@@ -33,10 +33,8 @@ from .store import RunStore
 from .stream import CanonicalEvent, CanonicalStream, StreamReader
 from .types import ErrorRef, EventCursor, StepRef
 
+from .event_projection import step_begin_event, step_end_event, direct_output
 from .observation import (
-    step_begin_event,
-    step_end_event,
-    direct_output,
     SNAPSHOT_SECONDS,
     SNAPSHOT_BYTES,
     SnapshotBudget as _Budget,

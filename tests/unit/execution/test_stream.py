@@ -2,7 +2,13 @@
 
 from toolang.execution.types import StepRef
 
-from tests.support.observations import run_begin, run_end, step_begin, step_end
+from tests.support.observations import (
+    part_end,
+    run_begin,
+    run_end,
+    step_begin,
+    step_end,
+)
 
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
@@ -19,7 +25,6 @@ from toolang.execution.events import (
     ModelStepInfo,
     PartBegin,
     PartDelta,
-    PartEnd,
     ThreadForked,
     event_to_data,
 )
@@ -76,7 +81,7 @@ def progress():
         begin(),
         PartBegin(str(step), 0, "text"),
         PartDelta(str(step), 0, TextDelta("hello")),
-        PartEnd(str(step), 0, TextPart("hello")),
+        part_end(str(step), 0, TextPart("hello")),
         step_end(step, "value", "succeeded"),
     )
 

@@ -1,10 +1,9 @@
 """Normalize native Flow and Tool Steps for presentation, without Store reads."""
 
 from toolang.execution.events import ToolStepInfo, ModelStepInfo
-from toolang.base.types.message import ToolResultPart
 from toolang.execution.events import StepBegin, StepEnd
 
-from .formatting import output_parts, runnable_label
+from .formatting import tool_result_data, runnable_label
 from .types import StepOperation
 
 
@@ -76,10 +75,8 @@ def committed_exec_target(operation: StepOperation, end: StepEnd) -> str | None:
         operation.name == "exec"
         and operation.source == "tool"
         and any(
-            isinstance(part, ToolResultPart)
-            and part.error is None
-            and bool(part.output.get("controls"))
-            for part in output_parts(end)
+            part.get("error") is None and part.get("control_applied") is True
+            for part in tool_result_data(end)
         )
     ):
         return operation.runnable or "runnable"

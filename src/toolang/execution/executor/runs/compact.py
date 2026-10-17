@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from ...event_projection import part_data
+
 import asyncio
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any
@@ -376,4 +378,4 @@ async def _emit_part(
     try:
         await execution.emit(PartBegin(step=str(step), part=index, part_type=part.type))
     finally:
-        await execution.emit(PartEnd(step=str(step), part=index, data=part))
+        await execution.emit(PartEnd(step=str(step), part=index, data=part_data(part)))

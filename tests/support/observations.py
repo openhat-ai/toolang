@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from toolang.execution.events import ModelStepInfo
+from toolang.execution.events import ModelStepInfo, PartEnd
+from toolang.execution.event_projection import part_data
+from toolang.base.types.message import Part
 
 from toolang.execution.types import StepRef
 
@@ -30,7 +32,7 @@ from toolang.execution.types import (
     StepStatus,
     RunStatus,
 )
-from toolang.execution.observation import step_info, step_summary, direct_output
+from toolang.execution.event_projection import step_info, step_summary, direct_output
 
 
 def run_begin(
@@ -139,3 +141,7 @@ def run_end(
         error_source=str(error.ref.record) if isinstance(error, ErrorRef) else None,
         finished_at=finished_at,
     )
+
+
+def part_end(step: str, part: int, data: Part) -> PartEnd:
+    return PartEnd(step, part, part_data(data))

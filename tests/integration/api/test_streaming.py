@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from toolang.execution.event_projection import part_data
+
+
 from toolang.execution.types import StepRef
 
 from tests.support.observations import run_begin, run_end, step_begin, step_end
@@ -267,7 +270,7 @@ agic answer(_: Part[]) -> Part[]:
             assert isinstance(decoded[3], PartDelta)
             assert decoded[3].delta == ReasoningDelta(part.text)
             assert isinstance(decoded[5], PartEnd)
-            assert decoded[5].data == part
+            assert decoded[5].data == part_data(part)
         assert "type_" not in events[2][1]
         assert events[-1][1]["status"] == "succeeded"
         assert without_runtime_snapshots(

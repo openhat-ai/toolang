@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from ...event_projection import part_data
+
 import asyncio
 from copy import deepcopy
 from dataclasses import dataclass, replace
@@ -543,7 +545,7 @@ async def _finish(
             "tool", FieldRef.from_path(step, "output", "value"), output
         )
         state.last_step = step.index
-    end = PartEnd(step=str(step), part=0, data=part)
+    end = PartEnd(step=str(step), part=0, data=part_data(part))
     ended = False
     status: StepStatus = "failed" if part.error is not None else "succeeded"
     noted = ToolStepNoted(summary=summary if summary is not None else part.tool_name)

@@ -159,8 +159,13 @@ from .common import (
     value_parts,
     value_text,
 )
-from ..observation import step_begin_event, step_end_event, direct_output
-from ..events import EventOutput, ControlApplied
+from ..event_projection import (
+    step_begin_event,
+    step_end_event,
+    direct_output,
+    event_output,
+)
+from ..events import ControlApplied
 from ..inspection.history import RunHistory
 from ..talk import TalkBatch
 from ..compaction import CompactSpec, RUNNABLE as COMPACT_RUNNABLE
@@ -1153,7 +1158,7 @@ class RunExecutor:
                     control=ControlApplied(str(control.target), control.index)
                     if control is not None
                     else None,
-                    output=EventOutput(result.type_name or "Json", result.value)
+                    output=event_output(result.type_name or "Json", result.value)
                     if result is not None and result.has_value
                     else direct_output(output),
                     error_source=str(error.ref.record)
@@ -1203,7 +1208,7 @@ class RunExecutor:
                 publication.append(
                     step_end_event(
                         step,
-                        EventOutput(result.type_name or "Json", result.value)
+                        event_output(result.type_name or "Json", result.value)
                         if result is not None and result.has_value
                         else direct_output(step.output),
                         step.error.message

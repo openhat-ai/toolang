@@ -89,19 +89,22 @@ client data, with the following boundaries:
 | Run/Step/control identity | Scalar IDs/indexes needed for correlation, including owning Run and parent identities. These never require a Store read. |
 | `StepGiven`, Flow AST, complete model/tool preparation | Only operation/target/model/tool facts currently consumed by clients; no complete call, AST or preparation snapshot. Formatting remains with clients, not executor/store. |
 | `FieldRef`, `TypedRef`, `ContentRef`, `ErrorRef` | Necessary resolved data or error text; no data pointers. |
-| Internal `Output` | Concrete type and actual value/Parts; no reference alternatives or local-table binding. |
+| Internal `Output` | Concrete type and final JSON value using client Part data; no reference alternatives or local-table binding. |
+| Execution `Part` | Text/reasoning and media display data, or tool identity and explicit runtime receipts; no provider state, full tool arguments or arbitrary result bodies. |
 | `StepNoted`, model accounting | Only completion facts and usage/cost consumed by existing clients; no internal pricing/accounting structures. |
 | Internal control provenance | Existing client-required application facts correlated by scalar Run ID/control index; not a persistence provenance chain or new control-event lifecycle. |
 
 Define these value-only payloads and their codecs with the Events. Scalar status,
-kind and occurrence vocabulary, canonical Parts and Deltas may be shared.
+kind and occurrence vocabulary and Deltas may be shared. Execution Parts remain
+with model calls and records; Event Parts use an explicit final-data definition.
 Choose an explicit field allowlist from existing consumers; do not replace
 `StepGiven` with an opaque metadata bag or replicate CLI rendering in the core.
 When output is required by the existing client contract, supply its actual value,
 with nested runtime refs resolved and literal user data preserved. A stored
 `Output` edge alone is not a reason to materialize it into an Event. Keep current
-content delivery; independently removing repeated Part/terminal content or
-filtering/truncating actual operation results is outside this change.
+text/media delivery; independently removing repeated Part/terminal content or
+truncating text/media results is outside this change. Project fields once before
+Event construction; encoding must not re-project output or load it from storage.
 
 Construct live notifications from execution memory and the current operation's
 write result. `Local.value` versus `Local.stored/ref` already separates actual
@@ -163,7 +166,7 @@ runnable.
 | Structural simplicity | `RunStore` behavior/signatures/SQL and durable formats are unchanged; `_PersistSink` has no replacement forwarding layer; lifecycle coordination stays centralized and gains no Event-specific state or strategy. |
 | Persistence independence | Lifecycle/control updates call existing Store methods with facts/records, without client Event objects or subscribers. |
 | Durable parity | Exact model calls, message deltas, typed references, control provenance, usage/limits and supported legacy history remain unchanged; no schema migration. |
-| Small direct Events | Live and snapshot metadata contains no internal reference-capable schemas, assembled model histories or ASTs; model-begin/summary size does not grow with earlier context. Actual operation output remains intact. |
+| Small direct Events | Live and snapshot metadata contains no internal reference-capable schemas, assembled model histories or ASTs; model-begin/summary size does not grow with earlier context. Text/media content and necessary runtime receipts remain intact; execution-only Part data stays in records. |
 | Failed commit | Acceptance, begin/end and content/control rollback publish nothing and adopt no failed candidate. |
 | Atomic admission | Native/runtime spawn, exec, await and control receipts remain atomic with source-Step completion; cancellation races do not duplicate terminal events. A failed spawn dispatch preserves acceptance and records/publishes the terminal failure once. |
 | Execution and consumers | Flow/Agic, children, parallel/loop work, state adoption, compaction, cancel/steer and local/remote presentation retain behavior without new queries, output caches or history lookups for live notifications. |
@@ -185,7 +188,7 @@ No open scope choices remain.
 
 ## Verification summary
 
-The default checks passed on the rebased code in a clean worktree: 11,782 tests
+The default checks passed on the rebased code in a clean worktree: 11,792 tests
 passed and 127 skipped. Coverage includes atomic admission, rollback, cancellation,
 exact call replay, stream recovery and local/remote presentation. The large-context
 stream test keeps its Model Begin notification under 1 KiB. Store methods, SQL and

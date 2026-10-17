@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from ...event_projection import part_data
+
 import asyncio
 import json
 import logging
@@ -926,7 +928,7 @@ async def _emit_part_end(
         PartEnd(
             step=str(StepRef.from_local(state.prepared.run.run_id, (stream.step,))),
             part=part_index,
-            data=part,
+            data=part_data(part),
         )
     )
 

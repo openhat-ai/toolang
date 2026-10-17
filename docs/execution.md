@@ -264,13 +264,24 @@ no complete model/tool call, Flow AST, State reference or input pointers.
 `StepEnd.noted` contains only completion facts and client usage/cost summaries;
 provider continuation and pricing details remain in records.
 
-Event outputs use `{type, value}` with direct values/Parts and no local binding.
+`PartEnd.data` uses event-owned `PartData`: text/reasoning content, media display
+fields, or tool identity and explicit receipts (`run`, `thread`,
+`control_applied`, `cwd`, and optional error). It excludes provider signatures,
+provider metadata, invocation arguments and arbitrary tool-result bodies. These
+execution details remain in records and model history.
+
+Event outputs use `{type, value}` with final JSON data and no local binding.
+Explicitly typed Part arrays, including nested arrays, use the same `PartData`.
+`event_projection.py` selects fields from available execution values before Event
+construction; `event_to_data()` only encodes the final Event once. Neither path
+loads values from the Store. `observation.py` owns structural normalization and
+snapshot budgets; record-based snapshot reads stay in `subscriptions.py`.
 Errors are text; optional `error_source` identifies the originating Run/Step for
 presentation deduplication without a data pointer. Live notifications use values
 already available during execution, including Await results. A stored output
 reference alone does not trigger value reconstruction for a notification.
-Providers stream Parts and deltas when supported; actual operation content is
-preserved. A tracer may ignore deltas and observe higher-level events.
+Providers stream display content and deltas when supported; text and media
+content is preserved. A tracer may ignore deltas and observe higher-level events.
 
 Explicit reconnect/replacement snapshots read records using the same small event
 shapes and existing budgets; they never rebuild model calls. Complete calls remain

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from toolang.execution.event_projection import part_data
+
 from toolang.execution.events import FlowStepInfo
 
 
@@ -260,7 +262,7 @@ flow parent() -> Part[][]:
                 )
                 assert isinstance(live, StepEnd | RunEnd)
                 assert live.output is not None and live.output.type == "Part[][]"
-                assert live.output.value == (parts, parts)
+                assert live.output.value == [[part_data(part) for part in parts]] * 2
                 wire = run_event_from_data(run_event_to_data(live))
                 assert wire == live
                 recorded, _cursor = snapshot.ends[identity]

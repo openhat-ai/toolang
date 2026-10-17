@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from toolang.execution.event_projection import part_data
+
 from toolang.execution.types import StepRef
 
 import asyncio
@@ -270,7 +272,7 @@ def test_interruption_before_result_commit_preserves_completed_result(
             await super().on_event(event)
             if (
                 isinstance(event, PartEnd)
-                and isinstance(event.data, ToolResultPart)
+                and event.data["type"] == "tool_result"
                 and StepRef.parse(event.step).index == 1
                 and not blockers
             ):
@@ -330,7 +332,9 @@ def test_interruption_before_result_commit_preserves_completed_result(
                 for event in tracer.events
                 if isinstance(event, PartEnd) and StepRef.parse(event.step) == step.ref
             )
-            assert parts_from_value(step.output.value) == (completed,)
+            assert tuple(
+                part_data(part) for part in parts_from_value(step.output.value)
+            ) == (completed,)
             if interruption == "steer":
                 assert [
                     part
@@ -339,7 +343,7 @@ def test_interruption_before_result_commit_preserves_completed_result(
                     )
                     for part in message.parts
                     if isinstance(part, ToolResultPart)
-                ] == [completed]
+                ] == list(parts_from_value(step.output.value))
             if tool_name == "runtime__run":
                 child = next(
                     r

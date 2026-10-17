@@ -164,7 +164,10 @@ def test_honor_precedes_blocked_batch_and_retry_executes_once(
             if isinstance(event, StepEnd) and StepRef.parse(event.step).index < 4:
                 early_effects.append((repo / "src/result").exists())
                 if event.kind == "tool":
-                    for summary in event.output.value.output["controls"]:
+                    record = harness.store.get_step(ref=StepRef.parse(event.step))
+                    assert record is not None and record.output is not None
+                    assert isinstance(record.output.value, ToolResultPart)
+                    for summary in record.output.value.output["controls"]:
                         ref = ControlRef.parse(summary["ref"])
                         assert (
                             harness.store.get_run_control(

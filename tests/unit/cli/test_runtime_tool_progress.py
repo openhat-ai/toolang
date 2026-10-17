@@ -192,7 +192,7 @@ def test_runtime_tool_failure_details_and_cancellation_remain_visible(name, stat
 @pytest.mark.parametrize(
     "plugin,name", [("runtime", "run"), ("runtime", "exec"), ("fs", "read")]
 )
-def test_tool_results_remain_in_events_but_not_in_progress(plugin, name):
+def test_tool_events_and_progress_exclude_raw_result_bodies(plugin, name):
     call = ToolCall("call-1", "call-1", f"{plugin}__{name}", {})
     begin = step_begin(
         step=StepRef.parse("run_root.0"),
@@ -227,8 +227,9 @@ def test_tool_results_remain_in_events_but_not_in_progress(plugin, name):
     assert rows[0].text.startswith("› ")
     assert len(rows) == 1
     assert rows[0].text == f"› Executed {name}"
-    assert end.output is not None and isinstance(end.output.value, ToolResultPart)
-    assert end.output.value.output == {"value": "Result is still available"}
+    assert end.output is not None and isinstance(end.output.value, dict)
+    assert end.output.value["tool_call_id"] == call.tool_call_id
+    assert "output" not in end.output.value and "value" not in end.output.value
 
 
 @pytest.mark.parametrize("status", ["succeeded", "failed", "canceled"])

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from toolang.execution.observation import step_info
+from tests.support.observations import part_end
+
+from toolang.execution.event_projection import step_info
 from toolang.execution.events import FlowStepInfo
 
 
@@ -33,7 +35,6 @@ from toolang.cli.common.execution_progress.headers import statement_header, unti
 from toolang.execution.events import (
     PartBegin,
     PartDelta,
-    PartEnd,
 )
 from toolang.execution.types import (
     Output,
@@ -384,7 +385,7 @@ def test_model_markdown_closes_without_repeating_at_step_end() -> None:
     assert streamed.live[0].rows[0].format == "markdown"
     assert streamed.live[0].rows[0].prefix == "• "
     closed = reducer.handle(
-        PartEnd(
+        part_end(
             step=str(StepRef.parse("run_root.0")),
             part=0,
             data=TextPart("Comparing\napproaches"),
@@ -448,7 +449,7 @@ def test_model_markdown_commits_stable_blocks_and_keeps_one_live_tail() -> None:
     assert paragraph.live[0].rows[0].gap_before is True
 
     closed = projector.handle(
-        PartEnd(
+        part_end(
             step=str(path),
             part=0,
             data=TextPart("# Heading\n\nParagraph"),
@@ -486,7 +487,7 @@ def test_model_part_end_must_extend_streamed_text() -> None:
     projector.handle(PartDelta(step=str(path), part=0, delta=TextDelta("prefix")))
 
     mismatch = projector.handle(
-        PartEnd(step=str(path), part=0, data=TextPart("different"))
+        part_end(step=str(path), part=0, data=TextPart("different"))
     )
 
     assert mismatch.live == ()
@@ -538,7 +539,7 @@ def test_multiple_signed_text_parts_render_without_exposing_reasoning():
             assert all(
                 part.text not in row.text for block in update.live for row in block.rows
             )
-        update = projector.handle(PartEnd(step=str(path), part=index, data=part))
+        update = projector.handle(part_end(step=str(path), part=index, data=part))
         rendered.extend(_rows(update.committed))
     update = projector.handle(
         step_end(
@@ -561,7 +562,7 @@ def test_model_step_end_must_repeat_the_completed_parts() -> None:
     )
     projector.handle(step_begin(step=path, kind="model", given=_model()))
     projector.handle(PartBegin(step=str(path), part=0, part_type="text"))
-    projector.handle(PartEnd(step=str(path), part=0, data=TextPart("authoritative")))
+    projector.handle(part_end(step=str(path), part=0, data=TextPart("authoritative")))
 
     mismatch = projector.handle(
         step_end(
@@ -603,7 +604,9 @@ def test_partial_model_output_is_committed_before_terminal_failure(
     projector.handle(step_begin(step=path, kind="model", given=_model()))
     projector.handle(PartBegin(step=str(path), part=0, part_type="text"))
     projector.handle(PartDelta(step=str(path), part=0, delta=TextDelta("partial")))
-    closed = projector.handle(PartEnd(step=str(path), part=0, data=TextPart("partial")))
+    closed = projector.handle(
+        part_end(step=str(path), part=0, data=TextPart("partial"))
+    )
     assert _rows(closed.committed) == [["partial"]]
 
     ended = projector.handle(
@@ -704,10 +707,10 @@ def test_model_committed_text_is_not_replaced_by_later_tool_call_part() -> None:
     projector.handle(step_begin(step=path, kind="model", given=_model()))
     projector.handle(PartBegin(step=str(path), part=0, part_type="text"))
     visible = projector.handle(
-        PartEnd(step=str(path), part=0, data=TextPart("Visible reasoning."))
+        part_end(step=str(path), part=0, data=TextPart("Visible reasoning."))
     )
     projector.handle(PartBegin(step=str(path), part=1, part_type="tool_call"))
-    hidden = projector.handle(PartEnd(step=str(path), part=1, data=_tool_call_part()))
+    hidden = projector.handle(part_end(step=str(path), part=1, data=_tool_call_part()))
 
     terminal = projector.handle(
         step_end(
@@ -1455,7 +1458,7 @@ def test_parallel_lane_is_single_line_and_terminal_failure_replaces_lanes() -> N
         ]
     ]
     reducer.handle(
-        PartEnd(
+        part_end(
             step=str(model),
             part=0,
             data=TextPart("first lane line\nsecond lane line"),
@@ -2482,7 +2485,7 @@ def test_restore_does_not_repeat_finalized_streamed_markdown():
         first,
         PartBegin(str(first.step), 0, "text"),
         PartDelta(str(first.step), 0, TextDelta("# Heading\n\nAnswer")),
-        PartEnd(str(first.step), 0, TextPart("# Heading\n\nAnswer")),
+        part_end(str(first.step), 0, TextPart("# Heading\n\nAnswer")),
         end,
         live,
     ):

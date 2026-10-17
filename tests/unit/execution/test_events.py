@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from toolang.execution.event_projection import event_output
+
+from tests.support.observations import part_end
+
 from toolang.execution.events import ModelStepInfo
 
 from toolang.execution.types import StepRef
@@ -18,7 +22,6 @@ from toolang.base.types.run import ModelCall, ToolCall
 from toolang.execution.events import (
     PartBegin,
     PartDelta,
-    PartEnd,
     RunEnd,
     StepBegin,
     StepEnd,
@@ -42,14 +45,13 @@ from toolang.execution.types import (
 from toolang.lang.ast import RepeatStmt, RunStmt, Span
 
 from toolang.execution.events import (
-    EventOutput,
     FlowStepInfo,
     ToolStepInfo,
     ControlApplied,
 )
-from toolang.execution.observation import step_info, step_summary
+from toolang.execution.event_projection import step_info, step_summary
 from tests.support.observations import step_begin, step_end, run_begin, run_end
-from toolang.lang.types import Struct
+from toolang.lang.types import Struct, Array
 import json
 from toolang.execution.types import TypedRef
 
@@ -170,12 +172,12 @@ def test_execution_status_vocabulary_has_canonical_order() -> None:
         ),
         PartBegin("run_root.0", 0, "text"),
         PartDelta("run_root.0", 0, TextDelta("hello")),
-        PartEnd("run_root.0", 0, TextPart("hello")),
+        part_end("run_root.0", 0, TextPart("hello")),
         step_end(
             "run_root.0",
             "model",
             "succeeded",
-            EventOutput("Part[]", (TextPart("hello"),)),
+            event_output("Part[]", (TextPart("hello"),)),
         ),
         run_end("run_root", "failed", error="timeout"),
     ],
@@ -241,7 +243,7 @@ def test_step_events_reject_internal_execution_payloads():
     with pytest.raises(TypeError, match="client Step info"):
         StepBegin("run_root.0", "run_root", None, 0, "model", ModelCall("", []))  # type: ignore[arg-type]
     with pytest.raises(TypeError, match="direct data"):
-        EventOutput(
+        event_output(
             "Text",
             TypedRef(
                 FieldRef.from_path(StepRef.parse("run_root.0"), "output", "value"),
@@ -249,7 +251,7 @@ def test_step_events_reject_internal_execution_payloads():
             ),
         )
     with pytest.raises(TypeError, match="direct data"):
-        EventOutput(
+        event_output(
             "Json",
             {"nested": FieldRef.from_path(StepRef.parse("run_root.0"), "output")},
         )
@@ -261,7 +263,7 @@ def test_event_output_preserves_literal_reference_shaped_json():
         "hash": "not content",
         "nested": [{"type": "ref", "ref": "literal"}],
     }
-    event = step_end("run_root.0", "value", "succeeded", EventOutput("Json", literal))
+    event = step_end("run_root.0", "value", "succeeded", event_output("Json", literal))
     assert run_event_from_data(run_event_to_data(event)) == event
     assert run_event_to_data(event)["output"] == {"type": "Json", "value": literal}
 
@@ -271,7 +273,7 @@ def test_struct_output_has_concrete_type_and_direct_data():
         "run_root.0",
         "run",
         "succeeded",
-        EventOutput("Review", Struct("Review", {"score": 1})),
+        event_output("Review", Struct("Review", {"score": 1})),
     )
     assert run_event_from_data(run_event_to_data(event)) == event
     assert event.output is not None and event.output.value == {"score": 1}
@@ -312,10 +314,10 @@ def test_event_decoder_rejects_old_state_inputs_and_bound_output():
     with pytest.raises(ValueError, match="Unexpected keyword"):
         run_event_from_data(data)
     data = run_event_to_data(
-        run_end("run_root", "succeeded", output=EventOutput("Text", "done"))
+        run_end("run_root", "succeeded", output=event_output("Text", "done"))
     )
     data["output"]["binding"] = "_"
-    with pytest.raises(ValueError, match="requires type and value"):
+    with pytest.raises(ValueError, match="Unexpected keyword"):
         run_event_from_data(data)
 
 
@@ -324,7 +326,7 @@ def test_user_struct_names_are_not_inferred_as_canonical_parts(name):
     value = (
         {"type": "ref", "ref": "literal"} if not name.endswith("[]") else [{"score": 2}]
     )
-    event = step_end("run_root.0", "value", "succeeded", EventOutput(name, value))
+    event = step_end("run_root.0", "value", "succeeded", event_output(name, value))
     assert run_event_from_data(run_event_to_data(event)) == event
 
 
@@ -333,33 +335,38 @@ def test_concrete_part_array_round_trips_without_losing_parts():
         "run_root.0",
         "model",
         "succeeded",
-        EventOutput("TextPart[]", (TextPart("hello"),)),
+        event_output("TextPart[]", (TextPart("hello"),)),
     )
     assert run_event_from_data(run_event_to_data(event)) == event
 
 
 @pytest.mark.parametrize("kind", ["Part[][]", "TextPart[][]", "Part[][][]"])
-def test_nested_part_arrays_retain_canonical_parts(kind):
+def test_nested_part_arrays_retain_final_client_data(kind):
     value = ((TextPart("answer"),),)
     if kind == "Part[][][]":
         value = (value,)
-    event = step_end("run_root.0", "value", "succeeded", EventOutput(kind, value))
+    event = step_end("run_root.0", "value", "succeeded", event_output(kind, value))
 
     restored = run_event_from_data(json.loads(json.dumps(run_event_to_data(event))))
 
     assert restored == event
     assert isinstance(restored, StepEnd)
-    assert restored.output is not None and restored.output.value == value
+    assert restored.output is not None
+    expected = [[{"type": "text", "text": "answer"}]]
+    if kind == "Part[][][]":
+        expected = [expected]
+    assert restored.output.value == expected
 
 
 def test_nested_part_array_presentation_filters_reasoning_and_metadata():
     from toolang.execution.values import parts_from_value
+    from toolang.cli.common.execution_progress.formatting import display_value
 
     event = step_end(
         "run_root.0",
         "value",
         "succeeded",
-        EventOutput(
+        event_output(
             "Part[][]",
             (
                 (
@@ -378,13 +385,15 @@ def test_nested_part_array_presentation_filters_reasoning_and_metadata():
 
     assert isinstance(restored, StepEnd)
     assert restored.output is not None
-    rendered = parts_from_value(restored.output.value, content_only=True)
+    rendered = parts_from_value(
+        display_value(restored.output.value, restored.output.type), content_only=True
+    )
     assert rendered == (TextPart('[[{"$part":{"type":"text","text":"answer"}}]]'),)
 
 
 @pytest.mark.parametrize("tool", [False, True])
 def test_await_error_is_direct_even_when_target_was_not_observed(tool):
-    from toolang.execution.observation import step_end_event
+    from toolang.execution.event_projection import step_end_event
     from toolang.execution.types import ErrorRef
     from toolang.lang.ast import AwaitStmt
 
@@ -408,15 +417,25 @@ def test_await_error_is_direct_even_when_target_was_not_observed(tool):
     assert event.error == "target failed" and event.error_source is None
 
 
-def test_part_events_reject_nested_runtime_references():
+def test_part_events_reject_internal_values_and_unselected_fields():
+    from toolang.execution.events import PartEnd
     from toolang.base.types.message import ToolResultPart
 
-    pointer = FieldRef.from_path(StepRef.parse("run_root.0"), "output", "value")
-    with pytest.raises(TypeError, match="direct data"):
+    with pytest.raises(ValueError):
+        PartEnd("run_root.1", 0, ToolResultPart("call", "tool", "tool"))  # type: ignore[arg-type]
+    with pytest.raises(ValueError):
+        PartEnd("run_root.1", 0, {"type": "text", "text": "ok", "signature": "native"})  # type: ignore[arg-type]
+    with pytest.raises(ValueError):
         PartEnd(
             "run_root.1",
             0,
-            ToolResultPart("call", "tool", "tool", output={"nested": pointer}),
+            {  # type: ignore[arg-type]
+                "type": "tool_result",
+                "tool_call_id": "call",
+                "tool_name": "tool",
+                "tool_family": "tool",
+                "output": {"nested": "body"},
+            },
         )
 
 
@@ -450,3 +469,114 @@ def test_generic_tool_target_named_arguments_do_not_expand_metadata(argument):
     assert info == ToolStepInfo("shell", "shell__execute", "Execute command")
     event = step_begin("run_root.0", "tool", info)
     assert len(json.dumps(run_event_to_data(event))) < 1024
+
+
+def test_client_part_payload_excludes_native_state_and_tool_bodies():
+    from toolang.base.types.message import ToolCallPart, ToolResultPart
+    from toolang.execution.event_projection import direct_output
+    from toolang.execution.types import Output
+
+    private = "private" * 200000
+    parts = (
+        TextPart(
+            "answer",
+            signature=private,
+            provider="test",
+            provider_metadata={"adapter": "test", "model": "test"},
+        ),
+        ToolCallPart("call", "shell__execute", "shell", input={"command": private}),
+        ToolResultPart("call", "shell__execute", "shell", output={"body": private}),
+    )
+    for part in parts:
+        event = part_end("run_root.0", 0, part)
+        assert private not in json.dumps(run_event_to_data(event))
+    output = direct_output(Output(Array("Part[]", parts)))
+    event = step_end("run_root.0", "model", "succeeded", output)
+    assert private not in json.dumps(run_event_to_data(event))
+
+
+def test_event_encoder_only_serializes_already_projected_data(monkeypatch):
+    event = step_end(
+        "run_root.0",
+        "model",
+        "succeeded",
+        event_output("Part[]", (TextPart("answer"),)),
+    )
+
+    def unexpected_projection(self):
+        raise AssertionError("event serialization must not project execution values")
+
+    monkeypatch.setattr(TextPart, "to_data", unexpected_projection)
+    assert run_event_to_data(event)["output"]["value"][0]["text"] == "answer"
+
+
+@pytest.mark.parametrize(
+    ("name", "body", "receipt"),
+    [
+        (
+            "runtime__spawn",
+            {"id": "run_child", "thread": "thread_child", "status": "pending"},
+            {"run": "run_child", "thread": "thread_child"},
+        ),
+        (
+            "_toolang__run",
+            {"id": "run_child", "thread": "thread_child"},
+            {"run": "run_child", "thread": "thread_child"},
+        ),
+        ("runtime__exec", {"controls": ["run_root@1"]}, {"control_applied": True}),
+        ("_toolang__execute", {"controls": []}, {"control_applied": False}),
+        ("runtime__chdir", {"cwd": "/workspace"}, {"cwd": "/workspace"}),
+        (
+            "shell__execute",
+            {"cwd": "/workspace", "controls": ["literal"], "id": "literal"},
+            {},
+        ),
+    ],
+)
+def test_tool_client_data_keeps_only_explicit_receipts(name, body, receipt):
+    from toolang.base.types.message import ToolResultPart
+    from toolang.execution.event_projection import part_data
+
+    body["private"] = "large result" * 100000
+    part = ToolResultPart("call", name, name, output=body, call_id="provider-id")
+    expected = {
+        "type": "tool_result",
+        "tool_call_id": "call",
+        "tool_name": name,
+        "tool_family": name,
+        **receipt,
+    }
+    assert part_data(part) == expected
+    event = step_end(
+        "run_root.0", "tool", "succeeded", event_output("ToolResultPart", part)
+    )
+    assert event.output is not None and event.output.value == expected
+    assert run_event_from_data(run_event_to_data(event)) == event
+    assert len(json.dumps(run_event_to_data(event))) < 1024
+
+
+def test_media_event_data_preserves_display_content():
+    from toolang.base.types.message import ImagePart, AudioPart, DocumentPart
+    from toolang.execution.event_projection import part_data
+
+    for part in (
+        ImagePart(image_url="data:image/png;base64,abcd", filename="image.png"),
+        AudioPart("abcd", "wav", transcript="spoken words"),
+        DocumentPart(data="document body", filename="document.txt"),
+    ):
+        event = part_end("run_root.0", 0, part)
+        assert event.data == part.to_data() == part_data(part)
+        assert run_event_from_data(run_event_to_data(event)) == event
+
+
+def test_event_output_constructor_requires_final_protocol_data():
+    from toolang.execution.events import EventOutput
+
+    with pytest.raises(ValueError):
+        EventOutput("Part[]", [TextPart("internal")])
+    event = run_end(
+        "run_root",
+        "succeeded",
+        output=EventOutput("Part[]", [{"type": "text", "text": "answer"}]),
+    )
+    assert run_event_from_data(run_event_to_data(event)) == event

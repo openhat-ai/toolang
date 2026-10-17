@@ -8,19 +8,17 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Annotated, Any, Literal, cast
-from collections.abc import Mapping, Sequence
 
-from pydantic import Field, TypeAdapter, ConfigDict
+from pydantic import Field, TypeAdapter, ConfigDict, JsonValue
+from typing_extensions import TypedDict, NotRequired
 from toolang.lang.types import authored_type
-from toolang.base.types.message import Delta, Part, PartType, part_from_data
-from .records import occurrence_from_data, occurrence_to_data
+from toolang.base.types.message import Delta, PartType, ImageDetail, AudioFormat
 from .types import (
     ControlRef,
     Occurrence,
     RunStatus,
     StepKind,
     StepStatus,
-    AwaitableHandle,
     validate_occurrence,
 )
 
@@ -122,45 +120,103 @@ class StepSummary:
     usage: Usage | None = None
 
 
-def _value_to_data(value: Any) -> Any:
-    if isinstance(value, Part | AwaitableHandle):
-        return _value_to_data(value.to_data())
-    if isinstance(value, Mapping):
-        return {str(key): _value_to_data(item) for key, item in value.items()}
-    if isinstance(value, Sequence) and not isinstance(value, str | bytes):
-        return [_value_to_data(item) for item in value]
-    if value is None or isinstance(value, str | int | float | bool):
-        return value
-    raise TypeError(f"event output requires direct data, got {type(value).__name__}")
+class TextPartData(TypedDict):
+    type: Literal["text", "reasoning"]
+    text: str
 
 
-def _part_value(value: Any, kind: str) -> Any:
-    """Keep canonical Parts at every dimension of an explicitly typed array."""
+class ImagePartData(TypedDict):
+    type: Literal["image"]
+    image_url: NotRequired[str]
+    file_id: NotRequired[str]
+    detail: ImageDetail
+    filename: NotRequired[str]
+    media_type: NotRequired[str]
+
+
+class AudioPartData(TypedDict):
+    type: Literal["audio"]
+    data: str
+    format: AudioFormat
+    filename: NotRequired[str]
+    media_type: NotRequired[str]
+    transcript: NotRequired[str]
+
+
+class DocumentPartData(TypedDict):
+    type: Literal["document"]
+    data: NotRequired[str]
+    url: NotRequired[str]
+    file_id: NotRequired[str]
+    filename: NotRequired[str]
+    media_type: NotRequired[str]
+
+
+class ToolCallData(TypedDict):
+    type: Literal["tool_call"]
+    tool_call_id: str
+    tool_name: str
+    tool_family: str
+
+
+class ToolResultData(TypedDict):
+    type: Literal["tool_result"]
+    tool_call_id: str
+    tool_name: str
+    tool_family: str
+    error: NotRequired[str]
+    run: NotRequired[str]
+    thread: NotRequired[str]
+    control_applied: NotRequired[bool]
+    cwd: NotRequired[str]
+
+
+PartData = Annotated[
+    TextPartData
+    | ImagePartData
+    | AudioPartData
+    | DocumentPartData
+    | ToolCallData
+    | ToolResultData,
+    Field(discriminator="type"),
+]
+for _part_type in (
+    TextPartData,
+    ImagePartData,
+    AudioPartData,
+    DocumentPartData,
+    ToolCallData,
+    ToolResultData,
+):
+    setattr(_part_type, "__pydantic_config__", ConfigDict(extra="forbid"))
+
+_PART_DATA_ADAPTER = TypeAdapter(PartData)
+_JSON_ADAPTER = TypeAdapter(JsonValue)
+
+
+def _validate_part_output(value: JsonValue, kind: str) -> None:
     if kind.endswith("[]"):
-        if not isinstance(value, Sequence) or isinstance(value, str | bytes):
+        if not isinstance(value, list):
             raise ValueError(f"event {kind} output requires an array")
-        return tuple(_part_value(item, kind[:-2]) for item in value)
-    if isinstance(value, Part):
-        return value
-    if not isinstance(value, dict):
-        raise ValueError("event Part output requires a canonical Part object")
-    return part_from_data(value)
+        for item in value:
+            _validate_part_output(item, kind[:-2])
+    else:
+        _PART_DATA_ADAPTER.validate_python(value, strict=True)
 
 
 @dataclass(frozen=True, slots=True)
 class EventOutput:
-    """A concrete output value, without local bindings or pointer alternatives."""
+    """Final client data; no execution values, bindings or pointer alternatives."""
 
     type: str
-    value: Any
+    value: JsonValue
 
     def __post_init__(self) -> None:
-        data = _value_to_data(self.value)
         kind = authored_type(self.type)
         if kind.split("[", 1)[0] == "Part":
-            object.__setattr__(self, "value", _part_value(self.value, kind))
-        elif self.type != "_Awaitable":
-            object.__setattr__(self, "value", data)
+            _validate_part_output(self.value, kind)
+        else:
+            _JSON_ADAPTER.validate_python(self.value, strict=True)
 
 
 @dataclass(frozen=True, slots=True)
@@ -229,11 +285,11 @@ class PartDelta:
 class PartEnd:
     step: str
     part: int
-    data: Part
+    data: PartData
     type: Literal["part_end"] = field(default="part_end", kw_only=True)
 
     def __post_init__(self) -> None:
-        _value_to_data(self.data)
+        _PART_DATA_ADAPTER.validate_python(self.data, strict=True)
 
 
 @dataclass(frozen=True, slots=True)
@@ -363,17 +419,9 @@ _EXECUTION_EVENT_ADAPTER = TypeAdapter(ExecutionEvent)
 
 
 def event_to_data(event: ExecutionEvent) -> dict[str, Any]:
-    data = cast(
+    return cast(
         dict[str, Any], _EXECUTION_EVENT_ADAPTER.dump_python(event, mode="json")
     )
-    if isinstance(event, RunBegin | StepBegin):
-        data["occurrence"] = occurrence_to_data(event.occurrence)
-    if isinstance(event, RunEnd | StepEnd) and event.output is not None:
-        data["output"] = {
-            "type": event.output.type,
-            "value": _value_to_data(event.output.value),
-        }
-    return data
 
 
 def run_event_to_data(event: RunEvent) -> dict[str, Any]:
@@ -388,21 +436,6 @@ def run_event_from_data(data: object) -> RunEvent:
         for key, value in cast(dict[str, Any], data).items()
         if key not in {"cursor", "context", "agent", "source_cursor"}
     }
-    if payload.get("type") in {"run_begin", "step_begin"}:
-        payload["occurrence"] = occurrence_from_data(payload.get("occurrence"))
-    if (
-        payload.get("type") in {"run_end", "step_end"}
-        and payload.get("output") is not None
-    ):
-        output: Any = payload["output"]
-        if not isinstance(output, dict) or set(output) != {"type", "value"}:
-            raise ValueError("event output requires type and value")
-        kind, value = output["type"], output["value"]
-        if not isinstance(kind, str):
-            raise ValueError("event output type must be text")
-        if kind == "_Awaitable":
-            value = AwaitableHandle.from_data(value, type_name=kind)
-        payload["output"] = EventOutput(kind, value)
     return _RUN_EVENT_ADAPTER.validate_python(payload)
 
 

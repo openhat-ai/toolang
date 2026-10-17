@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests.support.observations import part_end
+
 from toolang.execution.types import StepRef
 
 from tests.support.observations import run_begin, run_end, step_begin, step_end
@@ -49,7 +51,6 @@ from toolang.cli.common.script_progress.console import ProgressConsole
 from toolang.execution.events import (
     PartBegin,
     PartDelta,
-    PartEnd,
     RunBegin,
     RunEvent,
 )
@@ -999,7 +1000,7 @@ def test_single_run_gather_progressively_commits_markdown() -> None:
         assert presenter.console._live_rows[0].prefix == "  "
 
         await presenter.on_event(
-            PartEnd(
+            part_end(
                 step=str(model),
                 part=0,
                 data=TextPart("# First section\n\nSecond paragraph"),

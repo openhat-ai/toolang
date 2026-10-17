@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from toolang.execution.events import EventOutput
+from toolang.execution.event_projection import event_output
+
 
 from tests.support.setup import materialized_setup
 from tests.support.execution_assertions import without_runtime_snapshots
@@ -2023,7 +2024,7 @@ def test_agic_preserves_multimodal_steer_and_model_output() -> None:
         ),
     )
     step_end = next(event for event in events if isinstance(event, StepEnd))
-    assert step_end.output == EventOutput("Part[]", (audio,))
+    assert step_end.output == event_output("Part[]", (audio,))
     assert [event.type for event in events] == [
         "step_begin",
         "part_begin",

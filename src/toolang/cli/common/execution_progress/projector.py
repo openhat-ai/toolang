@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from toolang.base.types.message import part_from_data
+
 from toolang.execution.events import ModelStepInfo
 
 from collections.abc import Callable
@@ -770,23 +772,24 @@ class ProgressProjector:
         state = self._active_step(StepRef.parse(event.step))
         if state.begin.kind != "model":
             return None
-        state.model.completed_parts[event.part] = event.data
-        if not isinstance(event.data, TextPart):
+        part = part_from_data(event.data)
+        state.model.completed_parts[event.part] = part
+        if not isinstance(part, TextPart):
             return None
         if part_type != "text":
             raise _PresentationError(
                 f"PartEnd changed Part type for {StepRef.parse(event.step)} part {event.part}"
             )
         streamed = state.model.text_parts.get(event.part, "")
-        if not event.data.text.startswith(streamed):
+        if not part.text.startswith(streamed):
             raise _PresentationError(
                 f"PartEnd text does not extend TextDelta for {StepRef.parse(event.step)} part "
                 f"{event.part}"
             )
-        suffix = event.data.text[len(streamed) :]
+        suffix = part.text[len(streamed) :]
         state.model.pending += suffix
         state.model.streamed += suffix
-        state.model.text_parts[event.part] = event.data.text
+        state.model.text_parts[event.part] = part.text
         if self._runs[StepRef.parse(event.step).run_id].internal:
             return None
         if state.lane_owner is not None:

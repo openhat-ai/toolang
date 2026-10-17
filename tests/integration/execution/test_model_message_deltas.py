@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from toolang.execution.event_projection import part_data
+
 from toolang.execution.types import StepRef
 
 import asyncio
@@ -347,7 +349,9 @@ def test_interruption_during_cleanup_still_persists_adopted_output(
             assert step.status == "canceled"
             assert step.aborted_by == second.ref
             assert step.output is not None
-            assert parts_from_value(step.output.value) == tuple(
+            assert tuple(
+                part_data(part) for part in parts_from_value(step.output.value)
+            ) == tuple(
                 event.data
                 for event in tracer.events
                 if isinstance(event, PartEnd) and StepRef.parse(event.step) == step.ref

@@ -759,8 +759,9 @@ def test_pick_retains_the_bound_resource_selection(tmp_path: Path):
             if (
                 isinstance(event, StepEnd)
                 and event.output is not None
-                and isinstance(event.output.value, ToolResultPart)
-                and event.output.value.tool_call_id == "before"
+                and isinstance(event.output.value, dict)
+                and event.output.value.get("type") == "tool_result"
+                and event.output.value.get("tool_call_id") == "before"
             ):
                 harness.setup.layout.program.write_text(
                     SOURCE.replace(
@@ -836,12 +837,13 @@ def test_guidance_refreshes_between_batches_and_supports_revision_reversals(
             if (
                 isinstance(event, StepEnd)
                 and event.output is not None
-                and isinstance(event.output.value, ToolResultPart)
+                and isinstance(event.output.value, dict)
+                and event.output.value.get("type") == "tool_result"
             ):
-                if event.output.value.tool_call_id == "a":
+                if event.output.value.get("tool_call_id") == "a":
                     _write_guidance(skill, b)
                     harness.published = prepare_agent_state(harness.setup.layout)
-                elif event.output.value.tool_call_id == "b":
+                elif event.output.value.get("tool_call_id") == "b":
                     _write_guidance(skill, a)
                     harness.published = prepare_agent_state(harness.setup.layout)
 
@@ -991,8 +993,9 @@ def test_compaction_excludes_old_guidance_even_when_far_mentions_it(
             if (
                 isinstance(event, StepEnd)
                 and event.output is not None
-                and isinstance(event.output.value, ToolResultPart)
-                and event.output.value.tool_call_id == "before"
+                and isinstance(event.output.value, dict)
+                and event.output.value.get("type") == "tool_result"
+                and event.output.value.get("tool_call_id") == "before"
             ):
                 assert horizon is not None
                 harness.store.accept_compact_control(

@@ -14,7 +14,7 @@ from types import TracebackType
 from typing import Any, Self, cast
 
 from toolang.base.protocols.tool import Tool
-from toolang.base.types.message import Part, TextPart, ToolResultPart
+from toolang.base.types.message import Part, TextPart
 from toolang.base.types.model import (
     Model,
     ModelRequest,
@@ -270,9 +270,10 @@ class PublicationTracer(RecordingRunTracer):
         if (
             isinstance(event, StepEnd)
             and event.output is not None
-            and isinstance(event.output.value, ToolResultPart)
+            and isinstance(event.output.value, dict)
+            and event.output.value.get("type") == "tool_result"
         ):
-            state = self.publications.get(event.output.value.tool_call_id)
+            state = self.publications.get(str(event.output.value.get("tool_call_id")))
             if state is not None:
                 self.harness.published = state
 

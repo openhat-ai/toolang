@@ -10,16 +10,12 @@ from toolang.base.types.message import (
     TextPart,
     content_parts,
     ToolCallPart,
-    ToolResultPart,
 )
 from toolang.execution.events import StepEnd
-from toolang.execution.types import (
-    AwaitableHandle,
-)
 from toolang.execution.values import parts_from_value
 from toolang.lang.types import authored_type
 
-from .formatting import one_line, output_parts
+from .formatting import one_line, output_parts, tool_result_data, display_value
 from .facts import elapsed_fact
 from .types import ProgressRow, ProgressTone, StepOperation
 
@@ -60,16 +56,16 @@ def _execution_rows(
     ]
     handle = event.output.value if event.output is not None else None
     identity = None
-    if isinstance(handle, AwaitableHandle):
-        identity = (handle.id, handle.thread)
+    if (
+        event.output is not None
+        and event.output.type == "_Awaitable"
+        and isinstance(handle, dict)
+    ):
+        identity = (handle.get("id"), handle.get("thread"))
     elif operation.name in {"async run", "spawn"}:
-        for part in output_parts(event):
-            if (
-                isinstance(part, ToolResultPart)
-                and "id" in part.output
-                and "thread" in part.output
-            ):
-                identity = (part.output["id"], part.output["thread"])
+        for part in tool_result_data(event):
+            if "run" in part and "thread" in part:
+                identity = (part["run"], part["thread"])
     if identity is not None:
         rows.append(ProgressRow(f"  {identity[0]} in {identity[1]}", "progress"))
     if operation.name == "await" and not tool and event.status == "succeeded":
@@ -452,7 +448,9 @@ def _flow_output_lines(event: StepEnd) -> list[str]:
         parts = (
             content_parts(output_parts(event))
             if authored_type(event.output.type) == "Part[]"
-            else parts_from_value(event.output.value, content_only=True)
+            else parts_from_value(
+                display_value(event.output.value, event.output.type), content_only=True
+            )
         )
     except (TypeError, ValueError):
         return []

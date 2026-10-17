@@ -165,7 +165,7 @@ def event_labels(events: Sequence[RunEvent]) -> list[str]:
             labels.append(f"part_delta:{StepRef.parse(event.step)}:{event.part}")
         else:
             labels.append(
-                f"part_end:{StepRef.parse(event.step)}:{event.part}:{event.data.type}"
+                f"part_end:{StepRef.parse(event.step)}:{event.part}:{event.data['type']}"
             )
     return labels
 
@@ -243,7 +243,7 @@ def assert_run_event_integrity(
             key = (StepRef.parse(event.step), event.part)
             begin = active_parts.pop(key, None)
             assert begin is not None, f"part end without begin at {where}"
-            assert begin.part_type == event.data.type, (
+            assert begin.part_type == event.data["type"], (
                 f"part type changed before {where}"
             )
             assert key not in ended_parts, f"duplicate part end at {where}"

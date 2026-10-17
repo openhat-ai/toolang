@@ -1,6 +1,6 @@
 """Independent root launches keep identity, ownership, and admission durable."""
 
-from toolang.execution.observation import direct_output, step_summary
+from toolang.execution.event_projection import direct_output, step_summary
 
 from toolang.execution.types import StepRef
 

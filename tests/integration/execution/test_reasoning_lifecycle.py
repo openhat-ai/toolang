@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from toolang.execution.event_projection import part_data
+from toolang.execution.values import parts_from_value
+
 import asyncio
 from pathlib import Path
 import json
@@ -171,12 +174,9 @@ def test_interleaved_reasoning_events_match_durable_output(tmp_path: Path):
             )
             assert run.status == "succeeded", run.error
             assert harness.store.run_output(run_id=run.id) == parts
-            assert (
-                tuple(
-                    event.data for event in tracer.events if isinstance(event, PartEnd)
-                )
-                == parts
-            )
+            assert tuple(
+                event.data for event in tracer.events if isinstance(event, PartEnd)
+            ) == tuple(part_data(part) for part in parts)
             assert (
                 "".join(
                     event.delta.text
@@ -240,9 +240,9 @@ def test_typed_output_ignores_reasoning_without_losing_durable_parts(
             assert step.output is not None
             assert isinstance(step.output.value, Array)
             assert tuple(step.output.value) == parts
-            assert (
-                tuple(e.data for e in tracer.events if isinstance(e, PartEnd)) == parts
-            )
+            assert tuple(
+                e.data for e in tracer.events if isinstance(e, PartEnd)
+            ) == tuple(part_data(part) for part in parts)
         finally:
             reopened.close()
         assert_run_event_integrity(tracer.events)
@@ -293,7 +293,7 @@ def test_failed_stream_persists_reasoning_prefix_without_native_state(tmp_path: 
             )
             assert tuple(
                 event.data for event in tracer.events if isinstance(event, PartEnd)
-            ) == tuple(step.output.value)
+            ) == tuple(part_data(part) for part in parts_from_value(step.output.value))
             assert [
                 event.part for event in tracer.events if isinstance(event, PartEnd)
             ] == [0, 1, 2]

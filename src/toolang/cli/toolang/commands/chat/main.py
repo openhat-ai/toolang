@@ -36,7 +36,7 @@ from toolang.execution.types import (
     SessionSetting,
     StepRef,
 )
-from toolang.lang.types import Array
+from toolang.cli.common.execution_progress.formatting import output_parts
 from toolang.up.types import AgentServerRef
 from toolang.cli.common.context import (
     context_layout,
@@ -606,8 +606,7 @@ class _ScriptedRunRenderer:
                 or StepRef.parse(event.step) in self._text_delta_steps
             ):
                 return
-            value = event.output.value if event.output is not None else ()
-            parts = value if isinstance(value, Array | tuple | list) else ()
+            parts = output_parts(event)
             text = message_text(
                 tuple(part for part in parts if isinstance(part, TextPart))
             ).strip()

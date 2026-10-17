@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests.support.observations import part_end
+
 from toolang.execution.events import ControlApplied
 
 from toolang.execution.types import StepRef
@@ -104,7 +106,6 @@ from toolang.common.errors import ToolangError
 from toolang.execution.events import (
     PartBegin,
     PartDelta,
-    PartEnd,
     RunBegin,
     RunEnd,
     RunEvent,
@@ -372,7 +373,7 @@ def test_chat_uses_shared_progress_blocks_for_live_and_finalized_model_output() 
     assert "• drafting" in streamed
     assert "Thinking" not in streamed
     events.handle_run_event(
-        PartEnd(
+        part_end(
             step=str(StepRef.parse("run_1.1")),
             part=0,
             data=TextPart("drafting"),
@@ -502,7 +503,7 @@ def test_chat_moves_stable_markdown_to_scrollback_while_the_tail_stays_live() ->
     ]
 
     events.handle_run_event(
-        PartEnd(
+        part_end(
             step=str(path),
             part=0,
             data=TextPart("# Heading\n\nParagraph"),
@@ -3765,7 +3766,7 @@ def test_chat_tui_tracks_only_root_chdir_workspace_in_center(
     app.handle_run_event(_run_begin())
 
     app.handle_run_event(
-        PartEnd(
+        part_end(
             step=str(StepRef.parse("run_1.0")),
             part=0,
             data=ToolResultPart(
@@ -3780,7 +3781,7 @@ def test_chat_tui_tracks_only_root_chdir_workspace_in_center(
     assert app.status_bar._center_label() == "hak@other"
 
     app.handle_run_event(
-        PartEnd(
+        part_end(
             step=str(StepRef.parse("run_child.0")),
             part=0,
             data=ToolResultPart(
@@ -7518,7 +7519,7 @@ def test_chat_palette_reaches_live_committed_and_durable_output(
             )
         )
     events.handle_run_event(
-        PartEnd(step=str(step), part=0, data=TextPart(markup)), context
+        part_end(step=str(step), part=0, data=TextPart(markup)), context
     )
     events.handle_run_event(_model_step_end(output=markup), context)
     events.handle_run_event(_run_end(status="succeeded"), context)
