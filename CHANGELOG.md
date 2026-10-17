@@ -173,6 +173,8 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Fixed
 
+- Interrupted message-handler reconciliation closes nested Steps before their parents. Run stream clients preserve producer order and report a protocol error when a Run ends with an active owned child, rather than delaying or reordering terminal events; asynchronous launch admission and owned-child cleanup semantics are unchanged.
+
 - Large run and thread detail responses avoid expensive diagnostics from probing
   unrelated `StepGiven` variants, while preserving existing public payloads and
   stored facts; Chat title queries request existing thread metadata with

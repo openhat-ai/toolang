@@ -185,7 +185,7 @@ No open scope choices remain.
 
 ## Verification summary
 
-The default checks passed on the rebased code in a clean worktree: 11,778 tests
+The default checks passed on the rebased code in a clean worktree: 11,782 tests
 passed and 127 skipped. Coverage includes atomic admission, rollback, cancellation,
 exact call replay, stream recovery and local/remote presentation. The large-context
 stream test keeps its Model Begin notification under 1 KiB. Store methods, SQL and

@@ -2,8 +2,6 @@
 
 from toolang.execution.types import StepRef
 
-from tests.support.observations import run_end
-
 import asyncio
 import json
 
@@ -528,9 +526,8 @@ def test_overflow_wins_over_an_already_terminal_record(tmp_path):
     asyncio.run(scenario())
 
 
-def test_root_stream_waits_for_a_child_after_recorded_root_end(tmp_path):
+def test_root_snapshot_rejects_recorded_parent_end_with_active_child(tmp_path):
     from tests.support.execution_fixtures import project_run_start, project_step
-    from toolang.execution.events import RunEnd
     from toolang.execution.store import RunStore
     from toolang.execution.stream import CanonicalStream
 
@@ -570,32 +567,13 @@ def test_root_stream_waits_for_a_child_after_recorded_root_end(tmp_path):
         attachment = await service.reserve()
         sub = attachment.attach(StreamScope(root="run_root"))
         client = StreamClientState()
-        while True:
-            frame = await sub.receive()
-            client.feed(frame)
-            if frame.event == "stream_checkpoint":
-                break
+        with pytest.raises(ValueError, match="RunEnd with active child Run"):
+            while True:
+                frame = await sub.receive()
+                client.feed(frame)
         assert not client.complete("run_root")
-        assert not any(
-            isinstance(event, RunEnd) and event.run == "run_root"
-            for event in client.snapshot().events
-        )
-        pending = asyncio.create_task(sub.receive())
-        await asyncio.sleep(0)
-        assert not pending.done()
-        with source.publication() as publication:
-            store.finish_run(run_id="run_child", status="succeeded")
-            publication.append(
-                run_end("run_child", "succeeded"),
-                thread_id="term_tree",
-                root_run_id="run_root",
-            )
-        end = await asyncio.wait_for(pending, 1)
-        assert end.data["run"] == "run_child"
-        client.feed(end)
-        assert client.complete("run_root")
-        with pytest.raises(StopAsyncIteration):
-            await sub.receive()
+        assert client.snapshot().events == ()
+        assert client.cursor is None
         attachment.close()
         store.close()
 

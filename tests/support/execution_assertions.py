@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from toolang.execution.events import ModelStepInfo
+from toolang.execution.events import ModelStepInfo, FlowStepInfo, ToolStepInfo
 
 from toolang.execution.types import StepRef
 
@@ -176,8 +176,10 @@ def assert_run_event_integrity(
     """Assert lifecycle pairing, causal order, and terminal output agreement."""
 
     active_runs: set[str] = set()
+    run_begins: dict[str, RunBegin] = {}
     ended_runs: set[str] = set()
     active_steps: dict[StepRef, StepBegin] = {}
+    step_begins: dict[StepRef, StepBegin] = {}
     ended_steps: dict[StepRef, StepEnd] = {}
     active_parts: dict[tuple[StepRef, int], PartBegin] = {}
     ended_parts: dict[tuple[StepRef, int], PartEnd] = {}
@@ -187,7 +189,22 @@ def assert_run_event_integrity(
         if isinstance(event, RunBegin):
             assert event.run not in active_runs, f"duplicate run begin at {where}"
             assert event.run not in ended_runs, f"run restarted at {where}"
+            if event.parent is not None:
+                parent = StepRef.parse(event.parent)
+                assert parent.run_id in active_runs, (
+                    f"child outside active Run at {where}"
+                )
+                source = step_begins.get(parent)
+                assert source is not None, f"child before its source Step at {where}"
+                asynchronous = (
+                    isinstance(source.given, FlowStepInfo | ToolStepInfo)
+                    and source.given.asynchronous
+                )
+                assert parent in active_steps or asynchronous, (
+                    f"synchronous child after source Step ended at {where}"
+                )
             active_runs.add(event.run)
+            run_begins[event.run] = event
             continue
 
         if isinstance(event, StepBegin):
@@ -199,7 +216,12 @@ def assert_run_event_integrity(
             assert StepRef.parse(event.step) not in ended_steps, (
                 f"step restarted at {where}"
             )
+            parent = StepRef.parse(event.step).parent
+            assert parent is None or parent in active_steps, (
+                f"child Step outside active parent at {where}"
+            )
             active_steps[StepRef.parse(event.step)] = event
+            step_begins[StepRef.parse(event.step)] = event
             continue
 
         if isinstance(event, PartBegin):
@@ -243,6 +265,16 @@ def assert_run_event_integrity(
                 key for key in active_parts if key[0] == StepRef.parse(event.step)
             }
             assert not open_parts, f"terminal step has incomplete parts at {where}"
+            assert not any(
+                ref.parent == StepRef.parse(event.step) for ref in active_steps
+            ), f"Step ended with active child Step at {where}"
+            asynchronous = (
+                isinstance(begin.given, FlowStepInfo | ToolStepInfo)
+                and begin.given.asynchronous
+            )
+            assert asynchronous or not any(
+                run_begins[run].parent == event.step for run in active_runs
+            ), f"Step ended with active synchronous child Run at {where}"
             if event.status == "succeeded":
                 parts = tuple(
                     ended.data
@@ -275,6 +307,11 @@ def assert_run_event_integrity(
         assert not any(step.run_id == event.run for step in active_steps), (
             f"run ended with active steps at {where}"
         )
+        assert not any(
+            (parent := run_begins[run].parent) is not None
+            and StepRef.parse(parent).run_id == event.run
+            for run in active_runs
+        ), f"Run ended with active owned child Run at {where}"
         if event.output is not None and isinstance(event.output.value, TypedRef):
             pointer = event.output.value.ref
             if isinstance(pointer.record, StepRef):

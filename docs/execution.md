@@ -250,6 +250,14 @@ is durable record truth. Events use scalar Run/Step IDs and explicit correlation
 - `RunEnd.control` identifies an applied cancellation as `{run, index}`, including
   ancestor-owned cancellation.
 
+Producers guarantee causal order: Parts close before their Step, nested Steps and
+synchronous child Runs close before their owning Step, and owned child Runs close
+before their owning Run. An asynchronous launch Step ends when admission commits;
+its explicit `given.asynchronous` flag permits the target to outlive that Step.
+Sibling work may interleave. Live clients consume arrival order and reject a Run
+ending with an active child; they do not defer or reorder terminal notifications.
+Record-based replacement snapshots arrive in structural order from the server.
+
 `StepBegin.given` is an event-owned discriminated payload: model identity, tool
 identity/summary/target, or the Flow operation's presentation fields. It contains
 no complete model/tool call, Flow AST, State reference or input pointers.

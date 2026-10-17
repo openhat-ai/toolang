@@ -991,7 +991,7 @@ class RunExecutor:
                         if run.status not in {"pending", "running"}:
                             continue
                         unfinished = []
-                        for step in self.store.list_steps(run_id=run.id):
+                        for step in reversed(self.store.list_steps(run_id=run.id)):
                             if step.status not in {"pending", "running"}:
                                 continue
                             completed = self.store.finish_step(

@@ -11,6 +11,8 @@ from toolang.execution.types import StepRef
 
 import asyncio
 from pathlib import Path
+import pytest
+from tests.support.execution_fixtures import project_run_start, project_step
 
 from tests.support.execution_assertions import (
     assert_run_event_integrity,
@@ -38,6 +40,91 @@ from toolang.execution.types import (
     ToolStepNoted,
 )
 from toolang.lang.input import resolve_input_parts
+
+
+@pytest.mark.parametrize("with_child", [False, True])
+def test_reconcile_orphaned_tree_publishes_child_ends_first(tmp_path, with_child):
+    harness = ExecutionHarness.create(
+        tmp_path, source="flow root():\n  let value = unused\n", responses=[]
+    )
+
+    async def scenario():
+        async with harness:
+            root = project_run_start(
+                harness.store,
+                run_id="run_root",
+                thread_id="chat_test",
+                origin="chat",
+                input=Message.user("work"),
+                runnable_kind="flow",
+            )
+
+            def step(run, parent, kind):
+                return project_step(
+                    harness.store,
+                    run_id=run,
+                    parent=parent,
+                    index=0,
+                    kind=kind,
+                    status="running",
+                    input=(),
+                    output=None,
+                    started_at=root.started_at,
+                    finished_at=None,
+                )
+
+            outer = step(root.id, None, "loop")
+            source = step(root.id, outer.ref, "run" if with_child else "value")
+            if with_child:
+                child = project_run_start(
+                    harness.store,
+                    run_id="run_child",
+                    thread_id="chat_test",
+                    origin="chat",
+                    input=Message.user("work"),
+                    parent=source.ref,
+                    runnable_kind="flow",
+                )
+                nested = step(child.id, None, "loop")
+                step(child.id, nested.ref, "value")
+            runs = harness.store.list_run_tree(root_run_id=root.id)
+            snapshot = RecordSnapshot(
+                harness.store,
+                runs,
+                [s for run in runs for s in harness.store.list_steps(run_id=run.id)],
+            )
+            prefix = [
+                run_event_from_data(frame.data) for frame in snapshot.structural()
+            ]
+
+            result = await harness.executor.reconcile_talk(root.id)
+
+            assert result.status == "failed"
+            ends: list[StepEnd | RunEnd] = []
+            with harness.executor.stream.boundary() as (_tail, _floor, frames):
+                for frame in frames:
+                    if frame.root_run_id == root.id:
+                        assert isinstance(frame.event, StepEnd | RunEnd)
+                        ends.append(frame.event)
+            assert_run_event_integrity([*prefix, *ends])
+            expected = (
+                [
+                    "step_end:run_child.0.0:value:failed",
+                    "step_end:run_child.0:loop:failed",
+                    "run_end:run_child:failed",
+                ]
+                if with_child
+                else []
+            )
+            assert event_labels(ends) == [
+                *expected,
+                f"step_end:run_root.0.0:{'run' if with_child else 'value'}:failed",
+                "step_end:run_root.0:loop:failed",
+                "run_end:run_root:failed",
+            ]
+            assert not harness.adapter.invocations
+
+    asyncio.run(scenario())
 
 
 def test_tool_loop_events_include_durable_generic_summaries(

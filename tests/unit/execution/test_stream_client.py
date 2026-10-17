@@ -79,7 +79,43 @@ def test_incomplete_prefill_rejects_mismatched_checkpoint():
 
 
 @pytest.mark.parametrize("prefill", [False, True])
-def test_nested_background_completion_waits_for_each_run_subtree(prefill):
+def test_parent_end_with_active_child_is_a_protocol_error(prefill):
+    state = StreamClientState()
+    events = (
+        run_begin("run_root", 0),
+        step_begin(
+            "run_root.0",
+            "run",
+            RunStmt(span=Span(line=1), runnable="child", asynchronous=True),
+        ),
+        step_end("run_root.0", "run", "succeeded"),
+        run_begin("run_child", 0, parent="run_root.0"),
+        run_end("run_root", "succeeded"),
+    )
+    if prefill:
+        state.feed(
+            StreamFrame(
+                "stream_prefill",
+                {
+                    "cursor": cursor(len(events)),
+                    "scope": {"kind": "run", "id": "run_root"},
+                    "roots": ["run_root"],
+                },
+            )
+        )
+
+    def consume():
+        for seq, event in enumerate(events, 1):
+            state.feed(StreamFrame.source(event, cursor(seq), context=prefill))
+        if prefill:
+            state.feed(StreamFrame.checkpoint(EventCursor.parse(cursor(len(events)))))
+
+    with pytest.raises(ValueError, match="RunEnd with active child Run"):
+        consume()
+
+
+@pytest.mark.parametrize("prefill", [False, True])
+def test_nested_background_completion_preserves_producer_order(prefill):
     state = StreamClientState()
     root = run_begin("run_root", ControlRef.for_run("run_root", 0))
     outer = step_begin(
@@ -105,6 +141,7 @@ def test_nested_background_completion_waits_for_each_run_subtree(prefill):
         "run_sibling", ControlRef.for_run("run_sibling", 0), parent=side.step
     )
     child_end = run_end("run_child", "succeeded")
+    leaf_end = run_end(leaf.run, "succeeded")
     events = (
         root,
         outer,
@@ -116,6 +153,7 @@ def test_nested_background_completion_waits_for_each_run_subtree(prefill):
         side,
         sibling,
         step_end(side.step, "run", "succeeded"),
+        leaf_end,
         child_end,
     )
     if prefill:
@@ -138,22 +176,14 @@ def test_nested_background_completion_waits_for_each_run_subtree(prefill):
             StreamFrame.checkpoint(EventCursor.parse(cursor(seq)))
         )
     else:
-        assert observations == ()
-    assert child_end not in state.snapshot().events
+        assert observations == (child_end,)
+    assert child_end in state.snapshot().events
     assert not state.complete(root.run)
-    assert not state.complete(child.run)
-
-    leaf_end = run_end(leaf.run, "succeeded")
-    restored = state.feed(StreamFrame.source(leaf_end, cursor(seq + 1)))
-    assert len(restored) == 1 and isinstance(restored[0], RunSnapshot)
-    assert restored[0].events.index(leaf_end) < restored[0].events.index(child_end)
     assert state.complete(child.run)
-    assert not state.complete(root.run)  # Its other branch is still running.
-    root_end = run_end(root.run, "succeeded")
-    assert state.feed(StreamFrame.source(root_end, cursor(seq + 2))) == ()
-    finished = state.feed(
-        StreamFrame.source(run_end(sibling.run, "succeeded"), cursor(seq + 3))
+    sibling_end = run_end(sibling.run, "succeeded")
+    assert state.feed(StreamFrame.source(sibling_end, cursor(seq + 1))) == (
+        sibling_end,
     )
-    assert len(finished) == 1 and isinstance(finished[0], RunSnapshot)
-    assert finished[0].events[-1] == root_end
+    root_end = run_end(root.run, "succeeded")
+    assert state.feed(StreamFrame.source(root_end, cursor(seq + 2))) == (root_end,)
     assert state.complete(root.run)
