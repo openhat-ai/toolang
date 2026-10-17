@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 from typing import Any
 from dataclasses import FrozenInstanceError
 
@@ -455,5 +456,106 @@ def test_returned_usage_survives_final_stream_validation_failure(tmp_path):
             saved = harness.store.list_steps(run_id=result.id)[0]
             assert isinstance(saved.noted, ModelStepNoted)
             assert saved.noted.usage == TokenUsage(9, 4) and saved.noted.invoked
+
+    asyncio.run(scenario())
+
+
+def test_terminal_statistics_do_not_deadlock_with_cross_thread_control(
+    tmp_path, monkeypatch
+):
+    from toolang.execution.executor.executor import _Execution
+    from toolang.common.time import utc_now
+    from toolang.lang.input import CallInput
+    from toolang.lang.types import Array
+
+    gate = AsyncGate()
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="agic task() -> Text:\n  user: Work\n",
+        responses=[
+            ScriptedModelTurn(
+                ModelCallResult(message=Message.assistant("done")), gate=gate
+            )
+        ],
+    )
+    harness.executor._control_poll_interval = 3600
+    registry = harness.executor._runs_lock
+    finish = harness.executor._finish_run
+    finish_run = _Execution.finish_run
+    control_scope = _Execution.control_scope
+    scope_entered = threading.Event()
+    errors = []
+    workers = []
+    control = None
+
+    class BoundedRegistry:
+        def __enter__(self):
+            if not registry.acquire(timeout=3):
+                raise RuntimeError("registry acquisition blocked during completion")
+
+        def __exit__(self, *args):
+            registry.release()
+
+    def observe():
+        try:
+            assert control is not None
+            harness.executor._observe_control(control)
+        except BaseException as exc:
+            errors.append(exc)
+
+    def scope(execution, run_id):
+        scope_entered.set()
+        return control_scope(execution, run_id)
+
+    def finish_during_control(publication, **facts):
+        if not workers:
+            # Model completion owns the Store transaction while the API/control
+            # thread owns the registry and waits for ancestry from the Store.
+            assert harness.store._conn.in_transaction
+            worker = threading.Thread(target=observe, daemon=True)
+            workers.append(worker)
+            worker.start()
+            assert scope_entered.wait(5)
+        return finish(publication, **facts)
+
+    async def accept_control_before_terminal(execution, **facts):
+        nonlocal control
+        if control is None:
+            control = harness.store.accept_run_control(
+                run_id=facts["run"],
+                kind="steer",
+                timing="immediate",
+                input=CallInput({"_": Array("Part[]", (TextPart("late input"),))}),
+                request_id=None,
+                created_at=utc_now(),
+            )
+        return await finish_run(execution, **facts)
+
+    async def scenario():
+        async with harness:
+            handle = harness.executor.run(
+                harness.run_spec(
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    runnable="task",
+                )
+            )
+            await asyncio.wait_for(gate.wait_until_entered(), 3)
+            with monkeypatch.context() as patch:
+                patch.setattr(harness.executor, "_runs_lock", BoundedRegistry())
+                patch.setattr(_Execution, "control_scope", scope)
+                patch.setattr(_Execution, "finish_run", accept_control_before_terminal)
+                patch.setattr(harness.executor, "_finish_run", finish_during_control)
+                gate.release()
+                result = await handle
+                for worker in workers:
+                    worker.join(5)
+                    assert not worker.is_alive()
+            assert not errors
+            assert result.status == "succeeded", result.error
+            assert result.noted == RunNoted(CallCounters(1, 0))
+            assert control is not None
+            saved = harness.store.get_run_control(run_id=result.id, index=control.index)
+            assert saved is not None and saved.status == "wontapply"
+            assert not harness.executor.live_trees().trees
 
     asyncio.run(scenario())

@@ -16,7 +16,7 @@ from toolang.execution.executor import executor as executor_module
 from toolang.base.types.message import TextPart
 from toolang.execution.events import RunEnd
 from toolang.execution.store import RunStore
-from toolang.execution.types import ThreadPrefix
+from toolang.execution.types import ErrorMessage, RunNoted, ThreadPrefix
 
 
 @pytest.mark.parametrize("stage", ["task", "monitor", "observer"])
@@ -145,6 +145,58 @@ def test_owned_initialization_failure_finishes_without_waiting_for_stop(
                 assert [
                     frame.event for frame in frames if frame.root_run_id == record.id
                 ] == tracer.events
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("timing", ["immediate", "next_step", "next_call"])
+@pytest.mark.parametrize("shutdown", ["task", "stop"])
+def test_pre_entry_cancellation_applies_pending_cancel_and_preserves_reason(
+    tmp_path, timing, shutdown
+):
+    harness = ExecutionHarness.create(
+        tmp_path, source="flow root() -> Text:\n  pass\n", responses=[]
+    )
+
+    async def scenario():
+        async with harness:
+            tracer = RecordingRunTracer()
+            handle = harness.executor.run(
+                harness.run_spec(
+                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    runnable="root",
+                ),
+                tracer=tracer,
+            )
+            control = handle.cancel(reason="requested before execution", timing=timing)
+            if shutdown == "stop":
+                await harness.executor.stop()
+            else:
+                handle.task.cancel()
+            record = await handle
+            saved_control = harness.store.get_run_control(
+                run_id=handle.run_id, index=control.index
+            )
+            assert saved_control is not None and saved_control.status == "applied"
+            assert record.status == "canceled" and record.noted == RunNoted()
+            assert record.error == ErrorMessage("requested before execution")
+            assert record.begin_cursor is None and record.end_cursor is not None
+            assert len(tracer.events) == 1
+            terminal = tracer.events[0]
+            assert isinstance(terminal, RunEnd) and terminal.status == "canceled"
+            assert terminal.control is not None
+            assert (terminal.control.run, terminal.control.index) == (
+                handle.run_id,
+                control.index,
+            )
+            assert terminal.error == "requested before execution"
+            assert not harness.executor.has_owned_work()
+            assert not harness.executor.stream._readers
+            assert not harness.store.list_steps(run_id=record.id)
+            assert not harness.adapter.invocations
+            await harness.executor.stop()
+            with harness.executor.stream.boundary() as (_, _, frames):
+                assert [frame.event for frame in frames] == [terminal]
 
     asyncio.run(scenario())
 

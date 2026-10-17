@@ -887,6 +887,7 @@ class RunExecutor:
                             finished_at=utc_now(),
                             thread_id=bound.thread,
                             root_run_id=bound.root_run_id,
+                            noted=RunNoted(),
                         )
             finally:
                 if observer is not None:
@@ -1112,8 +1113,18 @@ class RunExecutor:
                 return
             if task.cancelled() and root.execution is None:
                 control = root.interruptions.get(run_id)
+                if control is None or control.kind != "cancel":
+                    control = next(
+                        iter(
+                            self.store.pending_run_controls(
+                                run_id=run_id, kind="cancel"
+                            )
+                        ),
+                        None,
+                    )
                 finished_at = utc_now()
                 status = "canceled"
+                noted = root.tree.run_noted(run_id)
                 with self.stream.publication() as publication:
                     with self.store.write_transaction():
                         self._finish_run(
@@ -1121,10 +1132,11 @@ class RunExecutor:
                             run=run_id,
                             status=status,
                             control=control.ref if control is not None else None,
-                            error=ErrorMessage("canceled"),
+                            error=ErrorMessage(control_text(control) or "canceled"),
                             finished_at=finished_at,
                             thread_id=root.thread_id,
                             root_run_id=run_id,
+                            noted=noted,
                         )
                     root.tree.end_run(run_id, status, finished_at)
             if observer is not None and (task.cancelled() or task.exception() is None):
@@ -1150,6 +1162,7 @@ class RunExecutor:
         status: RunStatus,
         thread_id: str,
         root_run_id: str,
+        noted: RunNoted,
         control: ControlRef | None = None,
         output: Output | None = None,
         error: ErrorMessage | ErrorRef | None = None,
@@ -1157,9 +1170,7 @@ class RunExecutor:
         result: Local | None = None,
         error_text: str | None = None,
     ) -> RunRecord:
-        with self._runs_lock:
-            owner = self._active_runs.get(run) or self._root_runs.get(root_run_id)
-        noted = owner.tree.run_noted(run) if owner is not None else RunNoted()
+        """Write detached terminal facts without acquiring the owner registry."""
         record = self.store.finish_run(
             run_id=run,
             noted=noted,
@@ -1454,6 +1465,9 @@ class RunExecutor:
             )
         elif record is not None:
             with self.stream.publication() as publication:
+                noted = (
+                    active.tree.run_noted(run_id) if active is not None else RunNoted()
+                )
                 with self.store.write_transaction():
                     self._finish_run(
                         publication,
@@ -1464,6 +1478,7 @@ class RunExecutor:
                         finished_at=finished_at,
                         thread_id=str(record.thread),
                         root_run_id=active.run_id if active is not None else run_id,
+                        noted=noted,
                     )
                 if active is not None:
                     active.tree.end_run(run_id, status, finished_at)
@@ -3158,6 +3173,11 @@ class _Execution:
         if self._root_run is not None and run in self._ended:
             return
         with self.executor.stream.publication() as publication:
+            noted = (
+                self._root_run.tree.run_noted(run)
+                if self._root_run is not None
+                else RunNoted()
+            )
             with self.store.write_transaction():
                 self.executor._finish_run(
                     publication,
@@ -3171,6 +3191,7 @@ class _Execution:
                     finished_at=finished_at,
                     result=result,
                     error_text=error_text,
+                    noted=noted,
                 )
             if self._root_run is not None:
                 self._root_run.tree.end_run(run, status, finished_at)
