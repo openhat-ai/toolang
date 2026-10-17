@@ -295,7 +295,11 @@ async def wait(
             pass  # Inspect the persisted outcome, not a task's wrapper error.
         if task.cancelled():
             await execution.executor._ensure_terminal(
-                handle.id, finish=execution.finish_run, status="canceled"
+                handle.id,
+                finish=active.execution.finish_run
+                if active is not None and active.execution is not None
+                else None,
+                status="canceled",
             )
         run = execution.store.get_run(run_id=handle.id)
         if run is None or run.status in {"pending", "running"}:

@@ -1116,7 +1116,13 @@ class RunExecutor:
                 root = self._root_runs.get(run_id)
             if root is None or root.task is not task:
                 return
-            if task.cancelled() and root.execution is None:
+            # A waiter may finalize a canceled Task before this callback runs.
+            unstarted = (
+                self.store.get_run(run_id=run_id)
+                if task.cancelled() and root.execution is None
+                else None
+            )
+            if unstarted is not None and unstarted.status in {"pending", "running"}:
                 control = root.interruptions.get(run_id)
                 if control is None or control.kind != "cancel":
                     control = next(

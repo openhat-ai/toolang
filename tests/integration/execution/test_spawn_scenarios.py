@@ -34,6 +34,90 @@ from toolang.execution.types import (
 )
 
 
+@pytest.mark.parametrize("reason", [None, "cancel before entry"])
+def test_wait_for_pre_entry_canceled_spawn_uses_its_own_root(
+    tmp_path, monkeypatch, reason
+):
+    from toolang.execution.events import RunEnd
+    from toolang.execution.types import RunNoted
+
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="""
+flow parent() -> Text:
+  let job = spawn child
+  repeat 1 time:
+    let tick = Tick
+  await job
+flow child() -> Text:
+  pass
+""",
+        responses=[],
+    )
+    launch = harness.executor._launch
+    children = []
+
+    def cancel_spawn(*args, **kwargs):
+        handle = launch(*args, **kwargs)
+        if kwargs.get("independent"):
+            children.append(handle.run_id)
+            if reason is not None:
+                handle.cancel(reason=reason, timing="next_step")
+            handle.task.cancel()
+        return handle
+
+    monkeypatch.setattr(harness.executor, "_launch", cancel_spawn)
+
+    async def scenario():
+        loop = asyncio.get_running_loop()
+        handler = loop.get_exception_handler()
+        callback_errors = []
+        loop.set_exception_handler(
+            lambda _loop, context: callback_errors.append(context)
+        )
+        try:
+            async with harness:
+                parent = await harness.executor.run(
+                    harness.run_spec(
+                        thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                        runnable="parent",
+                    )
+                )
+                assert parent.status == "failed" and parent.error is not None
+                assert harness.store.resolve_error(parent.error) == (
+                    reason or "canceled"
+                )
+                child = harness.store.get_run(run_id=children[0])
+                assert child is not None and child.status == "canceled"
+                assert child.noted == RunNoted()
+                assert child.begin_cursor is None and child.end_cursor is not None
+                assert child.error is not None
+                assert harness.store.resolve_error(child.error) == (
+                    reason or "canceled"
+                )
+                if reason is not None:
+                    control = harness.store.get_run_control(run_id=child.id, index=1)
+                    assert control is not None and control.status == "applied"
+                await harness.executor.stop()
+                with harness.executor.stream.boundary() as (_, _, frames):
+                    ends = [
+                        frame
+                        for frame in frames
+                        if isinstance(frame.event, RunEnd)
+                        and frame.event.run == child.id
+                    ]
+                assert len(ends) == 1
+                assert ends[0].root_run_id == child.id
+                assert ends[0].thread_id == str(child.thread)
+                assert not callback_errors
+                assert not harness.executor.has_owned_work()
+                assert not harness.adapter.invocations
+        finally:
+            loop.set_exception_handler(handler)
+
+    asyncio.run(scenario())
+
+
 @pytest.mark.parametrize(
     "statement", ["spawn child", "let spawn child", "let job = spawn child"]
 )
