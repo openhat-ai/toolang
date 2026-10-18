@@ -675,6 +675,36 @@ def test_sort_picker_and_mouse_hit_targets_follow_rendered_rows_and_columns():
     assert view.sort_field is None
 
 
+@pytest.mark.parametrize("transition", ["resize", "close_sort", "remove_rows"])
+def test_viewport_reveals_earlier_rows_when_the_whole_table_fits(transition):
+    snapshot = sorting_frame()
+    view = TopView(sort_menu=transition == "close_sort")
+    view.project(snapshot)
+    view.selected = view.rows[-1].key
+    initial_height = 20 if transition == "close_sort" else 17
+    view.render(snapshot, width=140, height=initial_height)
+    assert view.offset > 0
+    selected = view.selected
+    if transition == "close_sort":
+        view.sort_menu = False
+    elif transition == "remove_rows":
+        source = snapshot.sources[0]
+        source.live = replace(source.live, trees=source.live.trees[:1])
+    height = 25 if transition == "resize" else initial_height
+    text = view.render(snapshot, width=140, height=height).plain
+    assert view.page_size >= len(view.rows)
+    assert view.offset == 0
+    assert view.selected == selected
+    assert all(row.root in text for row in view.rows)
+
+
+@pytest.mark.parametrize("choice, delta", [(0, -1), (len(SORT_FIELDS), 1)])
+def test_sort_picker_boundary_keeps_the_chosen_direction(choice, delta):
+    view = TopView(sort_menu=True, sort_choice=choice, sort_choice_descending=False)
+    view.move(delta)
+    assert view.sort_choice == choice and not view.sort_choice_descending
+
+
 def test_real_mouse_events_sort_unicode_headings_and_select_finished_rows(
     tmp_path, monkeypatch
 ):

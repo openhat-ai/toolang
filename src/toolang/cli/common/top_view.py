@@ -406,8 +406,10 @@ class TopView:
 
     def move(self, delta: int) -> None:
         if self.sort_menu:
-            self.sort_choice = max(0, min(len(SORT_FIELDS), self.sort_choice + delta))
-            self.sort_choice_descending = True
+            choice = max(0, min(len(SORT_FIELDS), self.sort_choice + delta))
+            if choice != self.sort_choice:
+                self.sort_choice = choice
+                self.sort_choice_descending = True
             return
         if self.rows:
             index = next(
@@ -650,7 +652,9 @@ class TopView:
             index = next(
                 (i for i, row in enumerate(self.rows) if row.key == self.selected), 0
             )
-            self.offset = min(self.offset, index)
+            self.offset = min(
+                self.offset, index, max(0, len(self.rows) - self.page_size)
+            )
             self.offset = max(self.offset, index - self.page_size + 1)
             displayed = self.rows[self.offset : self.offset + self.page_size]
         else:
