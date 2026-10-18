@@ -173,7 +173,7 @@ def _path(chore: ChoreFile) -> Path:
 def _create_app() -> typer.Typer:
     app = typer.Typer(
         cls=PrefixAgentChoreGroup,
-        help="Manage one-off and scheduled chores",
+        help="Manage one-off and scheduled tasks",
         add_completion=False,
         no_args_is_help=True,
         pretty_exceptions_enable=False,

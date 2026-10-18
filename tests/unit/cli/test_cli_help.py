@@ -295,9 +295,10 @@ def test_lazy_command_exposes_short_help_without_loading():
     [
         ("workspace", "Configure agent workspaces"),
         ("hub", "Show or control the teaming service"),
-        ("talk", "Talk with agents through the hub"),
+        ("talk", "Have conversations with agents"),
         ("chat", "Chat directly with an agent"),
-        ("chore", "Manage one-off and scheduled chores"),
+        ("chore", "Manage one-off and scheduled tasks"),
+        ("convo", "Manage conversations and rules"),
         ("start", "Start an agent in the background"),
         ("inspect", "Inspect run history and details"),
     ],
@@ -313,7 +314,7 @@ def test_command_descriptions_match_root_and_command_help(
     assert f"{command} {description}" in rows
     assert too_main(["--root", str(tmp_path), command, "--help"]) == 0
     assert strip_ansi(capsys.readouterr().out).startswith(f"{description}.\n")
-    if command not in {"hub", "talk"}:
+    if command not in {"hub", "talk", "convo"}:
         assert too_main(["--root", str(tmp_path), "agent:sample", "--help"]) == 0
         rows = " ".join(strip_ansi(capsys.readouterr().out).split())
         assert f"{command} {description}" in rows

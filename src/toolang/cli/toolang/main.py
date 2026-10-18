@@ -424,7 +424,7 @@ _registered_command(
 _registered_group(
     "toolang.cli.toolang.commands.chore:chore_app",
     name="chore",
-    help="Manage one-off and scheduled chores",
+    help="Manage one-off and scheduled tasks",
     no_args_is_help=True,
     rich_help_panel=WORK_COMMAND_PANEL,
 )
@@ -432,7 +432,7 @@ _registered_group(
 _registered_command(
     "talk",
     "toolang.cli.toolang.commands.talk:talk_command",
-    help="Talk with agents through the hub",
+    help="Have conversations with agents",
     cls=_TalkCommand,
     context_settings={"allow_interspersed_args": False},
     rich_help_panel=WORK_COMMAND_PANEL,
