@@ -1086,7 +1086,7 @@ def test_chat_unqualified_entry_display_defaults_to_agic() -> None:
     assert display_runnable_ref("agent::<entry:3>", surface="chat") == "agic:_"
 
 
-def test_historical_nested_statements_load_new_default_fields() -> None:
+def test_historical_nested_statements_with_missing_fields_are_rejected() -> None:
     from toolang.lang.ast import flow_stmt_from_data
 
     program = Program.from_source(
@@ -1096,7 +1096,8 @@ def test_historical_nested_statements_load_new_default_fields() -> None:
     encoded = cast(dict[str, Any], to_data(statement))
     encoded.pop("window")
     encoded["stmts"][0].pop("initial")
-    assert flow_stmt_from_data(encoded) == statement
+    with pytest.raises(ValueError, match="canonical typed fields"):
+        flow_stmt_from_data(encoded)
 
 
 @pytest.mark.parametrize("kind", ["skill", "psyche", "service", "prompt"])

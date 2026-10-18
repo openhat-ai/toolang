@@ -577,7 +577,6 @@ def test_docker_sandbox_prepares_and_launches(
         "docker_guest.sh",
         "docker_guest.py",
         "guest.env",
-        "start.json",
         "toolang-1.2.3-py3-none-any.whl",
     }
     assert (stage_dir / "docker_guest.sh").read_bytes() == (
@@ -1516,7 +1515,6 @@ def test_docker_foreground_sandbox_follows_logs_only_when_waiting(
         "docker_guest.sh",
         "docker_guest.py",
         "guest.env",
-        "start.json",
     }
 
     ref = asyncio.run(sandbox.launch(plan))

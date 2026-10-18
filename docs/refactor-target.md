@@ -406,7 +406,8 @@ that sandbox decision.
 
 `toolang.api.app` owns `ApiContext`, its `app.state` registration and request
 dependency, and FastAPI application assembly. `toolang.api.router` mounts
-versioned resource routers under the shared `/api/v1` prefix. Resource modules
+agent resource routers under `/api/v0`; statistics uses its independent
+`/api/v0/stats` prefix. Resource modules
 under `toolang.api.routers`, such as `agent`, `chat`, `caps`, `jobs`, `runs`,
 and `threads`, own HTTP request mapping and export module-level `APIRouter`
 instances. Route functions receive the shared `ApiContext` dependency and use

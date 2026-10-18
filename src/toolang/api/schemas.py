@@ -8,11 +8,13 @@ from typing import Annotated, Literal, Self, cast
 
 from pydantic import BeforeValidator, BaseModel, ConfigDict, Field, model_validator
 
+from toolang.api.version import AGENT_API_VERSION
 from toolang.base.types.message import Part
 from toolang.base.money import reject_boolean_cost
 from toolang.base.types.model import ModelOverride, ModelRequest
 from toolang.base.types.policy import RunLimits, RunPolicy
 from toolang.execution.schemas import (
+    AgentAPIVersion,
     ControlInfo,
     RunnableRequest,
     RunDetail,
@@ -362,7 +364,7 @@ class RuntimeLifecyclePayload(ApiRequest):
 
     launch_id: StrictText
     lifetime: Literal["persistent", "foreground", "automatic"]
-    lifecycle_protocol: Literal[1] = 1
+    api_version: AgentAPIVersion = AGENT_API_VERSION
 
 
 class RunRerunRequest(ApiRequest):

@@ -98,7 +98,7 @@ publish locks coordinate derived State writes. Old
 
 ## Canonical Documents and Revisions
 
-`layer.json` (schema 22) contains `scope`, `created_at`, normalized State
+`layer.json` (agent state format 23) contains `scope`, `created_at`, normalized State
 `config`, `source` and `materialized` file maps, and `modules`, `caps`, and
 `chores` arrays. Each item has `ref`, `source`, and `value`; caps also have
 `form`. The `source` field names its original file in the source map. Only an
@@ -136,7 +136,7 @@ If that cached Program is edited locally, the new module keeps the captured
 local source and omits the fetched resolution. Restoring the acquired bytes
 restores their provenance; the visiting source-cache lifecycle is unchanged.
 
-`layers.json` (composition schema 3) records `created_at`, selected root/home
+`layers.json` (the same agent state format 23) records `created_at`, selected root/home
 revisions, agent name, frozen cap overrides, and optional workspace additions.
 Both documents use canonical UTF-8 JSON: sorted object keys, compact separators,
 direct Unicode, finite numbers, and no trailing newline. Unordered item arrays
@@ -198,7 +198,7 @@ resolutions, and stored value schemas. It recursively validates composition
 layers without resolving Source Refs or reinterpreting raw syntax. Hashes protect
 captured data against a known revision; they do not authenticate a publisher.
 Rejected bytes are absent, so only their observation records can be verified.
-Old layer/composition schemas are unsupported. Derived current caches can be
+Old agent state formats are unsupported. Derived current caches can be
 rebuilt from authored inputs; historical data is not migrated or converted.
 
 ## Programs And Module Terms

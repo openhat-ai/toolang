@@ -219,28 +219,27 @@ def resource_frame(
     if revision != "0" and isinstance(
         target, SkillTriggerRecallTarget | ServiceTriggerRecallTarget
     ):
-        # New trigger controls retain structured text; older pending controls
-        # may still carry a plain description. Recorded call templates stay intact.
         try:
             trigger = json.loads(content)
-        except (ValueError, TypeError):
-            trigger = None
+        except (ValueError, TypeError) as exc:
+            raise ValueError(
+                "trigger content requires description and metadata"
+            ) from exc
         if (
-            isinstance(trigger, dict)
-            and set(trigger) == {"description", "metadata"}
-            and isinstance(trigger["description"], str)
-            and isinstance(trigger["metadata"], dict)
+            not isinstance(trigger, dict)
+            or set(trigger) != {"description", "metadata"}
+            or not isinstance(trigger["description"], str)
+            or not isinstance(trigger["metadata"], dict)
         ):
-            attrs["description"] = trigger["description"]
-            if trigger["metadata"]:
-                attrs["metadata"] = json.dumps(
-                    trigger["metadata"],
-                    ensure_ascii=False,
-                    sort_keys=True,
-                    separators=(",", ":"),
-                )
-        else:
-            attrs["description"] = content
+            raise ValueError("trigger content requires description and metadata")
+        attrs["description"] = trigger["description"]
+        if trigger["metadata"]:
+            attrs["metadata"] = json.dumps(
+                trigger["metadata"],
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
         return f"<{tag} {attributes(attrs)}/>", ""
     rendered = attributes(attrs)
     if revision == "0" or not content or isinstance(target, WorkspaceRecallTarget):

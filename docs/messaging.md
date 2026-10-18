@@ -64,6 +64,8 @@ terminal scrollback. The snapshot is one-shot and does not start Hub or agents.
 `too hub serve` runs in the foreground. Hub binds `127.0.0.1`; clients discover its
 actual endpoint and backend identity from the private root `hub/hub.json`
 file. Calls assume trusted local clients; security authentication is deferred.
+`GET /info` reports the Toolang source `version` and `api_version: 0`;
+`HUB_API_VERSION` also owns publication, staging and event wire versions.
 Start Hub before using Talk or `convo` tools. Agents use it for messages, presence,
 and event export. Stopping Hub leaves agents running; communication fails until
 Hub returns. Background communication resumes without an agent restart; uncertain
@@ -74,8 +76,8 @@ Internally, a live Hub remains `starting`, `running`, or `unavailable` based on
 readiness; the snapshot shows a version only when ready, and `not running`
 otherwise. `too hub stop --force` can stop a stalled startup. Missing or corrupt initialized conversation data fails
 closed; Hub does not reset counters or rebuild it. Upgrade Hub and clients together
-and select a fresh Redis/Valkey dataset for conversation schema `3`. It gives DM
-and GC disjoint eight-character suffixes; older schemas are rejected without
+and select a fresh Redis/Valkey dataset for hub store schema `4`, which owns both
+messaging and event storage. Older schemas are rejected without
 mutation. Preserve the old runtime/data before switching datasets. Old datasets
 remain untouched; history, drafts, and checkpoints are not migrated or imported.
 
@@ -388,11 +390,6 @@ active agent lease and conversation membership. The existing
 
 ## Storage, events, and statistics
 
-Execution-event publication, recovery datasets and projection entities use
-version `2`; old execution-event datasets are rejected without rewriting.
-Conversation schema `3` and team-change events are unchanged. Stop all publishers
-and Hub readers before upgrading and preserve required old event data separately.
-
 With `P = too:teaming:v1`, the messaging key spaces are:
 
 | Key | Type | Contents |
@@ -406,7 +403,7 @@ With `P = too:teaming:v1`, the messaging key spaces are:
 | `P:convo:C:messages` | Stream | `data` → message JSON |
 | `P:convo:C:rules` | Hash | `document` → validated MEMBERS.md content/revision JSON; absent means no rules |
 | `P:convo:name:N` | Set | IDs matching an exact name; `N` is unpadded base64url UTF-8 |
-| `P:convo:schema` | String | Schema version `3` |
+| `P:convo:schema` | String | Hub store schema version `4` |
 | `P:convo:id:gc` | Hash | Last allocated hourly tick and sequence |
 | `P:convo:stats` | Hash | DM count, GC count, accepted message count |
 | `P:convo:system` | Hash | `all` → system GC ID |
@@ -487,7 +484,7 @@ capacity, not a measured throughput claim.
 
 The [conversation contract](plans/conversation-ids.md) specifies record JSON,
 atomic writes, and event payloads. The [ID upgrade](plans/conversation-id-upgrade.md)
-defines schema `3` codecs, capacity, and fresh-dataset rollout.
+defines the conversation ID codecs, capacity, and fresh-dataset rollout.
 
 The [Talk presentation plan](plans/talk-status-bar.md) records the original layout;
 the [conversation contract](plans/conversation-ids.md) supersedes its IDs and targets.

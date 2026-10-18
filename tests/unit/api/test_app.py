@@ -24,6 +24,6 @@ def test_app_owns_explicit_core_and_catalog_dependencies(tmp_path: Path) -> None
 
     with TestClient(app) as client:
         assert client.get("/healthz").json() == {"ok": True}
-        assert client.get("/api/v1/threads").json() == []
+        assert client.get("/api/v0/threads").json() == []
 
     asyncio.run(core.close())

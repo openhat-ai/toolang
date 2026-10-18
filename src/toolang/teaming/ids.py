@@ -1,4 +1,4 @@
-"""Conversation schema 3 and agent-specific talk-thread ID codecs.
+"""Conversation and agent-specific talk-thread ID codecs.
 
 The shared 40-bit permutation preserves disjoint kind domains:
 DM = 0 | pair_hash(39); GC = 1 | tick(20) | sequence(19).
@@ -19,7 +19,6 @@ from toolang.common.id_codec import (
 
 from .schemas import conversation_id, direct_pair, identifier
 
-CONVERSATION_SCHEMA = 3
 GC_EPOCH_SECONDS = 1767225600  # 2026-01-01T00:00:00Z
 GC_TICK_LIMIT = 1 << 20
 GC_SEQUENCE_BITS = 19

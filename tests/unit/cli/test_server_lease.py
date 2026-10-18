@@ -42,7 +42,7 @@ def test_promotion_ends_renewal_and_retention_failure_checks(
                 "lifetime": "persistent"
                 if len(requests) == promotion_request
                 else "automatic",
-                "lifecycle_protocol": 1,
+                "api_version": 0,
             },
         )
 
@@ -88,7 +88,7 @@ def test_late_renewal_response_cannot_revive_expired_retention(monkeypatch):
             json={
                 "launch_id": "launch",
                 "lifetime": "automatic",
-                "lifecycle_protocol": 1,
+                "api_version": 0,
             },
         )
 

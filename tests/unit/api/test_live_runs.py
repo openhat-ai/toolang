@@ -42,7 +42,7 @@ def test_live_http_and_remote_use_only_live_executor_interface():
             )
 
     app = FastAPI()
-    app.include_router(router, prefix="/api/v1")
+    app.include_router(router, prefix="/api/v0")
     # A core with no Store/history intentionally cannot service detail reads.
     app.dependency_overrides[get_agent_core] = lambda: SimpleNamespace(
         executor=Executor()
@@ -60,10 +60,10 @@ def test_live_http_and_remote_use_only_live_executor_interface():
             assert not (await client.live_trees(root_run_id="run_absent")).trees
             assert calls == [None, "run_root", "run_absent"]
             assert (
-                await http.get("/api/v1/runs/live?root_run_id=invalid")
+                await http.get("/api/v0/runs/live?root_run_id=invalid")
             ).status_code == 422
             stopped = True
-            assert (await http.get("/api/v1/runs/live")).status_code == 503
+            assert (await http.get("/api/v0/runs/live")).status_code == 503
             with pytest.raises(RemoteRunClientError):
                 await client.live_trees()
             await client.disconnect()
@@ -87,6 +87,6 @@ def test_remote_live_rejects_invalid_data_without_detail_fallback(payload):
             await client.connect()
             with pytest.raises(RemoteRunClientError, match="invalid snapshot"):
                 await client.live_trees()
-            assert requests == ["/api/v1/runs/live"]
+            assert requests == ["/api/v0/runs/live"]
 
     asyncio.run(scenario())

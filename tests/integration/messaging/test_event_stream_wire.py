@@ -196,13 +196,13 @@ def test_agents_reconnect_through_hub_without_direct_backend_access(valkey, tmp_
             async def local_run(name):
                 endpoint = f"http://127.0.0.1:{agents[name]}"
                 response = await http.post(
-                    endpoint + "/api/v1/runs/threads", json={"client_id": "test-script"}
+                    endpoint + "/api/v0/runs/threads", json={"client_id": "test-script"}
                 )
                 response.raise_for_status()
                 async with aconnect_sse(
                     http,
                     "POST",
-                    endpoint + "/api/v1/runs/authored/stream",
+                    endpoint + "/api/v0/runs/authored/stream",
                     json={
                         "thread_id": response.json()["thread"]["id"],
                         "request_id": str(uuid4()),
@@ -476,14 +476,14 @@ def test_resident_shutdown_drains_or_bounds_backend_outage(
                             break
                         await asyncio.sleep(0.01)
                 response = await http.post(
-                    f"{endpoint}/api/v1/runs/threads", json={"client_id": "test-script"}
+                    f"{endpoint}/api/v0/runs/threads", json={"client_id": "test-script"}
                 )
                 response.raise_for_status()
                 root = None
                 async with aconnect_sse(
                     http,
                     "POST",
-                    f"{endpoint}/api/v1/runs/authored/stream",
+                    f"{endpoint}/api/v0/runs/authored/stream",
                     json={
                         "thread_id": response.json()["thread"]["id"],
                         "request_id": "shutdown",

@@ -9,6 +9,7 @@ from dataclasses import dataclass, replace
 import json
 import logging
 from pathlib import Path
+from toolang.api.version import AGENT_API_VERSION
 from toolang.cli.common.attachments import capture_attachments
 import threading
 from typing import Any, cast
@@ -235,7 +236,7 @@ class RemoteChatSession:
     ) -> str:
         payload = await self._request_json(
             "POST",
-            "/api/v1/runs/workdir/resolve",
+            f"/api/v{AGENT_API_VERSION}/runs/workdir/resolve",
             operation="workdir resolution",
             json={
                 "thread_id": thread_id,
@@ -266,7 +267,7 @@ class RemoteChatSession:
     async def _initial_workdir(self, thread_id: str) -> str:
         payload = await self._request_json(
             "GET",
-            "/api/v1/runs/defaults",
+            f"/api/v{AGENT_API_VERSION}/runs/defaults",
             operation="run defaults",
             params={"thread_id": thread_id},
         )
@@ -410,7 +411,7 @@ class RemoteChatSession:
             )
         profile = await self._request_json(
             "GET",
-            "/api/v1/profile",
+            f"/api/v{AGENT_API_VERSION}/profile",
             operation="profile",
         )
         runtime_profile = _mapping(profile, operation="profile").get("runtime")
@@ -440,7 +441,7 @@ class RemoteChatSession:
         )
         defaults = await self._request_json(
             "GET",
-            "/api/v1/runs/defaults",
+            f"/api/v{AGENT_API_VERSION}/runs/defaults",
             operation="run defaults",
         )
         self._surface = _session_setting(defaults)
@@ -468,7 +469,7 @@ class RemoteChatSession:
 
         try:
             payload = await self._request_json(
-                "GET", "/api/v1/workspaces", operation="workspaces"
+                "GET", f"/api/v{AGENT_API_VERSION}/workspaces", operation="workspaces"
             )
             return _workspace_names(payload)
         except (RemoteChatError, ValueError):
@@ -480,7 +481,7 @@ class RemoteChatSession:
     ) -> dict[str, object]:
         payload = await self._request_json(
             "GET",
-            "/api/v1/models",
+            f"/api/v{AGENT_API_VERSION}/models",
             operation="models",
             params=_query_params(queries),
         )
@@ -492,7 +493,7 @@ class RemoteChatSession:
     ) -> dict[str, object]:
         payload = await self._request_json(
             "GET",
-            "/api/v1/tools",
+            f"/api/v{AGENT_API_VERSION}/tools",
             operation="tools",
             params=_query_params(queries),
         )
@@ -510,7 +511,11 @@ class RemoteChatSession:
             "prompt",
         }:
             raise ValueError(f"unknown cap kind: {kind}")
-        path = "/api/v1/caps" if kind is None else f"/api/v1/{kind}s"
+        path = (
+            f"/api/v{AGENT_API_VERSION}/caps"
+            if kind is None
+            else f"/api/v{AGENT_API_VERSION}/{kind}s"
+        )
         payload = await self._request_json(
             "GET",
             path,
@@ -559,7 +564,7 @@ class RemoteChatSession:
         if kind in {"agic", "flow"}:
             payload = await self._request_json(
                 "GET",
-                f"/api/v1/{kind}s",
+                f"/api/v{AGENT_API_VERSION}/{kind}s",
                 operation=kind,
             )
             result = _catalog_payload(
@@ -578,8 +583,12 @@ class RemoteChatSession:
         if kind != "runnable":
             raise ValueError(f"unknown runnable kind: {kind}")
         agics, flows = await asyncio.gather(
-            self._request_json("GET", "/api/v1/agics", operation="agics"),
-            self._request_json("GET", "/api/v1/flows", operation="flows"),
+            self._request_json(
+                "GET", f"/api/v{AGENT_API_VERSION}/agics", operation="agics"
+            ),
+            self._request_json(
+                "GET", f"/api/v{AGENT_API_VERSION}/flows", operation="flows"
+            ),
         )
         agic_payload = _catalog_payload(
             agics,
@@ -609,7 +618,7 @@ class RemoteChatSession:
         selected = runnable or await self._current_runnable_default()
         payload = await self._request_json(
             "GET",
-            "/api/v1/prompt-completions",
+            f"/api/v{AGENT_API_VERSION}/prompt-completions",
             operation="prompt completions",
             params={"runnable": selected} if selected is not None else None,
         )
@@ -618,7 +627,7 @@ class RemoteChatSession:
     async def _create_thread(self) -> str:
         payload = await self._request_json(
             "POST",
-            "/api/v1/threads",
+            f"/api/v{AGENT_API_VERSION}/threads",
             operation="create thread",
             json={"client_id": self._client_id, "request_id": f"request_{uuid4().hex}"},
         )
@@ -640,7 +649,7 @@ class RemoteChatSession:
 
         payload = await self._request_json(
             "GET",
-            "/api/v1/runs/defaults",
+            f"/api/v{AGENT_API_VERSION}/runs/defaults",
             operation="run defaults",
         )
         return _session_setting(payload).runnable
@@ -700,10 +709,10 @@ class RemoteChatSession:
         thread_id: str | None,
     ) -> ChatResult:
         if run_id is not None:
-            path = f"/api/v1/runs/{run_id}"
+            path = f"/api/v{AGENT_API_VERSION}/runs/{run_id}"
             operation = "get run result"
         elif thread_id is not None:
-            path = f"/api/v1/threads/{thread_id}/result"
+            path = f"/api/v{AGENT_API_VERSION}/threads/{thread_id}/result"
             operation = "get latest result"
         else:
             raise ValueError("No saved output is available in this chat.")
@@ -850,7 +859,7 @@ class RemoteChatSession:
                 return
             try:
                 detail = await self._run_detail(
-                    f"/api/v1/runs/{run_id}",
+                    f"/api/v{AGENT_API_VERSION}/runs/{run_id}",
                     operation="recover run",
                 )
             except _RemoteChatProtocolError:
@@ -969,7 +978,7 @@ class RemoteChatSession:
         try:
             payload = await self._request_json(
                 "GET",
-                f"/api/v1/threads/{thread_id}",
+                f"/api/v{AGENT_API_VERSION}/threads/{thread_id}",
                 operation="thread",
                 params={"limit": 0},
             )

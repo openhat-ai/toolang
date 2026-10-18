@@ -10,6 +10,7 @@ import sys
 import json
 from pathlib import Path
 from typing import Annotated, TYPE_CHECKING
+from toolang.api.version import AGENT_API_VERSION
 from toolang.cli.common.workspaces import (
     WorkspaceOptions,
     WorkdirOption,
@@ -76,7 +77,7 @@ from ...common.output import active_agent_error
 from toolang.common.version import development_source
 
 if TYPE_CHECKING:
-    from toolang.up.records import SandboxState
+    from toolang.up.instance import SandboxState
     from toolang.up.sandbox import LaunchSpec
 
 from ...common.progress import CliProgress, runtime_startup_failure_message
@@ -446,7 +447,7 @@ def _retain_started(
                 if server.launch_id is not None:
                     with httpx.Client(timeout=3.0) as http:
                         response = http.post(
-                            f"{server.endpoint}/api/v1/runtime/promote",
+                            f"{server.endpoint}/api/v{AGENT_API_VERSION}/runtime/promote",
                             json={"launch_id": server.launch_id},
                         )
                         response.raise_for_status()

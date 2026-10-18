@@ -314,7 +314,7 @@ def test_running_inspection_uses_server_state_without_local_preparation(
     assert result is not None
     assert result.workdir == "repo://src"
     assert result.items[-1].available
-    assert requests == ["/api/v1/workspaces?workdir=repo%3A%2F%2Fsrc"]
+    assert requests == ["/api/v0/workspaces?workdir=repo%3A%2F%2Fsrc"]
 
 
 def test_temporary_workspace_cannot_replace_configured_name(layout, tmp_path):

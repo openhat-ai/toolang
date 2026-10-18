@@ -10,6 +10,8 @@ from typing import cast
 
 import httpx
 
+from toolang.api.version import AGENT_API_VERSION
+
 
 class RemoteRuntimeError(RuntimeError):
     """One remote AgentServer health, transport, or identity failure."""
@@ -54,7 +56,7 @@ async def inspect_remote_runtime(
         raise RemoteRuntimeError("remote runtime health check returned invalid data")
     profile = await _request_json(
         client,
-        f"{base}/api/v1/profile",
+        f"{base}/api/v{AGENT_API_VERSION}/profile",
         operation="profile",
     )
     try:

@@ -5,9 +5,11 @@ provided by the caller; all validation precedes mutations because Lua cannot
 roll back an error after a write.
 """
 
+from .schema import HUB_STORE_SCHEMA
+from ...schemas import HUB_API_VERSION
+
 from .lua import LEASE_CHECK, STREAM_ORDER
 from ...ids import (
-    CONVERSATION_SCHEMA,
     GC_EPOCH_SECONDS,
     GC_SEQUENCE_LIMIT,
     GC_TICK_LIMIT,
@@ -24,7 +26,8 @@ _CONSTANTS = (
         f"local {name}={value}"
         for name, value in {
             "gc_epoch": GC_EPOCH_SECONDS,
-            "conversation_schema": CONVERSATION_SCHEMA,
+            "hub_store_schema": HUB_STORE_SCHEMA,
+            "hub_api_version": HUB_API_VERSION,
             "gc_tick_limit": GC_TICK_LIMIT,
             "gc_sequence_limit": GC_SEQUENCE_LIMIT,
             "lease_millis": LEASE_SECONDS * 1000,
@@ -177,7 +180,7 @@ local function valid()
   expect(KEYS[1],'string'); expect(KEYS[2],'hash'); expect(KEYS[3],'zset')
   expect(KEYS[4],'hash'); expect(KEYS[5],'hash'); expect(KEYS[6],'hash')
   expect(KEYS[8],'hash'); expect(KEYS[9],'hash')
-  if redis.call('GET',KEYS[1])~=tostring(conversation_schema) then fail('unsupported conversation schema; use a fresh dataset') end
+  if redis.call('GET',KEYS[1])~=tostring(hub_store_schema) then fail('unsupported conversation schema; use a fresh dataset') end
   for _,field in ipairs({'dm_count','gc_count','messages_total'}) do integer(redis.call('HGET',KEYS[5],field),0,max_safe_integer) end
   local dm=tonumber(redis.call('HGET',KEYS[5],'dm_count'))
   local gc=tonumber(redis.call('HGET',KEYS[5],'gc_count'))
@@ -194,7 +197,7 @@ local function capacity(field)
 end
 local function event(kind,member,conversation,actor,payload)
   payload=payload or {member=member}
-  redis.call('XADD',KEYS[7],'MAXLEN','~',event_retention,'*','data',cjson.encode({v=1,epoch=epoch,type=kind,conversation=conversation or cjson.null,actor=actor or cjson.null,payload=payload}))
+  redis.call('XADD',KEYS[7],'MAXLEN','~',event_retention,'*','data',cjson.encode({v=hub_api_version,epoch=epoch,type=kind,conversation=conversation or cjson.null,actor=actor or cjson.null,payload=payload}))
 end
 local function member_record(member,required)
   local raw=redis.call('HGET',KEYS[2],member)
@@ -256,7 +259,7 @@ if fresh then
     local page=redis.call('SCAN',cursor,'MATCH',ARGV[2]..':*','COUNT',128)
     cursor=page[1]
     for _,key in ipairs(page[2]) do
-      if string.find(key,ARGV[2]..':convo:',1,true)==1 or (string.find(key,ARGV[2]..':agent:',1,true)==1 and string.sub(key,-5)==':talk') then fail('partial conversation dataset') end
+      if string.find(key,ARGV[2]..':convo:',1,true)==1 or string.find(key,ARGV[2]..':events:',1,true)==1 or (string.find(key,ARGV[2]..':agent:',1,true)==1 and string.sub(key,-5)==':talk') then fail('partial conversation dataset') end
     end
   until cursor=='0'
 end
@@ -265,7 +268,7 @@ if not redis.call('GET',KEYS[1]) then
   for i=2,8 do if redis.call('EXISTS',KEYS[i])~=0 then fail('partial conversation dataset') end end
   expect(KEYS[9],'hash')
   if redis.call('HLEN',KEYS[9])>0 then fail('partial roster dataset') end
-  redis.call('SET',KEYS[1],tostring(conversation_schema))
+  redis.call('SET',KEYS[1],tostring(hub_store_schema))
   redis.call('HSET',KEYS[5],'dm_count',0,'gc_count',0,'messages_total',0)
   redis.call('HSET',KEYS[6],'last_tick',-1,'last_seq',-1)
   epoch=operation.epoch

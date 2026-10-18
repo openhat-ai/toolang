@@ -45,7 +45,7 @@ records and observes only new live events.
 
 Persistence makes completed history available after process restart and for
 later model calls. Toolang does not resume an unfinished run after its owner
-process exits. The execution store reads and writes only schema 60. Older schemas
+process exits. The execution store reads and writes only schema 61. Older schemas
 are rejected without modification, including read-only opens; writable opens also
 reject adjacent legacy `ids.json` files. There is no migration or old-record
 compatibility path. Stop old writers, preserve any required old runtime data
@@ -100,7 +100,7 @@ schemas. Local library consumers can use this client; execution owners such as
 
 `RemoteRunClient` implements the same boundary over an agent runtime's absolute
 HTTP origin. It sends self-contained, materialized requests to
-`POST /api/v1/runs/authored/stream`, consumes canonical `RunEvent` values from
+`POST /api/v0/runs/authored/stream`, consumes canonical `RunEvent` values from
 the accepted run's SSE response, and uses the existing run detail, cancel, and
 steer endpoints. The server owns setup/state snapshots, request validation,
 authored-input resolution, and file includes; mutable session defaults and
@@ -442,7 +442,7 @@ per-call records and make the aggregate USD amount unknown. Unknown optional
 token/cost contributions remain unknown; known zero stays zero. These are captured
 values, not a historical statistics index.
 
-This format requires Store schema 60 and fresh storage. Older schemas are rejected
+This format requires Store schema 61 and fresh storage. Older schemas are rejected
 for both reads and writes; no migration or compatibility decoder is provided.
 Retain any required old runtime data separately, then use a fresh runtime database.
 Record/event consumers must adopt `spec`/`report` and matching `Spec`/`Report`

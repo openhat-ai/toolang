@@ -49,7 +49,7 @@ from .source import (
     source_manifest_from_snapshot,
 )
 from .cache import (
-    LAYER_SCHEMA,
+    AGENT_STATE_FORMAT,
     HomeLayer,
     LayerScope,
     RootLayer,
@@ -85,7 +85,10 @@ def parse_visiting_agent(
     prepared = None
     try:
         home = load_home_layer(layout)
-        if home.schema == LAYER_SCHEMA and home.module_digests.get("agent") == digest:
+        if (
+            home.schema == AGENT_STATE_FORMAT
+            and home.module_digests.get("agent") == digest
+        ):
             prepared = home.modules.get("agent")
     except (FileNotFoundError, KeyError, TypeError, ValueError):
         pass
@@ -445,7 +448,7 @@ def _matching_root(
     try:
         revision = load_current_revision(layout, "root")
         layer = load_root_layer(layout, revision)
-        if layer.schema != LAYER_SCHEMA:
+        if layer.schema != AGENT_STATE_FORMAT:
             return None
         if layer.source != source:
             return None
@@ -466,7 +469,7 @@ def _matching_home(
     try:
         revision = load_current_revision(layout, "home")
         layer = load_home_layer(layout, revision)
-        if layer.schema != LAYER_SCHEMA:
+        if layer.schema != AGENT_STATE_FORMAT:
             return None
         if layer.source != source:
             return None

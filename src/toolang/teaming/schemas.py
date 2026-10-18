@@ -25,6 +25,11 @@ from typing_extensions import TypedDict, NotRequired
 from .errors import MessagingError
 from .types import MAX_SAFE_INTEGER
 
+HUB_API_VERSION = 0
+HubAPIVersion = Annotated[
+    int, Field(strict=True, ge=HUB_API_VERSION, le=HUB_API_VERSION)
+]
+
 TargetKind = Literal["agent", "human"]
 _STREAM_ID = re.compile(r"[0-9]+-[0-9]+\Z")
 MAX_RULES_BYTES = 64 * 1024
@@ -173,6 +178,7 @@ class HubInfo(BaseModel):
 
     model_config = ConfigDict(extra="ignore", strict=True, frozen=True)
     version: str
+    api_version: HubAPIVersion
 
     @field_validator("version")
     @classmethod
@@ -264,7 +270,7 @@ class RosterRecord(ProtocolModel):
 
 
 class TeamEvent(ProtocolModel):
-    v: Literal[1]
+    v: HubAPIVersion
     epoch: str = Field(pattern=r"^[0-9a-f]{32}$")
     type: Literal[
         "stream.initialized",
@@ -610,7 +616,7 @@ Generation = Annotated[str, Field(pattern=r"^[0-9a-f]{32}$")]
 
 
 class PublicationRequest(HubRequest):
-    v: Literal[2]
+    v: HubAPIVersion
     epoch: Generation
     generation: Generation
 
@@ -653,7 +659,7 @@ CommitRequest = Annotated[
 
 
 class StagingRequest(HubRequest):
-    v: Literal[2]
+    v: HubAPIVersion
     epoch: Generation
     recovery: Generation
     source: str

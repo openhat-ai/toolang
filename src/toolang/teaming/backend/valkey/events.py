@@ -10,6 +10,7 @@ from uuid import uuid4
 if TYPE_CHECKING:
     from .backend import ValkeyBackend
 from .keys import (
+    SCHEMA,
     EVENT_META,
     EVENT_STREAM,
     EVENT_AGENTS,
@@ -18,6 +19,7 @@ from .keys import (
     generation_key,
 )
 from . import event_scripts
+from .schema import HUB_STORE_SCHEMA
 from ...errors import MessagingError, EventProtocolError, EventRecoveryRequired
 from ...events import (
     HubCursor,
@@ -26,7 +28,7 @@ from ...events import (
     encode,
 )
 from ...records import MANIFEST, MAX_BYTES, MAX_ENTITIES
-from ...schemas import stream_id, TeamRecord
+from ...schemas import HUB_API_VERSION, stream_id, TeamRecord
 
 
 def _hash(values: Any) -> dict[str, str]:
@@ -42,6 +44,11 @@ class ValkeyEvents:
     async def _eval(
         self, script: str, keys: list[str], args: list[Any], *, agent: str | None = None
     ) -> Any:
+        keys = [*keys, SCHEMA]
+        script = (
+            f"if redis.call('GET',KEYS[{len(keys)}]) ~= '{HUB_STORE_SCHEMA}' then "
+            "error('protocol_error: unsupported hub store schema') end\n" + script
+        )
         try:
             if agent is not None:
                 return await self.backend._fenced_eval(agent, script, keys, args)
@@ -83,7 +90,7 @@ class ValkeyEvents:
         try:
             origins = {key: json.loads(value) for key, value in _hash(agents).items()}
             for value in origins.values():
-                if value.get("v") != 2:
+                if value.get("v") != HUB_STORE_SCHEMA:
                     raise ValueError("Origin schema version")
                 stream_id(value.get("floor", "0-0"))
             public = {}
@@ -97,6 +104,8 @@ class ValkeyEvents:
     async def projection(
         self, agent: str, generation: str
     ) -> dict[str, dict[str, Any]]:
+        if await self._command("GET", SCHEMA) != str(HUB_STORE_SCHEMA):
+            raise EventProtocolError("unsupported hub store schema")
         key = generation_key(agent, generation)
         result: dict[str, dict[str, Any]] = {}
         cursor = 0
@@ -110,11 +119,21 @@ class ValkeyEvents:
                     raise EventProtocolError("Oversized event generation")
                 try:
                     data = json.loads(value)
-                    if not isinstance(data, dict) or data.get("v") != 2:
+                    if not isinstance(data, dict):
+                        raise ValueError("Event entity must be an object")
+                    expected = (
+                        HUB_STORE_SCHEMA
+                        if name == MANIFEST or "entity" in data
+                        else HUB_API_VERSION
+                    )
+                    if data.get("v") != expected:
                         raise ValueError("Unsupported event entity version")
                     if "entity" in data:
                         entity = data["entity"]
-                        if not isinstance(entity, dict) or entity.get("v") != 2:
+                        if (
+                            not isinstance(entity, dict)
+                            or entity.get("v") != HUB_API_VERSION
+                        ):
                             raise ValueError("Unsupported event entity version")
                         data = {**entity, "delivery": data["delivery"]}
                     if name == MANIFEST:

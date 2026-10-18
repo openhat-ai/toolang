@@ -47,7 +47,7 @@ def test_workspace_inspection_uses_published_state_and_runtime_paths(
             create_app(core, CapsManager(layout), ChoresManager(layout))
         ) as client:
             response = client.get(
-                "/api/v1/workspaces", params={"workdir": "repo://src"}
+                "/api/v0/workspaces", params={"workdir": "repo://src"}
             )
             assert response.status_code == 200, response.text
             body = response.json()
@@ -60,13 +60,13 @@ def test_workspace_inspection_uses_published_state_and_runtime_paths(
             }
             assert (
                 client.get(
-                    "/api/v1/workspaces", params={"workdir": "missing://"}
+                    "/api/v0/workspaces", params={"workdir": "missing://"}
                 ).status_code
                 == 400
             )
             assert (
                 client.get(
-                    "/api/v1/workspaces", params={"workdir": "repo://missing"}
+                    "/api/v0/workspaces", params={"workdir": "repo://missing"}
                 ).status_code
                 == 400
             )
@@ -101,12 +101,12 @@ def test_guest_workspace_added_after_launch_is_not_reported_available(
         with TestClient(
             create_app(core, CapsManager(layout), ChoresManager(layout))
         ) as client:
-            response = client.get("/api/v1/workspaces")
+            response = client.get("/api/v0/workspaces")
             assert response.status_code == 200
             assert response.json()["items"][-1]["available"] is False
             assert (
                 client.get(
-                    "/api/v1/workspaces", params={"workdir": "added://"}
+                    "/api/v0/workspaces", params={"workdir": "added://"}
                 ).status_code
                 == 400
             )
@@ -147,7 +147,7 @@ def test_workspace_inspection_accepts_symlinked_runtime_root(
             create_app(core, CapsManager(layout), ChoresManager(layout))
         ) as client:
             response = client.get(
-                "/api/v1/workspaces", params={"workdir": "repo://src"}
+                "/api/v0/workspaces", params={"workdir": "repo://src"}
             )
             assert response.status_code == 200, response.text
             assert response.json()["workdir"] == "repo://src"
@@ -171,16 +171,16 @@ def test_workspace_listing_survives_stale_runtime_default(tmp_path, monkeypatch)
         with TestClient(
             create_app(core, CapsManager(layout), ChoresManager(layout))
         ) as client:
-            response = client.get("/api/v1/workspaces")
+            response = client.get("/api/v0/workspaces")
             assert response.status_code == 200, response.text
             assert response.json()["workdir"] is None
             assert response.json()["items"][-1]["available"] is True
-            response = client.get("/api/v1/workspaces", params={"workdir": "repo://"})
+            response = client.get("/api/v0/workspaces", params={"workdir": "repo://"})
             assert response.status_code == 200, response.text
             assert response.json()["workdir"] == "repo://"
             assert (
                 client.get(
-                    "/api/v1/workspaces", params={"workdir": "repo://src"}
+                    "/api/v0/workspaces", params={"workdir": "repo://src"}
                 ).status_code
                 == 400
             )
@@ -215,7 +215,7 @@ def test_listing_reports_unavailable_lab_without_requiring_execution(
         with TestClient(
             create_app(core, CapsManager(layout), ChoresManager(layout))
         ) as client:
-            response = client.get("/api/v1/workspaces")
+            response = client.get("/api/v0/workspaces")
             assert response.status_code == 200, response.text
             assert response.json()["workdir"] is None
             assert response.json()["items"] == [

@@ -66,7 +66,7 @@ def test_source_path_aliases_preserve_reference_identity(tmp_path):
 def test_relaunch_reuses_reference_name_and_preserves_new_registration(
     tmp_path, placement
 ):
-    from toolang.up.records import read_record
+    from toolang.up.instance import read_instance
 
     layout = (
         AgentLayout.visiting(
@@ -80,7 +80,7 @@ def test_relaunch_reuses_reference_name_and_preserves_new_registration(
     with old, current:
         assert old.path == current.path
         assert old.token != current.token
-        record = read_record(layout.runtime_status)
+        record = read_instance(layout.runtime_status)
         assert record is not None and record["control"]["source_id"] == layout.source_id
         old.close()
         assert running_instances(tmp_path)[0]["source_id"] == layout.source_id
@@ -126,7 +126,7 @@ def test_discovery_ignores_invalid_status_instances(tmp_path, instances):
         before = layout.runtime_status.read_bytes()
         try:
             layout.runtime_status.write_text(
-                json.dumps({"version": 2, "instances": instances})
+                json.dumps({"version": 3, "instances": instances})
             )
             assert running_instances(tmp_path) == ()
         finally:
@@ -197,7 +197,7 @@ def test_stale_registration_and_replaced_owner_are_safe(tmp_path) -> None:
     old.close()
     assert running_instances(tmp_path)[0]["drivers"] == ["chat"]
     assert runtime_snapshot(tmp_path).instances[0].drivers == ("chat",)
-    from toolang.up.records import patch_workload
+    from toolang.up.instance import patch_workload
 
     patch_workload(layout.runtime_status, current.token, {"process_created": 0})
     assert running_instances(tmp_path) == ()
@@ -209,7 +209,7 @@ def test_guest_discovery_uses_host_sandbox_ownership_not_guest_pid(
 ):
     from toolang.base.types.sandbox import SandboxRef
     from toolang.up import sandbox
-    from toolang.up.records import SandboxState
+    from toolang.up.instance import SandboxState
     from toolang.up.process import write_runtime_state
 
     layout = AgentLayout.resident(tmp_path, "guest")
@@ -247,7 +247,7 @@ def test_guest_discovery_uses_host_sandbox_ownership_not_guest_pid(
         assert running_instances(tmp_path)[0]["drivers"] == ["chore"]
         alive = False
         # Record changes invalidate the top cache immediately.
-        from toolang.up.records import patch_workload
+        from toolang.up.instance import patch_workload
 
         patch_workload(
             layout.runtime_status, registration.token, {"updated_at": "later"}
@@ -256,13 +256,13 @@ def test_guest_discovery_uses_host_sandbox_ownership_not_guest_pid(
 
 
 def test_unbound_guest_discovery_preserves_unknown_workload(tmp_path):
-    from toolang.up.records import patch_workload, update_record
+    from toolang.up.instance import patch_workload, update_instance
 
     layout = AgentLayout.resident(tmp_path, "guest")
     with RuntimeRegistration(
         layout, toolang_root=tmp_path, drivers=frozenset()
     ) as registration:
-        update_record(
+        update_instance(
             layout.runtime_status,
             lambda entry: entry["control"].update(sandbox="docker:image"),
         )
@@ -289,7 +289,7 @@ def test_short_lived_scripts_share_one_register_lock_and_readable_references(tmp
             assert registration.path.name.startswith(f"echo@r{layout.source_id}@")
             assert registration.path.name.endswith(f"@script{index}.json")
     assert tuple(path.name for path in directory.iterdir()) == ("register.lock",)
-    from toolang.up.records import read_document
+    from toolang.up.instance import read_document
 
     document = read_document(layout.runtime_status)
     assert document is not None and document["instances"] == {}
@@ -335,7 +335,7 @@ def test_register_guard_keeps_a_new_reference_when_old_cleanup_races(tmp_path):
     from concurrent.futures import ThreadPoolExecutor
     from threading import Event
     from toolang.common.files import file_write_lock
-    from toolang.up.records import update_record
+    from toolang.up.instance import update_instance
 
     layout = AgentLayout.resident(tmp_path, "gus")
     old = RuntimeRegistration(layout, toolang_root=tmp_path, drivers=frozenset())
@@ -355,7 +355,7 @@ def test_register_guard_keeps_a_new_reference_when_old_cleanup_races(tmp_path):
             closing = pool.submit(close_old)
             assert entered.wait(timeout=1)
             assert not closing.done()
-            update_record(
+            update_instance(
                 layout.runtime_status, lambda entry: entry.update(launch_id="new")
             )
             current.__enter__()
@@ -369,7 +369,7 @@ def test_placement_free_workload_cleans_the_reference_using_control_bindings(
     tmp_path, placement
 ):
     from toolang.plugin.sandboxes.host import process_ref
-    from toolang.up.records import SandboxState
+    from toolang.up.instance import SandboxState
     from toolang.up.sandbox import _clear_state
 
     layout = (
@@ -396,7 +396,7 @@ def test_placement_free_workload_cleans_the_reference_using_control_bindings(
 def test_discovery_reads_a_shared_agent_document_once_per_refresh(
     tmp_path, monkeypatch
 ):
-    from toolang.up import observation, records
+    from toolang.up import observation, instance as records
     from contextlib import ExitStack
 
     layout = AgentLayout.roaming(tmp_path / "echo.too")
@@ -475,7 +475,7 @@ def test_runtime_snapshot_lists_residents_and_registered_placements_once(tmp_pat
 
 
 def test_runtime_snapshot_reports_starting_and_invalid_drivers_as_partial(tmp_path):
-    from toolang.up.records import update_record
+    from toolang.up.instance import update_instance
 
     root = tmp_path / "toolang"
     layout = AgentLayout.resident(root, "alice")
@@ -483,7 +483,7 @@ def test_runtime_snapshot_reports_starting_and_invalid_drivers_as_partial(tmp_pa
     with RuntimeRegistration(
         layout, toolang_root=root, drivers=frozenset({"chat", "talk"})
     ) as registration:
-        update_record(
+        update_instance(
             layout.runtime_status,
             lambda entry: entry["workload"].update(status="starting"),
             launch_id=registration.token,
@@ -495,7 +495,7 @@ def test_runtime_snapshot_reports_starting_and_invalid_drivers_as_partial(tmp_pa
         assert row.drivers is None and row.diagnostic is not None
         assert starting.partial
 
-        update_record(
+        update_instance(
             layout.runtime_status,
             lambda entry: (
                 entry["workload"].update(status="running"),
@@ -600,7 +600,7 @@ def test_runtime_snapshot_batches_docker_liveness_references(tmp_path, monkeypat
 
     from toolang.base.types.sandbox import SandboxRef
     from toolang.up.process import AgentProcess, AgentStatus
-    from toolang.up.records import SandboxState
+    from toolang.up.instance import SandboxState
 
     root = tmp_path / "toolang"
     registrations = []
@@ -678,7 +678,7 @@ def test_runtime_snapshot_preserves_distinct_temporary_instance_labels(tmp_path)
 def test_runtime_snapshot_keeps_failed_residents_and_excludes_finished_visitors(
     tmp_path, terminal_state
 ):
-    from toolang.up.records import update_record
+    from toolang.up.instance import update_instance
 
     root = tmp_path / "toolang"
     resident = AgentLayout.resident(root, "alice")
@@ -698,7 +698,7 @@ def test_runtime_snapshot_keeps_failed_residents_and_excludes_finished_visitors(
             (resident, resident_run),
             (visiting, visiting_run),
         ):
-            update_record(
+            update_instance(
                 layout.runtime_status,
                 lambda entry: entry["workload"].update(status=terminal_state, pid=None),
                 instance=layout.instance,

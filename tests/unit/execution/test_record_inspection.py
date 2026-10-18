@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-
 from toolang.lang.input import CallInput
 from toolang.lang.types import Array
 
@@ -80,7 +79,8 @@ def test_model_call_payload_uses_output_schema_and_compact_cont_key() -> None:
 
     legacy_data = {**data, "structured_output": data["output_schema"]}
     legacy_data.pop("output_schema")
-    assert model_call_from_data(legacy_data) == call
+    with pytest.raises(ValueError, match="retired model call field"):
+        model_call_from_data(legacy_data)
 
 
 def test_execution_error_codec_uses_strict_tagged_objects() -> None:

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .schemas import HUB_API_VERSION
+
 import asyncio
 from collections import deque
 import time
@@ -43,7 +45,7 @@ from .schemas import stream_id
 def _canonical(data: str) -> CanonicalEvent:
     try:
         row = json.loads(data)
-        if row.get("v") != 2:
+        if row.get("v") != HUB_API_VERSION:
             raise ValueError("Unsupported event version")
         return CanonicalEvent(
             EventCursor.parse(row["source_cursor"]),

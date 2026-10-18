@@ -11,6 +11,7 @@ from threading import Event
 
 import httpx
 
+from toolang.api.version import AGENT_API_VERSION
 from toolang.execution.schemas import LiveSnapshot, RunNode
 from toolang.stats.errors import StatsUnavailable
 from toolang.stats.recent import recent_source, recent_usage
@@ -37,7 +38,7 @@ def read_activity(
     if source.endpoint:
         try:
             response = httpx.get(
-                source.endpoint.rstrip("/") + "/api/v1/top/snapshot",
+                source.endpoint.rstrip("/") + f"/api/v{AGENT_API_VERSION}/top/snapshot",
                 params={"recent": recent},
                 timeout=3,
                 trust_env=False,

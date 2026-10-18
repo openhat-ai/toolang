@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from tests.support.observations import run_begin, run_end
 
-
 import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field, replace
@@ -230,7 +229,7 @@ def test_remote_client_runs_traces_and_waits_for_detail() -> None:
         assert detail_reads == 2
         assert transport.requests[0] == (
             "POST",
-            "http://runtime.test/api/v1/runs/authored/stream",
+            "http://runtime.test/api/v0/runs/authored/stream",
             {
                 "thread_id": "term_test",
                 "request_id": "term_request",
@@ -337,7 +336,7 @@ def test_remote_client_reuses_the_run_stream_protocol_for_restarts(
         assert detail_reads == 2
         assert transport.requests[0] == (
             "POST",
-            f"http://runtime.test/api/v1/runs/run_source/{operation}/stream",
+            f"http://runtime.test/api/v0/runs/run_source/{operation}/stream",
             expected_payload,
         )
 
@@ -442,7 +441,7 @@ def test_remote_client_maps_cancel_and_empty_steer_controls() -> None:
         assert transport.requests == [
             (
                 "POST",
-                "https://runtime.test/api/v1/runs/run_remote/cancel",
+                "https://runtime.test/api/v0/runs/run_remote/cancel",
                 {
                     "mode": "immediate",
                     "request_id": "cancel_request",
@@ -452,7 +451,7 @@ def test_remote_client_maps_cancel_and_empty_steer_controls() -> None:
             ),
             (
                 "POST",
-                "https://runtime.test/api/v1/runs/run_remote/steer",
+                "https://runtime.test/api/v0/runs/run_remote/steer",
                 {
                     "mode": "next_step",
                     "request_id": "steer_request",
@@ -699,8 +698,8 @@ def test_remote_client_recovers_overflow_without_resubmitting_or_canceling(
             await client.disconnect()
         assert tracer.events == ([_begin()] if after_begin else [])
         assert [(method, url) for method, url, _ in transport.requests] == [
-            ("POST", "http://runtime.test/api/v1/runs/authored/stream"),
-            *(("GET", "http://runtime.test/api/v1/runs/run_remote/stream"),) * 3,
+            ("POST", "http://runtime.test/api/v0/runs/authored/stream"),
+            *(("GET", "http://runtime.test/api/v0/runs/run_remote/stream"),) * 3,
         ]
 
     asyncio.run(scenario())
@@ -1078,7 +1077,7 @@ def test_remote_client_disconnect_detaches_stream_without_canceling_remote_run()
         with pytest.raises(RemoteRunClientError, match="client is disconnected"):
             await client.run(_request())
         assert [(method, url) for method, url, _payload in transport.requests] == [
-            ("POST", "http://runtime.test/api/v1/runs/authored/stream")
+            ("POST", "http://runtime.test/api/v0/runs/authored/stream")
         ]
         assert not http.is_closed
         await http.aclose()

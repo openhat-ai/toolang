@@ -64,13 +64,13 @@ durable usage and completions; disconnected live paths freeze and are marked sta
 
 The read-only agent adapter exposes:
 
-- `GET /api/v1/top/snapshot?recent=300`: live trees and the first 100 completed
+- `GET /api/v0/top/snapshot?recent=300`: live trees and the first 100 completed
   roots, with terminal counts over the whole interval. Hosting pins a source
   snapshot and captures LiveTree under the executor publication gate, then releases
   the gate before scanning. Page with both `before_time` and `after_id`, using the
   previous page's last `(finished_at,id)`; `completed_at` preserves the initial
   page's UTC-second upper bound. Ordering is completion descending, then ID ascending.
-- `GET /api/v1/stats/recent?period=3600`: bounded source usage, independent of
+- `GET /api/v0/stats/recent?period=3600`: bounded source usage, independent of
   historical Stats initialization. The local observer uses this same Stats reader
   directly. Usage workers are separate from inventory and live polling; obsolete
   window responses are discarded. Source read failures return HTTP 503.

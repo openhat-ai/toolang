@@ -13,7 +13,7 @@ from toolang.cli.common.ports import agent_port
 from toolang.common.layout import AgentLayout
 from toolang.up.config import resolve_port_override
 from toolang.up.observation import RuntimeRegistration
-from toolang.up.records import HubRecord
+from toolang.teaming.discovery import HubDiscovery
 
 
 @pytest.mark.parametrize(
@@ -30,7 +30,7 @@ def test_hub_status_shows_server_version_inline(
 ):
     import toolang.up.hub as module
 
-    saved = HubRecord(
+    saved = HubDiscovery(
         pid=os.getpid(),
         created=psutil.Process().create_time(),
         port=7123,
@@ -46,7 +46,7 @@ def test_hub_status_shows_server_version_inline(
         if request.url.path == "/healthz":
             return httpx.Response(200 if healthy else 503, json={"ok": healthy})
         assert request.url.path == "/info"
-        return httpx.Response(200, json={"version": version})
+        return httpx.Response(200, json={"version": version, "api_version": 0})
 
     monkeypatch.setattr(
         module.httpx,
@@ -73,7 +73,7 @@ def test_hub_status_missing_metadata_keeps_readiness(
 ):
     import toolang.up.hub as module
 
-    saved = HubRecord(
+    saved = HubDiscovery(
         pid=os.getpid(),
         created=psutil.Process().create_time(),
         port=7123,
@@ -107,7 +107,7 @@ def test_hub_status_without_ready_process_skips_http(
     import toolang.up.hub as module
 
     if state != "stopped":
-        saved = HubRecord(
+        saved = HubDiscovery(
             pid=os.getpid(),
             created=psutil.Process().create_time() - (10 if state == "stale" else 0),
             port=7123,

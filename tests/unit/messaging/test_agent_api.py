@@ -3,6 +3,7 @@
 import asyncio
 import logging
 from dataclasses import replace
+from hashlib import sha256
 import json
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
@@ -14,13 +15,16 @@ import pytest
 from tests.support.execution_harness import ExecutionHarness
 from tests.support.talk import admitted_handler
 from tests.unit.messaging.test_event_observation import run, publish, prefix
-from tests.unit.messaging.test_protocol import CONFIG, client
+from tests.unit.messaging.test_protocol import CONFIG, client, snapshot
 from toolang.base.types.tool import ToolContext
 from toolang.common.layout import AgentLayout
 from toolang.execution.errors import SnapshotLimitError
+from toolang.execution.types import EventCursor
 from toolang.plugin.toolsets.convo import ConvoToolset
 from toolang.teaming.agent_client import AgentClient, AgentEventClient
 from toolang.teaming.api import create_app
+from toolang.teaming.backend.valkey.keys import EVENT_AGENTS, generation_key
+from toolang.teaming.backend.valkey.schema import HUB_STORE_SCHEMA
 from toolang.teaming.config import BackendConfig
 from toolang.teaming.discovery import hub_connection
 from toolang.teaming.errors import (
@@ -29,10 +33,11 @@ from toolang.teaming.errors import (
     EventProtocolError,
     SendUnconfirmed,
 )
-from toolang.teaming.events import HubScope
+from toolang.teaming.events import HubScope, encode
 from toolang.teaming.exporter import EventExporter
-from toolang.teaming.records import HubRecord, MAX_BYTES
-from toolang.teaming.schemas import HubConnection, Message
+from toolang.teaming.discovery import HubDiscovery
+from toolang.teaming.records import MANIFEST, MAX_BYTES
+from toolang.teaming.schemas import HUB_API_VERSION, HubConnection, Message
 from toolang.teaming.stream_client import HubStreamState
 from toolang.teaming.subscriptions import HubSubscription
 from toolang.driver.talk import MessagingLoop
@@ -105,7 +110,7 @@ def test_agent_tools_without_hub_never_construct_backend(tmp_path):
 def test_agent_discovery_ignores_legacy_hub_record(tmp_path):
     legacy_path = tmp_path / ".runtime" / "hub.json"
     legacy_path.parent.mkdir()
-    HubRecord(
+    HubDiscovery(
         pid=1,
         created=1.0,
         port=7000,
@@ -161,7 +166,7 @@ def test_agent_discovery_pins_batch_identity_and_refreshes_connections(tmp_path)
             return await httpx.ASGITransport(app).handle_async_request(request)
 
         def save():
-            HubRecord(
+            HubDiscovery(
                 pid=1,
                 created=1.0,
                 port=7000,
@@ -348,7 +353,7 @@ def test_event_publication_retries_exact_http_operation_and_recovers(tmp_path):
                         "updates": {
                             '["root","other"]': json.dumps(
                                 {
-                                    "v": 2,
+                                    "v": 0,
                                     "thread": "t",
                                     "root": "other",
                                     "terminal": "wrong",
@@ -396,7 +401,7 @@ def test_agent_api_rejects_bad_identity_lease_and_publications(tmp_path):
             publisher = AgentEventClient(alice)
             meta = await publisher.initialize()
             base = dict(
-                v=2,
+                v=0,
                 epoch=meta["epoch"],
                 generation=uuid4().hex,
                 recovery=uuid4().hex,
@@ -433,6 +438,74 @@ def test_agent_api_rejects_bad_identity_lease_and_publications(tmp_path):
                         },
                     )
                 ).status_code == 400
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("operation", ["stage", "recover"])
+@pytest.mark.parametrize("version", [1, HUB_STORE_SCHEMA + 1, None])
+def test_recovery_rejects_incompatible_stored_versions_without_mutation(
+    tmp_path, operation, version
+):
+    async def scenario():
+        human = client(FakeServer(server_type="valkey"), CONNECTION.human)
+        app = create_app(human, version="0.4.0-test")
+        async with app.router.lifespan_context(app), agent(app, tmp_path) as alice:
+            await alice.register(CONNECTION.human)
+            publisher = AgentEventClient(alice)
+            meta = await publisher.initialize()
+            recovery = uuid4().hex
+            generation = uuid4().hex
+            source_epoch = uuid4().hex
+            source = str(EventCursor(source_epoch, 0))
+            base = dict(
+                v=HUB_API_VERSION,
+                epoch=meta["epoch"],
+                agent=alice.actor,
+                token=alice.token,
+                generation=generation,
+                recovery=recovery,
+            )
+            await publisher.commit(
+                base
+                | dict(id=f"{recovery}:incomplete", kind="incomplete", reason="initial")
+            )
+            digest = sha256(encode({}).encode()).hexdigest()
+            staging = base | dict(source=source, entities={}, digest=digest)
+            await publisher.stage(staging)
+            raw = human.backend._client
+            if operation == "stage":
+                key, field = EVENT_AGENTS, alice.actor
+                error = "origin version"
+            else:
+                key = generation_key(alice.actor, generation)
+                field = MANIFEST
+                error = "manifest version"
+            stored = json.loads(await raw.hget(key, field))
+            if version is None:
+                del stored["v"]
+            else:
+                stored["v"] = version
+            await raw.hset(key, field, encode(stored))
+            before = await snapshot(raw)
+
+            with pytest.raises(EventProtocolError, match=error):
+                if operation == "stage":
+                    await publisher.stage(staging)
+                else:
+                    await publisher.commit(
+                        base
+                        | dict(
+                            id=f"{recovery}:commit",
+                            kind="recover",
+                            source=source,
+                            source_epoch=source_epoch,
+                            snapshot_digest=digest,
+                            old_generation=uuid4().hex,
+                        )
+                    )
+
+            assert await snapshot(raw) == before
 
     asyncio.run(scenario())
 

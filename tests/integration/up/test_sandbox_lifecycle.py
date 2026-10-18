@@ -17,7 +17,7 @@ from toolang.plugin.sandboxes.host import HOST_LAUNCH_ENV
 from urllib.request import urlopen
 
 from toolang.common.layout import AgentLayout
-from toolang.up.records import SandboxState
+from toolang.up.instance import SandboxState
 
 
 def test_host_sandbox_runs_without_backend_with_default_teaming(tmp_path: Path) -> None:
@@ -71,13 +71,13 @@ def test_host_sandbox_runs_without_backend_with_default_teaming(tmp_path: Path) 
             base_url=state.ref.endpoint, timeout=10, trust_env=False
         ) as http:
             response = http.post(
-                "/api/v1/runs/threads", json={"client_id": "test-script"}
+                "/api/v0/runs/threads", json={"client_id": "test-script"}
             )
             response.raise_for_status()
             with connect_sse(
                 http,
                 "POST",
-                "/api/v1/runs/authored/stream",
+                "/api/v0/runs/authored/stream",
                 json={
                     "thread_id": response.json()["thread"]["id"],
                     "request_id": "without-backend",
@@ -312,7 +312,7 @@ def test_unregistered_managed_child_exits_before_preparing_agent(
 def test_foreground_serve_is_one_process_and_kill_preserves_restart_settings(
     tmp_path: Path,
 ) -> None:
-    from toolang.up.records import read_record
+    from toolang.up.instance import read_instance
 
     layout = AgentLayout.resident(tmp_path / "toolang", "alice")
     layout.home.mkdir(parents=True)
@@ -329,7 +329,7 @@ def test_foreground_serve_is_one_process_and_kill_preserves_restart_settings(
         try:
             deadline = time.monotonic() + 15
             while time.monotonic() < deadline:
-                entry = read_record(layout.runtime_status)
+                entry = read_instance(layout.runtime_status)
                 if entry and entry["control"].get("last_successful"):
                     break
                 if workload.poll() is not None:
@@ -360,7 +360,7 @@ def test_foreground_serve_is_one_process_and_kill_preserves_restart_settings(
                 (*base, "list"), capture_output=True, text=True, timeout=10
             )
             assert listed.returncode == 0, listed.stderr
-            entry = read_record(layout.runtime_status)
+            entry = read_instance(layout.runtime_status)
             assert entry is not None and entry["workload"]["status"] == "stopped"
             assert entry["control"]["last_successful"]["endpoint"].endswith(f":{port}")
             restarted = subprocess.run(

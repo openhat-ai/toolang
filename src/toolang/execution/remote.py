@@ -16,6 +16,7 @@ import httpx
 from httpx_sse import ServerSentEvent, SSEError, aconnect_sse
 from pydantic import TypeAdapter, ValidationError
 
+from toolang.api.version import AGENT_API_VERSION
 from toolang.base.money import cost_text
 from toolang.base.types.message import Message
 from toolang.base.types.model import ModelOverride, ModelRequest
@@ -160,7 +161,7 @@ class RemoteRunClient:
             RunRef.parse(root_run_id)
         response = await self._request(
             "GET",
-            "/api/v1/runs/live",
+            f"/api/v{AGENT_API_VERSION}/runs/live",
             operation="live trees",
             params={"root_run_id": root_run_id} if root_run_id is not None else None,
         )
@@ -185,7 +186,7 @@ class RemoteRunClient:
     ) -> RunHandle:
         return await self._submit_stream(
             operation="run",
-            path="/api/v1/runs/authored/stream",
+            path=f"/api/v{AGENT_API_VERSION}/runs/authored/stream",
             payload=_run_request_data(
                 replace(request, client_id=request.client_id or self.client_id)
             ),
@@ -202,7 +203,7 @@ class RemoteRunClient:
     ) -> RunHandle:
         return await self._submit_stream(
             operation="rerun",
-            path=f"/api/v1/runs/{request.source}/rerun/stream",
+            path=f"/api/v{AGENT_API_VERSION}/runs/{request.source}/rerun/stream",
             payload=_restart_request_data(
                 replace(request, client_id=request.client_id or self.client_id)
             ),
@@ -223,7 +224,11 @@ class RemoteRunClient:
     ) -> RunHandle:
         self._require_connected()
         if self._interactive:
-            path = path.replace("/api/v1/runs/", "/api/v1/chat/runs/", 1)
+            path = path.replace(
+                f"/api/v{AGENT_API_VERSION}/runs/",
+                f"/api/v{AGENT_API_VERSION}/chat/runs/",
+                1,
+            )
         loop = asyncio.get_running_loop()
         accepted: asyncio.Future[str] = loop.create_future()
         delivery = asyncio.Event()
@@ -351,7 +356,7 @@ class RemoteRunClient:
         RunRef.parse(run_id)
         response = await self._request(
             "POST",
-            f"/api/v1/threads/{thread_id}/{action}",
+            f"/api/v{AGENT_API_VERSION}/threads/{thread_id}/{action}",
             operation=action,
             json={"run_id": run_id},
         )
@@ -461,7 +466,7 @@ class RemoteRunClient:
                     async with aconnect_sse(
                         http,
                         "GET",
-                        self._url(f"/api/v1/runs/{run_id}/stream"),
+                        self._url(f"/api/v{AGENT_API_VERSION}/runs/{run_id}/stream"),
                         params={"after": state.cursor}
                         if state.cursor is not None
                         else {},
@@ -644,7 +649,7 @@ class RemoteRunClient:
         RunRef.parse(run_id)
         response = await self._request(
             "GET",
-            f"/api/v1/runs/{run_id}",
+            f"/api/v{AGENT_API_VERSION}/runs/{run_id}",
             operation=operation,
         )
         payload = _response_json(response, operation=operation)
@@ -678,9 +683,9 @@ class RemoteRunClient:
         payload: dict[str, object],
     ) -> ControlInfo:
         prefix = (
-            "/api/v1/chat/runs"
+            f"/api/v{AGENT_API_VERSION}/chat/runs"
             if self._interactive and action == "steer"
-            else "/api/v1/runs"
+            else f"/api/v{AGENT_API_VERSION}/runs"
         )
         response = await self._request(
             "POST",

@@ -201,7 +201,7 @@ def test_replay_rejects_noncanonical_conversation_ids_before_yielding(conversati
                 {
                     "data": json.dumps(
                         dict(
-                            v=1,
+                            v=0,
                             epoch=cursor.split(".")[1],
                             type="conversation.member_added",
                             conversation=conversation,
@@ -231,7 +231,7 @@ def test_malformed_event_fails_without_writes():
                 {
                     "data": json.dumps(
                         dict(
-                            v=1,
+                            v=0,
                             epoch=epoch,
                             type="presence.online",
                             actor=None,

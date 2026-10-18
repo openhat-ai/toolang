@@ -21,7 +21,7 @@ from toolang.base.types.sandbox import (
 )
 from toolang.common.layout import AgentLayout
 from toolang.up import sandbox
-from toolang.up.records import SandboxState
+from toolang.up.instance import SandboxState
 from toolang.up import process as process_runtime
 from toolang.up.server import ServeSpec
 
@@ -263,7 +263,7 @@ def test_sandbox_state_round_trips(tmp_path: Path) -> None:
     state.save(path)
 
     assert SandboxState.load(path) == state
-    assert '"version": 2' in path.read_text(encoding="utf-8")
+    assert '"version": 3' in path.read_text(encoding="utf-8")
 
 
 def test_sandbox_state_does_not_adopt_a_version_one_reference(

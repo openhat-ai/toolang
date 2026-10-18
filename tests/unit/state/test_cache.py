@@ -12,6 +12,7 @@ from toolang.lang.ast import Program, RepeatStmt, ReduceStmt, SortStmt
 from toolang.state.cache import (
     _persist_agent_revision,
     _agent_publish_lock,
+    agent_revision_dir,
     canonical_json,
     layer_revision_dir,
     load_agent_revisions,
@@ -25,6 +26,8 @@ from toolang.state.cache import (
     write_layer,
 )
 from toolang.state.source import scan_source
+from toolang.state.format import AGENT_STATE_FORMAT
+from toolang.state.prepare import prepare_agent_state
 from toolang.state.state import agent_state_revision
 
 
@@ -77,6 +80,43 @@ def test_layer_json_exact_bytes_are_the_revision(tmp_path: Path) -> None:
     assert revision_dir.name == revision
     assert len(revision) == 64
     assert not encoded.endswith(b"\n")
+
+
+@pytest.mark.parametrize("owner", ["root", "home", "agent"])
+@pytest.mark.parametrize("version", [22, 24])
+def test_noncurrent_state_format_is_rejected_and_preparation_rebuilds(
+    tmp_path: Path, owner: str, version: int
+) -> None:
+    layout = _layout(tmp_path)
+    root = _write_root(layout)
+    home = _write_home(layout)
+    publish_layer_current(layout, "root", root)
+    publish_layer_current(layout, "home", home)
+    with _agent_publish_lock(layout):
+        agent = _persist_agent_revision(layout, root_revision=root, home_revision=home)
+    if owner == "agent":
+        path = agent_revision_dir(layout, agent) / "layers.json"
+    elif owner == "root":
+        path = layer_revision_dir(layout, "root", root) / "layer.json"
+    else:
+        path = layer_revision_dir(layout, "home", home) / "layer.json"
+    load = {
+        "agent": load_agent_revisions,
+        "root": load_root_layer,
+        "home": load_home_layer,
+    }[owner]
+    document = json.loads(path.read_bytes())
+    assert document["schema"] == AGENT_STATE_FORMAT
+    path.write_bytes(canonical_json(document | {"schema": version}))
+    before = path.read_bytes()
+    with pytest.raises(ValueError, match="unsupported"):
+        load(layout)
+    assert path.read_bytes() == before
+
+    state = prepare_agent_state(layout)
+    validate_agent_revision(layout, state.revision)
+    assert load_root_layer(layout).schema == AGENT_STATE_FORMAT
+    assert load_home_layer(layout).schema == AGENT_STATE_FORMAT
 
 
 def test_canonical_json_rejects_nonfinite_numbers() -> None:

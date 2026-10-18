@@ -9,6 +9,28 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Changed
 
+- **Breaking:** agent HTTP endpoints move from `/api/v1` to `/api/v0`,
+  including execution, capabilities, chores, threads, and top routes. Lifecycle
+  payloads report `api_version` instead of `lifecycle_protocol`, pagination and
+  history cursors carry the agent API version, so previously issued cursors are
+  rejected, and statistics endpoints move from `/api/v1/stats` to
+  `/api/v0/stats` with independent versioning. Update hard-coded client paths
+  and upgrade the CLI and agent servers together.
+
+- **Breaking:** the Hub wire protocol uses hub API version 0: team events,
+  publication, and staging payloads carry `v: 0`, and `GET /info` reports
+  `api_version`. Upgrade the Hub and its clients together, because other values
+  are rejected.
+
+- **Breaking:** persisted contracts are consolidated and advanced: agent state
+  format 23, agent instance format 3, run store schema 61, and hub store schema
+  4. Older data is rejected without rewriting, while derived State rebuilds
+  from authored inputs. Stop agents before upgrading and delete a stale
+  `AGENT_HOME/.runtime/status.json`; start from fresh `runs.db` storage, keeping
+  required old runtime data separately; and select a fresh Redis/Valkey dataset
+  for the Hub. Existing history, drafts, checkpoints, and cursors are not
+  migrated.
+
 - **Breaking:** execution records, HTTP payloads, and stream events use `spec`
   and `report` instead of `given` and `noted`, with `StepSpec`, `StepReport`,
   `ModelStepSpec`, `ModelStepReport`, `ToolStepSpec`, `ToolStepReport`,
@@ -18,19 +40,14 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   detail derives from `started_at`, and an exec Step's report stores only its
   Control reference, so read the target from `payload/runnable`. Update Pointer
   paths to `STEP/spec`, `RUN/report`, `STEP/report`, and `CONTROL/request_id`;
-  schema 60 rejects older execution stores without mutation, so keep required
+  schema 61 rejects older execution stores without mutation, so keep required
   old data separately and start with fresh storage.
 
 - **Breaking:** chore scheduler checkpoint records and `chores` columns rename
   `chore_id` and `active_run_id` to `id` and `active_run`; code reading a
   `ChoreRecord` must use `id` and `active_run`, while chore lookup parameters
   and the HTTP `active_run_id` projection are unchanged. Checkpoints share the
-  schema-60 execution store, so the fresh-storage requirement above applies.
-
-- **Breaking:** execution-event publication, recovery datasets, projection
-  entities, and history cursors use version `2` with no version-1 fallback.
-  Stop publishers and Hub readers before upgrading, then upgrade and reconnect
-  subscribers together.
+  schema-61 execution store, so the fresh-storage requirement above applies.
 
 - `AGENT_HOME/.runtime/stats.db` uses schema `2` with `roots`, `buckets`, and
   `state` tables; discard an older cache while the server is stopped and let it

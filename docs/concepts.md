@@ -107,7 +107,7 @@ and passes the remaining spec unchanged to that implementation. Future drivers
 may use a cloud host. `RunExecutor` receives an `AgentSetup` and an immutable
 `AgentState` and does not know where its process is hosted.
 
-`SandboxState` in `up/records.py` is a view of the resource reference inside
+`SandboxState` in `up/instance.py` is a view of the resource reference inside
 the authoritative agent `status.json`, alongside workload state. It has no
 separate state file. `AgentProcess` owns control/query orchestration;
 `AgentCore` and server lifecycle hooks own workload execution and status.

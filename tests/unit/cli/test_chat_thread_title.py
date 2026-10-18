@@ -33,11 +33,11 @@ def _session(
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/healthz":
             return httpx.Response(200, json={"ok": True})
-        if request.url.path == "/api/v1/workspaces":
+        if request.url.path == "/api/v0/workspaces":
             return httpx.Response(200, json={"items": []})
-        if request.url.path == "/api/v1/profile":
+        if request.url.path == "/api/v0/profile":
             return httpx.Response(200, json=_profile())
-        if request.url.path == "/api/v1/runs/defaults":
+        if request.url.path == "/api/v0/runs/defaults":
             return httpx.Response(
                 200,
                 json={
@@ -48,7 +48,7 @@ def _session(
                     "policy": {"allow": [], "limits": {}},
                 },
             )
-        if request.url.path.startswith("/api/v1/threads/"):
+        if request.url.path.startswith("/api/v0/threads/"):
             if requests is not None:
                 requests.append(request)
             return httpx.Response(status, json=thread_payload)
@@ -111,11 +111,11 @@ def test_remote_thread_title_survives_a_transport_failure() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/healthz":
             return httpx.Response(200, json={"ok": True})
-        if request.url.path == "/api/v1/workspaces":
+        if request.url.path == "/api/v0/workspaces":
             return httpx.Response(200, json={"items": []})
-        if request.url.path == "/api/v1/profile":
+        if request.url.path == "/api/v0/profile":
             return httpx.Response(200, json=_profile())
-        if request.url.path == "/api/v1/runs/defaults":
+        if request.url.path == "/api/v0/runs/defaults":
             return httpx.Response(
                 200,
                 json={

@@ -1,130 +1,12 @@
-"""Portable cache document envelope and shared cache helpers."""
+"""Canonical content fingerprints for captured setup inputs."""
 
 from __future__ import annotations
 
-import re
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from hashlib import sha256
 from pathlib import Path
-from typing import Any
 
-import msgspec
-
-from toolang.common.files import atomic_write_text
 from toolang.common.json import dumps
-
-CACHE_SCHEMA = 10
-_MAX_CACHE_BYTES = 128 * 1024 * 1024
-_REVISION_RE = re.compile(r"^sha256:([0-9a-f]{64})$")
-_SENSITIVE_HEADER_NAME_RE = re.compile(
-    r"(?:authorization|cookie|credential|key|secret|token)",
-    re.IGNORECASE,
-)
-_SECRET_VALUE_RE = re.compile(
-    r'(?:bearer\s+[A-Za-z0-9._~+/-]{8,}|https?://[^/\s"@:]+:[^@\s"]+@|'
-    r"[?&](?:api[-_]?key|access[-_]?token|credential|secret|token)="
-    r'[^&\s"]+)',
-    re.IGNORECASE,
-)
-_SECRET_FIELD_MARKERS = (
-    '"api_key"',
-    '"api-key"',
-    '"apikey"',
-    '"authorization"',
-    '"cookie"',
-    '"credential"',
-    '"credentials"',
-    '"header"',
-    '"password"',
-    '"proxy_authorization"',
-    '"proxy-authorization"',
-    '"secret"',
-    '"token"',
-    '"x_api_key"',
-    '"x-api-key"',
-    '_password"',
-    '_key"',
-    '_secret"',
-    '_token"',
-    '-password"',
-    '-key"',
-    '-secret"',
-    '-token"',
-)
-
-
-def store_document(
-    path: Path,
-    *,
-    kind: str,
-    key: str,
-    document: Mapping[str, object],
-    scan_content: bool = True,
-) -> bool:
-    """Write atomically under the directory owner; catalogs may skip scanning."""
-
-    payload = {
-        "schema": CACHE_SCHEMA,
-        "kind": kind,
-        "key": key,
-        **document,
-    }
-    payload_content = dumps(payload, indent=None)
-    checksum = text_digest(payload_content)
-    content = f'{{"digest":"{checksum}","payload":{payload_content}}}'
-    if len(content.encode("utf-8")) > _MAX_CACHE_BYTES:
-        return False
-    if scan_content and _serialized_data_is_unsafe(content, payload):
-        return False
-    atomic_write_text(path, content, inherit_owner=True)
-    return True
-
-
-class _Envelope(msgspec.Struct, forbid_unknown_fields=True):
-    digest: str
-    payload: msgspec.Raw
-
-
-def load_document(
-    path: Path,
-    *,
-    kind: str,
-    key: str,
-    fast_json: bool = False,
-    scan_content: bool = True,
-    decode: Callable[[str], dict[str, object]] | None = None,
-) -> dict[str, object]:
-    """Validate integrity and identity; content scanning is optional for catalogs."""
-
-    if path.stat().st_size > _MAX_CACHE_BYTES:
-        raise ValueError("model cache entry exceeds its size limit")
-    content = path.read_text(encoding="utf-8")
-    if scan_content and _serialized_data_is_unsafe(content):
-        raise ValueError("model cache entry contains unsafe data")
-    del fast_json  # All cache readers now use the same native decoder.
-    envelope = msgspec.json.decode(content, type=_Envelope)
-    checksum = envelope.digest
-    prefix = f'{{"digest":"{checksum}","payload":'
-    if not content.startswith(prefix) or not content.endswith("}"):
-        raise ValueError("model cache entry envelope is not canonical")
-    payload_content = content[len(prefix) : -1]
-    if checksum != text_digest(payload_content):
-        raise ValueError("model cache entry digest does not match its payload")
-    payload = (
-        msgspec.json.decode(payload_content)
-        if decode is None
-        else decode(payload_content)
-    )
-    if not isinstance(payload, Mapping):
-        raise TypeError("model cache entry payload must be an object")
-    document = dict(payload)
-    if (
-        document.get("schema") != CACHE_SCHEMA
-        or document.get("kind") != kind
-        or document.get("key") != key
-    ):
-        raise ValueError("model cache entry identity does not match its path")
-    return document
 
 
 def digest(value: object) -> str:
@@ -137,15 +19,6 @@ def text_digest(value: str) -> str:
     """Return a ``sha256:`` digest for one text payload."""
 
     return f"sha256:{sha256(value.encode('utf-8')).hexdigest()}"
-
-
-def revision_hex(value: str) -> str:
-    """Return the hex body of one ``sha256:`` revision."""
-
-    match = _REVISION_RE.fullmatch(value)
-    if match is None:
-        raise ValueError(f"invalid model cache revision: {value!r}")
-    return match.group(1)
 
 
 def canonical_value(value: object) -> object:
@@ -163,87 +36,3 @@ def canonical_value(value: object) -> object:
     if value is None or isinstance(value, str | int | float | bool):
         return value
     return repr(value)
-
-
-def require_fields(
-    data: Mapping[Any, object],
-    expected: frozenset[str],
-    *,
-    label: str,
-) -> None:
-    """Require one decoded object to contain exactly the expected field names."""
-
-    actual = {str(name) for name in data}
-    if actual != expected:
-        raise ValueError(f"{label} fields do not match schema")
-
-
-def _serialized_data_is_unsafe(
-    content: str,
-    parsed: object | None = None,
-) -> bool:
-    lowered = content.casefold()
-    if any(_json_field_occurs(lowered, marker) for marker in _SECRET_FIELD_MARKERS):
-        return True
-    if _SECRET_VALUE_RE.search(content) is not None or _contains_url_userinfo(content):
-        return True
-    if not _json_field_occurs(lowered, '"headers"'):
-        return False
-    value = parsed
-    if value is None:
-        value = msgspec.json.decode(content)
-    return _contains_unsafe_headers(value)
-
-
-def _json_field_occurs(content: str, marker: str) -> bool:
-    start = 0
-    while (index := content.find(marker, start)) >= 0:
-        cursor = index + len(marker)
-        while cursor < len(content) and content[cursor] in " \t\r\n":
-            cursor += 1
-        if cursor < len(content) and content[cursor] == ":":
-            return True
-        start = index + 1
-    return False
-
-
-def _contains_url_userinfo(content: str) -> bool:
-    start = 0
-    while (scheme := content.find("://", start)) >= 0:
-        end = content.find('"', scheme)
-        if end < 0:
-            return True
-        authority_end = content.find("/", scheme + 3, end)
-        if authority_end < 0:
-            authority_end = end
-        if "@" in content[scheme + 3 : authority_end]:
-            return True
-        start = end + 1
-    return False
-
-
-def _contains_unsafe_headers(value: object) -> bool:
-    if isinstance(value, Mapping):
-        for raw_name, item in value.items():
-            if isinstance(raw_name, str) and raw_name.casefold() == "headers":
-                if not isinstance(item, Mapping) or any(
-                    not isinstance(header_name, str)
-                    or not isinstance(header_value, str)
-                    or _SENSITIVE_HEADER_NAME_RE.search(header_name) is not None
-                    or _SECRET_VALUE_RE.search(header_value) is not None
-                    for header_name, header_value in item.items()
-                ):
-                    return True
-                continue
-            if isinstance(item, Mapping | list | tuple) and _contains_unsafe_headers(
-                item
-            ):
-                return True
-        return False
-    if isinstance(value, list | tuple):
-        return any(
-            _contains_unsafe_headers(item)
-            for item in value
-            if isinstance(item, Mapping | list | tuple)
-        )
-    return False

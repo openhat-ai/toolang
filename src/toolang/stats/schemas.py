@@ -9,6 +9,8 @@ from toolang.execution.schemas import RunNode
 
 from .types import Metrics, Scope, Window
 
+STATS_API_VERSION = 0
+
 T = TypeVar("T")
 
 

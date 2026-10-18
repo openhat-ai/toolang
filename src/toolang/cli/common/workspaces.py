@@ -11,6 +11,7 @@ from typing import Annotated
 
 import typer
 
+from toolang.api.version import AGENT_API_VERSION
 from toolang.base.utils.workspace_paths import (
     parse_cwd,
     workspace_uri,
@@ -137,5 +138,7 @@ def running_workspace_inspection(
         raise ValueError("running agent has no endpoint")
     query = "?" + urlencode({"workdir": workdir}) if workdir else ""
     return WorkspaceInspection.model_validate(
-        RuntimeClient(status.endpoint).get("/api/v1/workspaces" + query)
+        RuntimeClient(status.endpoint).get(
+            f"/api/v{AGENT_API_VERSION}/workspaces" + query
+        )
     )

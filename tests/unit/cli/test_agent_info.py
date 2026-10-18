@@ -128,11 +128,11 @@ def test_running_info_uses_runtime_resources_without_loading_local_sources(
     )
     monkeypatch.setattr(AgentProcess, "state", lambda _self: {})
     payloads = {
-        "/api/v1/models": {"items": [{"provider": "guest"}]},
-        "/api/v1/tools": {"items": [{"toolset": "guest"}, {"toolset": "guest"}]},
-        "/api/v1/caps": {"psyches": [], "skills": [{}], "services": [], "prompts": []},
-        "/api/v1/chores": [{}],
-        "/api/v1/workspaces": {
+        "/api/v0/models": {"items": [{"provider": "guest"}]},
+        "/api/v0/tools": {"items": [{"toolset": "guest"}, {"toolset": "guest"}]},
+        "/api/v0/caps": {"psyches": [], "skills": [{}], "services": [], "prompts": []},
+        "/api/v0/chores": [{}],
+        "/api/v0/workspaces": {
             "revision": "a" * 64,
             "items": [{"name": "guest", "path": "/guest", "available": True}],
             "workdir": "guest://",

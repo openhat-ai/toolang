@@ -58,8 +58,8 @@ def test_driver_selection_roundtrips_host_guest_and_preserves_management(
     try:
         with TestClient(app) as client:
             assert client.get("/healthz").json() == {"ok": True}
-            assert client.get("/api/v1/threads").status_code == 200
-            response = client.post("/api/v1/threads", json={})
+            assert client.get("/api/v0/threads").status_code == 200
+            response = client.post("/api/v0/threads", json={})
             assert response.status_code == (201 if "chat" in drivers else 409)
             if "chat" in drivers:
                 assert response.json()["thread"]["id"].startswith("chat_")
@@ -69,13 +69,13 @@ def test_driver_selection_roundtrips_host_guest_and_preserves_management(
                     "run_absent/rerun/stream",
                     "run_absent/steer",
                 ]:
-                    response = client.post(f"/api/v1/chat/runs/{path}", json={})
+                    response = client.post(f"/api/v0/chat/runs/{path}", json={})
                     assert response.status_code == 409
                     assert response.json()["detail"]["driver"] == "chat"
                 assert core.store.list_threads() == []
                 assert core.store.list_runs() == []
             script = client.post(
-                "/api/v1/runs/threads",
+                "/api/v0/runs/threads",
                 json={"client_id": "test-script", "request_id": "script-context"},
             )
             assert script.status_code == 201

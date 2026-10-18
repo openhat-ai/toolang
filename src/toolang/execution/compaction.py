@@ -591,16 +591,11 @@ def read_checkpoint(store: RunStore, run: RunRecord) -> tuple[int, str]:
     roots = tuple(RunRef.parse(root) for root in json.loads(str(request["snapshot"])))
     if (
         not isinstance(policy, dict)
-        or policy.get("version") not in {1, 2}
+        or "version" in policy
         or len(set(roots)) != len(roots)
     ):
         raise ValueError("unsupported compact checkpoint contract")
-    granular = policy["version"] == 2
-    units = (
-        tuple(history_ref(ref) for ref in json.loads(str(request["units"])))
-        if granular
-        else roots
-    )
+    units = tuple(history_ref(ref) for ref in json.loads(str(request["units"])))
     if len(set(units)) != len(units) or any(
         history_root(ref) not in roots for ref in units
     ):
@@ -628,7 +623,7 @@ def read_checkpoint(store: RunStore, run: RunRecord) -> tuple[int, str]:
             or step.spec.call.messages.head != step.ref
         ):
             raise ValueError("invalid compact checkpoint pair")
-        batch = read.spec.call.input.get("units" if granular else "roots")
+        batch = read.spec.call.input.get("units")
         if (
             not isinstance(batch, list)
             or not batch
@@ -643,7 +638,7 @@ def read_checkpoint(store: RunStore, run: RunRecord) -> tuple[int, str]:
             or read_output.value.output
             != {
                 "roots": [str(history_root(str(ref))) for ref in batch],
-                **({"units": batch} if granular else {}),
+                "units": batch,
                 "content": str(
                     FieldRef.from_path(step.ref, "spec", "call", "messages")
                 ),
@@ -769,7 +764,6 @@ class CompactSpec:
                 "versions": json.dumps(dict(self.versions), sort_keys=True),
                 "policy": json.dumps(
                     {
-                        "version": 2,
                         "setup": self.setup,
                         "size": self.size,
                         "output": self.request.max_output,

@@ -9,7 +9,7 @@ from .conftest import DAY, NOW
 def client_for(service):
     app = FastAPI()
     app.state.stats = service
-    app.include_router(router, prefix="/api/v1")
+    app.include_router(router, prefix="/api/v0")
     return TestClient(app)
 
 
@@ -19,19 +19,19 @@ def test_public_endpoints_serialize_quantities_models_and_daily_dates(fixture):
     fixture.finish(root, NOW - 2 * DAY)
     assert fixture.refresh() is None
     with client_for(fixture.stats) as client:
-        response = client.get("/api/v1/stats/summary", params={"root_run_id": root})
+        response = client.get("/api/v0/stats/summary", params={"root_run_id": root})
         assert response.status_code == 200
         result = response.json()
         assert len(result["data"]) == 8
         assert result["data"][0]["in"] == 100 and result["data"][0]["spend"] == 0.1
         assert result["data"][0]["root_runs"] == 1
         assert result["snapshot"]["computed_at"]
-        models = client.get("/api/v1/stats/models", params={"window": "all"}).json()[
+        models = client.get("/api/v0/stats/models", params={"window": "all"}).json()[
             "data"
         ]
         assert models[0]["model_ref"] == "test/model" and models[0]["root_runs"] is None
         daily = client.get(
-            "/api/v1/stats/daily",
+            "/api/v0/stats/daily",
             params={
                 "start_date": "2026-10-14",
                 "end_date": "2026-10-19",
@@ -53,11 +53,11 @@ def test_scope_and_range_errors_have_stable_http_statuses(fixture):
             {"thread_id": "chat_stats", "root_run_id": root},
             {"root_run_id": child},
         ):
-            assert client.get("/api/v1/stats/summary", params=params).status_code == 422
+            assert client.get("/api/v0/stats/summary", params=params).status_code == 422
         for params in ({"root_run_id": "run_missing"}, {"thread_id": "chat_missing"}):
-            assert client.get("/api/v1/stats/summary", params=params).status_code == 404
+            assert client.get("/api/v0/stats/summary", params=params).status_code == 404
         assert (
-            client.get("/api/v1/stats/models", params={"window": "2h"}).status_code
+            client.get("/api/v0/stats/models", params={"window": "2h"}).status_code
             == 422
         )
         for params in (
@@ -69,12 +69,12 @@ def test_scope_and_range_errors_have_stable_http_statuses(fixture):
             },
             {"start_date": "2026-10-18", "end_date": "2026-10-20", "timezone": "UTC"},
         ):
-            assert client.get("/api/v1/stats/daily", params=params).status_code == 422
+            assert client.get("/api/v0/stats/daily", params=params).status_code == 422
 
 
 def test_unavailable_statistics_returns_503(fixture):
     fixture.stats.close()
     with client_for(fixture.stats) as client:
-        assert client.get("/api/v1/stats/summary").status_code == 503
+        assert client.get("/api/v0/stats/summary").status_code == 503
     with client_for(None) as client:
-        assert client.get("/api/v1/stats/models").status_code == 503
+        assert client.get("/api/v0/stats/models").status_code == 503

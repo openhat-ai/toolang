@@ -20,7 +20,7 @@ def test_remote_runtime_rejects_a_profile_sandbox_mismatch() -> None:
         requests.append(request.url.path)
         if request.url.path == "/healthz":
             return httpx.Response(200, json={"ok": True})
-        if request.url.path == "/api/v1/profile":
+        if request.url.path == "/api/v0/profile":
             return httpx.Response(
                 200,
                 json={
@@ -51,4 +51,4 @@ def test_remote_runtime_rejects_a_profile_sandbox_mismatch() -> None:
 
     asyncio.run(scenario())
 
-    assert requests == ["/healthz", "/api/v1/profile"]
+    assert requests == ["/healthz", "/api/v0/profile"]

@@ -7,7 +7,6 @@ from collections.abc import Mapping
 from contextlib import suppress
 from dataclasses import dataclass, field
 from hashlib import sha256
-import json
 import os
 from pathlib import Path
 import re
@@ -334,25 +333,6 @@ class DockerSandbox:
             dotenv_envs=dotenv_envs,
             process_envs=process_envs,
         )
-        (stage_dir / "start.json").write_text(
-            json.dumps(
-                {
-                    "version": 1,
-                    "agent": request.agent_name,
-                    "image": image,
-                    "local_root": str(request.local_root),
-                    "hosted_root": str(request.hosted_root),
-                    "hosted_home": str(request.hosted_home),
-                    "endpoint": request.endpoint,
-                },
-                ensure_ascii=False,
-                indent=2,
-                sort_keys=True,
-            )
-            + "\n",
-            encoding="utf-8",
-        )
-
         mounts = [
             *_request_mounts(request),
             *model_catalog_mounts,

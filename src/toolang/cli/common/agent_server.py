@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import replace
@@ -14,13 +15,14 @@ import time
 
 import httpx
 
+from toolang.api.version import AGENT_API_VERSION
 from toolang.base.errors import ToolangError
 from toolang.base.types.model import ModelOverride
 from toolang.common.layout import AgentLayout
 from toolang.common.version import development_source
 from toolang.plugin.catalogs.models_dev.path import MODEL_CATALOG_ENV
 from toolang.up import process as agents
-from toolang.up.records import read_record
+from toolang.up.instance import read_instance
 from toolang.up import sandbox as sandbox_runtime
 from toolang.up.logging import resolve_agent_logging
 from toolang.up.types import (
@@ -206,11 +208,11 @@ def acquire_agent_server(
 def _server_reference(
     layout: AgentLayout, sandbox: str, endpoint: str
 ) -> AgentServerRef:
-    entry = read_record(layout.runtime_status, layout.instance) or {}
+    entry = read_instance(layout.runtime_status, layout.instance) or {}
     state = entry.get("workload", {})
     managed = (
         layout.placement in {"resident", "visiting"}
-        and state.get("lifecycle_protocol") == 1
+        and state.get("api_version") == AGENT_API_VERSION
     )
     return AgentServerRef(
         sandbox=sandbox,
@@ -225,7 +227,7 @@ def _retain_server(server: AgentServerRef) -> tuple[AgentServerRef, ServerLease 
         return server, None
     try:
         with httpx.Client(timeout=3.0) as http:
-            response = http.get(f"{server.endpoint}/api/v1/profile")
+            response = http.get(f"{server.endpoint}/api/v{AGENT_API_VERSION}/profile")
             response.raise_for_status()
             runtime = response.json()["runtime"]
         if runtime.get("launch_id") != server.launch_id:
@@ -294,10 +296,10 @@ def _prepare_agent_server(
     required_driver: DriverName | None = None,
     attach_only: bool = False,
 ) -> AgentServerRef | sandbox_runtime.SandboxHandle | None:
-    entry = read_record(layout.runtime_status, layout.instance) or {}
+    entry = read_instance(layout.runtime_status, layout.instance) or {}
     managed = (
         layout.placement in {"resident", "visiting"}
-        and entry.get("workload", {}).get("lifecycle_protocol") == 1
+        and entry.get("workload", {}).get("api_version") == AGENT_API_VERSION
     )
     status = agents.AgentProcess(layout).status(
         # Managed attachment checks the live profile and registers retention below.

@@ -13,9 +13,9 @@ import pytest
 from toolang.base.types.sandbox import SandboxRef
 from toolang.common.files import file_lock_path
 from toolang.common.layout import AgentLayout
-from toolang.up.records import (
-    read_record,
-    update_record,
+from toolang.up.instance import (
+    read_instance,
+    update_instance,
     patch_workload,
     SandboxState,
     management_operation,
@@ -26,7 +26,7 @@ from toolang.up.sandbox import resolve_selection, _clear_state
 
 
 def begin(layout, identity="first"):
-    update_record(
+    update_instance(
         layout.runtime_status,
         lambda entry: entry.update(launch_id=identity),
         instance=layout.instance,
@@ -43,13 +43,13 @@ def test_shared_file_merges_concurrent_sections_and_isolated_instances(tmp_path)
             patch_workload, layout.runtime_status, "first", {"pid": 123}
         )
         control = pool.submit(
-            update_record,
+            update_instance,
             layout.runtime_status,
             lambda entry: entry["control"].update(endpoint="http://localhost:8123"),
             launch_id="first",
         )
         assert workload.result() and control.result()
-    entry = read_record(layout.runtime_status)
+    entry = read_instance(layout.runtime_status)
     assert entry is not None
     assert entry["workload"]["pid"] == 123
     assert entry["control"]["endpoint"].endswith(":8123")
@@ -73,17 +73,17 @@ def test_old_workload_and_cleanup_cannot_change_a_new_launch(tmp_path):
 def test_resource_binding_cannot_adopt_a_launch_created_after_its_snapshot(
     tmp_path, monkeypatch
 ):
-    from toolang.up import records
+    from toolang.up import instance as records
 
     layout = AgentLayout.resident(tmp_path, "alice")
     old = SandboxState("host", SandboxRef("123", "http://localhost:8123"), "first")
-    update = records.update_record
+    update = records.update_instance
 
     def raced_update(*args, **kwargs):
         begin(layout, "second")
         return update(*args, **kwargs)
 
-    monkeypatch.setattr(records, "update_record", raced_update)
+    monkeypatch.setattr(records, "update_instance", raced_update)
     with pytest.raises(ValueError, match="launch ownership changed"):
         old.save(layout.runtime_status)
     entry = required_record(layout)
@@ -94,7 +94,7 @@ def test_resource_binding_cannot_adopt_a_launch_created_after_its_snapshot(
 def test_stop_retains_successful_settings_and_error_history(tmp_path):
     layout = AgentLayout.resident(tmp_path, "alice")
     begin(layout)
-    update_record(
+    update_instance(
         layout.runtime_status,
         lambda entry: entry["control"].update(
             last_successful={
@@ -151,7 +151,7 @@ def test_query_skips_contended_or_changed_snapshot(tmp_path):
     begin(layout)
     patch_workload(layout.runtime_status, "first", {"status": "running", "pid": 123})
     owner = AgentProcess(layout)
-    observed = read_record(layout.runtime_status)
+    observed = read_instance(layout.runtime_status)
     with runtime_lock(layout.runtime_status):
         with ThreadPoolExecutor(max_workers=1) as pool:
             assert not pool.submit(owner.reconcile, observed).result(timeout=1)
@@ -165,7 +165,7 @@ def test_management_operation_does_not_hold_status_lock(tmp_path):
     with management_operation(layout, stage="start"):
         with ThreadPoolExecutor(max_workers=1) as pool:
             assert pool.submit(
-                update_record,
+                update_instance,
                 layout.runtime_status,
                 lambda entry: entry["workload"].update(pid=123),
             ).result(timeout=1)
@@ -176,30 +176,34 @@ def test_management_operation_does_not_hold_status_lock(tmp_path):
     assert "operation" not in required_record(layout)["control"]
 
 
-def test_stopped_legacy_report_migrates_but_live_report_is_rejected(tmp_path):
+@pytest.mark.parametrize("status", ["stopped", "running", "starting", "preparing"])
+def test_unversioned_instance_is_rejected_without_mutation(tmp_path, status):
     layout = AgentLayout.resident(tmp_path, "alice")
     layout.runtime_status.parent.mkdir(parents=True)
-    layout.runtime_status.write_text(
-        json.dumps(
-            {
-                "status": "stopped",
-                "endpoint": "http://localhost:8123",
-                "sandbox": "host",
-            }
-        )
-    )
-    with management_operation(layout, stage="start"):
-        assert preferred_runtime_port(layout) == 8123
-    layout.runtime_status.write_text(json.dumps({"status": "running", "pid": 123}))
-    with pytest.raises(ValueError, match="previous Toolang version"):
+    layout.runtime_status.write_text(json.dumps({"status": status, "pid": 123}))
+    before = layout.runtime_status.read_bytes()
+    with pytest.raises(ValueError, match="unsupported runtime status version"):
         with management_operation(layout, stage="start"):
-            pytest.fail("must not adopt live legacy runtime")
+            pytest.fail("must not adopt an unversioned runtime")
+    assert layout.runtime_status.read_bytes() == before
+    assert not file_lock_path(layout.runtime_status).exists()
 
 
 def required_record(layout):
-    entry = read_record(layout.runtime_status, layout.instance)
+    entry = read_instance(layout.runtime_status, layout.instance)
     assert entry is not None
     return entry
+
+
+@pytest.mark.parametrize("version", [2, 4, 3.0, True])
+def test_noncurrent_instance_is_rejected_without_mutation(tmp_path, version):
+    layout = AgentLayout.resident(tmp_path, "alice")
+    layout.runtime_status.parent.mkdir(parents=True)
+    layout.runtime_status.write_text(json.dumps({"version": version, "instances": {}}))
+    before = layout.runtime_status.read_bytes()
+    with pytest.raises(ValueError, match="unsupported runtime status version"):
+        read_instance(layout.runtime_status)
+    assert layout.runtime_status.read_bytes() == before
 
 
 def test_unknown_backend_probe_does_not_rewrite_workload(tmp_path, monkeypatch):
@@ -254,7 +258,7 @@ def test_pending_resource_with_live_control_owner_is_preparing(tmp_path, monkeyp
 def test_unreferenced_guest_pid_is_never_probed_in_the_host_namespace(tmp_path):
     layout = AgentLayout.resident(tmp_path, "alice")
     begin(layout)
-    update_record(
+    update_instance(
         layout.runtime_status,
         lambda entry: entry["control"].update(sandbox="docker:image"),
     )
@@ -277,7 +281,7 @@ def test_stop_recovers_a_host_created_before_its_reference_was_bound(tmp_path):
 
     layout = AgentLayout.resident(tmp_path, "alice")
     begin(layout)
-    update_record(
+    update_instance(
         layout.runtime_status,
         lambda entry: entry["control"].update(
             sandbox="host", endpoint="http://localhost:8123"
@@ -320,10 +324,10 @@ def test_killed_control_owner_can_be_recovered_without_losing_settings(tmp_path)
 import sys, time
 from pathlib import Path
 from toolang.common.layout import AgentLayout
-from toolang.up.records import management_operation, update_record
+from toolang.up.instance import management_operation, update_instance
 layout = AgentLayout.resident(Path(sys.argv[1]), 'alice')
 with management_operation(layout, stage='start'):
-    update_record(layout.runtime_status, lambda entry: entry['control'].update(last_successful={'endpoint': 'http://localhost:8123', 'sandbox': 'host'}))
+    update_instance(layout.runtime_status, lambda entry: entry['control'].update(last_successful={'endpoint': 'http://localhost:8123', 'sandbox': 'host'}))
     print('owned', flush=True)
     time.sleep(60)
 """
@@ -354,7 +358,7 @@ def test_killed_status_writer_claim_is_reclaimed(tmp_path):
     script = """
 import sys, time
 from pathlib import Path
-from toolang.up.records import runtime_lock
+from toolang.up.instance import runtime_lock
 with runtime_lock(Path(sys.argv[1])):
     print('locked', flush=True)
     time.sleep(60)
@@ -383,7 +387,7 @@ with runtime_lock(Path(sys.argv[1])):
 def test_foreign_guest_claim_requires_a_definite_dead_probe(
     tmp_path, monkeypatch, alive
 ):
-    from toolang.up import records, sandbox
+    from toolang.up import instance as records, sandbox
 
     layout = AgentLayout.resident(tmp_path, "alice")
     previous = {
@@ -417,7 +421,7 @@ def test_foreign_guest_claim_requires_a_definite_dead_probe(
 
 
 def test_temporary_cleanup_retains_recovery_refs_and_new_generations(tmp_path):
-    from toolang.up.records import remove_finished_instance
+    from toolang.up.instance import remove_finished_instance
 
     layout = replace(AgentLayout.resident(tmp_path, "alice"), instance="script")
     begin(layout)
@@ -456,7 +460,7 @@ def test_next_control_operation_recovers_only_abandoned_temporary_runtimes(
         registration.token,
     )
     state.save(old.runtime_status, instance=old.instance)
-    update_record(
+    update_instance(
         old.runtime_status,
         lambda entry: entry["control"].update(
             owner={
@@ -483,7 +487,7 @@ def test_next_control_operation_recovers_only_abandoned_temporary_runtimes(
     )
     assert stopped == ([] if live_owner else [state.ref])
     assert registration.path.exists() is live_owner
-    assert (read_record(base.runtime_status, old.instance) is not None) is live_owner
+    assert (read_instance(base.runtime_status, old.instance) is not None) is live_owner
 
 
 def test_owned_bootstrap_is_not_mistaken_for_unreferenced_staging(tmp_path):
@@ -508,7 +512,7 @@ def test_owned_bootstrap_is_not_mistaken_for_unreferenced_staging(tmp_path):
         registration.token,
     )
     state.save(base.runtime_status, instance=old.instance)
-    update_record(
+    update_instance(
         base.runtime_status,
         lambda entry: entry.update(
             launch_id="uncreated",
@@ -523,4 +527,4 @@ def test_owned_bootstrap_is_not_mistaken_for_unreferenced_staging(tmp_path):
     )
     asyncio.run(sandbox.release_stopped(base))
     assert stage.exists() and registration.path.exists()
-    assert read_record(base.runtime_status, "uncreated") is None
+    assert read_instance(base.runtime_status, "uncreated") is None

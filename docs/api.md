@@ -1,6 +1,8 @@
 # Control Surfaces
 
 This document defines the public CLI and local agent HTTP API.
+Agent endpoints use `AGENT_API_VERSION = 0`; the independently versioned
+[statistics API](execution-statistics.md) uses `/api/v0/stats`.
 
 Interactive CLI, TUI, and WebUI surfaces may parse the `ChatInput` forms
 defined by [input-syntax.md](./input-syntax.md). Commands remain local to
@@ -850,7 +852,7 @@ the final 2000 Docker log lines and streamed without buffering them in memory.
 Diagnostic write failures do not prevent container cleanup. Foreground
 interruption, ready-reporting errors, and wait failures stop and release the
 workload; cleanup failures preserve `SandboxState` for a later forced stop.
-`SandboxState` reads the `control` section of version 2 `status.json`; host and
+`SandboxState` reads the `control` section of agent instance format 3 `status.json`; host and
 guest update that shared file with generation checks and owned-field merges.
 Docker mounts the agent home read-write, including status, database sidecars,
 and logs; required inputs/workspaces and read-only bootstrap materials are added
@@ -1061,7 +1063,7 @@ Core endpoints are grouped as:
 - `runs`
 - `threads`
 
-Non-interactive execution uses `POST /api/v1/runs/stream`. It accepts an agic
+Non-interactive execution uses `POST /api/v0/runs/stream`. It accepts an agic
 or flow's unique `runnable` name, primary input, optional model, and optional
 declared arguments, and returns the canonical trace event stream for HTTP
 clients. An omitted model uses the current `AgentSetup.defaults.model`. CLI
@@ -1071,18 +1073,18 @@ script runs and TUI execution do not consume this endpoint.
 ## Agent Endpoints
 
 - `GET /healthz`
-- `GET /api/v1/stream`
-- `GET /api/v1/profile`
-- `GET /api/v1/models`
-- `GET /api/v1/tools`
-- `GET /api/v1/workspaces`
-- `GET /api/v1/agics`
-- `GET /api/v1/flows`
-- `PUT /api/v1/runtime/leases/{client_id}`
-- `DELETE /api/v1/runtime/leases/{client_id}`
-- `POST /api/v1/runtime/promote`
+- `GET /api/v0/stream`
+- `GET /api/v0/profile`
+- `GET /api/v0/models`
+- `GET /api/v0/tools`
+- `GET /api/v0/workspaces`
+- `GET /api/v0/agics`
+- `GET /api/v0/flows`
+- `PUT /api/v0/runtime/leases/{client_id}`
+- `DELETE /api/v0/runtime/leases/{client_id}`
+- `POST /api/v0/runtime/promote`
 
-`GET /api/v1/workspaces` reads the server's current Setup and State. It returns
+`GET /api/v0/workspaces` reads the server's current Setup and State. It returns
 `revision`, ordered `items` (`name`, source `path`, and runtime `available`), and
 `workdir`. A listing remains available when the runtime default cannot be resolved;
 in that case `workdir` is `null`. Inspection does not create workspace directories.
@@ -1099,14 +1101,14 @@ Execution CLI commands parse local directory grants but leave named workspace UR
 validation to the embedded executor or remote server; client configuration and
 filesystem paths do not determine remote availability.
 
-`/api/v1/profile` returns:
+`/api/v0/profile` returns:
 
 - profile metadata
 - runtime identity:
   - the server process's Toolang source `version`
   - enabled `drivers`
   - `launch_id`, `lifetime` (`persistent`, `foreground`, or `automatic`), and
-    `lifecycle_protocol: 1` on servers supporting managed lifetime
+    `api_version: 0`
   - `sandbox.driver`
   - the complete `sandbox.selector`
   - the complete, unprojected `sandbox.instance` for Docker, otherwise `null`
@@ -1117,16 +1119,15 @@ filesystem paths do not determine remote availability.
 `sandbox.description` is optional presentation metadata. Its absence or a `null`
 value does not block Chat: host execution falls back to the local host sandbox
 plugin description, while Docker continues to use `sandbox.instance`. Runtime
-profile readers ignore unknown additive fields, so TUI and executor releases can
-be upgraded independently. Breaking protocol changes require a separately
-versioned contract rather than making an additive display field mandatory.
+profile readers ignore unknown additive fields. Lifecycle and pagination
+payloads share the agent API version; incompatible versions are rejected.
 
 Lease upsert/release and promotion accept `{"launch_id": "<generation>"}`.
-Upsert and promotion return `launch_id`, `lifetime`, and `lifecycle_protocol`;
+Upsert and promotion return `launch_id`, `lifetime`, and `api_version`;
 release returns `{"ok": true}` and ignores a different generation. Promotion
 keeps the same endpoint/drivers, disables automatic shutdown, and rejects a
 foreground server. A stale generation or closing server rejects upsert/promotion
-with HTTP 409. Legacy servers require stop/restart to adopt this protocol.
+with HTTP 409. Upgrade the CLI and agent servers together.
 
 Mutating requests may carry `X-Toolang-Launch-ID` to reject a replaced execution
 owner before writes. Resident/visiting CLI clients send it automatically. Lease
@@ -1134,7 +1135,7 @@ renewal is independent of SSE; readers do not retain automatic servers. See
 [the lifetime contract](plans/resident-visiting-server-lifecycle.md) for timing,
 shutdown eligibility, and failure handling.
 
-`GET /api/v1/models` returns the server's current effective
+`GET /api/v0/models` returns the server's current effective
 `AgentSetup.models` collection. Runnable `models` directives are applied when a
 run starts, not by this inspection endpoint. The response includes:
 
@@ -1159,8 +1160,8 @@ effort-level or token-budget control; a toggle by itself is not applicable.
 `price.input` and `price.output` are base token prices converted to USD per one
 million tokens and are `null` when the corresponding catalog price is absent.
 
-`GET /api/v1/models` accepts repeatable `query` parameters evaluated by the
-runtime model collection. `GET /api/v1/tools` uses the same convention and
+`GET /api/v0/models` accepts repeatable `query` parameters evaluated by the
+runtime model collection. `GET /api/v0/tools` uses the same convention and
 returns effective tool `ref`, structured `toolset`, `plugin`, and `description`
 fields. Omitting
 `query` lists the complete effective collection. Repeated query values and
@@ -1170,7 +1171,7 @@ deduplicated. Empty matches return an empty `items` list; the model response
 also has a `null` default. Matching uses the public CLI JSON projection, while
 these HTTP response fields remain unchanged.
 
-`GET /api/v1/agics` and `GET /api/v1/flows` list the agent's runnable
+`GET /api/v0/agics` and `GET /api/v0/flows` list the agent's runnable
 definitions.
 
 
@@ -1178,14 +1179,14 @@ definitions.
 
 Summary:
 
-- `GET /api/v1/caps`
+- `GET /api/v0/caps`
 
 Collections:
 
-- `GET /api/v1/psyches`
-- `GET /api/v1/skills`
-- `GET /api/v1/services`
-- `GET /api/v1/prompts`
+- `GET /api/v0/psyches`
+- `GET /api/v0/skills`
+- `GET /api/v0/services`
+- `GET /api/v0/prompts`
 
 The cap summary and collection endpoints accept repeatable `query` parameters.
 They match the public cap records documented in [Resource Queries](queries.md),
@@ -1202,40 +1203,40 @@ without issuing one detail request per item.
 
 Detail:
 
-- `GET /api/v1/psyches/{name}`
-- `GET /api/v1/skills/{name}`
-- `GET /api/v1/services/{name}`
-- `GET /api/v1/prompts/{name}`
+- `GET /api/v0/psyches/{name}`
+- `GET /api/v0/skills/{name}`
+- `GET /api/v0/services/{name}`
+- `GET /api/v0/prompts/{name}`
 
 Templates (one bundled `default` per kind; list responses contain one entry):
 
-- `GET /api/v1/psyches/templates`
-- `GET /api/v1/skills/templates`
-- `GET /api/v1/services/templates`
-- `GET /api/v1/prompts/templates`
-- `GET /api/v1/psyches/templates/default`
-- `GET /api/v1/skills/templates/default`
-- `GET /api/v1/services/templates/default`
-- `GET /api/v1/prompts/templates/default`
+- `GET /api/v0/psyches/templates`
+- `GET /api/v0/skills/templates`
+- `GET /api/v0/services/templates`
+- `GET /api/v0/prompts/templates`
+- `GET /api/v0/psyches/templates/default`
+- `GET /api/v0/skills/templates/default`
+- `GET /api/v0/services/templates/default`
+- `GET /api/v0/prompts/templates/default`
 
 Write:
 
-- `PUT /api/v1/psyches/{name}/authored`
-- `PUT /api/v1/skills/{name}/authored`
-- `PUT /api/v1/services/{name}/authored`
-- `PUT /api/v1/prompts/{name}/authored`
-- `DELETE /api/v1/psyches/{name}/authored`
-- `DELETE /api/v1/skills/{name}/authored`
-- `DELETE /api/v1/services/{name}/authored`
-- `DELETE /api/v1/prompts/{name}/authored`
-- `PUT /api/v1/psyches/{name}/configured`
-- `PUT /api/v1/skills/{name}/configured`
-- `PUT /api/v1/services/{name}/configured`
-- `PUT /api/v1/prompts/{name}/configured`
-- `DELETE /api/v1/psyches/{name}/configured`
-- `DELETE /api/v1/skills/{name}/configured`
-- `DELETE /api/v1/services/{name}/configured`
-- `DELETE /api/v1/prompts/{name}/configured`
+- `PUT /api/v0/psyches/{name}/authored`
+- `PUT /api/v0/skills/{name}/authored`
+- `PUT /api/v0/services/{name}/authored`
+- `PUT /api/v0/prompts/{name}/authored`
+- `DELETE /api/v0/psyches/{name}/authored`
+- `DELETE /api/v0/skills/{name}/authored`
+- `DELETE /api/v0/services/{name}/authored`
+- `DELETE /api/v0/prompts/{name}/authored`
+- `PUT /api/v0/psyches/{name}/configured`
+- `PUT /api/v0/skills/{name}/configured`
+- `PUT /api/v0/services/{name}/configured`
+- `PUT /api/v0/prompts/{name}/configured`
+- `DELETE /api/v0/psyches/{name}/configured`
+- `DELETE /api/v0/skills/{name}/configured`
+- `DELETE /api/v0/services/{name}/configured`
+- `DELETE /api/v0/prompts/{name}/configured`
 
 Authored write bodies use:
 
@@ -1281,8 +1282,8 @@ The HTTP API has no endpoint that accepts terminal `ChatInput` text. A chat
 client creates a thread when needed, converts the interaction to the shared
 `RunRequest` boundary, and starts each turn through the authored run stream:
 
-1. `POST /api/v1/threads` with `client_id` and `request_id`.
-2. `POST /api/v1/chat/runs/authored/stream` with the returned thread ID, client ID, request ID,
+1. `POST /api/v0/threads` with `client_id` and `request_id`.
+2. `POST /api/v0/chat/runs/authored/stream` with the returned thread ID, client ID, request ID,
    authored input, materialized model/policy, `driver: "chat"`, and a nullable
    `runnable.ref`. A null ref leaves handler selection to execution admission;
    a session choice or input override supplies an explicit ref.
@@ -1294,7 +1295,7 @@ selection, policy precedence, prompts, named input, and server-relative file
 includes. This keeps the Chat TUI and a future WebUI on the same run protocol
 without adding a chat-specific server vocabulary.
 
-The separate non-interactive `POST /api/v1/runs/stream` endpoint continues to
+The separate non-interactive `POST /api/v0/runs/stream` endpoint continues to
 accept a selected runnable and canonical percept parts such as:
 
 - `text`
@@ -1359,7 +1360,7 @@ and conventional twelve-character container ID, for example
 `sandbox  docker:python:3.13-slim · a1b2c3d4e5f6`. Host execution displays the
 ready OS description produced by the host sandbox plugin, for example
 `sandbox  host · macOS 27.0 arm64`. The middle-dot separators use the dim style,
-and OS build identifiers are omitted. `/api/v1/profile` returns the same
+and OS build identifiers are omitted. `/api/v0/profile` returns the same
 twelve-character Docker hostname used to identify the guest; the host retains
 the complete container ID for Docker lifecycle operations.
 Chore thread IDs are inspectable through thread and run commands.
@@ -1375,34 +1376,34 @@ derived ID, and optional schedule. Progress is stored in the `chores` table of
 
 ## Run And Thread Endpoints
 
-Interactive clients submit, rerun, and steer under `/api/v1/chat/runs`;
+Interactive clients submit, rerun, and steer under `/api/v0/chat/runs`;
 these write routes require the chat driver. Noninteractive scripts use the
-`/api/v1/runs` routes below and create script threads at `POST /api/v1/runs/threads`.
-Interactive thread creation at `POST /api/v1/threads` creates `chat_` contexts.
+`/api/v0/runs` routes below and create script threads at `POST /api/v0/runs/threads`.
+Interactive thread creation at `POST /api/v0/threads` creates `chat_` contexts.
 All callers use `client_id` and `request_id` rather than a client-type enum.
 Management, cancellation, inspection, and script execution remain available
 when chat is disabled. See [driver selection](work.md).
 
-- `POST /api/v1/runs/stream`
-- `POST /api/v1/runs/authored/stream`
-- `GET /api/v1/runs/defaults`
-- `POST /api/v1/runs/workdir/resolve`
-- `GET /api/v1/runs`
-- `GET /api/v1/runs/{run_id}`
-- `GET /api/v1/runs/{run_id}/stream`
-- `POST /api/v1/runs/{run_id}/rerun/stream`
-- `POST /api/v1/runs/{run_id}/rerun`
-- `POST /api/v1/runs/{run_id}/steer`
-- `POST /api/v1/runs/{run_id}/cancel`
-- `POST /api/v1/threads`
-- `GET /api/v1/threads`
-- `GET /api/v1/threads/{thread_id}`
-- `GET /api/v1/threads/{thread_id}/result`
-- `POST /api/v1/threads/{thread_id}/rewind`
-- `POST /api/v1/threads/{thread_id}/fork`
-- `GET /api/v1/threads/{thread_id}/stream`
+- `POST /api/v0/runs/stream`
+- `POST /api/v0/runs/authored/stream`
+- `GET /api/v0/runs/defaults`
+- `POST /api/v0/runs/workdir/resolve`
+- `GET /api/v0/runs`
+- `GET /api/v0/runs/{run_id}`
+- `GET /api/v0/runs/{run_id}/stream`
+- `POST /api/v0/runs/{run_id}/rerun/stream`
+- `POST /api/v0/runs/{run_id}/rerun`
+- `POST /api/v0/runs/{run_id}/steer`
+- `POST /api/v0/runs/{run_id}/cancel`
+- `POST /api/v0/threads`
+- `GET /api/v0/threads`
+- `GET /api/v0/threads/{thread_id}`
+- `GET /api/v0/threads/{thread_id}/result`
+- `POST /api/v0/threads/{thread_id}/rewind`
+- `POST /api/v0/threads/{thread_id}/fork`
+- `GET /api/v0/threads/{thread_id}/stream`
 
-`/api/v1/runs/{run_id}` is the main trace-detail endpoint.
+`/api/v0/runs/{run_id}` is the main trace-detail endpoint.
 
 Run collections return `RunInfo` arrays directly. `RunInfo` combines run
 identity, status, input text, output summary, failure, and timestamps; there is
@@ -1445,7 +1446,7 @@ chore for progress. Thread create and fork return the created thread; rewind
 returns the updated existing thread representation. None of these thread
 operations starts a follow-up run.
 
-`POST /api/v1/runs/stream` accepts:
+`POST /api/v0/runs/stream` accepts:
 
 - `thread_id`: required existing thread id
 - `request_id`: required globally unique caller-supplied control identifier
@@ -1459,7 +1460,7 @@ HTTP limit fields are `agic_model_calls`, `agic_tool_calls`, `tokens`, `cost`,
 and `time`. The caller materializes omitted session values before submission;
 an explicit JSON `null` disables that field for the run.
 
-`POST /api/v1/runs/authored/stream` accepts the authored `RunRequest` wire
+`POST /api/v0/runs/authored/stream` accepts the authored `RunRequest` wire
 shape:
 
 Authored requests may supply `driver` (`chat`, `talk`, or `chore`) with
@@ -1518,23 +1519,23 @@ catalog route and replaces that target's complete reasoning choice. Named input
 names must be unique. Unknown fields and invalid combinations return `422`; a
 missing thread returns `404`.
 
-`GET /api/v1/runs/defaults` returns one concrete `model` request, including its
+`GET /api/v0/runs/defaults` returns one concrete `model` request, including its
 typed `parameters`, plus `runnable`, materialized `policy`, and the effective
 canonical `workdir` for clients to adopt as session-owned defaults. The optional
 `thread_id` selects the workdir inherited from that thread. The resolver endpoint
-`POST /api/v1/runs/workdir/resolve` accepts optional `thread_id`, `workdir`, and
+`POST /api/v0/runs/workdir/resolve` accepts optional `thread_id`, `workdir`, and
 `workdir_base` fields and returns one canonical `workdir`. It applies the same
 workspace authorization and path rules as run submission, but does not accept a
 run or mutate client session settings. Run submissions still perform full
 validation of the complete request.
 
-`GET /api/v1/threads/{thread_id}/result` returns the newest succeeded root
+`GET /api/v0/threads/{thread_id}/result` returns the newest succeeded root
 `RunDetail` with a nonempty resolved output. An unknown thread and a known
 thread without a result return distinct `404` details.
 
 ### Live execution snapshots
 
-`GET /api/v1/runs/live` returns `LiveSnapshot(epoch, observed_at, trees)` from
+`GET /api/v0/runs/live` returns `LiveSnapshot(epoch, observed_at, trees)` from
 resident executor memory. Optional `root_run_id` selects one root; unknown,
 completed and child IDs return an empty `trees` collection. Invalid IDs return
 `422`; a stopped executor returns `503`. Local and remote RunClients expose
@@ -1558,7 +1559,7 @@ never cancels execution; reconnect with GET once the run ID is known, never repe
 An older `after` cursor cannot prepend recovery to a newly admitted root: its
 subscription starts at admission. GET recovers the existing scope from `after`.
 
-Clients create a thread explicitly with `POST /api/v1/threads` before the first
+Clients create a thread explicitly with `POST /api/v0/threads` before the first
 run. The thread request accepts `web`, `term`, `tui`, `chat`, or `script` as its
 client placement; `script` creates a `script_*` thread.
 
@@ -1566,9 +1567,9 @@ All execution POST streams and these GET streams accept optional `?after=CURSOR`
 
 | Endpoint | Scope and lifetime |
 | --- | --- |
-| `/api/v1/stream` | This agent's events; stays open. |
-| `/api/v1/threads/{thread_id}/stream` | Physical events of this thread, including forks from it; stays open. |
-| `/api/v1/runs/{run_id}/stream` | Complete root tree, through its last active descendant. A child ID returns `409` with the root ID. |
+| `/api/v0/stream` | This agent's events; stays open. |
+| `/api/v0/threads/{thread_id}/stream` | Physical events of this thread, including forks from it; stays open. |
+| `/api/v0/runs/{run_id}/stream` | Complete root tree, through its last active descendant. A child ID returns `409` with the root ID. |
 
 Cursors are opaque agent-wide positions. Invalid or future cursors return `422`
 before POST admission. Filtering leaves legitimate gaps. Use `after` explicitly;
@@ -1616,13 +1617,13 @@ Completion events carry direct `{type, value}` outputs, error text and necessary
 completion/usage summaries. `preceded_by` application facts and terminal `control`
 identify controls by `{run, index}`; `RunBegin.control` is its own Run binding control index.
 External subscribers must upgrade and reconnect for this schema.
-Step Begin/End fields use `spec`/`report`. History cursors use version `2`;
-Hub execution publication envelopes and persisted event projections use version
-`2`, with no version-1 fallback. Upgrade publishers and subscribers together. Model completion
+Step Begin/End fields use `spec`/`report`. History cursors use agent API v0;
+Hub publications use hub API v0 and persisted projections use hub store schema 4.
+Upgrade publishers and subscribers together. Model completion
 summaries expose four token fields under `report.usage`; USD `report.cost` and
 `report.cost_approximate` are siblings. They contain no full cost evidence.
 Stored model Report now uses `usage`, `cost`, `invoked`, `cont`, with no
-`accounting` envelope; Run records add terminal `report`. Schema 60 requires fresh
+`accounting` envelope; Run records add terminal `report`. Schema 61 requires fresh
 storage without compatibility reads. See [terminal records](execution.md#terminal-usage-and-cost-records)
 and [Run Events](execution.md#run-events).
 

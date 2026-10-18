@@ -218,15 +218,6 @@ def test_buffer_only_renders_additions_and_groups_unsaved_tool_results(
 
 
 def test_unknown_versions_and_non_part_references_fail_explicitly() -> None:
-    with pytest.raises(ValueError, match="unsupported durable model call version: 2"):
-        ModelCallRefs(
-            "hash",
-            ModelMessages(StepRef.parse("run_ab12.0")),
-            None,
-            None,
-            None,
-            version=2,
-        )
     with pytest.raises(ValueError, match="must be an array"):
         delta_from_data({"version": 2, "messages": [{"future": "format"}]})
     with pytest.raises(ValueError, match="requires Text or Parts"):
@@ -295,8 +286,8 @@ def test_shared_resource_ref_keeps_trigger_and_guidance_visibility_separate() ->
     assert recall_revisions((forged,)) == {}
 
 
-@pytest.mark.parametrize("version", [0, 2, True, "1", None])
-def test_call_version_is_checked_before_decoding_future_messages(version) -> None:
+@pytest.mark.parametrize("version", [0, 1, 2, True, "1", None])
+def test_retired_call_version_is_rejected_before_decoding_messages(version) -> None:
     spec = StoredModelStepSpec(
         "test/model",
         ModelCallRefs(
@@ -310,7 +301,7 @@ def test_call_version_is_checked_before_decoding_future_messages(version) -> Non
     assert "recall" not in call and "delta" not in call
     call["version"] = version
     call["messages"] = {"future": "unknown format"}
-    with pytest.raises(ValueError, match="unsupported durable model call version"):
+    with pytest.raises(ValueError, match="stored model call requires"):
         stored_step_spec_from_data("model", data)
 
 

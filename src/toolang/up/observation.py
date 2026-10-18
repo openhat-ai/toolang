@@ -17,10 +17,11 @@ import psutil
 from toolang.common.files import atomic_write_text, file_write_lock
 from toolang.common.layout import AgentLayout
 from toolang.up.discovery import agent_layouts
-from toolang.up.records import (
+from toolang.up.instance import (
+    AGENT_INSTANCE_FORMAT,
     read_document,
-    read_record,
-    update_record,
+    read_instance,
+    update_instance,
     remove_finished_instance,
     control_owner,
 )
@@ -93,7 +94,7 @@ class RuntimeRegistration:
         self.toolang_root = toolang_root
         self.path = toolang_root / ".runtime" / "instances" / instance_filename(layout)
         self.payload = {
-            "version": 1,
+            "version": AGENT_INSTANCE_FORMAT,
             "status": str(layout.runtime_status),
             "launch_id": self.token,
         }
@@ -129,7 +130,7 @@ class RuntimeRegistration:
                     "endpoint": self.endpoint,
                 }
 
-            update_record(
+            update_instance(
                 self.layout.runtime_status, begin, instance=self.layout.instance
             )
         try:
@@ -168,7 +169,7 @@ def _remove_reference(path: Path, launch_id: str) -> None:
 
 
 def remove_registration(layout: AgentLayout, launch_id: str) -> None:
-    entry = read_record(layout.runtime_status, layout.instance)
+    entry = read_instance(layout.runtime_status, layout.instance)
     if entry is None or entry["launch_id"] != launch_id:
         return
     root = entry["control"].get("toolang_root")
@@ -191,7 +192,10 @@ def running_instances(root: Path) -> tuple[dict, ...]:
     for path in sorted((root / ".runtime" / "instances").glob("*.json")):
         try:
             reference = json.loads(path.read_text())
-            if not isinstance(reference, dict) or reference.get("version") != 1:
+            if (
+                not isinstance(reference, dict)
+                or reference.get("version") != AGENT_INSTANCE_FORMAT
+            ):
                 continue  # Never adopt legacy registrations.
             status_path = Path(reference["status"])
             if status_path not in records:
@@ -207,7 +211,7 @@ def running_instances(root: Path) -> tuple[dict, ...]:
                         and isinstance(entry.get("workload"), dict)
                     }
                     if document is not None
-                    and document.get("version") == 2
+                    and document.get("version") == AGENT_INSTANCE_FORMAT
                     and isinstance(entries, dict)
                     else {}
                 )
@@ -231,9 +235,9 @@ def running_instances(root: Path) -> tuple[dict, ...]:
             control.get("ref") is not None
             and control.get("sandbox", "").partition(":")[0] == "docker"
         ):
-            from toolang.up.records import SandboxState
+            from toolang.up.instance import SandboxState
 
-            reference = SandboxState.from_record(entry)
+            reference = SandboxState.from_instance(entry)
             if reference is not None:
                 docker.append((AgentProcess(layout), reference, entry))
     AgentProcess.cache_docker_states(docker)
@@ -482,7 +486,9 @@ def runtime_inventory(root: Path) -> RuntimeInventory:
             add_resident(layout, None)
             continue
         entries = document.get("instances")
-        if document.get("version") != 2 or not isinstance(entries, dict):
+        if document.get("version") != AGENT_INSTANCE_FORMAT or not isinstance(
+            entries, dict
+        ):
             add_resident(layout, None, "runtime status document is invalid")
             continue
         default_entry = entries.get("default")
@@ -544,7 +550,10 @@ def runtime_inventory(root: Path) -> RuntimeInventory:
         fallback: AgentLayout | None = None
         try:
             reference = json.loads(reference_path.read_text(encoding="utf-8"))
-            if not isinstance(reference, dict) or reference.get("version") != 1:
+            if (
+                not isinstance(reference, dict)
+                or reference.get("version") != AGENT_INSTANCE_FORMAT
+            ):
                 diagnostics.append(
                     f"runtime registry {reference_path.name}: invalid reference"
                 )
@@ -575,7 +584,7 @@ def runtime_inventory(root: Path) -> RuntimeInventory:
                     )
                 )
                 continue
-            if document is None or document.get("version") != 2:
+            if document is None or document.get("version") != AGENT_INSTANCE_FORMAT:
                 add(
                     _SnapshotCandidate(
                         status_path,
@@ -751,7 +760,7 @@ def runtime_inventory(root: Path) -> RuntimeInventory:
         probes.append((candidate, candidate.layout, entry))
 
     docker_owners = []
-    from toolang.up.records import SandboxState
+    from toolang.up.instance import SandboxState
 
     for candidate, layout, entry in probes:
         sandbox_name = entry["control"].get("sandbox")
@@ -761,7 +770,7 @@ def runtime_inventory(root: Path) -> RuntimeInventory:
             and sandbox_name.partition(":")[0] == "docker"
         ):
             try:
-                reference = SandboxState.from_record(entry)
+                reference = SandboxState.from_instance(entry)
             except (TypeError, ValueError):
                 reference = None
             if reference is not None:

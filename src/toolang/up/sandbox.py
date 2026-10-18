@@ -18,6 +18,7 @@ from urllib.request import urlopen
 from uuid import uuid4
 from weakref import WeakKeyDictionary
 
+from toolang.api.version import AGENT_API_VERSION
 from toolang.base.errors import SandboxLaunchError
 from toolang.base.protocols.sandbox import Sandbox
 from toolang.base.types.model import ModelOverride
@@ -54,11 +55,11 @@ from toolang.up.mounts import (
     prepare_source_mounts,
     prepare_workspace_mounts,
 )
-from toolang.up.records import (
+from toolang.up.instance import (
     SandboxState,
-    read_record,
+    read_instance,
     read_document,
-    update_record,
+    update_instance,
     patch_workload,
     process_alive,
     control_owner,
@@ -224,7 +225,7 @@ def management_lock(
             detail=layout.name,
         )
 
-    from toolang.up.records import management_operation
+    from toolang.up.instance import management_operation
 
     with management_operation(layout, stage=stage, on_wait=on_wait):
         if waiting:
@@ -914,7 +915,7 @@ async def _wait_ready(
     timeout_sec: float,
 ) -> None:
     deadline = time.monotonic() + timeout_sec
-    url = f"{ref.endpoint.rstrip('/')}/api/v1/profile"
+    url = f"{ref.endpoint.rstrip('/')}/api/v{AGENT_API_VERSION}/profile"
     while time.monotonic() < deadline:
         if not await implementation.running(ref):
             raise RuntimeError("agent server exited before becoming ready")
@@ -961,7 +962,7 @@ def _clear_state(layout: AgentLayout, *, expected: SandboxState) -> None:
         if workload.get("status") in {"running", "preparing", "starting"}:
             workload.update(status="stopped", pid=None, updated_at=_now())
 
-    update_record(
+    update_instance(
         layout.runtime_status,
         clear,
         instance=layout.instance,
@@ -1014,7 +1015,7 @@ async def register_host_server(
                 layout, endpoint=endpoint, launch_id=launch_id, spec=spec
             )
     # Publish identity before execution; recovery must not depend on parent acknowledgement.
-    entry = read_record(layout.runtime_status, layout.instance)
+    entry = read_instance(layout.runtime_status, layout.instance)
     if entry is None or entry["launch_id"] != launch_id:
         raise ValueError("host launch identity does not match this server")
     state = SandboxState("host", own, launch_id)
@@ -1105,14 +1106,14 @@ async def _release_abandoned_temporary(layout: AgentLayout) -> None:
             file_lock_path(sibling.runtime_status), instance=instance
         ):
             with management_lock(sibling, stage="stop"):
-                current = read_record(sibling.runtime_status, instance)
+                current = read_instance(sibling.runtime_status, instance)
                 if (
                     current is None
                     or current["launch_id"] != entry["launch_id"]
                     or current["control"].get("owner") != owner
                 ):
                     continue
-                state = SandboxState.from_record(current)
+                state = SandboxState.from_instance(current)
                 if state is not None:
                     await _stop_and_release(
                         sibling,
@@ -1128,9 +1129,9 @@ async def _release_abandoned_temporary(layout: AgentLayout) -> None:
 
 async def _recover_unreferenced(layout: AgentLayout) -> SandboxState | None:
     """Recover a host created before binding, or retire an uncreated intent."""
-    from toolang.up.records import process_alive
+    from toolang.up.instance import process_alive
 
-    entry = read_record(layout.runtime_status, layout.instance)
+    entry = read_instance(layout.runtime_status, layout.instance)
     if entry is None or entry["workload"].get("status") not in {
         "running",
         "preparing",
@@ -1221,7 +1222,7 @@ def _now() -> str:
 
 
 def _remembered_sandbox(layout: AgentLayout) -> str | None:
-    entry = read_record(layout.runtime_status, layout.instance)
+    entry = read_instance(layout.runtime_status, layout.instance)
     value = (entry or {}).get("control", {}).get("last_successful", {}).get("sandbox")
     return value if isinstance(value, str) and value else None
 
@@ -1250,7 +1251,7 @@ def _begin_launch(spec: LaunchSpec) -> None:
         if layout.instance is not None:
             entry["control"]["owner"] = control_owner()
 
-    update_record(layout.runtime_status, begin, instance=layout.instance)
+    update_instance(layout.runtime_status, begin, instance=layout.instance)
     RuntimeRegistration(
         layout,
         toolang_root=spec.serve.toolang_root or layout.root,
@@ -1262,7 +1263,7 @@ def _begin_launch(spec: LaunchSpec) -> None:
 def _remember_success(
     layout: AgentLayout, state: SandboxState, *, selector: str
 ) -> None:
-    update_record(
+    update_instance(
         layout.runtime_status,
         lambda entry: entry["control"].update(
             last_successful={"endpoint": state.ref.endpoint, "sandbox": selector}

@@ -14,7 +14,7 @@ from toolang.cli.common import agent_server
 from toolang.common.layout import AgentLayout
 from toolang.up.logging import LoggingPlan
 from toolang.up.process import AgentStatus
-from toolang.up.records import SandboxState
+from toolang.up.instance import SandboxState
 from toolang.up.types import AgentServerRef
 from toolang.base.types.sandbox import SandboxRef
 from toolang.base.types.model import ModelOverride
@@ -218,7 +218,7 @@ def test_automatic_server_exiting_during_acquisition(
             else {
                 "launch_id": request.url.host,
                 "lifetime": "automatic",
-                "lifecycle_protocol": 1,
+                "api_version": 0,
             },
         )
 
@@ -312,10 +312,10 @@ def test_managed_attachment_checks_its_profile_instead_of_waiting_for_health(
     monkeypatch.setattr(agent_server.agents, "AgentProcess", Process)
     monkeypatch.setattr(
         agent_server,
-        "read_record",
+        "read_instance",
         lambda *_args: {
             "launch_id": "launch",
-            "workload": {"lifetime": "automatic", "lifecycle_protocol": 1},
+            "workload": {"lifetime": "automatic", "api_version": 0},
         },
     )
     retained = []

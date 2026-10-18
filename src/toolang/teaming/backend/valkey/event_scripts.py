@@ -4,9 +4,13 @@ import json
 
 from ...events import MAX_EVENT_BYTES
 from ...records import MANIFEST, MAX_BYTES, MAX_ENTITIES
+from .schema import HUB_STORE_SCHEMA
+from ...schemas import HUB_API_VERSION
 from .lua import LEASE_CHECK, STREAM_ORDER
 
 _CONSTANTS = (
+    f"local hub_store_schema={HUB_STORE_SCHEMA}\n"
+    f"local hub_api_version={HUB_API_VERSION}\n"
     f"local max_event_bytes={MAX_EVENT_BYTES}\n"
     f"local max_bytes={MAX_BYTES}\n"
     f"local max_entities={MAX_ENTITIES}\n"
@@ -26,7 +30,7 @@ end
 expect(KEYS[1],'hash'); expect(KEYS[2],'stream'); expect(KEYS[3],'hash')
 local epoch = redis.call('HGET',KEYS[1],'epoch')
 local function valid()
-  if not epoch or redis.call('HGET',KEYS[1],'v') ~= '2' or redis.call('HEXISTS',KEYS[1],'pending') == 1 then error('protocol_error: incomplete dataset') end
+  if not epoch or redis.call('HGET',KEYS[1],'v') ~= tostring(hub_store_schema) or redis.call('HEXISTS',KEYS[1],'pending') == 1 then error('protocol_error: incomplete dataset') end
   local tail = redis.call('HGET',KEYS[1],'tail')
   local floor = redis.call('HGET',KEYS[1],'floor')
   if not tail or not floor or not redis.call('HGET',KEYS[1],'bytes') then error('protocol_error: missing metadata') end
@@ -61,7 +65,7 @@ INIT = (
     + """
 if not epoch then
   if redis.call('EXISTS',KEYS[1],KEYS[2],KEYS[3]) ~= 0 then error('protocol_error: partial dataset') end
-  redis.call('HSET',KEYS[1],'v','2','epoch',ARGV[1],'tail','0-0','floor','0-0','bytes','0','catalog_revision','0')
+  redis.call('HSET',KEYS[1],'v',tostring(hub_store_schema),'epoch',ARGV[1],'tail','0-0','floor','0-0','bytes','0','catalog_revision','0')
   epoch = ARGV[1]
 end
 valid()
@@ -110,11 +114,11 @@ valid()
 expect(KEYS[4],'hash'); expect(KEYS[5],'hash'); expect(KEYS[6],'hash')
 local op = cjson.decode(ARGV[4])
 if epoch ~= op.epoch then return {'reset'} end
-local lease=current_lease(KEYS[4],KEYS[#KEYS],op.agent)
+local lease=current_lease(KEYS[4],KEYS[#KEYS-1],op.agent)
 if not lease or lease.token~=op.token then return {'lease'} end
 local raw = redis.call('HGET',KEYS[3],op.agent)
-local agent = raw and cjson.decode(raw) or {v=2,revision=0,status='incomplete',floor='0-0'}
-if agent.v ~= 2 then error('protocol_error: origin version') end
+local agent = raw and cjson.decode(raw) or {v=hub_store_schema,revision=0,status='incomplete',floor='0-0'}
+if agent.v ~= hub_store_schema then error('protocol_error: origin version') end
 if agent.last_id == op.id then
   if agent.last_digest ~= ARGV[5] then error('protocol_error: conflicting operation') end
   return {'ok',agent.last_result}
@@ -124,20 +128,21 @@ if op.kind == 'event' then
   if agent.source_epoch ~= op.source_epoch then return {'recover'} end
   if op.source <= agent.source then return {'ok',agent.last_result or '0-0'} end
   if agent.source ~= op.prior then return {'recover'} end
-  if #op.data + #op.agent + 133 > max_event_bytes or op.count > max_entities or op.bytes > max_bytes or cjson.decode(op.data).v ~= 2 then error('protocol_error: publication bounds') end
+  if #op.data + #op.agent + 133 > max_event_bytes or op.count > max_entities or op.bytes > max_bytes or cjson.decode(op.data).v ~= hub_api_version then error('protocol_error: publication bounds') end
   if redis.call('HEXISTS',KEYS[5],manifest_field) == 0 then error('protocol_error: missing generation') end
 elseif op.kind == 'recover' then
   if agent.token ~= op.token or agent.recovery ~= op.recovery or agent.staging ~= op.generation then return {'recover'} end
   local manifest = redis.call('HGET',KEYS[5],manifest_field)
   if not manifest then return {'recover'} end
   local m = cjson.decode(manifest)
+  if m.v ~= hub_store_schema then error('protocol_error: manifest version') end
   if m.digest ~= op.snapshot_digest or m.sealed ~= true or m.source ~= op.source or redis.call('HLEN',KEYS[5]) ~= m.count + 1 then return {'recover'} end
 elseif op.kind ~= 'incomplete' then error('protocol_error: operation') end
 -- Decode and validate the entire bounded mutation before the first shared write.
 local fields = {}
 for key,value in pairs(op.updates or {}) do
   local decoded = cjson.decode(value)
-  if decoded.v ~= 2 then error('protocol_error: entity version') end
+  if decoded.v ~= hub_api_version then error('protocol_error: entity version') end
   fields[key]=value
 end
 local old_generation = agent.generation
@@ -146,13 +151,13 @@ redis.call('HSET',KEYS[1],'pending',op.id)
 local sid
 if op.kind == 'incomplete' then
   if agent.status ~= 'incomplete' or agent.token ~= op.token or agent.reason ~= op.reason or not raw then
-    sid=append('incomplete',op.agent,cjson.encode({v=2,reason=op.reason}))
+    sid=append('incomplete',op.agent,cjson.encode({v=hub_api_version,reason=op.reason}))
     agent.revision=agent.revision+1
   else sid=redis.call('HGET',KEYS[1],'tail') end
   agent.status='incomplete'; agent.reason=op.reason; agent.token=op.token
   agent.recovery=op.recovery; agent.staging=op.generation
 elseif op.kind == 'recover' then
-  sid=append('recovered',op.agent,cjson.encode({v=2,recovery=op.recovery}))
+  sid=append('recovered',op.agent,cjson.encode({v=hub_api_version,recovery=op.recovery}))
   local m=cjson.decode(redis.call('HGET',KEYS[5],manifest_field))
   m.baseline=sid
   redis.call('HSET',KEYS[5],manifest_field,cjson.encode(m))
@@ -163,7 +168,7 @@ elseif op.kind == 'recover' then
 else
   sid=append('event',op.agent,op.data)
   for key,value in pairs(fields) do
-    redis.call('HSET',KEYS[5],key,'{"v":2,"entity":'..value..',"delivery":"'..sid..'"}')
+    redis.call('HSET',KEYS[5],key,'{"v":'..tostring(hub_store_schema)..',"entity":'..value..',"delivery":"'..sid..'"}')
   end
   for _,key in ipairs(op.removed or {}) do redis.call('HDEL',KEYS[5],key) end
   if op.structural then
@@ -189,25 +194,26 @@ valid()
 expect(KEYS[4],'hash'); expect(KEYS[5],'hash'); expect(KEYS[6],'hash')
 local op=cjson.decode(ARGV[4])
 if epoch ~= op.epoch then return {'reset'} end
-local lease=current_lease(KEYS[4],KEYS[#KEYS],op.agent)
+local lease=current_lease(KEYS[4],KEYS[#KEYS-1],op.agent)
 if not lease or lease.token~=op.token then return {'lease'} end
 local raw=redis.call('HGET',KEYS[3],op.agent)
 if not raw then return {'recover'} end
 local agent=cjson.decode(raw)
+if agent.v ~= hub_store_schema then error('protocol_error: origin version') end
 if agent.recovery ~= op.recovery or agent.staging ~= op.generation then return {'recover'} end
 if #ARGV[4] > max_bytes then return {'limit'} end
 local fields={}
 local count=0
 for key,value in pairs(op.entities) do
   local decoded=cjson.decode(value)
-  if decoded.v ~= 2 then error('protocol_error: entity version') end
+  if decoded.v ~= hub_api_version then error('protocol_error: entity version') end
   fields[key]=value; count=count+1
 end
 if count > max_entities then return {'limit'} end
 -- Only staging is touched. A retry recreates all fields after interruption/expiry.
 redis.call('DEL',KEYS[5])
 for key,value in pairs(fields) do redis.call('HSET',KEYS[5],key,value) end
-redis.call('HSET',KEYS[5],manifest_field,cjson.encode({v=2,source=op.source,digest=op.digest,count=count,bytes=#ARGV[4],sealed=true,baseline='0-0'}))
+redis.call('HSET',KEYS[5],manifest_field,cjson.encode({v=hub_store_schema,source=op.source,digest=op.digest,count=count,bytes=#ARGV[4],sealed=true,baseline='0-0'}))
 redis.call('EXPIRE',KEYS[5],60)
 return {'ok','0-0'}
 """
@@ -218,11 +224,11 @@ ABANDON = (
     + """
 valid()
 expect(KEYS[4],'hash'); expect(KEYS[5],'hash')
-local lease=current_lease(KEYS[4],KEYS[#KEYS],ARGV[2])
+local lease=current_lease(KEYS[4],KEYS[#KEYS-1],ARGV[2])
 if not lease or lease.token~=ARGV[1] then return {'lease'} end
 local raw = redis.call('HGET',KEYS[3],ARGV[2])
 local agent = raw and cjson.decode(raw) or {}
-if raw and agent.v ~= 2 then error('protocol_error: origin version') end
+if raw and agent.v ~= hub_store_schema then error('protocol_error: origin version') end
 if agent.generation ~= ARGV[3] then redis.call('UNLINK',KEYS[5]) end
 return {'ok','0-0'}
 """

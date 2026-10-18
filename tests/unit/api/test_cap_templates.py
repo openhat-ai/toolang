@@ -19,7 +19,7 @@ from toolang.catalog import templates
 )
 def test_template_routes_expose_only_the_default(collection, kind):
     app = FastAPI()
-    app.include_router(router, prefix="/api/v1")
+    app.include_router(router, prefix="/api/v0")
     template = templates.load_template(kind)
     expected = {
         "kind": kind,
@@ -29,13 +29,13 @@ def test_template_routes_expose_only_the_default(collection, kind):
         "path": template.path,
     }
     with TestClient(app) as client:
-        listing = client.get(f"/api/v1/{collection}/templates")
+        listing = client.get(f"/api/v0/{collection}/templates")
         assert listing.status_code == 200
         assert listing.json() == [expected]
-        detail = client.get(f"/api/v1/{collection}/templates/default")
+        detail = client.get(f"/api/v0/{collection}/templates/default")
         assert detail.status_code == 200
         assert detail.json() == {**expected, "content": template.raw_text}
         for name in ("stdio", "missing"):
             assert (
-                client.get(f"/api/v1/{collection}/templates/{name}").status_code == 404
+                client.get(f"/api/v0/{collection}/templates/{name}").status_code == 404
             )

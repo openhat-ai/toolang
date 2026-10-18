@@ -18,7 +18,7 @@ from toolang.teaming.config import BackendConfig, TeamingRootConfig
 from toolang.teaming.errors import TeamingError
 from toolang.cli.toolang import main as cli
 from toolang.up.hub import HubProcess, serve
-from toolang.up.records import HubRecord
+from toolang.teaming.discovery import HubDiscovery
 
 
 def record(**changes):
@@ -29,7 +29,7 @@ def record(**changes):
         human="human:owner",
         identity="backend",
     )
-    return HubRecord.model_validate(values | changes)
+    return HubDiscovery.model_validate(values | changes)
 
 
 def test_hub_artifacts_live_under_root_hub(tmp_path):
@@ -53,7 +53,9 @@ def test_hub_version_uses_recorded_endpoint_and_identity(monkeypatch):
         assert request.extensions["timeout"] == dict.fromkeys(
             ["connect", "read", "write", "pool"], 1
         )
-        return httpx.Response(200, json={"version": "0.4.0a5-3-g12345678*"})
+        return httpx.Response(
+            200, json={"version": "0.4.0a5-3-g12345678*", "api_version": 0}
+        )
 
     def client(**kwargs):
         assert kwargs == {"trust_env": False, "timeout": 1}
@@ -142,7 +144,7 @@ def test_discovery_rejects_unsupported_token_record(tmp_path):
     saved = record()
     saved.save(hub.path)
     hub.path.write_text(json.dumps(saved.model_dump() | {"token": "old-token"}))
-    with pytest.raises(ValueError, match="Invalid Hub record"):
+    with pytest.raises(ValueError, match="Invalid Hub discovery"):
         hub.current()
 
 

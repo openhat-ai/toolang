@@ -131,9 +131,9 @@ from .values import parts_from_value
 from . import talk
 from .errors import ThreadBusy
 
-_SCHEMA_VERSION = 60
-_SUPPORTED_SCHEMA_VERSIONS = (_SCHEMA_VERSION,)
-_WRITABLE_SCHEMA_VERSIONS = (_SCHEMA_VERSION,)
+RUN_STORE_SCHEMA = 61
+_SUPPORTED_SCHEMA_VERSIONS = (RUN_STORE_SCHEMA,)
+_WRITABLE_SCHEMA_VERSIONS = (RUN_STORE_SCHEMA,)
 
 
 class RunStore:
@@ -257,8 +257,7 @@ class RunStore:
 
     @property
     def stream_has_cursors(self) -> bool:
-        with self._lock:
-            return int(self._conn.execute("PRAGMA user_version").fetchone()[0]) >= 53
+        return True
 
     def stream_records(
         self,
@@ -558,8 +557,6 @@ class RunStore:
         triggered_by: StepRef | None = None,
         revision: int | None = None,
     ) -> None:
-        if kind == "retry":
-            raise ValueError("legacy retry controls are read-only")
         _validate_request_id(client_id)
         scope = "run" if isinstance(ref.target, RunRef) else "thread"
         self._conn.execute(
@@ -3334,11 +3331,7 @@ class RunStore:
                 # Cancellation can arrive after the final Step was committed.
                 # RunEnd applies it without rewriting that completed Step.
                 attempt = max(
-                    (
-                        item.index
-                        for item in controls.values()
-                        if item.kind in {"run", "retry"}
-                    ),
+                    (item.index for item in controls.values() if item.kind == "run"),
                     default=0,
                 )
                 terminal = next(
@@ -3577,7 +3570,7 @@ class RunStore:
             ):
                 raise RunStoreSchemaError(
                     version,
-                    current=_SCHEMA_VERSION,
+                    current=RUN_STORE_SCHEMA,
                     supported=_WRITABLE_SCHEMA_VERSIONS,
                     read_only=False,
                 )
@@ -3589,7 +3582,7 @@ class RunStore:
             if version not in allowed:
                 raise RunStoreSchemaError(
                     version,
-                    current=_SCHEMA_VERSION,
+                    current=RUN_STORE_SCHEMA,
                     supported=(
                         _SUPPORTED_SCHEMA_VERSIONS
                         if self.read_only
@@ -3611,7 +3604,7 @@ class RunStore:
                 self._conn.rollback()
                 raise RunStoreSchemaError(
                     version,
-                    current=_SCHEMA_VERSION,
+                    current=RUN_STORE_SCHEMA,
                     supported=_WRITABLE_SCHEMA_VERSIONS,
                     read_only=False,
                 )
@@ -3739,7 +3732,7 @@ class RunStore:
                         f"CREATE INDEX IF NOT EXISTS idx_{table}_{name} ON {table}({name})"
                     )
             talk.initialize(self._conn)
-            self._conn.execute(f"PRAGMA user_version={_SCHEMA_VERSION}")
+            self._conn.execute(f"PRAGMA user_version={RUN_STORE_SCHEMA}")
             self._conn.commit()
 
 

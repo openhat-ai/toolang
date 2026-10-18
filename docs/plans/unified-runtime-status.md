@@ -149,7 +149,7 @@ and tool subprocesses. `_serve` is already counted by its launching command.
 
 1. Update [layout](../../src/toolang/common/layout.py), `ServeSpec`, CLI inputs,
    and [server](../../src/toolang/up/server.py) for in-process host `serve`.
-2. Consolidate [records](../../src/toolang/up/records.py) and
+2. Consolidate [records](../../src/toolang/up/instance.py) and
    [lifecycle helpers](../../src/toolang/up/sandbox.py); make host/guest section
    updates share lock/merge/replace logic and resolve remembered settings at the
    control boundary. Preserve host ownership/permissions on replacement.

@@ -4,6 +4,7 @@ from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 import os
+import socket
 import subprocess
 import sys
 import threading
@@ -46,6 +47,9 @@ def _visiting_chat(tmp_path: Path):
     root = tmp_path / "root"
     root.mkdir()
     (root / "config.toml").write_text("[teaming]\nenabled = false\n")
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        agent_port = listener.getsockname()[1]
     url = f"http://127.0.0.1:{source.server_port}/dev.too"
     layout = visiting_layout(url, toolang_root=root)
     base = [sys.executable, "-m", "toolang.cli.toolang", "--root", str(root)]
@@ -62,7 +66,10 @@ def _visiting_chat(tmp_path: Path):
             stdout=output,
             stderr=subprocess.STDOUT,
             text=True,
-            env={**os.environ, "TOOLANG_ROOT": str(root)},
+            env={
+                **os.environ,
+                "TOOLANG_ROOT": str(root),
+            },
         )
         clients.append(process)
 
@@ -82,19 +89,23 @@ def _visiting_chat(tmp_path: Path):
         assert result.returncode == (0 if success else 1), result.stderr
         return result
 
-    try:
-        yield layout, url, chat, command, requests
-    finally:
-        for client in clients:
-            if client.poll() is None:
-                client.kill()
-            client.wait(timeout=10)
-        subprocess.run([*base, "stop", url, "--force"], capture_output=True, timeout=20)
-        for output in outputs:
-            output.close()
-        source.shutdown()
-        source.server_close()
-        thread.join()
+    with pytest.MonkeyPatch.context() as environment:
+        environment.setenv("TOOLANG_AGENT_PORT", str(agent_port))
+        try:
+            yield layout, url, chat, command, requests
+        finally:
+            for client in clients:
+                if client.poll() is None:
+                    client.kill()
+                client.wait(timeout=10)
+            subprocess.run(
+                [*base, "stop", url, "--force"], capture_output=True, timeout=20
+            )
+            for output in outputs:
+                output.close()
+            source.shutdown()
+            source.server_close()
+            thread.join()
 
 
 @pytest.mark.parametrize("killed", [False, True])

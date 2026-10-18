@@ -28,7 +28,7 @@ import pytest
 from toolang.up import source as agent_sources
 
 from toolang.common.layout import AgentLayout
-from toolang.up.records import SandboxState
+from toolang.up.instance import SandboxState
 
 
 pytestmark = pytest.mark.live_docker
@@ -173,7 +173,7 @@ def test_docker_foreground_nonresident_uses_selected_root_and_cleans_reference(
     tmp_path: Path, docker_wheel_dir: Path, local_model_port: int, placement: str
 ) -> None:
     from toolang.up.source import visiting_layout
-    from toolang.up.records import read_record
+    from toolang.up.instance import read_instance
 
     program = "flow complete:\n  let result = Done\n"
 
@@ -238,7 +238,7 @@ def test_docker_foreground_nonresident_uses_selected_root_and_cleans_reference(
                 time.sleep(0.1)
             else:
                 pytest.fail("nonresident guest did not become ready")
-            entry = read_record(layout.runtime_status)
+            entry = read_instance(layout.runtime_status)
             assert entry is not None and entry["control"]["placement"] == placement
             assert entry["control"]["toolang_root"] == str(root)
             assert entry["control"]["source_id"] == layout.source_id
@@ -289,7 +289,7 @@ def test_docker_foreground_nonresident_uses_selected_root_and_cleans_reference(
 def test_docker_restart_reuses_settings_after_queries_reconcile_killed_guest(
     tmp_path: Path, docker_wheel_dir: Path, local_model_port: int
 ) -> None:
-    from toolang.up.records import read_record
+    from toolang.up.instance import read_instance
 
     layout = AgentLayout.resident(tmp_path / "toolang", "restart")
     layout.home.mkdir(parents=True)
@@ -322,7 +322,7 @@ def test_docker_restart_reuses_settings_after_queries_reconcile_killed_guest(
         first = SandboxState.load(layout.runtime_status)
         assert first is not None
         containers.add(first.ref.runtime_id)
-        entry = read_record(layout.runtime_status)
+        entry = read_instance(layout.runtime_status)
         assert entry is not None and first.ref.runtime_kind == "container"
         settings = entry["control"]["last_successful"]
         assert settings["sandbox"] == "docker"
@@ -337,7 +337,7 @@ def test_docker_restart_reuses_settings_after_queries_reconcile_killed_guest(
         )
         assert killed.returncode == 0, killed.stderr
         command("list")
-        entry = read_record(layout.runtime_status)
+        entry = read_instance(layout.runtime_status)
         assert entry is not None and entry["workload"]["status"] == "stopped"
         assert entry["workload"]["pid"] is None
         unchanged = layout.runtime_status.stat().st_mtime_ns
@@ -373,7 +373,7 @@ def test_docker_restart_reuses_settings_after_queries_reconcile_killed_guest(
         command("stop", "restart")
         repeated = command("stop", "restart", expected=1)
         assert "not running" in repeated.stderr
-        entry = read_record(layout.runtime_status)
+        entry = read_instance(layout.runtime_status)
         assert entry is not None and entry["workload"]["status"] == "stopped"
         assert entry["control"]["last_successful"] == settings
         assert not entry["control"].get("ref")
@@ -399,7 +399,7 @@ def test_killed_temporary_controller_is_recovered_by_next_control_operation(
 ):
     from dataclasses import replace
     from toolang.up import sandbox
-    from toolang.up.records import read_record
+    from toolang.up.instance import read_instance
 
     source = tmp_path / "temporary.too"
     source.write_text("flow complete:\n  let result = Done\n")
@@ -431,7 +431,7 @@ with acquire_agent_server(layout, sandbox='docker', dev=Path(sys.argv[2]), tempo
         assert state is not None
         worker.kill()
         worker.wait(timeout=5)
-        entry = read_record(layout.runtime_status, old.instance)
+        entry = read_instance(layout.runtime_status, old.instance)
         assert entry is not None and entry["control"]["owner"]["pid"] == worker.pid
         assert (
             subprocess.run(
@@ -451,7 +451,7 @@ with acquire_agent_server(layout, sandbox='docker', dev=Path(sys.argv[2]), tempo
         import asyncio
 
         asyncio.run(sandbox.release_stopped(replace(layout, instance="next")))
-        assert read_record(layout.runtime_status, old.instance) is None
+        assert read_instance(layout.runtime_status, old.instance) is None
         assert (
             subprocess.run(
                 ("docker", "inspect", state.ref.runtime_id),
@@ -612,7 +612,7 @@ def test_docker_agent_server_start_exposes_canonical_runtime_identity(
 
     with urlopen(f"{agent.endpoint}/healthz", timeout=2) as response:
         assert response.status == 200
-    profile = _get_json(f"{agent.endpoint}/api/v1/profile")
+    profile = _get_json(f"{agent.endpoint}/api/v0/profile")
     state = SandboxState.load(agent.layout.runtime_status)
 
     assert state is not None
@@ -629,7 +629,7 @@ def test_docker_agent_server_start_exposes_canonical_runtime_identity(
 def test_docker_agent_server_discovers_host_ollama_and_llama_cpp(
     running_docker_agent: _RunningDockerAgent,
 ) -> None:
-    payload = _get_json(f"{running_docker_agent.endpoint}/api/v1/models")
+    payload = _get_json(f"{running_docker_agent.endpoint}/api/v0/models")
     discovered = {
         (item["provider"], item["ref"].partition("/")[2])
         for item in payload["items"]
@@ -645,7 +645,7 @@ def test_docker_agent_server_discovers_host_ollama_and_llama_cpp(
 def test_docker_agent_server_prepares_authored_caps(
     running_docker_agent: _RunningDockerAgent,
 ) -> None:
-    skills = _get_json_list(f"{running_docker_agent.endpoint}/api/v1/skills")
+    skills = _get_json_list(f"{running_docker_agent.endpoint}/api/v0/skills")
 
     assert [(item["name"], item["description"]) for item in skills] == [
         ("reviewer", "Review text")
@@ -674,13 +674,13 @@ def test_docker_agent_server_rejects_removed_interfaces_without_mutation(
     running_docker_agent: _RunningDockerAgent,
     completed_docker_run: str,
 ) -> None:
-    url = f"{running_docker_agent.endpoint}/api/v1/runs/{completed_docker_run}"
+    url = f"{running_docker_agent.endpoint}/api/v0/runs/{completed_docker_run}"
     before = _get_json(url)
     with pytest.raises(HTTPError) as retry:
         _post_json(f"{url}/retry", {})
     assert retry.value.code == 404
     with pytest.raises(HTTPError) as activity:
-        _get_json(f"{running_docker_agent.endpoint}/api/v1/activity")
+        _get_json(f"{running_docker_agent.endpoint}/api/v0/activity")
     assert activity.value.code == 404
     result = _run_agent_command(
         running_docker_agent,
@@ -964,12 +964,12 @@ def _chat_completion() -> dict[str, object]:
 
 def _create_authored_run(agent: _RunningDockerAgent) -> str:
     created = _post_json(
-        f"{agent.endpoint}/api/v1/threads",
+        f"{agent.endpoint}/api/v0/threads",
         {"client_id": "test-script"},
     )
     thread = cast(dict[str, Any], created["thread"])
     run_id, stream = _post_stream(
-        f"{agent.endpoint}/api/v1/runs/authored/stream",
+        f"{agent.endpoint}/api/v0/runs/authored/stream",
         {
             "thread_id": thread["id"],
             "request_id": "live_docker_seed",
@@ -978,7 +978,7 @@ def _create_authored_run(agent: _RunningDockerAgent) -> str:
             "policy": {"allow": [], "limits": {}},
         },
     )
-    detail = _get_json(f"{agent.endpoint}/api/v1/runs/{run_id}")
+    detail = _get_json(f"{agent.endpoint}/api/v0/runs/{run_id}")
 
     assert b"run_end" in stream
     assert detail["status"] == "succeeded"
@@ -1114,7 +1114,7 @@ def test_guest_status_updates_share_host_lock_and_preserve_control_and_ownership
     running_docker_agent: _RunningDockerAgent,
 ) -> None:
     from toolang.common.files import file_lock_path
-    from toolang.up.records import read_record, update_record, runtime_lock
+    from toolang.up.instance import read_instance, update_instance, runtime_lock
 
     agent = running_docker_agent
     status = agent.layout.runtime_status
@@ -1124,9 +1124,9 @@ def test_guest_status_updates_share_host_lock_and_preserve_control_and_ownership
     assert not lock.exists()
     script = """
 from pathlib import Path
-from toolang.up.records import read_record, patch_workload
+from toolang.up.instance import read_instance, patch_workload
 status = Path('/root/.toolang/agents/alice/.runtime/status.json')
-entry = read_record(status, location='guest')
+entry = read_instance(status, location='guest')
 status.with_name('mount-test.marker').write_text('waiting')
 assert patch_workload(status, entry['launch_id'], {'message': 'mount-test'}, location='guest')
 """
@@ -1152,16 +1152,16 @@ assert patch_workload(status, entry['launch_id'], {'message': 'mount-test'}, loc
             assert marker.exists(), "guest writer did not reach the shared record"
             time.sleep(0.1)
             assert worker.poll() is None, "guest writer did not wait for the host"
-            entry = read_record(status)
+            entry = read_instance(status)
             assert (
                 entry is not None and entry["workload"].get("message") != "mount-test"
             )
-            update_record(
+            update_instance(
                 status, lambda entry: entry["control"].update(mount_test=True)
             )
         _, stderr = worker.communicate(timeout=10)
         assert worker.returncode == 0, stderr
-        entry = read_record(status)
+        entry = read_instance(status)
         assert entry is not None and entry["control"]["mount_test"] is True
         assert entry["workload"]["message"] == "mount-test"
         assert (
@@ -1175,14 +1175,14 @@ assert patch_workload(status, entry['launch_id'], {'message': 'mount-test'}, loc
         rounds_script = """
 import json, sys
 from pathlib import Path
-from toolang.up.records import read_record, patch_workload
+from toolang.up.instance import read_instance, patch_workload
 status = Path('/root/.toolang/agents/alice/.runtime/status.json')
 for line in sys.stdin:
     round = int(line)
-    entry = read_record(status, location='guest')
+    entry = read_instance(status, location='guest')
     assert entry['control']['mount_round'] == round
     assert patch_workload(status, entry['launch_id'], {'mount_round': round, 'padding': 'g' * (3072 + round % 50 * 61)}, location='guest')
-    assert read_record(status, location='guest')['control']['mount_round'] == round
+    assert read_instance(status, location='guest')['control']['mount_round'] == round
     print(round, flush=True)
 """
         worker = subprocess.Popen(
@@ -1203,7 +1203,7 @@ for line in sys.stdin:
         )
         assert worker.stdin is not None and worker.stdout is not None
         for round in range(200):
-            update_record(
+            update_instance(
                 status,
                 lambda entry: entry["control"].update(
                     mount_round=round, padding="h" * (4096 + round % 50 * 35)
@@ -1212,7 +1212,7 @@ for line in sys.stdin:
             worker.stdin.write(f"{round}\n")
             worker.stdin.flush()
             assert worker.stdout.readline().strip() == str(round)
-            entry = read_record(status)
+            entry = read_instance(status)
             assert entry is not None
             assert entry["control"]["mount_round"] == round
             assert entry["workload"]["mount_round"] == round
@@ -1232,14 +1232,14 @@ for line in sys.stdin:
             for key in ("message", "mount_round", "padding"):
                 entry["workload"].pop(key, None)
 
-        update_record(status, clear)
+        update_instance(status, clear)
 
 
 def test_killed_guest_writer_claim_is_recovered_by_query(
     running_docker_agent: _RunningDockerAgent,
 ) -> None:
     from toolang.common.files import file_lock_path
-    from toolang.up.records import read_record
+    from toolang.up.instance import read_instance
 
     agent = running_docker_agent
     status = agent.layout.runtime_status
@@ -1247,9 +1247,9 @@ def test_killed_guest_writer_claim_is_recovered_by_query(
     script = """
 from pathlib import Path
 import time
-from toolang.up.records import runtime_lock, read_record
+from toolang.up.instance import runtime_lock, read_instance
 status = Path('/root/.toolang/agents/alice/.runtime/status.json')
-entry = read_record(status)
+entry = read_instance(status)
 with runtime_lock(status, location='guest', launch_id=entry['launch_id']):
     status.with_name('killed-writer.marker').write_text('owned')
     time.sleep(60)
@@ -1290,7 +1290,7 @@ with runtime_lock(status, location='guest', launch_id=entry['launch_id']):
             timeout=10,
         )
         assert listed.returncode == 0, listed.stderr
-        entry = read_record(status)
+        entry = read_instance(status)
         assert entry is not None and entry["workload"]["status"] == "stopped"
         assert not file_lock_path(status).exists()
     finally:
