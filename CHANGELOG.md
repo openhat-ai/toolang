@@ -9,6 +9,10 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Changed
 
+- The bundled model catalog refreshes to the 2026-10-18 release with 232
+  providers and 2,547 models, so newly published models are selectable
+  without an external catalog.
+
 - `too start` reports only the agent endpoint, without `drivers=` and
   `lifetime=`, and `too AGENT info` omits the Drivers, Lifetime, and Launch
   rows.
