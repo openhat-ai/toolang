@@ -1,7 +1,8 @@
 # Top recent activity
 
 Status: approved by the human on 2026-10-18, including terminal styling,
-lightweight root markers, instance-name labels and four-decimal USD presentation.
+lightweight root markers, instance-name labels, four-decimal USD presentation,
+recent-change/default and numeric sorting, and mouse selection/sorting.
 Details content remains deferred; only its open/close placeholder is required.
 
 ## Goal and scope
@@ -142,9 +143,25 @@ convert unknown or incomplete observations to zero or hide their field labels.
 | `stats last 1h` | Period usage: model calls, tool calls, input/cached/output tokens and spend; omit started roots. |
 
 One body table follows, with one column heading and no Active/Completed
-subheaders, separators or empty group placeholders. Active roots sort first in
-admission order, sorted by creation time then source/root identity; terminal
-roots follow by completion time descending then source/root identity.
+subheaders, separators or empty group placeholders. Active roots always precede
+finished roots. By default, active roots sort by most recently observed tree
+change (status, invocation, counters, usage or structure), excluding clock/elapsed
+refreshes and presentation changes. Seed newly observed trees from their latest
+node lifecycle timestamp. Finished roots sort by completion time descending.
+Use source/root identity for deterministic ties and preserve selection by identity.
+
+F6 opens a sort picker with Default and MODEL, TOOL, INPUT, CACHED, OUTPUT, SPEND,
+TIME+. Up/Down chooses, Left selects ascending, Right selects descending, and
+F6/Enter applies; Esc cancels. Newly chosen fields start descending. Clicking a
+sortable table heading selects descending, then toggles direction on repeat;
+mark that heading with `↓`/`↑`. Default restores recent-change ordering.
+Sort each partition independently by the root's lifetime numeric values, with
+unknowns last in either direction and default order breaking ties. TIME+ uses
+elapsed seconds, frozen at the last observation for stale live data. Keep each
+owned subtree attached to its root and its internal execution order unchanged.
+Sorting covers loaded roots; paging can insert newly loaded completions in order.
+Mouse clicks select visible rows without changing folds. Keyboard interaction
+and exact source/node identities remain available.
 Illustrative values and IDs below are sample data.
 
 ```text
@@ -169,7 +186,7 @@ bob   run_7p2m4f9s     4     3    13k     8k    900   $0.1100     58s   succeede
 alice run_7p2m8g2y     3     5    10k     6k    600   $0.0800    2m8s   canceled
 bob   run_7p2m5n3v     2     4     7k     4k    400   $0.0500     32s   succeeded
 
-F1 Help   F3 Details   F5 List   F7 Runs(15m)   F8 Stats(4h)   F10 Quit
+F1 Help   F3 Details   F5 List   F6 Sort   F7 Runs(15m)   F8 Stats(4h)   F10 Quit
 ```
 
 - Agent placement counts follow the discovered instance inventory, including
@@ -302,6 +319,8 @@ first visible child. Start in Tree with current paths expanded.
 F5 toggles Tree/List: List folds all roots for presentation;
 returning to Tree restores individual folds. Keep folds by exact node identity
 within the source epoch; move hidden selection to its visible ancestor.
+F6 opens/applies the sort picker; mouse row selection and heading sorting use
+the same selection and ordering state as the keyboard.
 F7 cycles Recent `1m / 5m / 15m`; F8 cycles Period `1h / 4h / 8h`.
 F3 toggles the Details placeholder (Enter is an alias), Esc closes it,
 PgUp/PgDn pages the table, F1 opens Help, and F10 exits (q/Ctrl-C are aliases).
@@ -367,6 +386,8 @@ factory/routing and a focused presenter.
 | Expanded/folded serial paths, one/many parallel lanes and retained async ancestors | No repeated visible child activity or representative lane; row identity/metrics and restored folds are stable; occurrence never claims completion progress. |
 | Root/child/Step rows and Details | Full owning root ID stays in RUN; child IDs are Details-only; typed/unnamed runnable, provider/model and toolset.tool formatting is correct; finished Runs show terminal state only. |
 | Instance labels and USD formatting | Table and source diagnostics retain the existing instance name without `#runtime_instance`; USD has four decimals and no `~`, including zero and approximate costs; JSON metadata is unchanged and large costs keep STATUS aligned. |
+| Default and field sorting | Real tree changes move active roots above unchanged peers; clock/fold changes do not; all seven numeric fields sort both directions with unknowns last, finished roots below active roots, attached subtrees and stable selection. |
+| Keyboard and mouse sorting/selection | F6 picker applies/cancels and restores Default; heading clicks choose/toggle and show direction; row clicks select correctly after scrolling, overlays, resize and reorder. |
 | Both scopes, empty/idle data and normal-terminal resize | All columns and fixed header fields remain; right-side titles share the clock's edge; known empty is zero, unknown is explicit; no group subheaders or started-root metric. |
 | Window/Tree/List/Details controls | Footer shows only Fn keys and the next setting through wraparound; header shows current windows; F3/Enter share Details; Period/folds do not change lifetime values. |
 | Terminal appearance, selection and resize | Normal-weight/intensity summaries; green full-width heading, deep cyan full-row selection and cyan bottom bars; active owned subtrees remain normal and selected terminal roots remain dim through the last column; root `+` is unchanged by folds/List. |

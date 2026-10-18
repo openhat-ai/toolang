@@ -16,6 +16,7 @@ from toolang.execution.store import RunStore
 from toolang.cli.common.top_view import (
     PERIODS,
     RECENTS,
+    SORT_FIELDS,
     TopView,
     next_value,
     operation,
@@ -541,6 +542,201 @@ def test_large_call_counts_keep_numeric_and_status_columns_aligned():
     parent = next(line for line in lines if "flow:review" in line)
     child = next(line for line in lines if "└─" in line)
     assert parent.index("flow:review") == child.index("└─")
+
+
+def sorting_frame():
+    low = root(
+        id="run_low",
+        calls=CallCounters(1, 2),
+        usage=TokenUsage(10, 20, 30),
+        cost=0.001,
+        started_at=timestamp(NOW - 10),
+    )
+    high = root(
+        id="run_high",
+        calls=CallCounters(8, 9),
+        usage=TokenUsage(100, 200, 300),
+        cost=0.009,
+        started_at=timestamp(NOW - 100),
+    )
+    unknown = root(
+        id="run_unknown",
+        calls=CallCounters(),
+        usage=None,
+        cost=None,
+        started_at=None,
+    )
+    finished = tuple(
+        replace(node, id=node.id + "_done", status="succeeded", finished_at=AT)
+        for node in (low, high, unknown)
+    )
+    snapshot = frame(completed=finished)
+    source = snapshot.sources[0]
+    source.live = replace(
+        source.live,
+        trees=tuple(
+            LiveTreeSnapshot(node.id, "chat_top", (node, step(node.id + ".0", node.id)))
+            for node in (low, high, unknown)
+        ),
+    )
+    return snapshot
+
+
+@pytest.mark.parametrize("sort_field", SORT_FIELDS)
+@pytest.mark.parametrize("descending", [False, True])
+def test_numeric_sorting_keeps_partitions_subtrees_unknowns_and_selection(
+    sort_field,
+    descending,
+):
+    snapshot = sorting_frame()
+    view = TopView()
+    view.project(snapshot)
+    selected = view.selected = view.rows[1].key
+    view.sort_field = sort_field
+    view.sort_descending = descending
+    rows = view.project(snapshot)
+    order = [row.root for row in rows if row.node.id == row.root]
+    expected = (
+        ["run_high", "run_low", "run_unknown"]
+        if descending
+        else ["run_low", "run_high", "run_unknown"]
+    )
+    if not descending and sort_field in {"MODEL", "TOOL"}:
+        expected = ["run_unknown", "run_low", "run_high"]
+    assert order == expected + [name + "_done" for name in expected]
+    assert view.selected == selected
+    for index, row in enumerate(rows):
+        if row.parent is not None:
+            assert rows[index - 1].root == row.root
+    text = view.render(snapshot, width=160).plain
+    assert sort_field + ("↓" if descending else "↑") in text
+
+
+def test_default_order_tracks_tree_changes_without_clock_or_fold_reordering():
+    snapshot = sorting_frame()
+    source = snapshot.sources[0]
+    source.live = replace(source.live, trees=source.live.trees[:2])
+    view = TopView()
+    view.project(snapshot)
+    assert view.rows[0].root == "run_low"  # Most recent lifecycle timestamp.
+    selected = view.selected
+    snapshot.observed_at = timestamp(NOW + 1)
+    view.project(snapshot)
+    assert view.rows[0].root == "run_low"
+    high = source.live.trees[1]
+    source.live = replace(
+        source.live,
+        trees=(
+            source.live.trees[0],
+            replace(
+                high,
+                nodes=(high.nodes[0], replace(high.nodes[1], invoked=False)),
+            ),
+        ),
+    )
+    view.project(snapshot)
+    assert view.rows[0].root == "run_high" and view.selected == selected
+    snapshot.observed_at = timestamp(NOW + 10)
+    view.left()
+    view.list_mode = True
+    view.project(snapshot)
+    assert view.rows[0].root == "run_high" and view.selected == selected
+    assert len(view._activity) == 2
+
+
+def test_sort_picker_and_mouse_hit_targets_follow_rendered_rows_and_columns():
+    snapshot = sorting_frame()
+    view = TopView()
+    lines = view.render(snapshot, width=160, height=20).plain.splitlines()
+    header_y = next(
+        i for i, line in enumerate(lines) if "AGENT" in line and "STATUS" in line
+    )
+    view.click(lines[header_y].index("MODEL"), header_y)
+    assert view.sort_field == "MODEL" and view.sort_descending
+    lines = view.render(snapshot, width=160, height=20).plain.splitlines()
+    view.click(lines[header_y].index("MODEL"), header_y)
+    assert not view.sort_descending
+    view.sort()
+    view.move(5)
+    view.left()
+    assert view.sort_menu and view.sort_choice == 6 and not view.sort_choice_descending
+    view.sort()
+    assert view.sort_field == "SPEND" and not view.sort_descending
+    view.move(100)
+    lines = view.render(snapshot, width=140, height=16).plain.splitlines()
+    assert view.offset > 0
+    row_y = next(i for i, line in enumerate(lines) if "run_" in line)
+    key = view._row_hits[row_y]
+    view.click(130, row_y)
+    assert view.selected == key
+    view.sort()
+    view.move(-100)
+    view.sort()
+    assert view.sort_field is None
+
+
+def test_real_mouse_events_sort_unicode_headings_and_select_finished_rows(
+    tmp_path, monkeypatch
+):
+    import asyncio
+
+    from prompt_toolkit.data_structures import Size
+    from prompt_toolkit.input import create_pipe_input
+    from prompt_toolkit.output import DummyOutput
+    from toolang.cli.common.top import top_application
+    from toolang.up.top import TopObserver
+
+    class Output(DummyOutput):
+        def get_size(self):
+            return Size(rows=25, columns=160)
+
+    snapshot = sorting_frame()
+    snapshot.sources[0].label = "助手@r70200d1f#runtime"
+    observer = TopObserver(tmp_path, agent=None, period=3600, recent=300, refresh=1)
+    monkeypatch.setattr(observer, "tick", lambda: snapshot)
+    view = TopView()
+    phase = 0
+
+    async def scenario():
+        nonlocal phase
+        with create_pipe_input() as pipe:
+            app = top_application(observer, view, input=pipe, output=Output())
+
+            def click(x, y):
+                pipe.send_text(f"\x1b[<0;{x + 1};{y + 1}M\x1b[<0;{x + 1};{y + 1}m")
+
+            def rendered(_):
+                nonlocal phase
+                if phase == 0:
+                    y, x, _, _ = next(
+                        hit for hit in view._sort_hits if hit[3] == "MODEL"
+                    )
+                    phase = 1
+                    click(x + 1, y)
+                elif phase == 1 and view.sort_field == "MODEL":
+                    phase = 2
+                    y = next(
+                        y
+                        for y, key in view._row_hits.items()
+                        if key[2] == "run_low_done"
+                    )
+                    click(150, y)
+                elif (
+                    phase == 2
+                    and view.selected is not None
+                    and view.selected[2] == "run_low_done"
+                ):
+                    phase = 3
+                    pipe.send_text("q")
+
+            app.after_render += rendered
+            await asyncio.wait_for(app.run_async(), timeout=5)
+
+    try:
+        asyncio.run(scenario())
+        assert phase == 3 and view.sort_descending
+    finally:
+        observer.close()
 
 
 def test_non_tty_json_empty_scope_and_refresh_validation(tmp_path):

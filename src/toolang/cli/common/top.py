@@ -6,13 +6,15 @@ import asyncio
 from io import StringIO
 
 from prompt_toolkit import Application
-from prompt_toolkit.formatted_text import ANSI
+from prompt_toolkit.formatted_text import ANSI, to_formatted_text
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.layout import Layout, Window
 from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.input import Input
 from prompt_toolkit.output import Output
+from prompt_toolkit.mouse_events import MouseButton, MouseEvent, MouseEventType
 from rich.console import Console
+from rich.cells import cell_len
 
 from toolang.up.top import TopObserver
 
@@ -28,6 +30,7 @@ def top_application(
 ) -> Application[None]:
     bindings = KeyBindings()
     snapshot = observer.tick()
+    rendered_lines: list[str] = []
 
     def quit(event):
         event.app.exit()
@@ -38,22 +41,33 @@ def top_application(
     @bindings.add("f1")
     def help_(event):
         view.help = not view.help
-        view.details = False
+        view.details = view.sort_menu = False
 
     def details(event):
+        view.sort_menu = False
         view.details = not view.details
         view.help = False
 
     bindings.add("f3")(details)
-    bindings.add("enter")(details)
+
+    @bindings.add("enter")
+    def enter(event):
+        if view.sort_menu:
+            view.sort()
+        else:
+            details(event)
 
     @bindings.add("escape")
     def close(event):
-        view.details = view.help = False
+        view.details = view.help = view.sort_menu = False
 
     @bindings.add("f5")
     def list_(event):
         view.list_mode = not view.list_mode
+
+    @bindings.add("f6")
+    def sort_(event):
+        view.sort()
 
     @bindings.add("f7")
     def recent(event):
@@ -70,7 +84,7 @@ def top_application(
     @bindings.add("down")
     def down(event):
         view.move(1)
-        if view.rows and view.selected == view.rows[-1].key:
+        if not view.sort_menu and view.rows and view.selected == view.rows[-1].key:
             observer.more()
 
     @bindings.add("left")
@@ -90,9 +104,24 @@ def top_application(
         view.move(view.page_size)
         observer.more()
 
+    def mouse(event: MouseEvent):
+        if (
+            event.button == MouseButton.LEFT
+            and event.event_type == MouseEventType.MOUSE_UP
+        ):
+            y = event.position.y
+            # Window translates terminal cells to character offsets before dispatch.
+            x = cell_len(rendered_lines[y][: event.position.x])
+            view.click(x, y)
+            app.invalidate()
+            return None
+        return NotImplemented
+
     def content():
+        nonlocal rendered_lines
         size = app.output.get_size()
         text = view.render(snapshot, width=size.columns, height=size.rows)
+        rendered_lines = text.plain.splitlines()
         output = StringIO()
         Console(
             file=output,
@@ -100,7 +129,10 @@ def top_application(
             force_terminal=True,
             color_system="truecolor",
         ).print(text, end="", soft_wrap=True)
-        return ANSI(output.getvalue())
+        return [
+            (style, value, mouse)
+            for style, value, *_ in to_formatted_text(ANSI(output.getvalue()))
+        ]
 
     async def refresh() -> None:
         nonlocal snapshot
@@ -119,7 +151,7 @@ def top_application(
         ),
         key_bindings=bindings,
         full_screen=True,
-        mouse_support=False,
+        mouse_support=True,
         input=input,
         output=output,
     )

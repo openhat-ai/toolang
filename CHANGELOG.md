@@ -9,6 +9,13 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Added
 
+- `too top` sorts interactively: F6 opens a picker for Default, MODEL, TOOL,
+  INPUT, CACHED, OUTPUT, SPEND, and TIME+, Left/Right choose ascending or
+  descending, and F6/Enter apply while Esc cancels. Clicking a heading sorts by
+  that column and reverses on the next click, clicking a row selects it, and
+  default order lists the most recently changed active trees first, followed by
+  finished roots in completion order.
+
 - `too top` shows a live dashboard over the selected root's local resident,
   visiting, and roaming instances, and `too AGENT top` observes one resident
   agent: placement counts, one table of active LiveTrees and root Runs
@@ -232,6 +239,16 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   lists (`too skill list`) and cap mutation commands are unchanged.
 
 ### Fixed
+
+- `too top` counts active roots only from current inventory and keeps retained
+  departed instances to completions and usage, so they add no live rows or
+  live-coverage warnings and cannot make active counts unknown. USD spend uses
+  four decimals without an approximation marker, instance labels omit
+  `#runtime_instance`, active roots carry `+` instead of `[+]`, and interactive
+  output fills the terminal with a green heading, deep cyan selection and cyan
+  status and function-key bars, normal-weight summaries, dim finished roots, and
+  a hidden cursor, and publishes `top team` or `top AGENT` terminal titles,
+  clearing them on exit.
 
 - Cancellation while `stop()` drains owned tasks still runs terminal fallback and
   monitor/observer cleanup before propagating; cancellation while draining

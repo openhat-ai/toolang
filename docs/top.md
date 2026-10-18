@@ -77,7 +77,19 @@ from an older window cannot delay the selected window's next query.
 
 Up/Down selects; Left folds or selects the parent; Right expands or selects the
 first child. PgUp/PgDn pages the table and PgDn loads more completed roots.
-F5 switches Tree/List while retaining Tree folds. F7 cycles Recent and F8 cycles
+F5 switches Tree/List while retaining Tree folds. Default ordering puts the most
+recently changed active trees first, followed by finished roots in completion
+order; clock ticks and folds do not change that order. F6 opens the sort picker
+for Default, MODEL, TOOL, INPUT, CACHED, OUTPUT, SPEND and TIME+. Up/Down chooses
+a field, Left/Right chooses ascending/descending, F6/Enter applies, and Esc
+cancels. Click a table heading to sort descending, then click again to reverse;
+an arrow marks the chosen direction. Sorting uses root lifetime values within
+each partition, with unknowns last. Subtrees retain execution order, selection
+follows its identity, and finished roots always stay below active roots. Only
+loaded roots participate; paging inserts additional completions in sort order.
+Click any visible row to select it.
+
+F7 cycles Recent and F8 cycles
 Period; their footer labels show the next setting. F1 opens Help. F3/Enter toggles
 the Details placeholder and Esc closes it. Details content remains deferred.
 F10, q and Ctrl-C exit; the footer displays function keys only.
