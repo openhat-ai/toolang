@@ -3886,7 +3886,7 @@ def test_cap_inspection_only_prepares_the_shared_root_layer(tmp_path: Path) -> N
 
     assert cold.exit_code == 0, cold.stderr
     assert len(cold.stderr.splitlines()) == 1
-    assert cold.stderr.startswith("Prepared State in ")
+    assert cold.stderr.startswith("Prepared state in ")
     assert warm.exit_code == 0, warm.stderr
     assert warm.stderr == ""
 

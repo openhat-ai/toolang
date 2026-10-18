@@ -126,7 +126,7 @@ def test_source_change_retry_remains_visible_without_double_counting_caps(
                 id="state",
                 kind="prepare",
                 stage="materialize",
-                label="Prepared State",
+                label="Prepared state",
                 status="ok",
                 subject="state",
                 complete=True,

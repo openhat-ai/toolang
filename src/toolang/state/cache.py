@@ -407,7 +407,7 @@ def layer_build_lock(
     """Serialize preparation writers for one State layer."""
 
     with _file_lock(
-        layer_build_lock_path(layout, scope), label=f"{scope} State", progress=progress
+        layer_build_lock_path(layout, scope), label=f"{scope} state", progress=progress
     ):
         yield
 
@@ -420,7 +420,7 @@ def _agent_publish_lock(
 
     with _file_lock(
         _agent_publish_lock_path(layout),
-        label=f"agent {layout.name} State",
+        label=f"agent {layout.name} state",
         progress=progress,
     ):
         yield

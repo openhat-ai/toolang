@@ -63,6 +63,10 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Fixed
 
+- Preparation progress uses sentence case for state in labels such as
+  `Prepared state in 2s`, `Waiting for root state...`, and
+  `Failed to prepare agent state`.
+
 - Automatic agent runtime port selection skips a local peer whose
   `.runtime/status.json` is unreadable or written by an unsupported version,
   so starting an agent no longer fails because of another agent's runtime

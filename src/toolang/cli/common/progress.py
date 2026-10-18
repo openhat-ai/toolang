@@ -712,7 +712,7 @@ class PreparationProgress(CliProgress):
             parts.append(
                 f"{len(self._caps)} {'cap' if len(self._caps) == 1 else 'caps'}"
             )
-        subject = " and ".join(parts) or "State"
+        subject = " and ".join(parts) or "state"
         elapsed = format_duration(self._clock() - self._started)
         self._print_or_defer(Text(f"Prepared {subject} in {elapsed}", style="dim"))
 
