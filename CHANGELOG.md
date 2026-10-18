@@ -59,6 +59,12 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Fixed
 
+- Automatic agent runtime port selection skips a local peer whose
+  `.runtime/status.json` is unreadable or written by an unsupported version,
+  so starting an agent no longer fails because of another agent's runtime
+  status. The selected agent's own incompatible status still fails with
+  `unsupported runtime status version`.
+
 - Unnamed entry runnables read `agic:` or `flow:` in file help, signature
   help, run headers, and chat status in place of the previous `agic:_` and
   `_ agic` labels.
