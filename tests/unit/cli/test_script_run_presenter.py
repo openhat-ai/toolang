@@ -1073,12 +1073,13 @@ def test_tty_wraps_complete_cjk_output_by_terminal_cell_width() -> None:
         ),
     ],
 )
-def test_script_context_alignment_and_dim_style(model, label) -> None:
-    context = RunContext("agent::agic:<entry:1>", model)
+@pytest.mark.parametrize("kind", ["agic", "flow"])
+def test_script_context_alignment_and_dim_style(model, label, kind) -> None:
+    context = RunContext(f"agent::{kind}:<entry:1>", model)
     console = Console(width=80, color_system=None)
     segments = list(console.render(context, console.options))
     text = "".join(segment.text for segment in segments).rstrip("\n")
-    assert text.startswith("‣ agic:_  ")
+    assert text.startswith(f"‣ {kind}:  ")
     assert text.endswith(label)
     assert display_width(text) == 78
     assert display_width("‣") == 1

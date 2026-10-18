@@ -186,7 +186,7 @@ def display_runnable_ref(value: str, *, surface: str) -> str:
         return f"{kind}{parsed.name}"
     kind = parsed.kind or "agic"
     if surface in {"help", "chat"} and parsed.role == "entry":
-        return f"{kind}:_"
+        return f"{kind}:"
     if surface in {"help", "chat"}:
         return f"{kind}:<{parsed.role}>"
     if surface == "progress":

@@ -13,7 +13,9 @@ reads stdin, so `too file.too _ -` selects the entry and reads from stdin.
 Use `too run FILE [RUNNABLE] [ARGUMENTS]` when a runnable name matches a Toolang
 command. Otherwise, `run` can be omitted: `too aid.too whats_for`.
 Add `--help` after the file or runnable for details. File help lists the unnamed
-entry first, then named agics and flows in their source order within each kind.
+entry as `agic:` or `flow:` first, then named agics and flows in their source order
+within each kind. Chat and script run labels and signature help use the same
+unnamed entry labels.
 
 ## Directories and configuration
 

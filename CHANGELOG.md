@@ -53,6 +53,12 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   `state` tables; discard an older cache while the server is stopped and let it
   rebuild from compatible execution records.
 
+### Fixed
+
+- Unnamed entry runnables read `agic:` or `flow:` in file help, signature
+  help, run headers, and chat status in place of the previous `agic:_` and
+  `_ agic` labels.
+
 ## [0.4.0a9] - 2026-10-18
 
 ### Added
