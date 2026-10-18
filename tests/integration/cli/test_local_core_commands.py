@@ -67,12 +67,12 @@ from toolang.execution.types import (
     Output,
     ControlRef,
     FieldRef,
-    ModelStepGiven,
+    ModelStepSpec,
     Occurrence,
     OccurrencePosition,
     StepRef,
     ThreadPrefix,
-    ToolStepGiven,
+    ToolStepSpec,
 )
 from toolang.lang.input import resolve_input_parts
 from toolang.lang.types import Array, Struct
@@ -1405,7 +1405,7 @@ def test_inspect_projects_complete_persisted_model_call(
             ref=StepRef.from_local(run.id, (0,)),
             kind="model",
             input=(),
-            given=ModelStepGiven(setup="test-setup", model="test/model", call=call),
+            spec=ModelStepSpec(setup="test-setup", model="test/model", call=call),
             state=ControlRef.for_run(run.id, 0),
             started_at="2026-01-01T00:00:00Z",
         )
@@ -1414,7 +1414,7 @@ def test_inspect_projects_complete_persisted_model_call(
             kind="model",
             status="succeeded",
             output=Output(value_for_type("Part[]", (TextPart(result_text),)), "_"),
-            noted=None,
+            report=None,
             error=None,
             finished_at="2026-01-01T00:00:01Z",
         )
@@ -1442,7 +1442,7 @@ def test_inspect_projects_complete_persisted_model_call(
         root,
         "alice",
         "inspect",
-        "run_model_call.0/given/call",
+        "run_model_call.0/spec/call",
         "--json",
     )
     human = _invoke(
@@ -1774,7 +1774,7 @@ def test_inspect_projects_exact_tool_call_and_persisted_result(
             ref=path,
             kind="tool",
             input=(),
-            given=ToolStepGiven(plugin="web", call=call),
+            spec=ToolStepSpec(plugin="web", call=call),
             state=ControlRef.for_run(run.id, 0),
             started_at="2026-01-01T00:00:00Z",
         )
@@ -1795,7 +1795,7 @@ def test_inspect_projects_exact_tool_call_and_persisted_result(
                 ),
                 "_",
             ),
-            noted=None,
+            report=None,
             error=None,
             finished_at="2026-01-01T00:00:01Z",
         )

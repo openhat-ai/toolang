@@ -29,11 +29,11 @@ from toolang.execution.types import (
     ContentRef,
     ControlRef,
     FieldRef,
-    ModelStepGiven,
+    ModelStepSpec,
     StepRef,
     ThreadPrefix,
-    ToolStepGiven,
-    ToolStepNoted,
+    ToolStepSpec,
+    ToolStepReport,
     TypedRef,
 )
 from toolang.lang.input import CallInput
@@ -297,7 +297,7 @@ def test_steps_resolve_outputs_and_keep_dependencies_and_model_refs(store, monke
         ref=StepRef.parse("run_a.1"),
         kind="model",
         input=(),
-        given=ModelStepGiven("test", ModelCall("instructions", []), setup="test-setup"),
+        spec=ModelStepSpec("test", ModelCall("instructions", []), setup="test-setup"),
         preceded_by=(steer.ref,),
         started_at="2026-01-01T00:00:04Z",
     )
@@ -309,7 +309,7 @@ def test_steps_resolve_outputs_and_keep_dependencies_and_model_refs(store, monke
             value_for_type("Text", FieldRef.from_path(source.ref, "output", "value")),
             None,
         ),
-        noted=None,
+        report=None,
         error=None,
         finished_at="2026-01-01T00:00:05Z",
     )
@@ -323,7 +323,7 @@ def test_steps_resolve_outputs_and_keep_dependencies_and_model_refs(store, monke
     monkeypatch.setattr(RunStore, "rebuild_model_calls", forbidden)
     page = read(store, "read_steps", run="run_a", begin="run_a.1")
     assert [r["id"] for r in page["entries"]] == [model.id]
-    assert page["entries"][0]["given"] == record_to_data(model)["given"]
+    assert page["entries"][0]["spec"] == record_to_data(model)["spec"]
     assert page["entries"][0]["status"] == "canceled"
     assert page["entries"][0]["output"]["value"] == "exact input"
     by_id = {c["id"]: c for c in page["dependencies"]}
@@ -351,7 +351,7 @@ def test_execute_input_is_resolved_in_entries_and_dependencies(store):
         ref=StepRef.parse("run_a.1"),
         kind="tool",
         input=(),
-        given=ToolStepGiven(
+        spec=ToolStepSpec(
             "runtime", ToolCall("call", "provider", "runtime__exec", arguments)
         ),
         started_at="2026-01-01T00:00:03Z",
@@ -372,7 +372,7 @@ def test_execute_input_is_resolved_in_entries_and_dependencies(store):
             }
         ),
         created_at="2026-01-01T00:00:04Z",
-        tool_noted=ToolStepNoted("Switched to runnable: target"),
+        tool_report=ToolStepReport("Switched to runnable: target"),
     )
     committed = store.get_step(ref=trigger.ref)
     assert committed.status == "succeeded"
@@ -382,7 +382,7 @@ def test_execute_input_is_resolved_in_entries_and_dependencies(store):
         ref=StepRef.parse("run_a.2"),
         kind="model",
         input=(),
-        given=ModelStepGiven("test", ModelCall("", []), setup="test-setup"),
+        spec=ModelStepSpec("test", ModelCall("", []), setup="test-setup"),
         preceded_by=(control.ref,),
         started_at="2026-01-01T00:00:06Z",
     )
@@ -566,8 +566,8 @@ def test_real_history_calls_are_ordinary_steps_and_replay_without_reading_again(
                 assert result.error is None
                 assert result.output["thread"] == thread
                 assert result.output["runs"][0]["id"] == run.id
-            assert isinstance(steps[1].given, ToolStepGiven)
-            assert steps[1].given.trigger == "model"
+            assert isinstance(steps[1].spec, ToolStepSpec)
+            assert steps[1].spec.trigger == "model"
             assert [c.kind for c in harness.store.list_run_controls(run_id=run.id)] == [
                 "run"
             ]

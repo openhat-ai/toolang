@@ -60,7 +60,7 @@ from ..types import (
     value_for_type,
     value_type,
     AgentResources,
-    CollectionStepNoted,
+    CollectionStepReport,
     ControlRef,
     ErrorMessage,
     ErrorRef,
@@ -69,8 +69,8 @@ from ..types import (
     Output,
     Occurrence,
     StepKind,
-    StepGiven,
-    StepNoted,
+    StepSpec,
+    StepReport,
     StepRef,
     StepStatus,
     TypedRef,
@@ -90,7 +90,7 @@ class StepWriter(Protocol):
         *,
         step: StepRef,
         kind: StepKind,
-        given: StepGiven,
+        spec: StepSpec,
         state: ControlRef | None = None,
         input: tuple[FieldRef, ...] = (),
         preceded_by: tuple[ControlRef, ...] = (),
@@ -260,7 +260,7 @@ async def execute_step(
     controls: Sequence[ControlRecord],
     occurrence: Occurrence | None,
     evaluate: Callable[[], Awaitable[Local]],
-    note: Callable[[StepStatus], StepNoted] | None = None,
+    note: Callable[[StepStatus], StepReport] | None = None,
     inputs: Sequence[FieldRef] | None = None,
 ) -> Local:
     """Evaluate, transform, and commit one Flow statement Step."""
@@ -294,7 +294,7 @@ async def execute_step(
             input=step_inputs,
             preceded_by=tuple(item.ref for item in controls),
             occurrence=occurrence,
-            given=statement,
+            spec=statement,
             started_at=started_at,
         )
 
@@ -309,7 +309,7 @@ async def execute_step(
             step=path,
             kind=kind,
             status="canceled",
-            noted=_flow_step_noted(
+            report=_flow_step_report(
                 statement,
                 locals,
                 status="canceled",
@@ -324,7 +324,7 @@ async def execute_step(
             step=path,
             kind=kind,
             status="failed",
-            noted=_flow_step_noted(
+            report=_flow_step_report(
                 statement,
                 locals,
                 status="failed",
@@ -345,7 +345,7 @@ async def execute_step(
             step=path,
             kind=kind,
             status="failed",
-            noted=_flow_step_noted(
+            report=_flow_step_report(
                 statement,
                 locals,
                 status="failed",
@@ -363,7 +363,7 @@ async def execute_step(
         status="succeeded",
         output=output,
         result=result,
-        noted=_flow_step_noted(
+        report=_flow_step_report(
             statement,
             locals,
             status="succeeded",
@@ -382,14 +382,14 @@ async def execute_step(
     )
 
 
-def _flow_step_noted(
+def _flow_step_report(
     statement: FlowStmt,
     locals: Mapping[str, Local],
     *,
     status: StepStatus,
     result: Local | None,
-    note: Callable[[StepStatus], StepNoted] | None,
-) -> StepNoted:
+    note: Callable[[StepStatus], StepReport] | None,
+) -> StepReport:
     if note is not None:
         return note(status)
     if not isinstance(
@@ -406,7 +406,7 @@ def _flow_step_noted(
     output_items = None
     if result is not None and isinstance(result.value, Array | list | tuple):
         output_items = len(result.value)
-    return CollectionStepNoted(total_items, output_items)
+    return CollectionStepReport(total_items, output_items)
 
 
 def transform_flow_result(

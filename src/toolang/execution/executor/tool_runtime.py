@@ -46,8 +46,8 @@ from ..types import (
     StepRef,
     WorkspaceRecallTarget,
     Output,
-    ToolStepGiven,
-    ToolStepNoted,
+    ToolStepSpec,
+    ToolStepReport,
 )
 from .common import BoundRun, _ExecuteCommitted, _RunRejected
 from ..recall import required_declarations
@@ -420,17 +420,17 @@ class _ToolRuntime(ToolRuntime):
                     step = store.get_step(ref=self.step)
                     if (
                         step is None
-                        or not isinstance(step.given, ToolStepGiven)
-                        or step.given.trigger != "model"
+                        or not isinstance(step.spec, ToolStepSpec)
+                        or step.spec.trigger != "model"
                     ):
                         raise ValueError("control requires a model Tool Step")
-                    arguments = step.given.call.input
+                    arguments = step.spec.call.input
                     if (
                         arguments.get("target") != target
                         or arguments.get("expected_control") != expected_control
                         or arguments.get("input" if kind == "steer" else "reason")
                         != text
-                        or step.given.call.name != f"runtime__{kind}"
+                        or step.spec.call.name != f"runtime__{kind}"
                     ):
                         raise ValueError("conflicting control admission")
                     if step.output is not None and isinstance(
@@ -488,14 +488,14 @@ class _ToolRuntime(ToolRuntime):
                         status="succeeded",
                         output=Output(
                             ToolResultPart(
-                                tool_call_id=step.given.call.tool_call_id,
-                                call_id=step.given.call.call_id,
-                                tool_name=step.given.call.name,
-                                tool_family=step.given.call.name,
+                                tool_call_id=step.spec.call.tool_call_id,
+                                call_id=step.spec.call.call_id,
+                                tool_name=step.spec.call.name,
+                                tool_family=step.spec.call.name,
                                 output=receipt,
                             )
                         ),
-                        noted=ToolStepNoted(
+                        report=ToolStepReport(
                             summary=f"Accepted {kind}: {run_id}", invoked=True
                         ),
                         error=None,
@@ -531,11 +531,11 @@ class _ToolRuntime(ToolRuntime):
             and isinstance(previous.output.value, ToolResultPart)
         ):
             if (
-                not isinstance(previous.given, ToolStepGiven)
-                or previous.given.call.name != "runtime__spawn"
-                or previous.given.call.input.get("runnable") != runnable
-                or previous.given.call.input.get("input", {}) != input
-                or previous.given.call.input.get("thread") != thread
+                not isinstance(previous.spec, ToolStepSpec)
+                or previous.spec.call.name != "runtime__spawn"
+                or previous.spec.call.input.get("runnable") != runnable
+                or previous.spec.call.input.get("input", {}) != input
+                or previous.spec.call.input.get("thread") != thread
             ):
                 return ToolResult(error="conflicting spawn admission")
             return ToolResult(

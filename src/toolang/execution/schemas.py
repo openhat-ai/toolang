@@ -36,10 +36,10 @@ from .records import (
     ControlRecord,
     RunRecord,
     StepRecord,
-    StoredModelStepGiven,
+    StoredModelStepSpec,
     ThreadRecord,
-    stored_step_given_to_data,
-    step_noted_to_data,
+    stored_step_spec_to_data,
+    step_report_to_data,
     step_message_role,
 )
 from .types import (
@@ -56,13 +56,13 @@ from .types import (
     ErrorRef,
     FieldRef,
     Output,
-    ModelStepGiven,
+    ModelStepSpec,
     Occurrence,
     RunStatus,
     AwaitableHandle,
     StepKind,
-    StepGiven,
-    StepNoted,
+    StepSpec,
+    StepReport,
     StepRef,
     StepStatus,
     ThreadRef,
@@ -72,8 +72,8 @@ from .types import (
     TypedRef,
     value_type,
     validate_occurrence,
-    validate_step_given,
-    validate_step_noted,
+    validate_step_spec,
+    validate_step_report,
 )
 from .values import parts_from_value
 
@@ -165,7 +165,7 @@ class HistoryCursor:
     thread: ThreadRecord | None = None
     head: ControlRef | None = None
     members: dict[str, str] = field(default_factory=dict)
-    version: Literal[1] = 1
+    version: Literal[2] = 2
 
 
 @dataclass(frozen=True)
@@ -261,13 +261,18 @@ def record_to_data(
     kind = record_kind(record)
     data = cast(
         dict[str, object],
-        _RECORD_ADAPTERS[kind].dump_python(record, mode="json", include=include),
+        _RECORD_ADAPTERS[kind].dump_python(
+            record,
+            mode="json",
+            include=include,
+            exclude={item.name for item in fields(record) if item.name.startswith("_")},
+        ),
     )
     if isinstance(record, StepRecord):
-        if include is None or "given" in include:
-            data["given"] = stored_step_given_to_data(record.kind, record.given)
-        if include is None or "noted" in include:
-            data["noted"] = step_noted_to_data(record.kind, record.noted)
+        if include is None or "spec" in include:
+            data["spec"] = stored_step_spec_to_data(record.kind, record.spec)
+        if include is None or "report" in include:
+            data["report"] = step_report_to_data(record.kind, record.report)
     return data
 
 
@@ -277,7 +282,7 @@ def select_record(record: Record, pointer: Pointer) -> RecordSelection:
     kind = record_kind(record)
     if pointer.kind != kind:
         raise ValueError(f"Pointer identifies {pointer.kind}, not {kind}: {pointer}")
-    # History commonly selects only an output from a Step whose given field
+    # History commonly selects only an output from a Step whose spec field
     # contains the entire preceding conversation. Do not serialize that field.
     include = {pointer.tokens[0]} if pointer.tokens else None
     data: object = record_to_data(record, include=include)
@@ -785,7 +790,7 @@ class ControlInfo:
             index=control.index,
             kind=control.kind,
             timing=control.timing,
-            request_id=control.request,
+            request_id=control.request_id,
             client_id=control.client_id,
             status=control.status,
             payload=control.payload,
@@ -803,13 +808,13 @@ class StepData:
     path: StepRef
     kind: StepKind
     input: list[StepInputData]
-    given: StepGiven
+    spec: StepSpec
     state: RunControlRefData
     output: Output | None
     preceded_by: tuple[ControlRef, ...] = ()
     aborted_by: ControlRef | None = None
     occurrence: Occurrence | None = None
-    noted: StepNoted = None
+    report: StepReport = None
     status: StepStatus = "running"
     error: ErrorMessage | ErrorRef | None = None
     created_at: str = ""
@@ -818,8 +823,8 @@ class StepData:
 
     def __post_init__(self) -> None:
         validate_occurrence(self.occurrence)
-        validate_step_given(self.kind, self.given)
-        validate_step_noted(self.kind, self.noted, self.status)
+        validate_step_spec(self.kind, self.spec)
+        validate_step_report(self.kind, self.report, self.status)
 
     @classmethod
     def from_record(
@@ -828,17 +833,17 @@ class StepData:
         *,
         call: ModelCall | None = None,
     ) -> StepData:
-        if isinstance(step.given, StoredModelStepGiven):
+        if isinstance(step.spec, StoredModelStepSpec):
             if call is None:
                 raise ValueError(f"model call is missing for Step {step.ref}")
-            given: StepGiven = ModelStepGiven(
-                model=step.given.model,
-                setup=step.given.setup,
+            spec: StepSpec = ModelStepSpec(
+                model=step.spec.model,
+                setup=step.spec.setup,
                 call=call,
-                state=step.given.state,
+                state=step.spec.state,
             )
         else:
-            given = step.given
+            spec = step.spec
         return cls(
             path=step.ref,
             kind=step.kind,
@@ -847,12 +852,12 @@ class StepData:
             preceded_by=step.preceded_by,
             aborted_by=step.aborted_by,
             occurrence=step.occur,
-            given=given,
+            spec=spec,
             state=RunControlRefData.from_ref(step.state),
-            noted=step.noted,
+            report=step.report,
             status=step.status,
             error=step.error,
-            created_at=step.created_at,
+            created_at=step.started_at,
             started_at=step.started_at,
             finished_at=step.finished_at,
         )

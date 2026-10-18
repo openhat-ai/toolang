@@ -25,7 +25,7 @@ from toolang.execution.schemas import record_to_data
 from toolang.execution.types import (
     value_for_type,
     FieldRef,
-    ModelStepGiven,
+    ModelStepSpec,
     StepRef,
     RunRef,
     Output,
@@ -164,7 +164,7 @@ def test_compact_reference_survives_restart_before_and_after_adoption(
             input=(),
             preceded_by=(control.ref,),
             state=run.state,
-            given=ModelStepGiven(
+            spec=ModelStepSpec(
                 "test", ModelCall(instructions="", messages=[]), setup="test-setup"
             ),
             started_at="2026-09-06T00:00:02Z",

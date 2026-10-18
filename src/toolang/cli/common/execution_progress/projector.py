@@ -572,13 +572,13 @@ class ProgressProjector:
             return None
         execute = self._complete_execute(run, state, event)
         if (
-            event.noted is not None and event.noted.total_items is not None
+            event.report is not None and event.report.total_items is not None
         ) and event.kind == "par":
-            if state.par.total_items not in {None, event.noted.total_items}:
+            if state.par.total_items not in {None, event.report.total_items}:
                 raise _PresentationError(
                     f"parallel item total changed for {StepRef.parse(event.step)}"
                 )
-            state.par.total_items = event.noted.total_items
+            state.par.total_items = event.report.total_items
         if (
             state.is_dynamic_run
             and event.status == "succeeded"
@@ -1161,10 +1161,10 @@ class ProgressProjector:
                 run.pending_executes.pop(index)
             return None
         row = ProgressRow(
-            end.noted.summary
+            end.report.summary
             if state.operation.tool
-            and (end.noted is not None and end.noted.summary is not None)
-            and end.noted.summary
+            and (end.report is not None and end.report.summary is not None)
+            and end.report.summary
             else f"exec → {target}",
             leader="handoff",
             tool_identity=state.operation.tool_identity,
@@ -1189,7 +1189,7 @@ class ProgressProjector:
         handoff = next((item for item in run.pending_executes if item.ready), None)
         if handoff is not None:
             run.pending_executes.remove(handoff)
-            run.agic = isinstance(event.given, ModelStepInfo)
+            run.agic = isinstance(event.spec, ModelStepInfo)
             run.step_origin = StepRef.parse(event.step).index
         return handoff
 
@@ -1279,10 +1279,10 @@ class ProgressProjector:
         )
         return (
             ProgressRow(
-                event.noted.summary
+                event.report.summary
                 if state.operation.tool
                 and isinstance(event, StepEnd)
-                and (event.noted is not None and event.noted.summary is not None)
+                and (event.report is not None and event.report.summary is not None)
                 else "",
                 leader="run",
                 tool_identity=state.operation.tool_identity,

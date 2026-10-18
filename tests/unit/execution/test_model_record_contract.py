@@ -15,14 +15,14 @@ from toolang.base.types.model import Model, ModelRequest, ModelToolang, Reasonin
 from toolang.base.types.run import ModelCall, ModelUsage
 from toolang.base.types.tool import ToolDefinition
 from toolang.execution.accounting import (
-    build_model_noted,
+    build_model_report,
     selected_cost_is_approximate,
     selected_usd_cost,
 )
 from toolang.execution.records import (
-    StoredModelStepGiven,
-    step_noted_from_data,
-    step_noted_to_data,
+    StoredModelStepSpec,
+    step_report_from_data,
+    step_report_to_data,
 )
 from toolang.execution.store import RunStore
 from toolang.execution.events import run_event_from_data, run_event_to_data
@@ -30,8 +30,8 @@ from toolang.execution.types import (
     ControlRef,
     ModelCostLine,
     ModelPricing,
-    ModelStepGiven,
-    ModelStepNoted,
+    ModelStepSpec,
+    ModelStepReport,
     ModelUsageMeter,
     StepRef,
     ModelCost,
@@ -59,12 +59,12 @@ def test_call_settings_and_setup_survive_store_reopening(
         state=ControlRef.for_run(ref.run_id, 0),
         input=(),
         started_at="now",
-        given=ModelStepGiven("test/one", call, setup="setup-v1", state=state),
+        spec=ModelStepSpec("test/one", call, setup="setup-v1", state=state),
     )
     encoded = run_event_to_data(event)
     assert "state" not in encoded
-    assert encoded["given"] == {"type": "model", "model": "test/one"}
-    assert "catalog_state" not in encoded["given"]
+    assert encoded["spec"] == {"type": "model", "model": "test/one"}
+    assert "catalog_state" not in encoded["spec"]
     assert run_event_from_data(encoded) == event
     with closing(RunStore(path)) as store:
         store.begin_step(
@@ -73,18 +73,18 @@ def test_call_settings_and_setup_survive_store_reopening(
             input=(),
             state=ControlRef.for_run(ref.run_id, 0),
             started_at="now",
-            given=ModelStepGiven("test/one", call, setup="setup-v1", state=state),
+            spec=ModelStepSpec("test/one", call, setup="setup-v1", state=state),
         )
     with closing(RunStore(path)) as store:
         step = store.get_step(ref=ref)
-        assert step is not None and isinstance(step.given, StoredModelStepGiven)
-        assert step.given.setup == "setup-v1"
-        assert step.given.state == state
+        assert step is not None and isinstance(step.spec, StoredModelStepSpec)
+        assert step.spec.setup == "setup-v1"
+        assert step.spec.state == state
         assert step.state == ControlRef.for_run(ref.run_id, 0)
-        assert step.given.call.reasoning == call.reasoning
+        assert step.spec.call.reasoning == call.reasoning
         assert store.rebuild_model_call(step) == call
         assert {"tokens", "price", "accounting"}.isdisjoint(
-            item.name for item in fields(ModelStepNoted)
+            item.name for item in fields(ModelStepReport)
         )
         assert {item.name for item in fields(ModelPricing)} == {"plan", "match"}
 
@@ -127,18 +127,18 @@ def test_cost_selection_survives_numeric_record_round_trip(
     complete: bool | None,
 ) -> None:
     model = Model("one", "One", ModelToolang(), cost=rates, provider="test")
-    accounting = build_model_noted(model, usage)
+    accounting = build_model_report(model, usage)
     assert (
         accounting is not None
         and accounting.cost is not None
         and accounting.cost.source == selected
     )
-    noted = replace(accounting, continuation={"cursor": "after"})
-    data = step_noted_to_data("model", noted)
+    report = replace(accounting, continuation={"cursor": "after"})
+    data = step_report_to_data("model", report)
     assert data is not None and set(data) == {"usage", "cost", "cont", "invoked"}
-    restored = step_noted_from_data("model", data)
-    assert restored == noted
-    assert isinstance(restored, ModelStepNoted) and restored.usage is not None
+    restored = step_report_from_data("model", data)
+    assert restored == report
+    assert isinstance(restored, ModelStepReport) and restored.usage is not None
     assert selected_usd_cost(restored.cost) == amount
     result = restored.cost
     assert (result.complete if result else None) == complete

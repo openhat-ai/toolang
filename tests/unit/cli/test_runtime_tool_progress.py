@@ -28,8 +28,8 @@ from toolang.execution.types import (
     Output,
     ControlRef,
     StepRef,
-    ToolStepGiven,
-    ToolStepNoted,
+    ToolStepSpec,
+    ToolStepReport,
 )
 
 
@@ -57,7 +57,7 @@ def _begin(name="compact", arguments=None):
         step=StepRef.parse("run_root.0"),
         kind="tool",
         started_at=START,
-        given=ToolStepGiven(
+        spec=ToolStepSpec(
             plugin="runtime",
             trigger="runtime" if name in {"honor", "compact"} else "model",
             call=ToolCall("call-1", "call-1", f"runtime__{name}", arguments),
@@ -70,11 +70,11 @@ def _begin(name="compact", arguments=None):
 
 
 def _end(begin, status="succeeded", output=None):
-    call = ToolCall("call-1", "call-1", begin.given.name, {})
-    summary = begin.given.summary
-    name = begin.given.name.removeprefix("runtime__")
+    call = ToolCall("call-1", "call-1", begin.spec.name, {})
+    summary = begin.spec.summary
+    name = begin.spec.name.removeprefix("runtime__")
     arguments = _arguments_by_step[id(begin)]
-    call = ToolCall("call-1", "call-1", begin.given.name, arguments)
+    call = ToolCall("call-1", "call-1", begin.spec.name, arguments)
     summary = _tool_summary(
         _tool_summary_context(call, RuntimeToolset().tools()[name]),
         status,
@@ -86,7 +86,7 @@ def _end(begin, status="succeeded", output=None):
         kind="tool",
         status=status,
         finished_at=FINISH,
-        noted=ToolStepNoted(summary=summary),
+        report=ToolStepReport(summary=summary),
         output=Output(
             value_for_type(
                 "ToolResultPart",
@@ -198,7 +198,7 @@ def test_tool_events_and_progress_exclude_raw_result_bodies(plugin, name):
         step=StepRef.parse("run_root.0"),
         kind="tool",
         started_at=START,
-        given=ToolStepGiven(
+        spec=ToolStepSpec(
             plugin=plugin,
             call=call,
             summary=f"Executing {name}...",
@@ -209,7 +209,7 @@ def test_tool_events_and_progress_exclude_raw_result_bodies(plugin, name):
         kind="tool",
         status="succeeded",
         finished_at=FINISH,
-        noted=ToolStepNoted(summary=f"Executed {name}"),
+        report=ToolStepReport(summary=f"Executed {name}"),
         output=Output(
             value_for_type(
                 "ToolResultPart",
@@ -357,7 +357,7 @@ def test_flow_spawn_summary_is_visible_without_child_events():
         step_begin(
             step=StepRef.parse("run_root.0"),
             kind="spawn",
-            given=SpawnStmt(span=Span(line=1), runnable="flow:research", binding="job"),
+            spec=SpawnStmt(span=Span(line=1), runnable="flow:research", binding="job"),
             started_at=START,
         )
     )

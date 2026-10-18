@@ -33,18 +33,18 @@ from toolang.execution.types import (
     RunRef,
     IterationOccurrence,
     RunStatus,
-    ModelStepGiven,
+    ModelStepSpec,
     ModelCost,
     Occurrence,
     OccurrencePosition,
-    StepGiven,
+    StepSpec,
     StepKind,
-    StepNoted,
+    StepReport,
     StepStatus,
     ThreadRef,
-    ToolStepGiven,
+    ToolStepSpec,
     TokenUsage,
-    ModelStepNoted,
+    ModelStepReport,
     StepRef,
 )
 from toolang.lang.ast import (
@@ -263,7 +263,7 @@ def project_step(
         kind=kind,
         input=tuple(input),
         occurrence=_occurrence_from_context(context or {}),
-        given=_step_given(kind, context),
+        spec=_step_spec(kind, context),
         started_at=started_at,
     )
     if status != "running":
@@ -274,7 +274,7 @@ def project_step(
             output=output
             if isinstance(output, Output) or output is None
             else Output(value_for_type("Part[]", tuple(output)), "_"),
-            noted=_step_noted(kind, detail),
+            report=_step_report(kind, detail),
             error=ErrorMessage(error) if isinstance(error, str) else error,
             finished_at=finished_at or started_at,
         )
@@ -287,10 +287,10 @@ def project_step(
     return step
 
 
-def _step_given(
+def _step_spec(
     kind: StepKind,
     context: Mapping[str, Any] | None,
-) -> StepGiven:
+) -> StepSpec:
     """Build minimal typed begin facts for persistence-focused tests."""
 
     facts = context or {}
@@ -301,14 +301,14 @@ def _step_given(
             if isinstance(model, Mapping)
             else str(model or "test")
         )
-        return ModelStepGiven(
+        return ModelStepSpec(
             setup="test-setup",
             model=identity,
             call=ModelCall(instructions="", messages=[]),
         )
     if kind == "tool":
         plugin = str(facts.get("plugin") or facts.get("tool") or "test")
-        return ToolStepGiven(
+        return ToolStepSpec(
             plugin=plugin,
             call=ToolCall(
                 tool_call_id=str(facts.get("tool_call_id") or "test-call"),
@@ -334,10 +334,10 @@ def _step_given(
     raise AssertionError(f"unsupported test Step kind: {kind}")
 
 
-def _step_noted(
+def _step_report(
     kind: StepKind,
     detail: Mapping[str, Any] | None,
-) -> StepNoted:
+) -> StepReport:
     """Build compact token usage from test result details."""
 
     if kind != "model":
@@ -347,7 +347,7 @@ def _step_noted(
     raw_cost = facts.get("cost")
     accounting = None
     if isinstance(raw_tokens, Mapping):
-        accounting = ModelStepNoted(
+        accounting = ModelStepReport(
             usage=TokenUsage(
                 input_tokens=int(raw_tokens.get("input", 0)),
                 output_tokens=int(raw_tokens.get("output", 0)),
@@ -363,7 +363,7 @@ def _step_noted(
         )
     raw_cont = facts.get("cont")
     return replace(
-        accounting or ModelStepNoted(),
+        accounting or ModelStepReport(),
         continuation=dict(raw_cont) if isinstance(raw_cont, Mapping) else None,
     )
 

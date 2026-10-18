@@ -25,15 +25,15 @@ from toolang.base.types.tool import ToolDefinition
 from toolang.execution.inspection.history import RunHistory
 from toolang.execution.records import (
     StepRecord,
-    StoredModelStepGiven,
-    stored_step_given_from_data,
-    stored_step_given_to_data,
+    StoredModelStepSpec,
+    stored_step_spec_from_data,
+    stored_step_spec_to_data,
 )
 from toolang.execution.store import RunStore
 from toolang.execution.types import (
     ControlRef,
-    ModelStepGiven,
-    ModelStepNoted,
+    ModelStepSpec,
+    ModelStepReport,
     StepRef,
     ThreadPrefix,
 )
@@ -41,7 +41,7 @@ from toolang.lang.input import resolve_input_parts
 
 
 def _capture_replayable_model_step(store: RunStore) -> StepRecord:
-    given = ModelStepGiven(
+    spec = ModelStepSpec(
         setup="test-setup",
         model="test/model",
         call=ModelCall(
@@ -60,7 +60,7 @@ def _capture_replayable_model_step(store: RunStore) -> StepRecord:
         ref=StepRef.from_local("run_replayable_model", (0,)),
         kind="model",
         input=(),
-        given=given,
+        spec=spec,
         state=ControlRef.for_run("run_replayable_model", 0),
         started_at="2026-01-01T00:00:00Z",
     )
@@ -111,8 +111,8 @@ agic chat(_: Part[]) -> Part[]:
         ]
         detail = RunHistory(reopened).get_run(run_id)
         assert detail is not None
-        assert isinstance(detail.steps[0].given, ModelStepGiven)
-        assert detail.steps[0].given.call == expected_call
+        assert isinstance(detail.steps[0].spec, ModelStepSpec)
+        assert detail.steps[0].spec.call == expected_call
     finally:
         reopened.close()
 
@@ -346,12 +346,12 @@ agic calculate(_: Text) -> Boolean:
             tuple(reopened.rebuild_model_call(step) for step in model_steps)
             == expected_calls
         )
-        assert isinstance(model_steps[0].noted, ModelStepNoted)
-        assert isinstance(model_steps[1].noted, ModelStepNoted)
-        assert isinstance(model_steps[0].given, StoredModelStepGiven)
-        assert model_steps[0].given.call.output_schema == {"type": "boolean"}
-        assert model_steps[0].noted.continuation == {"cursor": "turn-1"}
-        assert model_steps[1].noted.continuation == {"cursor": "turn-2"}
+        assert isinstance(model_steps[0].report, ModelStepReport)
+        assert isinstance(model_steps[1].report, ModelStepReport)
+        assert isinstance(model_steps[0].spec, StoredModelStepSpec)
+        assert model_steps[0].spec.call.output_schema == {"type": "boolean"}
+        assert model_steps[0].report.continuation == {"cursor": "turn-1"}
+        assert model_steps[1].report.continuation == {"cursor": "turn-2"}
 
         connection = sqlite3.connect(reopened.db_path)
         try:
@@ -365,9 +365,9 @@ agic calculate(_: Text) -> Boolean:
                 is None
             )
             assert [
-                len(step.given.call.messages.delta)
+                len(step.spec.call.messages.delta)
                 for step in model_steps
-                if isinstance(step.given, StoredModelStepGiven)
+                if isinstance(step.spec, StoredModelStepSpec)
             ] == [2, 3]
         finally:
             connection.close()
@@ -376,7 +376,7 @@ agic calculate(_: Text) -> Boolean:
 
 
 def test_stored_model_call_delta_round_trip() -> None:
-    stored = stored_step_given_from_data(
+    stored = stored_step_spec_from_data(
         "model",
         {
             "model": "test/model",
@@ -394,10 +394,10 @@ def test_stored_model_call_delta_round_trip() -> None:
         },
     )
 
-    assert isinstance(stored, StoredModelStepGiven)
+    assert isinstance(stored, StoredModelStepSpec)
     assert stored.call.output_schema is None
     assert stored.call.continuation == {"cursor": "saved"}
-    assert stored_step_given_to_data("model", stored)["call"] == {
+    assert stored_step_spec_to_data("model", stored)["call"] == {
         "instructions": "instruction-ref",
         "version": 1,
         "messages": {"head": "run_ab12.0", "delta": []},
@@ -417,12 +417,12 @@ def test_rebuild_model_call_rejects_corrupted_content_addressed_data(
     store = RunStore(tmp_path / "runs.db")
     try:
         step = _capture_replayable_model_step(store)
-        assert isinstance(step.given, StoredModelStepGiven)
+        assert isinstance(step.spec, StoredModelStepSpec)
         connection = sqlite3.connect(store.db_path)
         try:
             connection.execute(
                 "UPDATE contents SET value = ? WHERE id = ?",
-                (b"corrupted", getattr(step.given.call, field)),
+                (b"corrupted", getattr(step.spec.call, field)),
             )
             connection.commit()
         finally:
@@ -449,12 +449,12 @@ def test_rebuild_model_call_rejects_missing_content_addressed_data(
     store = RunStore(tmp_path / "runs.db")
     try:
         step = _capture_replayable_model_step(store)
-        assert isinstance(step.given, StoredModelStepGiven)
+        assert isinstance(step.spec, StoredModelStepSpec)
         connection = sqlite3.connect(store.db_path)
         try:
             connection.execute(
                 "DELETE FROM contents WHERE id = ?",
-                (getattr(step.given.call, field),),
+                (getattr(step.spec.call, field),),
             )
             connection.commit()
         finally:

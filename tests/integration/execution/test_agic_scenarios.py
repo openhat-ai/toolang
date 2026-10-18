@@ -69,9 +69,9 @@ from toolang.execution.types import (
     ErrorMessage,
     ErrorRef,
     FieldRef,
-    ModelStepNoted,
+    ModelStepReport,
     ThreadPrefix,
-    ToolStepNoted,
+    ToolStepReport,
     StepRef,
 )
 from toolang.lang.input import resolve_input_parts
@@ -376,8 +376,8 @@ agic reply(_: Part[]) -> Part[]:
                 (automatic, {"effort": "medium"}),
             ):
                 step = harness.store.list_steps(run_id=run.id)[0]
-                assert isinstance(step.noted, ModelStepNoted)
-                assert step.noted.usage is not None
+                assert isinstance(step.report, ModelStepReport)
+                assert step.report.usage is not None
                 call = harness.store.rebuild_model_call(step)
                 assert call.reasoning is not None
                 assert call.reasoning.to_data() == expected
@@ -1371,10 +1371,10 @@ agic calculate(_: Text) -> Text:
                 ErrorMessage("RuntimeError"),
                 ErrorMessage("unknown tool call: missing__tool"),
             ]
-            assert [step.noted for step in steps[1:4]] == [
-                ToolStepNoted(summary="Failed broken: 3", invoked=True),
-                ToolStepNoted(summary="Failed silent", invoked=True),
-                ToolStepNoted(summary="Failed tool: 4"),
+            assert [step.report for step in steps[1:4]] == [
+                ToolStepReport(summary="Failed broken: 3", invoked=True),
+                ToolStepReport(summary="Failed silent", invoked=True),
+                ToolStepReport(summary="Failed tool: 4"),
             ]
             followup = without_runtime_snapshots(
                 harness.adapter.invocations[1].call.messages
@@ -1662,11 +1662,11 @@ agic reply(_: Text) -> Text:
                 for step in harness.store.list_steps(run_id=record.id)
             ] == [("model", "succeeded")]
             model_step = harness.store.list_steps(run_id=record.id)[0]
-            assert isinstance(model_step.noted, ModelStepNoted)
+            assert isinstance(model_step.report, ModelStepReport)
 
-            assert model_step.noted.usage is not None
-            assert model_step.noted.usage.input_tokens == 6
-            assert model_step.noted.usage.output_tokens == 5
+            assert model_step.report.usage is not None
+            assert model_step.report.usage.input_tokens == 6
+            assert model_step.report.usage.output_tokens == 5
 
     asyncio.run(scenario())
 
@@ -1730,9 +1730,9 @@ agic reply(_: Text) -> Text:
             assert record.status == status
             assert record.error == (ErrorMessage(error) if error is not None else None)
             model_step = harness.store.list_steps(run_id=record.id)[0]
-            assert isinstance(model_step.noted, ModelStepNoted)
+            assert isinstance(model_step.report, ModelStepReport)
 
-            assert model_step.noted.usage is not None
+            assert model_step.report.usage is not None
 
     asyncio.run(scenario())
 
@@ -1804,7 +1804,7 @@ agic reply(_: Text) -> Text:
             )
             assert len(harness.adapter.invocations) == 1
             model_step = harness.store.list_steps(run_id=record.id)[0]
-            assert model_step.noted == ModelStepNoted(invoked=True)
+            assert model_step.report == ModelStepReport(invoked=True)
 
     asyncio.run(scenario())
 
@@ -2044,17 +2044,17 @@ def test_model_step_keeps_the_setup_revision_after_refresh(tmp_path):
             gate.release()
             record = await run
             assert record.status == "succeeded"
-            noted = harness.store.list_steps(run_id=record.id)[0].noted
-            assert isinstance(noted, ModelStepNoted)
+            report = harness.store.list_steps(run_id=record.id)[0].report
+            assert isinstance(report, ModelStepReport)
             assert (
-                noted.usage is not None
-                and noted.cost is not None
-                and noted.cost.pricing is not None
+                report.usage is not None
+                and report.cost is not None
+                and report.cost.pricing is not None
             )
-            from toolang.execution.records import StoredModelStepGiven
+            from toolang.execution.records import StoredModelStepSpec
 
-            given = harness.store.list_steps(run_id=record.id)[0].given
-            assert isinstance(given, StoredModelStepGiven)
-            assert given.setup == "setup-v1"
+            spec = harness.store.list_steps(run_id=record.id)[0].spec
+            assert isinstance(spec, StoredModelStepSpec)
+            assert spec.setup == "setup-v1"
 
     asyncio.run(scenario())

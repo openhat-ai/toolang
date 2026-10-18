@@ -14,7 +14,7 @@ from toolang.base.types.run import ModelCallResult
 from toolang.execution.types import (
     ControlRef,
     FieldRef,
-    LoopStepNoted,
+    LoopStepReport,
     ThreadPrefix,
     TypedRef,
 )
@@ -72,7 +72,7 @@ def test_run_preserves_one_call_with_complete_input_and_output(
             assert harness.store.resolve_value(run.output.value) == (
                 harness.store.resolve_value(source)
             )
-            assert not harness.store.list_steps(run_id=run.id)[0].noted
+            assert not harness.store.list_steps(run_id=run.id)[0].report
 
     asyncio.run(scenario())
 
@@ -319,7 +319,7 @@ def test_empty_reduce_returns_typed_initializer_without_child_calls(
             step = harness.store.list_steps(run_id=run.id)[-1]
             assert step.status == "succeeded"
             assert step.output is not None and step.output.type == output_type
-            assert step.noted == LoopStepNoted(0, "exhausted", 0)
+            assert step.report == LoopStepReport(0, "exhausted", 0)
             assert len(harness.store.list_run_tree(root_run_id=run.id)) == 1
             assert not harness.adapter.invocations
 

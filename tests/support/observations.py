@@ -26,9 +26,9 @@ from toolang.execution.types import (
     ErrorRef,
     Occurrence,
     Output,
-    StepGiven,
+    StepSpec,
     StepKind,
-    StepNoted,
+    StepReport,
     StepStatus,
     RunStatus,
 )
@@ -58,7 +58,7 @@ def run_begin(
 def step_begin(
     step: StepRef | str,
     kind: StepKind,
-    given: StepGiven | StepInfo,
+    spec: StepSpec | StepInfo,
     state: ControlRef | None = None,
     input: object = (),
     preceded_by: tuple[ControlRef | ControlApplied, ...] = (),
@@ -73,9 +73,9 @@ def step_begin(
         str(ref.parent) if ref.parent else None,
         ref.index,
         kind,
-        given
-        if isinstance(given, FlowStepInfo | ModelStepInfo | ToolStepInfo)
-        else step_info(given),
+        spec
+        if isinstance(spec, FlowStepInfo | ModelStepInfo | ToolStepInfo)
+        else step_info(spec),
         tuple(
             ControlApplied(str(item.target), item.index)
             if isinstance(item, ControlRef)
@@ -92,7 +92,7 @@ def step_end(
     kind: StepKind,
     status: StepStatus,
     output: Output | EventOutput | None = None,
-    noted: StepNoted | StepSummary = None,
+    report: StepReport | StepSummary = None,
     error: str | ErrorMessage | ErrorRef | None = None,
     aborted_by: ControlRef | None = None,
     finished_at: str = "",
@@ -105,7 +105,7 @@ def step_end(
         kind=kind,
         status=status,
         output=output if isinstance(output, EventOutput) else direct_output(output),
-        noted=noted if isinstance(noted, StepSummary) else step_summary(noted),
+        report=report if isinstance(report, StepSummary) else step_summary(report),
         error=error.message
         if isinstance(error, ErrorMessage)
         else error

@@ -14,8 +14,8 @@ from toolang.execution.types import ContentRef
     "schema_version",
     [
         pytest.param(28, id="historical"),
-        *[pytest.param(version, id=f"old-{version}") for version in range(51, 59)],
-        pytest.param(60, id="future"),
+        *[pytest.param(version, id=f"old-{version}") for version in range(51, 60)],
+        pytest.param(61, id="future"),
     ],
 )
 @pytest.mark.parametrize("read_only", (False, True))
@@ -37,7 +37,7 @@ def test_run_store_rejects_any_other_schema_without_modifying_it(
         RunStore(path, read_only=read_only)
 
     assert raised.value.version == schema_version
-    assert raised.value.current == 59
+    assert raised.value.current == 60
     assert raised.value.read_only is read_only
     assert path.read_bytes() == before
     connection = sqlite3.connect(path)
@@ -92,7 +92,7 @@ def test_run_store_opens_the_current_schema(tmp_path: Path) -> None:
 
     connection = sqlite3.connect(path)
     try:
-        assert int(connection.execute("PRAGMA user_version").fetchone()[0]) == 59
+        assert int(connection.execute("PRAGMA user_version").fetchone()[0]) == 60
         columns = {
             table: {
                 str(row[1]) for row in connection.execute(f"PRAGMA table_info({table})")
@@ -108,9 +108,9 @@ def test_run_store_opens_the_current_schema(tmp_path: Path) -> None:
                 "updated_at",
             },
             "runs": {
-                "noted",
-                "begin_cursor",
-                "end_cursor",
+                "report",
+                "_begin_cursor",
+                "_end_cursor",
                 "id",
                 "parent",
                 "thread",
@@ -125,8 +125,8 @@ def test_run_store_opens_the_current_schema(tmp_path: Path) -> None:
                 "finished_at",
             },
             "steps": {
-                "begin_cursor",
-                "end_cursor",
+                "_begin_cursor",
+                "_end_cursor",
                 "preceded_by",
                 "aborted_by",
                 "id",
@@ -137,23 +137,22 @@ def test_run_store_opens_the_current_schema(tmp_path: Path) -> None:
                 "state",
                 "output",
                 "occur",
-                "given",
-                "noted",
+                "spec",
+                "report",
                 "status",
                 "error",
-                "created_at",
                 "started_at",
                 "finished_at",
             },
             "controls": {
-                "event_cursor",
+                "_event_cursor",
                 "triggered_by",
                 "id",
                 "scope",
                 "target",
                 "index",
                 "kind",
-                "request",
+                "request_id",
                 "client_id",
                 "status",
                 "error",

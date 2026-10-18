@@ -30,7 +30,7 @@ from toolang.execution.types import (
     ErrorMessage,
     FieldRef,
     ThreadPrefix,
-    ToolStepNoted,
+    ToolStepReport,
     StepRef,
 )
 from toolang.lang.input import resolve_input_parts
@@ -480,7 +480,7 @@ agic calculate(_: Part[]) -> Part[]:
                 ("model", "succeeded"),
                 ("tool", "canceled"),
             ]
-            assert steps[1].noted == ToolStepNoted(
+            assert steps[1].report == ToolStepReport(
                 summary="Canceled slow: 3", invoked=True
             )
             assert steps[1].aborted_by == control.ref

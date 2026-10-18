@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from toolang.execution.types import ContentRef
-from toolang.execution.records import StoredModelStepGiven
+from toolang.execution.records import StoredModelStepSpec
 from toolang.execution.events import ControlApplied
 
 from toolang.execution.events import ModelStepInfo
@@ -286,7 +286,7 @@ agic chat(_: Part[]) -> Part[]:
                 event
                 for event in tracer.events
                 if isinstance(event, StepBegin)
-                and isinstance(event.given, ModelStepInfo)
+                and isinstance(event.spec, ModelStepInfo)
             ]
             assert model_events[1].preceded_by == (
                 *(ControlApplied(str(item.target), item.index) for item in recalls),
@@ -298,11 +298,11 @@ agic chat(_: Part[]) -> Part[]:
             for event in model_events:
                 record = harness.store.get_step(ref=StepRef.parse(event.step))
                 assert record is not None and isinstance(
-                    record.given, StoredModelStepGiven
+                    record.spec, StoredModelStepSpec
                 )
                 assert all(
                     isinstance(segment, ContentRef)
-                    for message in record.given.call.messages.delta
+                    for message in record.spec.call.messages.delta
                     for segment in message.content
                 )
             recorded = harness.store.get_step(ref=StepRef.parse(model_events[1].step))

@@ -597,7 +597,7 @@ def test_live_relay_preserves_complete_root_run_tree_order(tmp_path) -> None:
             step_begin(
                 step=StepRef.parse("run_test.0"),
                 kind="run",
-                given=RunStmt(span=Span(line=1), runnable="agic:test"),
+                spec=RunStmt(span=Span(line=1), runnable="agic:test"),
                 started_at="2026-01-01T00:00:01Z",
             ),
             run_begin(
@@ -608,7 +608,7 @@ def test_live_relay_preserves_complete_root_run_tree_order(tmp_path) -> None:
             step_begin(
                 step=StepRef.parse("run_child.0"),
                 kind="value",
-                given=LetStmt(span=Span(line=1), value="test"),
+                spec=LetStmt(span=Span(line=1), value="test"),
                 started_at="2026-01-01T00:00:03Z",
             ),
             step_end(

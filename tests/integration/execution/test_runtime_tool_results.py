@@ -43,7 +43,7 @@ from toolang.execution.inspection.trees import build_execution_tree
 from toolang.execution.types import (
     FieldRef,
     ThreadPrefix,
-    ToolStepGiven,
+    ToolStepSpec,
     StepRef,
 )
 from toolang.execution.values import parts_from_value
@@ -111,8 +111,8 @@ def test_runtime_result_survives_restart_without_followup_model(
         try:
             history = RunHistory(reopened)
             model, tool = history.run_view(root.id).steps()
-            assert isinstance(tool.given, ToolStepGiven)
-            assert tool.given.call == request
+            assert isinstance(tool.spec, ToolStepSpec)
+            assert tool.spec.call == request
             assert tool.input == (FieldRef.from_path(model.ref, "output", "value", 0),)
             assert tool.output is not None
             (part,) = parts_from_value(tool.output.value)
@@ -499,9 +499,7 @@ def test_skipped_batch_is_durable_and_does_not_consume_call_budget(
             steps = RunHistory(reopened).run_view(root.id).steps()
             for step, request in zip(steps[1:3], requests, strict=True):
                 assert step.kind == "tool" and step.status == "canceled"
-                assert (
-                    isinstance(step.given, ToolStepGiven) and step.given.call == request
-                )
+                assert isinstance(step.spec, ToolStepSpec) and step.spec.call == request
                 assert step.aborted_by == steer.ref
                 assert step.output is not None
                 (part,) = parts_from_value(step.output.value)
@@ -616,7 +614,7 @@ def test_steer_during_execute_delivery_keeps_committed_transfer(tmp_path: Path) 
                 row.text == "Switched to runnable: agic:child"
                 and row.tool_identity == ("runtime", "exec")
                 for row in rows
-            ), (steps[1].noted, rows)
+            ), (steps[1].report, rows)
             assert not any("Failed to execute" in row.text for row in rows)
 
     asyncio.run(scenario())

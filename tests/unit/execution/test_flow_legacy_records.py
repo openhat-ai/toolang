@@ -4,7 +4,7 @@ from typing import cast
 
 import pytest
 
-from toolang.execution.records import step_given_from_data
+from toolang.execution.records import step_spec_from_data
 from toolang.lang.ast import RunStmt, Span, to_data
 
 
@@ -18,4 +18,4 @@ def test_removed_statement_records_are_rejected(kind, step_kind) -> None:
     )
     data["kind"] = kind
     with pytest.raises(ValueError, match="Removed"):
-        step_given_from_data(step_kind, data)
+        step_spec_from_data(step_kind, data)

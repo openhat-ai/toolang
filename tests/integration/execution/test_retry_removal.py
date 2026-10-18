@@ -67,7 +67,7 @@ def test_legacy_retry_history_is_inspectable_and_an_ordinary_rerun_source(
             control = ControlRef.for_run(source.id, 1)
             with harness.store._conn:
                 harness.store._conn.execute(
-                    "INSERT INTO controls(id,scope,target,\"index\",kind,request,status,error,timing,payload,created_at,finished_at,_claimed,_revision,triggered_by,event_cursor,client_id) SELECT ?,scope,target,1,'retry',NULL,'applied',NULL,"
+                    "INSERT INTO controls(id,scope,target,\"index\",kind,request_id,status,error,timing,payload,created_at,finished_at,_claimed,_revision,triggered_by,_event_cursor,client_id) SELECT ?,scope,target,1,'retry',NULL,'applied',NULL,"
                     "timing,?,created_at,finished_at,_claimed,_revision+1,NULL,NULL,NULL "
                     "FROM controls WHERE id=?",
                     (str(control), json.dumps(legacy), initial.id),
@@ -108,7 +108,7 @@ def test_legacy_retry_history_is_inspectable_and_an_ordinary_rerun_source(
                     kind="retry",
                     timing="immediate",
                     payload=control_payload_from_data("retry", legacy),
-                    request=None,
+                    request_id=None,
                     status="applied",
                     error=None,
                     created_at=source.created_at,

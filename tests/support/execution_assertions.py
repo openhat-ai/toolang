@@ -99,7 +99,7 @@ def execution_snapshot(call: ModelCall) -> dict[str, str]:
 def assert_replayed(harness: ExecutionHarness, events: Sequence[RunEvent]) -> None:
     """Compare persisted replay with calls captured before observer projection."""
     begins = {
-        StepRef.parse(event.step): event.given
+        StepRef.parse(event.step): event.spec
         for event in events
         if isinstance(event, StepBegin) and event.kind == "model"
     }
@@ -111,8 +111,8 @@ def assert_replayed(harness: ExecutionHarness, events: Sequence[RunEvent]) -> No
         batch = store.rebuild_model_calls(saved)
         assert set(batch) == set(begins)
         for step in saved:
-            given = begins[step.ref]
-            assert isinstance(given, ModelStepInfo)
+            spec = begins[step.ref]
+            assert isinstance(spec, ModelStepInfo)
             original = harness.model_calls[step.ref]
             for replayed in (batch[step.ref], store.rebuild_model_call(step)):
                 assert replayed == original
@@ -197,8 +197,8 @@ def assert_run_event_integrity(
                 source = step_begins.get(parent)
                 assert source is not None, f"child before its source Step at {where}"
                 asynchronous = (
-                    isinstance(source.given, FlowStepInfo | ToolStepInfo)
-                    and source.given.asynchronous
+                    isinstance(source.spec, FlowStepInfo | ToolStepInfo)
+                    and source.spec.asynchronous
                 )
                 assert parent in active_steps or asynchronous, (
                     f"synchronous child after source Step ended at {where}"
@@ -269,8 +269,8 @@ def assert_run_event_integrity(
                 ref.parent == StepRef.parse(event.step) for ref in active_steps
             ), f"Step ended with active child Step at {where}"
             asynchronous = (
-                isinstance(begin.given, FlowStepInfo | ToolStepInfo)
-                and begin.given.asynchronous
+                isinstance(begin.spec, FlowStepInfo | ToolStepInfo)
+                and begin.spec.asynchronous
             )
             assert asynchronous or not any(
                 run_begins[run].parent == event.step for run in active_runs

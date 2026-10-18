@@ -56,10 +56,10 @@ from toolang.execution.types import (
     ErrorMessage,
     ErrorRef,
     FieldRef,
-    ModelStepGiven,
-    ToolStepGiven,
+    ModelStepSpec,
+    ToolStepSpec,
     TokenUsage,
-    ModelStepNoted,
+    ModelStepReport,
     StepRef,
     ModelCost,
     value_for_type,
@@ -77,16 +77,16 @@ def _parts(text: str) -> Output:
     return Output(value_for_type("Part[]", (TextPart(text),)), "_")
 
 
-def _model() -> ModelStepGiven:
-    return ModelStepGiven(
+def _model() -> ModelStepSpec:
+    return ModelStepSpec(
         setup="test-setup",
         model="deepseek/deepseek-chat",
         call=ModelCall(instructions="", messages=[]),
     )
 
 
-def _tool() -> ToolStepGiven:
-    return ToolStepGiven(
+def _tool() -> ToolStepSpec:
+    return ToolStepSpec(
         plugin="web",
         call=ToolCall(
             tool_call_id="call_1",
@@ -128,7 +128,7 @@ def test_non_tty_appends_only_finalized_model_progress() -> None:
             step_begin(
                 step=StepRef.parse("run_one.0"),
                 kind="model",
-                given=_model(),
+                spec=_model(),
                 started_at="2026-01-01T00:00:00Z",
             ),
             step_end(
@@ -136,7 +136,7 @@ def test_non_tty_appends_only_finalized_model_progress() -> None:
                 kind="model",
                 status="succeeded",
                 output=_parts("Use a shared reducer."),
-                noted=ModelStepNoted(
+                report=ModelStepReport(
                     usage=TokenUsage(input_tokens=3400, output_tokens=86),
                     cost=ModelCost(
                         amount=float("0.006"),
@@ -292,7 +292,7 @@ def test_script_tool_call_only_model_step_clears_live_without_scrollback(
 
     async def scenario() -> None:
         await presenter.on_event(_root_begin())
-        await presenter.on_event(step_begin(step=path, kind="model", given=_model()))
+        await presenter.on_event(step_begin(step=path, kind="model", spec=_model()))
         assert [row.text for row in presenter.console._live_rows] == ["• Thinking"]
 
         await presenter.on_event(
@@ -338,7 +338,7 @@ def test_tty_model_output_uses_normal_style() -> None:
             step_begin(
                 step=StepRef.parse("run_one.0"),
                 kind="model",
-                given=_model(),
+                spec=_model(),
             ),
             step_end(
                 step=StepRef.parse("run_one.0"),
@@ -362,7 +362,7 @@ def test_tool_output_is_not_rendered() -> None:
             step_begin(
                 step=StepRef.parse("run_one.0"),
                 kind="tool",
-                given=_tool(),
+                spec=_tool(),
             ),
             step_end(
                 step=StepRef.parse("run_one.0"),
@@ -431,7 +431,7 @@ def test_tty_replaces_live_rows_and_clears_them_on_shutdown() -> None:
             step_begin(
                 step=StepRef.parse("run_one.0"),
                 kind="model",
-                given=_model(),
+                spec=_model(),
             ),
         ],
         tty=True,
@@ -448,7 +448,7 @@ def test_step_error_and_ownerless_run_error_use_bullet_rows() -> None:
             step_begin(
                 step=StepRef.parse("run_one.0"),
                 kind="tool",
-                given=_tool(),
+                spec=_tool(),
             ),
             step_end(
                 step=StepRef.parse("run_one.0"),
@@ -965,7 +965,7 @@ def test_single_run_gather_progressively_commits_markdown() -> None:
             step_begin(
                 step=gather,
                 kind="run",
-                given=RunStmt(span=Span(line=1), runnable="merge"),
+                spec=RunStmt(span=Span(line=1), runnable="merge"),
             )
         )
         await presenter.on_event(
@@ -976,7 +976,7 @@ def test_single_run_gather_progressively_commits_markdown() -> None:
                 runnable="agic:merge",
             )
         )
-        await presenter.on_event(step_begin(step=model, kind="model", given=_model()))
+        await presenter.on_event(step_begin(step=model, kind="model", spec=_model()))
         await presenter.on_event(PartBegin(step=str(model), part=0, part_type="text"))
         await presenter.on_event(
             PartDelta(
@@ -1155,7 +1155,7 @@ def test_script_context_precedes_steps_once_and_keeps_root_snapshot() -> None:
             step_begin(
                 step=owner,
                 kind="run",
-                given=RunStmt(span=Span(line=1), runnable="child"),
+                spec=RunStmt(span=Span(line=1), runnable="child"),
             ),
             run_begin(
                 run=child,
@@ -1163,7 +1163,7 @@ def test_script_context_precedes_steps_once_and_keeps_root_snapshot() -> None:
                 control=ControlRef.for_run(child, 0),
                 runnable="agic:child",
             ),
-            step_begin(step=StepRef.parse("run_child.0"), kind="model", given=_model()),
+            step_begin(step=StepRef.parse("run_child.0"), kind="model", spec=_model()),
             step_end(
                 step=StepRef.parse("run_child.0"),
                 kind="model",
@@ -1191,7 +1191,7 @@ def test_script_context_separates_first_non_tty_compact_activity(prior_output) -
         events.extend(
             [
                 step_begin(
-                    step=StepRef.parse("run_one.0"), kind="model", given=_model()
+                    step=StepRef.parse("run_one.0"), kind="model", spec=_model()
                 ),
                 step_end(
                     step=StepRef.parse("run_one.0"),
@@ -1207,7 +1207,7 @@ def test_script_context_separates_first_non_tty_compact_activity(prior_output) -
             step_begin(
                 step=StepRef.parse("run_one.1"),
                 kind="tool",
-                given=ToolStepGiven(
+                spec=ToolStepSpec(
                     plugin="runtime",
                     trigger="runtime",
                     call=ToolCall("compact", "compact", "runtime__compact", {}),

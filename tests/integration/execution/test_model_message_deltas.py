@@ -46,7 +46,7 @@ from toolang.execution.inspection.history import RunHistory
 from toolang.execution.records import delta_to_data
 from toolang.execution.recall import recall_revisions
 from toolang.execution.values import parts_from_value
-from toolang.execution.records import RecallControlPayload, StoredModelStepGiven
+from toolang.execution.records import RecallControlPayload, StoredModelStepSpec
 from toolang.execution.store import RunStore
 from toolang.execution.types import (
     ControlTiming,
@@ -55,7 +55,7 @@ from toolang.execution.types import (
     ContentRef,
     MessageTemplate,
     ControlRef,
-    ModelStepGiven,
+    ModelStepSpec,
     RecallTarget,
     RulesRecallTarget,
     ServiceRecallTarget,
@@ -242,7 +242,7 @@ def test_online_tool_loops_only_record_and_render_additions(
             assert root.status == "succeeded", root.error
             steps = harness.store.list_steps(run_id=root.id)
             model_steps = [
-                step for step in steps if isinstance(step.given, StoredModelStepGiven)
+                step for step in steps if isinstance(step.spec, StoredModelStepSpec)
             ]
             for index, step in enumerate(model_steps[:-1]):
                 assert step.output is not None
@@ -254,15 +254,15 @@ def test_online_tool_loops_only_record_and_render_additions(
                 assert len(reasoning) == 1
                 assert reasoning[0].signature == f"signature-{index}"
             assert [
-                len(step.given.call.messages.delta)
+                len(step.spec.call.messages.delta)
                 for step in model_steps
-                if isinstance(step.given, StoredModelStepGiven)
+                if isinstance(step.spec, StoredModelStepSpec)
             ] == [2, *([3] * 12)]
             for step in model_steps[1:]:
-                assert isinstance(step.given, StoredModelStepGiven)
+                assert isinstance(step.spec, StoredModelStepSpec)
                 assert all(
                     isinstance(message.content[0], ContentRef)
-                    for message in step.given.call.messages.delta
+                    for message in step.spec.call.messages.delta
                 )
             historical_outputs = {step.ref for step in steps[:-1]}
             assert not any(
@@ -652,7 +652,7 @@ def test_long_delta_sequences_are_linear_and_batch_expansion_is_shared(
                     input=(),
                     state=ControlRef.for_run("run_ab12", 0),
                     started_at="now",
-                    given=ModelStepGiven(
+                    spec=ModelStepSpec(
                         "test/model",
                         ModelCall("", list(buffer.messages)),
                         buffer.take_delta(StepRef.from_local("run_ab12", (index,))),
@@ -661,15 +661,15 @@ def test_long_delta_sequences_are_linear_and_batch_expansion_is_shared(
                 )
             )
         assert all(
-            isinstance(step.given, StoredModelStepGiven)
-            and len(step.given.call.messages.delta) == 1
+            isinstance(step.spec, StoredModelStepSpec)
+            and len(step.spec.call.messages.delta) == 1
             for step in steps
         )
         assert (
             sum(
-                len(str(delta_to_data(step.given.call.messages.delta)))
+                len(str(delta_to_data(step.spec.call.messages.delta)))
                 for step in steps
-                if isinstance(step.given, StoredModelStepGiven)
+                if isinstance(step.spec, StoredModelStepSpec)
             )
             < total_messages * 200
         )
@@ -705,7 +705,7 @@ def test_delta_cannot_exceed_the_assembled_call(
                 input=(),
                 state=ControlRef.for_run("run_ab12", 0),
                 started_at="now",
-                given=ModelStepGiven(
+                spec=ModelStepSpec(
                     "test/model",
                     ModelCall("", []),
                     ModelMessages(
@@ -727,7 +727,7 @@ def _record(store, index, call, messages=None):
         input=(),
         state=ControlRef.for_run(ref.run_id, 0),
         started_at="now",
-        given=ModelStepGiven("test/model", call, messages, setup="test-setup"),
+        spec=ModelStepSpec("test/model", call, messages, setup="test-setup"),
     )
 
 
@@ -749,8 +749,8 @@ def test_batch_replay_does_not_read_unrequested_sequence_or_suffix(
             else None,
         )
         last = _record(store, 10, ModelCall("", [Message.user("new baseline")]))
-        assert isinstance(skipped.given, StoredModelStepGiven)
-        ref = skipped.given.call.messages.delta[-1].content[0]
+        assert isinstance(skipped.spec, StoredModelStepSpec)
+        ref = skipped.spec.call.messages.delta[-1].content[0]
         with sqlite3.connect(store.db_path) as connection:
             connection.execute("DELETE FROM contents WHERE id = ?", (str(ref),))
         calls = store.rebuild_model_calls((last, first))
@@ -803,7 +803,7 @@ def test_replay_rejects_disconnected_intermediate_message_heads(tmp_path, head):
         )
         with sqlite3.connect(store.db_path) as connection:
             connection.execute(
-                "UPDATE steps SET given = json_set(given, '$.call.messages.head', ?) "
+                "UPDATE steps SET spec = json_set(spec, '$.call.messages.head', ?) "
                 "WHERE id = ?",
                 (head, str(middle.ref)),
             )
@@ -848,8 +848,8 @@ def test_replayed_withdrawal_preserves_old_calls_and_trigger_visibility(
             ModelCall("", list(buffer.messages)),
             buffer.take_delta(StepRef.parse("run_ab12.1")),
         )
-        assert isinstance(second.given, StoredModelStepGiven)
-        (delta,) = second.given.call.messages.delta
+        assert isinstance(second.spec, StoredModelStepSpec)
+        (delta,) = second.spec.call.messages.delta
         assert delta.tag == "skill-guidance" and delta.recall == removed.recall
     with closing(RunStore(path)) as store:
         before, after = (
@@ -892,8 +892,8 @@ def test_recorded_messages_freeze_actual_parts_and_require_intact_hashes(
         ModelCall("instructions", [original]),
         ModelMessages(head, (MessageTemplate("user", (unavailable,)),)),
     )
-    assert isinstance(step.given, StoredModelStepGiven)
-    content = step.given.call.messages.delta[0].content[0]
+    assert isinstance(step.spec, StoredModelStepSpec)
+    content = step.spec.call.messages.delta[0].content[0]
     assert isinstance(content, ContentRef)
     store.close()
     with closing(RunStore(path)) as reopened:
@@ -930,7 +930,7 @@ def test_heads_rebase_messages_but_never_inherit_other_call_fields(
             10,
             ModelCall("after", [Message.user("summary"), Message.user("now")]),
         )
-        assert isinstance(current.given, StoredModelStepGiven)
+        assert isinstance(current.spec, StoredModelStepSpec)
         head = current.ref
         next_call = ModelCall(
             "last",
@@ -951,8 +951,8 @@ def test_heads_rebase_messages_but_never_inherit_other_call_fields(
         rebuilt = store.rebuild_model_call(final)
         assert rebuilt == next_call
         assert rebuilt.output_schema is None and rebuilt.continuation is None
-        assert isinstance(first.given, StoredModelStepGiven)
-        assert first.given.call.messages.delta[0].content[0] not in resolved
+        assert isinstance(first.spec, StoredModelStepSpec)
+        assert first.spec.call.messages.delta[0].content[0] not in resolved
         assert store.rebuild_model_call(first).messages == [Message.user("old")]
         for bad_head in (
             first.ref,
@@ -965,23 +965,23 @@ def test_heads_rebase_messages_but_never_inherit_other_call_fields(
             _record(store, 12, next_call, ModelMessages(StepRef.parse("run_ab12.12")))
         bad = replace(
             final,
-            given=replace(
-                final.given,
+            spec=replace(
+                final.spec,
                 call=replace(
-                    final.given.call,
+                    final.spec.call,
                     messages=ModelMessages(StepRef.parse("run_ab12.9")),
                 ),
             ),
         )
         # Corrupt persisted heads fail closed rather than guessing from controls.
-        from toolang.execution.records import stored_step_given_to_data
+        from toolang.execution.records import stored_step_spec_to_data
         import json
 
         with sqlite3.connect(store.db_path) as connection:
             connection.execute(
-                "UPDATE steps SET given = ? WHERE id = ?",
+                "UPDATE steps SET spec = ? WHERE id = ?",
                 (
-                    json.dumps(stored_step_given_to_data("model", bad.given)),
+                    json.dumps(stored_step_spec_to_data("model", bad.spec)),
                     str(final.ref),
                 ),
             )

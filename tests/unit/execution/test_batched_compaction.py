@@ -304,11 +304,11 @@ def test_failed_run_usage_marker_uses_recorded_token_usage() -> None:
     steps = (
         SimpleNamespace(
             kind="model",
-            noted=SimpleNamespace(
+            report=SimpleNamespace(
                 usage=SimpleNamespace(input_tokens=1200, output_tokens=30)
             ),
         ),
-        SimpleNamespace(kind="tool", noted=None),
+        SimpleNamespace(kind="tool", report=None),
     )
     from toolang.execution.assembly.history import _run_usage
 

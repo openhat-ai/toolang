@@ -74,7 +74,7 @@ class ChoreInspection:
             definitions=inspect_chore_sources(layout)
             if definitions is None
             else definitions,
-            records={record.chore_id: record for record in records},
+            records={record.id: record for record in records},
             latest_runs=latest_runs,
             error_messages=error_messages,
         )
@@ -125,7 +125,7 @@ class ChoreInspection:
                 thread_id=thread_id,
                 synced=synced,
                 status=record.status if record else None,
-                active_run_id=record.active_run_id if record else None,
+                active_run_id=record.active_run if record else None,
                 pending_at=record.pending_at if record else None,
                 next_scheduled_at=record.next_scheduled_at if record else None,
                 last_run=last_run,

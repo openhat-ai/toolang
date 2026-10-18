@@ -40,8 +40,8 @@ def _execution_rows(
     tool = operation.source == "tool"
     marker = "›" if tool else "•"
     summary = (
-        event.noted.summary
-        if tool and (event.noted is not None and event.noted.summary is not None)
+        event.report.summary
+        if tool and (event.report is not None and event.report.summary is not None)
         else ""
     )
     summary = summary or f"{label} {operation.runnable or 'runnable'}"
@@ -201,8 +201,8 @@ def trace_terminal_rows(
 
     label = operation.tool.name if operation.tool else "tool"
     summary = (
-        event.noted.summary
-        if (event.noted is not None and event.noted.summary is not None)
+        event.report.summary
+        if (event.report is not None and event.report.summary is not None)
         else ""
     )
     tone = "progress"
@@ -271,22 +271,22 @@ def loop_terminal_rows(
 ) -> tuple[ProgressRow, ...]:
     """Project one Loop Step's typed terminal cause."""
 
-    noted = (
-        event.noted
-        if (event.noted is not None and event.noted.iterations is not None)
+    report = (
+        event.report
+        if (event.report is not None and event.report.iterations is not None)
         else None
     )
     iterations = (
-        noted.iterations
-        if noted is not None and noted.iterations is not None
+        report.iterations
+        if report is not None and report.iterations is not None
         else observed_iterations
     )
-    total = noted.total if noted is not None else None
+    total = report.total if report is not None else None
     if total is None and (statement is not None and statement.kind in {"repeat"}):
         total = statement.count
     termination = (
-        noted.termination
-        if noted is not None and noted.termination is not None
+        report.termination
+        if report is not None and report.termination is not None
         else "exhausted"
         if event.status == "succeeded"
         else event.status
@@ -322,13 +322,13 @@ def collection_terminal_rows(
         return flow_error_rows(error, tone=_tone(event.status))
     if event.status == "canceled":
         return (ProgressRow("• canceled", _tone(event.status)),)
-    noted = (
-        event.noted
-        if (event.noted is not None and event.noted.total_items is not None)
+    report = (
+        event.report
+        if (event.report is not None and event.report.total_items is not None)
         else None
     )
-    total = noted.total_items if noted is not None else fallback_total
-    output = noted.output_items if noted is not None else None
+    total = report.total_items if report is not None else fallback_total
+    output = report.output_items if report is not None else None
     if total is None:
         return ()
     text = _collection_success_text(statement, total, output)

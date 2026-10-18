@@ -177,11 +177,11 @@ def test_real_provider_executes_requested_agic_once_with_chat_history(
             assert isinstance(control.payload, ExecControlPayload)
             assert control.payload.runnable == "agic:test"
             assert len(runtime.store.list_run_tree(root_run_id=run_id)) == 1
-            from toolang.execution.types import ToolStepGiven
+            from toolang.execution.types import ToolStepSpec
 
             steps = runtime.store.list_steps(run_id=run_id)
             tool_calls = [
-                s.given.call for s in steps if isinstance(s.given, ToolStepGiven)
+                s.spec.call for s in steps if isinstance(s.spec, ToolStepSpec)
             ]
             assert sum(t.name == "runtime__exec" for t in tool_calls) == 1
             assert all(
@@ -273,7 +273,7 @@ def test_real_provider_uses_discovery_for_task_directed_routing(
     operation: str | None,
 ) -> None:
     import json
-    from toolang.execution.types import ModelStepNoted, ToolStepGiven
+    from toolang.execution.types import ModelStepReport, ToolStepSpec
 
     source = """
 agic chat(_: Text) -> Text:
@@ -305,7 +305,7 @@ flow check(_: Text) -> Text:
             steps = [
                 step for run in runs for step in runtime.store.list_steps(run_id=run.id)
             ]
-            tools = [s.given.call for s in steps if isinstance(s.given, ToolStepGiven)]
+            tools = [s.spec.call for s in steps if isinstance(s.spec, ToolStepSpec)]
             discoveries = [t for t in tools if t.name == "runtime__runnables"]
             assert discoveries, output
             if target and operation != "run":
@@ -334,9 +334,9 @@ flow check(_: Text) -> Text:
                     assert "ROUTE_MARKER" in output
             metrics = []
             for step in steps:
-                if isinstance(step.noted, ModelStepNoted):
+                if isinstance(step.report, ModelStepReport):
                     call = runtime.store.rebuild_model_call(step)
-                    accounting = step.noted
+                    accounting = step.report
                     metrics.append(
                         {
                             "messages": len(call.messages),

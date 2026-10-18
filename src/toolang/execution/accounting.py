@@ -17,21 +17,21 @@ from .types import (
     ModelCostLine,
     ModelPricing,
     ModelUsageMeter,
-    ModelStepNoted,
+    ModelStepReport,
     TokenUsage,
 )
 
 _PER_MILLION = 1_000_000
 
 
-def build_model_noted(
+def build_model_report(
     model: Model,
     usage: ModelUsage | None,
-) -> ModelStepNoted:
+) -> ModelStepReport:
     """Normalize one result once for persistence, live statistics and Events."""
 
     if usage is None:
-        return ModelStepNoted()
+        return ModelStepReport()
     rates, plan, match = _selected_rates(model, usage=usage)
     estimate = (
         _estimate_cost(
@@ -84,7 +84,7 @@ def build_model_noted(
         ),
         lines=estimate.lines if estimate is not None else (),
     )
-    return ModelStepNoted(
+    return ModelStepReport(
         usage=TokenUsage(
             usage.input_tokens,
             usage.output_tokens,

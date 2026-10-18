@@ -33,23 +33,23 @@ from toolang.execution.events import (
 )
 from toolang.execution.types import (
     Output,
-    CollectionStepNoted,
+    CollectionStepReport,
     ControlRef,
     ErrorMessage,
     ErrorRef,
     FieldRef,
     IterationOccurrence,
-    LoopStepNoted,
+    LoopStepReport,
     LoopTermination,
-    ModelStepGiven,
+    ModelStepSpec,
     Occurrence,
     OccurrencePosition,
     StepStatus,
-    ToolStepGiven,
-    ToolStepNoted,
+    ToolStepSpec,
+    ToolStepReport,
     TypedRef,
     TokenUsage,
-    ModelStepNoted,
+    ModelStepReport,
     StepRef,
     ModelCost,
     value_for_type,
@@ -76,14 +76,14 @@ def flow_info(statement):
     return info
 
 
-def _model(model: str = "deepseek/deepseek-chat") -> ModelStepGiven:
-    return ModelStepGiven(
+def _model(model: str = "deepseek/deepseek-chat") -> ModelStepSpec:
+    return ModelStepSpec(
         setup="test-setup", model=model, call=ModelCall(instructions="", messages=[])
     )
 
 
-def _tool(name: str = "web.search", *, summary: str = "") -> ToolStepGiven:
-    return ToolStepGiven(
+def _tool(name: str = "web.search", *, summary: str = "") -> ToolStepSpec:
+    return ToolStepSpec(
         plugin=name.split(".", 1)[0],
         call=ToolCall(
             tool_call_id="call_1",
@@ -186,38 +186,38 @@ def test_progress_header_preserves_doc_selection(
 
 
 @pytest.mark.parametrize(
-    ("statement", "noted", "expected"),
+    ("statement", "report", "expected"),
     [
         (
             KeepStmt(span=SPAN, position="first", count=2),
-            CollectionStepNoted(6, 2),
+            CollectionStepReport(6, 2),
             "• Kept the first 2 items out of 6",
         ),
         (
             KeepStmt(span=SPAN, position="last", count=1),
-            CollectionStepNoted(6, 1),
+            CollectionStepReport(6, 1),
             "• Kept the last item out of 6",
         ),
         (
             KeepStmt(span=SPAN, position="first", count=8),
-            CollectionStepNoted(6, 6),
+            CollectionStepReport(6, 6),
             "• Kept all 6 items",
         ),
         (
             DropStmt(span=SPAN, position="first", count=2),
-            CollectionStepNoted(6, 4),
+            CollectionStepReport(6, 4),
             "• Dropped the first 2 items out of 6, leaving 4",
         ),
         (
             DropStmt(span=SPAN, position="last", count=8),
-            CollectionStepNoted(6, 0),
+            CollectionStepReport(6, 0),
             "• Dropped all 6 items, leaving none",
         ),
     ],
 )
 def test_positional_collection_steps_describe_the_transform(
     statement: KeepStmt | DropStmt,
-    noted: CollectionStepNoted,
+    report: CollectionStepReport,
     expected: str,
 ) -> None:
     projector = ProgressProjector(show_boundaries=False)
@@ -229,14 +229,14 @@ def test_positional_collection_steps_describe_the_transform(
             runnable="flow:demo",
         )
     )
-    projector.handle(step_begin(step=path, kind="value", given=statement))
+    projector.handle(step_begin(step=path, kind="value", spec=statement))
 
     terminal = projector.handle(
         step_end(
             step=path,
             kind="value",
             status="succeeded",
-            noted=noted,
+            report=report,
         )
     )
 
@@ -245,61 +245,61 @@ def test_positional_collection_steps_describe_the_transform(
 
 
 @pytest.mark.parametrize(
-    ("statement", "noted", "expected"),
+    ("statement", "report", "expected"),
     [
         (
             MapStmt(span=SPAN, runnable="map_item"),
-            CollectionStepNoted(6, 6),
+            CollectionStepReport(6, 6),
             "• Mapped 6 items",
         ),
         (
             MapStmt(span=SPAN, runnable="map_item", lanes=1),
-            CollectionStepNoted(1, 1),
+            CollectionStepReport(1, 1),
             "• Mapped 1 item",
         ),
         (
             MapStmt(span=SPAN, runnable="map_item"),
-            CollectionStepNoted(0, 0),
+            CollectionStepReport(0, 0),
             "• Mapped 0 items",
         ),
         (
             GenerateStmt(span=SPAN, count=6, runnable="brainstorm"),
-            CollectionStepNoted(6, 6),
+            CollectionStepReport(6, 6),
             "• Generated 6 items",
         ),
         (
             KeepStmt(span=SPAN, runnable="accept"),
-            CollectionStepNoted(6, 6),
+            CollectionStepReport(6, 6),
             "• Kept all 6 items",
         ),
         (
             KeepStmt(span=SPAN, runnable="accept"),
-            CollectionStepNoted(6, 4),
+            CollectionStepReport(6, 4),
             "• Kept 4 of 6 items",
         ),
         (
             KeepStmt(span=SPAN, runnable="accept"),
-            CollectionStepNoted(1, 1),
+            CollectionStepReport(1, 1),
             "• Kept the item",
         ),
         (
             DropStmt(span=SPAN, runnable="reject"),
-            CollectionStepNoted(6, 4),
+            CollectionStepReport(6, 4),
             "• Dropped 2 of 6 items; 4 remaining",
         ),
         (
             DropStmt(span=SPAN, runnable="reject"),
-            CollectionStepNoted(6, 0),
+            CollectionStepReport(6, 0),
             "• Dropped all 6 items",
         ),
         (
             DropStmt(span=SPAN, runnable="reject"),
-            CollectionStepNoted(6, 6),
+            CollectionStepReport(6, 6),
             "• Dropped 0 of 6 items; 6 remaining",
         ),
         (
             SortStmt(span=SPAN, runnable="score", order="ascending"),
-            CollectionStepNoted(6, 6),
+            CollectionStepReport(6, 6),
             "• Sorted 6 items ascending",
         ),
         (
@@ -308,14 +308,14 @@ def test_positional_collection_steps_describe_the_transform(
                 runnable="score",
                 order="descending",
             ),
-            CollectionStepNoted(10, 10),
+            CollectionStepReport(10, 10),
             "• Sorted 10 items descending",
         ),
     ],
 )
 def test_parallel_collection_steps_describe_the_result(
     statement: MapStmt | GenerateStmt | KeepStmt | DropStmt | SortStmt,
-    noted: CollectionStepNoted,
+    report: CollectionStepReport,
     expected: str,
 ) -> None:
     projector = ProgressProjector(show_boundaries=False)
@@ -327,7 +327,7 @@ def test_parallel_collection_steps_describe_the_result(
             runnable="flow:demo",
         )
     )
-    live = projector.handle(step_begin(step=path, kind="par", given=statement))
+    live = projector.handle(step_begin(step=path, kind="par", spec=statement))
 
     assert _rows(live.live) == [["• Running · 0 succeeded"]]
     assert live.live[0].rows[0].tone == "active"
@@ -337,7 +337,7 @@ def test_parallel_collection_steps_describe_the_result(
             step=path,
             kind="par",
             status="succeeded",
-            noted=noted,
+            report=report,
         )
     )
 
@@ -359,7 +359,7 @@ def test_model_markdown_closes_without_repeating_at_step_end() -> None:
         step_begin(
             step=StepRef.parse("run_root.0"),
             kind="model",
-            given=_model(),
+            spec=_model(),
             started_at="2026-01-01T00:00:00Z",
         )
     )
@@ -400,7 +400,7 @@ def test_model_markdown_closes_without_repeating_at_step_end() -> None:
             kind="model",
             status="succeeded",
             output=_parts("Comparing\napproaches"),
-            noted=ModelStepNoted(
+            report=ModelStepReport(
                 usage=TokenUsage(input_tokens=3400, output_tokens=86),
                 cost=ModelCost(
                     amount=float("0.002"),
@@ -427,7 +427,7 @@ def test_model_markdown_commits_stable_blocks_and_keeps_one_live_tail() -> None:
             runnable="agic:demo",
         )
     )
-    projector.handle(step_begin(step=path, kind="model", given=_model()))
+    projector.handle(step_begin(step=path, kind="model", spec=_model()))
     projector.handle(PartBegin(step=str(path), part=0, part_type="text"))
 
     heading = projector.handle(
@@ -480,7 +480,7 @@ def test_model_part_end_must_extend_streamed_text() -> None:
             runnable="agic:demo",
         )
     )
-    projector.handle(step_begin(step=path, kind="model", given=_model()))
+    projector.handle(step_begin(step=path, kind="model", spec=_model()))
     projector.handle(PartBegin(step=str(path), part=0, part_type="text"))
     projector.handle(PartDelta(step=str(path), part=0, delta=TextDelta("prefix")))
 
@@ -505,7 +505,7 @@ def test_multiple_signed_text_parts_render_without_exposing_reasoning():
             runnable="agic:demo",
         )
     )
-    projector.handle(step_begin(step=path, kind="model", given=_model()))
+    projector.handle(step_begin(step=path, kind="model", spec=_model()))
     origin: dict[str, object] = {"adapter": "generate_content", "model": "model"}
     parts = (
         ReasoningPart("hidden", "reasoning-signature", "provider", origin),
@@ -558,7 +558,7 @@ def test_model_step_end_must_repeat_the_completed_parts() -> None:
             runnable="agic:demo",
         )
     )
-    projector.handle(step_begin(step=path, kind="model", given=_model()))
+    projector.handle(step_begin(step=path, kind="model", spec=_model()))
     projector.handle(PartBegin(step=str(path), part=0, part_type="text"))
     projector.handle(part_end(step=str(path), part=0, data=TextPart("authoritative")))
 
@@ -599,7 +599,7 @@ def test_partial_model_output_is_committed_before_terminal_failure(
             runnable="agic:demo",
         )
     )
-    projector.handle(step_begin(step=path, kind="model", given=_model()))
+    projector.handle(step_begin(step=path, kind="model", spec=_model()))
     projector.handle(PartBegin(step=str(path), part=0, part_type="text"))
     projector.handle(PartDelta(step=str(path), part=0, delta=TextDelta("partial")))
     closed = projector.handle(
@@ -633,7 +633,7 @@ def test_model_tool_call_only_output_discards_live_presentation() -> None:
         step_begin(
             step=StepRef.parse("run_root.0"),
             kind="model",
-            given=_model(),
+            spec=_model(),
         )
     )
 
@@ -643,7 +643,7 @@ def test_model_tool_call_only_output_discards_live_presentation() -> None:
             kind="model",
             status="succeeded",
             output=_part_output(_tool_call_part()),
-            noted=ModelStepNoted(
+            report=ModelStepReport(
                 usage=TokenUsage(input_tokens=12, output_tokens=3),
                 cost=ModelCost(
                     amount=float("0.001"),
@@ -673,7 +673,7 @@ def test_model_mixed_output_hides_tool_calls_and_keeps_visible_parts() -> None:
             runnable="agic:demo",
         )
     )
-    projector.handle(step_begin(step=path, kind="model", given=_model()))
+    projector.handle(step_begin(step=path, kind="model", spec=_model()))
 
     update = projector.handle(
         step_end(
@@ -701,7 +701,7 @@ def test_model_committed_text_is_not_replaced_by_later_tool_call_part() -> None:
             runnable="agic:demo",
         )
     )
-    projector.handle(step_begin(step=path, kind="model", given=_model()))
+    projector.handle(step_begin(step=path, kind="model", spec=_model()))
     projector.handle(PartBegin(step=str(path), part=0, part_type="text"))
     visible = projector.handle(
         part_end(step=str(path), part=0, data=TextPart("Visible reasoning."))
@@ -746,7 +746,7 @@ def test_model_tool_call_output_keeps_failure_diagnostics(
             runnable="agic:demo",
         )
     )
-    projector.handle(step_begin(step=path, kind="model", given=_model()))
+    projector.handle(step_begin(step=path, kind="model", spec=_model()))
 
     update = projector.handle(
         step_end(
@@ -771,7 +771,7 @@ def test_model_empty_success_keeps_completed_fallback() -> None:
             runnable="agic:demo",
         )
     )
-    projector.handle(step_begin(step=path, kind="model", given=_model()))
+    projector.handle(step_begin(step=path, kind="model", spec=_model()))
 
     update = projector.handle(
         step_end(
@@ -799,7 +799,7 @@ def test_parallel_lane_tool_call_only_model_hands_activity_to_tool_step() -> Non
         step_begin(
             step=par,
             kind="par",
-            given=MapStmt(span=SPAN, runnable="research", lanes=1),
+            spec=MapStmt(span=SPAN, runnable="research", lanes=1),
         )
     )
     projector.handle(
@@ -815,7 +815,7 @@ def test_parallel_lane_tool_call_only_model_hands_activity_to_tool_step() -> Non
         )
     )
     model = StepRef.parse("run_child.0")
-    projector.handle(step_begin(step=model, kind="model", given=_model()))
+    projector.handle(step_begin(step=model, kind="model", spec=_model()))
 
     hidden = projector.handle(
         step_end(
@@ -834,7 +834,7 @@ def test_parallel_lane_tool_call_only_model_hands_activity_to_tool_step() -> Non
         step_begin(
             step=StepRef.parse("run_child.1"),
             kind="tool",
-            given=_tool(),
+            spec=_tool(),
         )
     )
 
@@ -859,7 +859,7 @@ def test_flow_run_header_wraps_real_agic_steps_without_a_wrapper_row() -> None:
         step_begin(
             step=StepRef.parse("run_root.0"),
             kind="run",
-            given=RunStmt(span=SPAN, runnable="summarize"),
+            spec=RunStmt(span=SPAN, runnable="summarize"),
             started_at="2026-01-01T00:00:00Z",
         )
     )
@@ -876,7 +876,7 @@ def test_flow_run_header_wraps_real_agic_steps_without_a_wrapper_row() -> None:
         step_begin(
             step=StepRef.parse("run_child.0"),
             kind="model",
-            given=_model(),
+            spec=_model(),
         )
     )
     assert _rows(live.live) == [["• Thinking"]]
@@ -886,7 +886,7 @@ def test_flow_run_header_wraps_real_agic_steps_without_a_wrapper_row() -> None:
             kind="model",
             status="succeeded",
             output=_parts("Done."),
-            noted=ModelStepNoted(
+            report=ModelStepReport(
                 usage=TokenUsage(input_tokens=639, output_tokens=215),
                 cost=ModelCost(
                     amount=float("0.00149"),
@@ -940,7 +940,7 @@ def test_tool_output_is_not_projected(
         step_begin(
             step=StepRef.parse("run_root.0"),
             kind="tool",
-            given=_tool(),
+            spec=_tool(),
         )
     )
     assert live.live[0].rows[0].tone == "active"
@@ -985,7 +985,7 @@ def test_tool_error_is_one_indented_line() -> None:
         step_begin(
             step=path,
             kind="tool",
-            given=_tool(summary="calling web search for Toolang"),
+            spec=_tool(summary="calling web search for Toolang"),
         )
     )
     assert _rows(live.live) == [["› calling web search for Toolang"]]
@@ -995,7 +995,7 @@ def test_tool_error_is_one_indented_line() -> None:
             step=path,
             kind="tool",
             status="failed",
-            noted=ToolStepNoted(summary="failed to call web search for Toolang"),
+            report=ToolStepReport(summary="failed to call web search for Toolang"),
             error=ErrorMessage("provider rejected the request\nretry after 60 seconds"),
         )
     )
@@ -1027,7 +1027,7 @@ def test_canceled_tool_has_only_its_summary() -> None:
         step_begin(
             step=path,
             kind="tool",
-            given=_tool(summary="calling web search for Toolang"),
+            spec=_tool(summary="calling web search for Toolang"),
         )
     )
 
@@ -1036,7 +1036,7 @@ def test_canceled_tool_has_only_its_summary() -> None:
             step=path,
             kind="tool",
             status="canceled",
-            noted=ToolStepNoted(summary="canceled web search for Toolang"),
+            report=ToolStepReport(summary="canceled web search for Toolang"),
             error=ErrorMessage("interrupted by user"),
         )
     )
@@ -1060,7 +1060,7 @@ def test_flow_scalar_output_is_displayed_in_its_normal_output_slot() -> None:
         step_begin(
             step=StepRef.parse("run_root.0"),
             kind="value",
-            given=LetStmt(span=SPAN, binding="topic", value="agent runtimes"),
+            spec=LetStmt(span=SPAN, binding="topic", value="agent runtimes"),
         )
     )
     update = reducer.handle(
@@ -1092,7 +1092,7 @@ def test_flow_list_output_uses_presentation_data_without_storage_tags() -> None:
         step_begin(
             step=path,
             kind="value",
-            given=LetStmt(span=SPAN, binding="queries", value="[]"),
+            spec=LetStmt(span=SPAN, binding="queries", value="[]"),
         )
     )
 
@@ -1124,7 +1124,7 @@ def test_flow_pointer_backed_output_is_not_displayed() -> None:
         step_begin(
             step=path,
             kind="value",
-            given=LetStmt(span=SPAN, binding="topic", value="source"),
+            spec=LetStmt(span=SPAN, binding="topic", value="source"),
         )
     )
 
@@ -1164,7 +1164,7 @@ def test_unbounded_repeat_progress_uses_shared_description() -> None:
         step_begin(
             step=StepRef.parse("run_root.0"),
             kind="loop",
-            given=RepeatStmt(span=SPAN),
+            spec=RepeatStmt(span=SPAN),
         )
     )
     assert _rows(header.committed) == [["[0] Repeat indefinitely", ""]]
@@ -1184,7 +1184,7 @@ def test_repeat_uses_flat_iteration_and_statement_boundaries(count: int | None) 
         step_begin(
             step=StepRef.parse("run_root.2"),
             kind="loop",
-            given=RepeatStmt(span=SPAN, count=count, runnable="completion_check"),
+            spec=RepeatStmt(span=SPAN, count=count, runnable="completion_check"),
         )
     )
     assert _rows(repeat_header.committed) == [
@@ -1199,7 +1199,7 @@ def test_repeat_uses_flat_iteration_and_statement_boundaries(count: int | None) 
         step_begin(
             step=StepRef.parse("run_root.2.0"),
             kind="run",
-            given=RunStmt(span=SPAN, runnable="review"),
+            spec=RunStmt(span=SPAN, runnable="review"),
             occurrence=Occurrence(
                 iteration=IterationOccurrence(index=0, count=count, phase="body")
             ),
@@ -1229,7 +1229,7 @@ def test_repeat_uses_flat_iteration_and_statement_boundaries(count: int | None) 
         step_begin(
             step=StepRef.parse("run_review.0"),
             kind="model",
-            given=_model(),
+            spec=_model(),
         )
     )
     assert _rows(live.live) == [["• Thinking"]]
@@ -1256,7 +1256,7 @@ def test_repeat_uses_flat_iteration_and_statement_boundaries(count: int | None) 
             kind="loop",
             status="succeeded",
             output=_parts("revised"),
-            noted=LoopStepNoted(iterations=1, termination="exhausted"),
+            report=LoopStepReport(iterations=1, termination="exhausted"),
         )
     )
 
@@ -1282,7 +1282,7 @@ def test_until_run_shows_control_boundary_and_only_real_agic_steps() -> None:
         step_begin(
             step=StepRef.parse("run_root.0"),
             kind="loop",
-            given=RepeatStmt(span=SPAN, count=3, runnable="completion_check"),
+            spec=RepeatStmt(span=SPAN, count=3, runnable="completion_check"),
         )
     )
     assert _rows(repeat_header.committed) == [
@@ -1303,7 +1303,7 @@ def test_until_run_shows_control_boundary_and_only_real_agic_steps() -> None:
         step_begin(
             step=StepRef.parse("run_until.0"),
             kind="model",
-            given=_model(),
+            spec=_model(),
         )
     )
     assert _rows(live.committed) == [
@@ -1343,7 +1343,7 @@ def test_named_flow_condition_preserves_its_until_boundary(kind, statement, labe
         step_begin(
             step=StepRef.parse("run_root.0"),
             kind="loop",
-            given=RepeatStmt(
+            spec=RepeatStmt(
                 span=SPAN,
                 runnable="check",
                 until_index=0,
@@ -1363,7 +1363,7 @@ def test_named_flow_condition_preserves_its_until_boundary(kind, statement, labe
         )
     )
     update = reducer.handle(
-        step_begin(step=StepRef.parse("run_check.0"), kind=kind, given=statement)
+        step_begin(step=StepRef.parse("run_check.0"), kind=kind, spec=statement)
     )
     assert _rows(update.committed) == [
         ["<?> Run check to check whether to break", "", f"[0] {label}", ""]
@@ -1383,7 +1383,7 @@ def test_parallel_lane_is_single_line_and_terminal_failure_replaces_lanes() -> N
         step_begin(
             step=StepRef.parse("run_root.0"),
             kind="par",
-            given=MapStmt(span=SPAN, runnable="search_web", lanes=2),
+            spec=MapStmt(span=SPAN, runnable="search_web", lanes=2),
         )
     )
     for item in range(2):
@@ -1403,7 +1403,7 @@ def test_parallel_lane_is_single_line_and_terminal_failure_replaces_lanes() -> N
             step_begin(
                 step=StepRef.parse(f"run_child_{item}.0"),
                 kind="tool" if item == 0 else "model",
-                given=_tool("fetch_page") if item == 0 else _model(),
+                spec=_tool("fetch_page") if item == 0 else _model(),
             )
         )
 
@@ -1507,7 +1507,7 @@ def test_parallel_cancellation_accounts_for_items_that_never_started() -> None:
         step_begin(
             step=par,
             kind="par",
-            given=MapStmt(span=SPAN, runnable="search", lanes=2),
+            spec=MapStmt(span=SPAN, runnable="search", lanes=2),
         )
     )
     for item in range(2):
@@ -1551,7 +1551,7 @@ def test_parent_error_pointers_are_silent_but_ownerless_run_errors_are_visible()
         step_begin(
             step=StepRef.parse("run_root.0"),
             kind="tool",
-            given=_tool("fetch_page"),
+            spec=_tool("fetch_page"),
         )
     )
     leaf = reducer.handle(
@@ -1605,7 +1605,7 @@ def test_malformed_part_sequence_becomes_one_root_diagnostic() -> None:
         step_begin(
             step=StepRef.parse("run_root.0"),
             kind="model",
-            given=_model(),
+            spec=_model(),
         )
     )
     update = reducer.handle(
@@ -1649,7 +1649,7 @@ def test_terminal_diagnostic_preserves_the_active_statement_header() -> None:
         step_begin(
             step=flow,
             kind="run",
-            given=RunStmt(
+            spec=RunStmt(
                 span=SPAN,
                 runnable="synthesize",
                 doc="Synthesize the final research brief",
@@ -1664,7 +1664,7 @@ def test_terminal_diagnostic_preserves_the_active_statement_header() -> None:
             runnable="agic:synthesize",
         )
     )
-    projector.handle(step_begin(step=model, kind="model", given=_model()))
+    projector.handle(step_begin(step=model, kind="model", spec=_model()))
     projector.handle(PartBegin(step=str(model), part=0, part_type="text"))
 
     update = projector.handle(step_end(step=model, kind="model", status="canceled"))
@@ -1687,7 +1687,7 @@ def test_parallel_lane_cannot_be_reused_while_its_run_is_active() -> None:
         step_begin(
             step=par,
             kind="par",
-            given=MapStmt(span=SPAN, runnable="work", lanes=1),
+            spec=MapStmt(span=SPAN, runnable="work", lanes=1),
         )
     )
     occurrence = Occurrence(
@@ -1733,7 +1733,7 @@ def test_run_end_with_active_step_clears_live_with_one_diagnostic() -> None:
         step_begin(
             step=StepRef.parse("run_root.0"),
             kind="model",
-            given=_model(),
+            spec=_model(),
         )
     )
 
@@ -1758,7 +1758,7 @@ def test_nested_cancellation_is_rendered_once_at_the_leaf() -> None:
         step_begin(
             step=flow,
             kind="run",
-            given=RunStmt(
+            spec=RunStmt(
                 span=SPAN,
                 runnable="expand_queries",
                 doc="Expand the research question into diverse search queries",
@@ -1771,7 +1771,7 @@ def test_nested_cancellation_is_rendered_once_at_the_leaf() -> None:
             control=ControlRef.for_run("run_child", 0),
             runnable="agic:expand_queries",
         ),
-        step_begin(step=model, kind="model", given=_model()),
+        step_begin(step=model, kind="model", spec=_model()),
         step_end(step=model, kind="model", status="canceled"),
         run_end(
             run="run_child",
@@ -1834,14 +1834,14 @@ def test_compact_mode_removes_repeat_boundaries_but_keeps_agic_activity() -> Non
         step_begin(
             step=StepRef.parse("run_root.0"),
             kind="loop",
-            given=RepeatStmt(span=SPAN, count=2),
+            spec=RepeatStmt(span=SPAN, count=2),
         )
     )
     reducer.handle(
         step_begin(
             step=StepRef.parse("run_root.0.0"),
             kind="run",
-            given=RunStmt(span=SPAN, runnable="review"),
+            spec=RunStmt(span=SPAN, runnable="review"),
             occurrence=Occurrence(
                 iteration=IterationOccurrence(index=0, count=2, phase="body")
             ),
@@ -1859,7 +1859,7 @@ def test_compact_mode_removes_repeat_boundaries_but_keeps_agic_activity() -> Non
         step_begin(
             step=StepRef.parse("run_review.0"),
             kind="model",
-            given=_model(),
+            spec=_model(),
         )
     )
 
@@ -1880,7 +1880,7 @@ def test_nested_flow_inside_parallel_stays_in_one_reusable_lane() -> None:
         step_begin(
             step=par,
             kind="par",
-            given=MapStmt(span=SPAN, runnable="child_flow", lanes=1),
+            spec=MapStmt(span=SPAN, runnable="child_flow", lanes=1),
         )
     )
     reducer.handle(
@@ -1899,7 +1899,7 @@ def test_nested_flow_inside_parallel_stays_in_one_reusable_lane() -> None:
         step_begin(
             step=StepRef.parse("run_flow_0.0"),
             kind="run",
-            given=RunStmt(span=SPAN, runnable="fetch"),
+            spec=RunStmt(span=SPAN, runnable="fetch"),
         )
     )
     reducer.handle(
@@ -1914,7 +1914,7 @@ def test_nested_flow_inside_parallel_stays_in_one_reusable_lane() -> None:
         step_begin(
             step=StepRef.parse("run_fetch.0"),
             kind="tool",
-            given=_tool("fetch_page"),
+            spec=_tool("fetch_page"),
         )
     )
     assert _rows(live.live) == [
@@ -2009,7 +2009,7 @@ def test_finalized_blocks_are_returned_in_step_completion_order() -> None:
             step_begin(
                 step=StepRef.parse(f"run_root.{index}"),
                 kind="model",
-                given=_model(),
+                spec=_model(),
             )
         )
 
@@ -2047,7 +2047,7 @@ def test_model_terminal_preserves_complete_multiline_output() -> None:
         step_begin(
             step=StepRef.parse("run_root.0"),
             kind="model",
-            given=_model(),
+            spec=_model(),
         )
     )
     long_line = "x" * 240
@@ -2091,7 +2091,7 @@ def test_loop_terminal_uses_typed_termination(
         step_begin(
             step=path,
             kind="loop",
-            given=RepeatStmt(span=SPAN, count=3),
+            spec=RepeatStmt(span=SPAN, count=3),
         )
     )
     iterations = {"exhausted": 3, "satisfied": 2, "failed": 1, "canceled": 0}[
@@ -2103,7 +2103,7 @@ def test_loop_terminal_uses_typed_termination(
             step=path,
             kind="loop",
             status=status,
-            noted=LoopStepNoted(
+            report=LoopStepReport(
                 iterations=iterations,
                 termination=termination,
                 total=3,
@@ -2139,7 +2139,7 @@ def test_loop_direct_failure_keeps_error_and_termination_summary() -> None:
         step_begin(
             step=path,
             kind="loop",
-            given=RepeatStmt(span=SPAN, count=3),
+            spec=RepeatStmt(span=SPAN, count=3),
         )
     )
 
@@ -2148,7 +2148,7 @@ def test_loop_direct_failure_keeps_error_and_termination_summary() -> None:
             step=path,
             kind="loop",
             status="failed",
-            noted=LoopStepNoted(iterations=1, termination="failed"),
+            report=LoopStepReport(iterations=1, termination="failed"),
             error=ErrorMessage("condition returned an invalid value"),
         )
     )
@@ -2176,7 +2176,7 @@ def test_settle_uses_the_shared_loop_iteration_boundary() -> None:
         step_begin(
             step=loop,
             kind="loop",
-            given=ReduceStmt(span=SPAN, runnable="merge_pair"),
+            spec=ReduceStmt(span=SPAN, runnable="merge_pair"),
         )
     )
     assert _rows(header.committed) == [
@@ -2199,7 +2199,7 @@ def test_settle_uses_the_shared_loop_iteration_boundary() -> None:
         step_begin(
             step=StepRef.parse("run_merge.0"),
             kind="model",
-            given=_model(),
+            spec=_model(),
         )
     )
 
@@ -2223,7 +2223,7 @@ def test_parallel_terminal_retains_each_independent_failed_lane() -> None:
         step_begin(
             step=par,
             kind="par",
-            given=MapStmt(span=SPAN, runnable="fetch", lanes=2),
+            spec=MapStmt(span=SPAN, runnable="fetch", lanes=2),
         )
     )
     for lane in range(2):
@@ -2241,7 +2241,7 @@ def test_parallel_terminal_retains_each_independent_failed_lane() -> None:
                 ),
             )
         )
-        projector.handle(step_begin(step=step, kind="model", given=_model()))
+        projector.handle(step_begin(step=step, kind="model", spec=_model()))
         projector.handle(
             step_end(
                 step=step,
@@ -2288,7 +2288,7 @@ def test_nested_parallel_direct_error_is_preserved_by_the_outer_lane() -> None:
         step_begin(
             step=outer,
             kind="par",
-            given=MapStmt(span=SPAN, runnable="child", lanes=1),
+            spec=MapStmt(span=SPAN, runnable="child", lanes=1),
         )
     )
     projector.handle(
@@ -2307,7 +2307,7 @@ def test_nested_parallel_direct_error_is_preserved_by_the_outer_lane() -> None:
         step_begin(
             step=inner,
             kind="par",
-            given=MapStmt(span=SPAN, runnable="leaf", lanes=1),
+            spec=MapStmt(span=SPAN, runnable="leaf", lanes=1),
         )
     )
     projector.handle(
@@ -2363,7 +2363,7 @@ def test_nested_parallel_boundary_error_does_not_replace_the_leaf_error() -> Non
         step_begin(
             step=outer,
             kind="par",
-            given=MapStmt(span=SPAN, runnable="child", lanes=1),
+            spec=MapStmt(span=SPAN, runnable="child", lanes=1),
         )
     )
     projector.handle(
@@ -2382,7 +2382,7 @@ def test_nested_parallel_boundary_error_does_not_replace_the_leaf_error() -> Non
         step_begin(
             step=inner,
             kind="par",
-            given=MapStmt(span=SPAN, runnable="leaf", lanes=1),
+            spec=MapStmt(span=SPAN, runnable="leaf", lanes=1),
         )
     )
     projector.handle(
@@ -2397,7 +2397,7 @@ def test_nested_parallel_boundary_error_does_not_replace_the_leaf_error() -> Non
             ),
         )
     )
-    projector.handle(step_begin(step=leaf, kind="model", given=_model()))
+    projector.handle(step_begin(step=leaf, kind="model", spec=_model()))
     projector.handle(
         step_end(
             step=leaf,

@@ -1447,7 +1447,7 @@ class ModelMessages:
 
 
 @dataclass(frozen=True, slots=True)
-class ModelStepGiven:
+class ModelStepSpec:
     """Resolved model identity and normalized call known at Step begin."""
 
     model: str
@@ -1461,15 +1461,15 @@ class ModelStepGiven:
 
     def __post_init__(self) -> None:
         if not isinstance(self.model, str) or not self.model:
-            raise ValueError("model Step given requires a model identity")
+            raise ValueError("model Step spec requires a model identity")
         if not isinstance(self.setup, str) or not self.setup:
             raise TypeError("model Step setup must be a revision string")
         if not isinstance(self.call, ModelCall):
-            raise TypeError("model Step given requires a ModelCall")
+            raise TypeError("model Step spec requires a ModelCall")
 
 
 @dataclass(frozen=True, slots=True)
-class ToolStepGiven:
+class ToolStepSpec:
     """Resolved plugin, invocation provenance, and call known at Step begin."""
 
     plugin: str
@@ -1479,34 +1479,34 @@ class ToolStepGiven:
 
     def __post_init__(self) -> None:
         if not isinstance(self.plugin, str) or not self.plugin:
-            raise ValueError("tool Step given requires a plugin identity")
+            raise ValueError("tool Step spec requires a plugin identity")
         if not isinstance(self.call, ToolCall):
-            raise TypeError("tool Step given requires a ToolCall")
+            raise TypeError("tool Step spec requires a ToolCall")
         if self.trigger not in {"model", "runtime"}:
             raise ValueError("tool Step trigger must be model or runtime")
-        _validate_step_summary(self.summary, label="tool Step given", allow_empty=True)
+        _validate_step_summary(self.summary, label="tool Step spec", allow_empty=True)
 
 
-def _serialize_step_given(value: StepGiven, handler: Any) -> object:
+def _serialize_step_spec(value: StepSpec, handler: Any) -> object:
     if isinstance(value, Node):
         return ast_to_data(value)
     return handler(value)
 
 
-def _parse_step_given(value: object) -> object:
+def _parse_step_spec(value: object) -> object:
     payload = cast(Mapping[str, object], value) if isinstance(value, Mapping) else {}
     if isinstance(payload.get("kind"), str):
         return flow_stmt_from_data(value)
     return value
 
 
-def _step_given_variant(value: object) -> str | None:
+def _step_spec_variant(value: object) -> str | None:
     """Select the existing payload shape without probing unrelated branches."""
     if isinstance(value, Node):
         return "flow"
-    if isinstance(value, ModelStepGiven):
+    if isinstance(value, ModelStepSpec):
         return "model"
-    if isinstance(value, ToolStepGiven):
+    if isinstance(value, ToolStepSpec):
         return "tool"
     if isinstance(value, Mapping):
         payload = cast(Mapping[str, object], value)
@@ -1519,13 +1519,13 @@ def _step_given_variant(value: object) -> str | None:
     return None
 
 
-StepGiven: TypeAlias = Annotated[
+StepSpec: TypeAlias = Annotated[
     Annotated[FlowStmt, Tag("flow")]
-    | Annotated[ModelStepGiven, Tag("model")]
-    | Annotated[ToolStepGiven, Tag("tool")],
-    Discriminator(_step_given_variant),
-    BeforeValidator(_parse_step_given),
-    WrapSerializer(_serialize_step_given),
+    | Annotated[ModelStepSpec, Tag("model")]
+    | Annotated[ToolStepSpec, Tag("tool")],
+    Discriminator(_step_spec_variant),
+    BeforeValidator(_parse_step_spec),
+    WrapSerializer(_serialize_step_spec),
 ]
 
 
@@ -1654,7 +1654,7 @@ class CallCounters:
 
 
 @dataclass(frozen=True, slots=True)
-class RunNoted:
+class RunReport:
     """Final resident statistics captured when a Run ends."""
 
     calls: CallCounters = field(default_factory=CallCounters)
@@ -1675,7 +1675,7 @@ class RunNoted:
 
 
 @dataclass(frozen=True, slots=True)
-class ModelStepNoted:
+class ModelStepReport:
     """Token usage, model cost and continuation learned by one model Step."""
 
     usage: TokenUsage | None = None
@@ -1701,14 +1701,14 @@ class ModelStepNoted:
 
 
 @dataclass(frozen=True, slots=True)
-class ToolStepNoted:
+class ToolStepReport:
     """Human-readable terminal summary learned when a tool Step ends."""
 
     summary: str
     invoked: bool = False
 
     def __post_init__(self) -> None:
-        _validate_step_summary(self.summary, label="tool Step noted")
+        _validate_step_summary(self.summary, label="tool Step report")
         if type(self.invoked) is not bool:
             raise TypeError("tool Step invoked must be boolean")
 
@@ -1717,7 +1717,7 @@ LoopTermination = Literal["exhausted", "satisfied", "exec", "failed", "canceled"
 
 
 @dataclass(frozen=True, slots=True)
-class CollectionStepNoted:
+class CollectionStepReport:
     """Collection cardinality learned while executing one Flow Step."""
 
     total_items: int
@@ -1739,7 +1739,7 @@ class CollectionStepNoted:
 
 
 @dataclass(frozen=True, slots=True)
-class LoopStepNoted:
+class LoopStepReport:
     """Iteration count and terminal cause learned when a loop Step ends."""
 
     iterations: int
@@ -1769,25 +1769,22 @@ class LoopStepNoted:
 
 
 @dataclass(frozen=True, slots=True)
-class ExecStepNoted:
+class ExecStepReport:
     """Committed native handoff, independent of successor Step delivery."""
 
     control: ControlRef
-    runnable: str
 
     def __post_init__(self) -> None:
         if not isinstance(self.control, ControlRef):
             raise TypeError("exec Step requires a ControlRef")
-        if not self.runnable or self.runnable != self.runnable.strip():
-            raise ValueError("exec Step requires a canonical runnable")
 
 
-StepNoted: TypeAlias = (
-    ExecStepNoted
-    | ModelStepNoted
-    | ToolStepNoted
-    | CollectionStepNoted
-    | LoopStepNoted
+StepReport: TypeAlias = (
+    ExecStepReport
+    | ModelStepReport
+    | ToolStepReport
+    | CollectionStepReport
+    | LoopStepReport
     | None
 )
 
@@ -1862,56 +1859,56 @@ def validate_occurrence(occurrence: Occurrence | None) -> Occurrence | None:
     return occurrence
 
 
-def validate_step_given(kind: StepKind, given: StepGiven) -> StepGiven:
+def validate_step_spec(kind: StepKind, spec: StepSpec) -> StepSpec:
     """Validate one begin payload against its enclosing Step kind."""
 
     if kind == "model":
-        if not isinstance(given, ModelStepGiven):
-            raise TypeError("model Step requires ModelStepGiven")
-        return given
+        if not isinstance(spec, ModelStepSpec):
+            raise TypeError("model Step requires ModelStepSpec")
+        return spec
     if kind == "tool":
-        if not isinstance(given, ToolStepGiven):
-            raise TypeError("tool Step requires ToolStepGiven")
-        return given
-    if not _flow_statement_matches_kind(given, kind):
+        if not isinstance(spec, ToolStepSpec):
+            raise TypeError("tool Step requires ToolStepSpec")
+        return spec
+    if not _flow_statement_matches_kind(spec, kind):
         raise TypeError(f"{kind} Step requires a compatible FlowStmt")
-    return given
+    return spec
 
 
-def validate_step_noted(
+def validate_step_report(
     kind: StepKind,
-    noted: StepNoted,
+    report: StepReport,
     status: StepStatus | None = None,
-) -> StepNoted:
+) -> StepReport:
     """Validate one end payload against its enclosing Step kind."""
 
     if kind == "exec":
-        if noted is not None and not isinstance(noted, ExecStepNoted):
-            raise TypeError("exec Step noted requires ExecStepNoted or None")
-        if status == "succeeded" and noted is None:
+        if report is not None and not isinstance(report, ExecStepReport):
+            raise TypeError("exec Step report requires ExecStepReport or None")
+        if status == "succeeded" and report is None:
             raise ValueError("succeeded exec Step requires committed handoff facts")
-        if status is not None and status != "succeeded" and noted is not None:
+        if status is not None and status != "succeeded" and report is not None:
             raise ValueError("only succeeded exec Steps have handoff facts")
-        return noted
+        return report
     if kind == "model":
-        if noted is not None and not isinstance(noted, ModelStepNoted):
-            raise TypeError("model Step noted requires ModelStepNoted or None")
-        return noted
+        if report is not None and not isinstance(report, ModelStepReport):
+            raise TypeError("model Step report requires ModelStepReport or None")
+        return report
     if kind == "tool":
-        if noted is not None and not isinstance(noted, ToolStepNoted):
-            raise TypeError("tool Step noted requires ToolStepNoted or None")
-        if status in {"pending", "running"} and noted is not None:
-            raise ValueError(f"{status} tool Step cannot have terminal noted facts")
-        return noted
+        if report is not None and not isinstance(report, ToolStepReport):
+            raise TypeError("tool Step report requires ToolStepReport or None")
+        if status in {"pending", "running"} and report is not None:
+            raise ValueError(f"{status} tool Step cannot have terminal report facts")
+        return report
     if kind == "loop":
-        if noted is not None and not isinstance(noted, LoopStepNoted):
-            raise TypeError("loop Step noted requires LoopStepNoted or None")
-        if status in {"pending", "running"} and noted is not None:
-            raise ValueError(f"{status} loop Step cannot have terminal noted facts")
+        if report is not None and not isinstance(report, LoopStepReport):
+            raise TypeError("loop Step report requires LoopStepReport or None")
+        if status in {"pending", "running"} and report is not None:
+            raise ValueError(f"{status} loop Step cannot have terminal report facts")
         if (
             status == "succeeded"
-            and noted is not None
-            and noted.termination
+            and report is not None
+            and report.termination
             not in {
                 "exec",
                 "exhausted",
@@ -1919,30 +1916,30 @@ def validate_step_noted(
             }
         ):
             raise ValueError("succeeded loop Step requires a successful termination")
-        if status in {"failed", "canceled"} and noted is not None:
-            if noted.termination != status:
+        if status in {"failed", "canceled"} and report is not None:
+            if report.termination != status:
                 raise ValueError(
                     f"{status} loop Step requires {status} termination facts"
                 )
-        return noted
+        return report
     if kind in {"value", "par"}:
-        if noted is not None and not isinstance(noted, CollectionStepNoted):
-            raise TypeError(f"{kind} Step noted requires CollectionStepNoted or None")
-        if status in {"pending", "running"} and noted is not None:
-            raise ValueError(f"{status} {kind} Step cannot have terminal noted facts")
-        if status == "succeeded" and noted is not None:
-            if noted.output_items is None:
+        if report is not None and not isinstance(report, CollectionStepReport):
+            raise TypeError(f"{kind} Step report requires CollectionStepReport or None")
+        if status in {"pending", "running"} and report is not None:
+            raise ValueError(f"{status} {kind} Step cannot have terminal report facts")
+        if status == "succeeded" and report is not None:
+            if report.output_items is None:
                 raise ValueError(
                     f"succeeded {kind} Step requires collection output items"
                 )
-        if status in {"failed", "canceled"} and noted is not None:
-            if noted.output_items is not None:
+        if status in {"failed", "canceled"} and report is not None:
+            if report.output_items is not None:
                 raise ValueError(
                     f"{status} {kind} Step cannot have collection output items"
                 )
-        return noted
-    if noted is not None:
-        raise TypeError(f"{kind} Step does not accept noted facts")
+        return report
+    if report is not None:
+        raise TypeError(f"{kind} Step does not accept report facts")
     return None
 
 

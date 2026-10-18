@@ -437,7 +437,7 @@ prompt rewrite:
         rerun_control = harness.store.get_run_control(run_id=rerun.id, index=0)
         assert source_control is not None
         assert rerun_control is not None
-        assert rerun_control.request == "rerun_request"
+        assert rerun_control.request_id == "rerun_request"
         assert rerun_control.payload.limits.time == 30
         assert (
             rerun_control.payload.authored_input

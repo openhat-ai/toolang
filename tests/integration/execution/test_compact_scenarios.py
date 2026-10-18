@@ -36,7 +36,7 @@ from toolang.execution.assembly.history import summary_message
 from toolang.execution.compaction import permit
 from toolang.execution.tokens import InputEstimate, message_tokens
 from toolang.execution.records import CompactControlPayload, RunControlPayload
-from toolang.execution.types import FieldRef, ThreadPrefix, ToolStepGiven
+from toolang.execution.types import FieldRef, ThreadPrefix, ToolStepSpec
 
 
 def compact_runs(harness, thread):
@@ -143,10 +143,9 @@ def test_compact_before_model_and_freeze_horizon_for_next_root(
                 FieldRef.from_path(start.ref, "payload", "input", "_"),
             )
             assert (
-                isinstance(tool.given, ToolStepGiven)
-                and tool.given.trigger == "runtime"
+                isinstance(tool.spec, ToolStepSpec) and tool.spec.trigger == "runtime"
             )
-            assert tool.given.call.input == {}
+            assert tool.spec.call.input == {}
             controls = [
                 c
                 for c in harness.store.list_run_controls(run_id=current.id)
@@ -178,9 +177,9 @@ def test_compact_before_model_and_freeze_horizon_for_next_root(
                 for s in harness.store.list_steps(run_id=member.id)
             ]
             assert any(
-                isinstance(s.given, ToolStepGiven)
-                and s.given.call.name == "runtime__compact_read"
-                and s.given.trigger == "runtime"
+                isinstance(s.spec, ToolStepSpec)
+                and s.spec.call.name == "runtime__compact_read"
+                and s.spec.trigger == "runtime"
                 for s in compact_steps
             )
             assert [
@@ -286,10 +285,10 @@ def test_compact_between_model_calls_preserves_now_and_prior_call(tmp_path):
             assert [step.kind for step in steps] == ["model", "tool", "tool", "model"]
             first, lookup, compact, last = steps
             assert last.input == (FieldRef.from_path(lookup.ref, "output", "value"),)
-            assert isinstance(lookup.given, ToolStepGiven)
-            assert lookup.given.trigger == "model"
-            assert isinstance(compact.given, ToolStepGiven)
-            assert compact.given.trigger == "runtime"
+            assert isinstance(lookup.spec, ToolStepSpec)
+            assert lookup.spec.trigger == "model"
+            assert isinstance(compact.spec, ToolStepSpec)
+            assert compact.spec.trigger == "runtime"
             controls = [
                 c
                 for c in harness.store.list_run_controls(run_id=root.id)
@@ -982,8 +981,8 @@ def test_runtime_compact_resolves_its_boundary_at_admission(tmp_path, monkeypatc
             output = RunHistory(harness.store).get_compaction(thread)
             assert output is not None and output.result.end == retained
             steps = harness.store.list_steps(run_id=current.id)
-            assert isinstance(steps[0].given, ToolStepGiven)
-            assert steps[0].given.call.input == {}
+            assert isinstance(steps[0].spec, ToolStepSpec)
+            assert steps[0].spec.call.input == {}
             assert [step.kind for step in steps] == ["tool", "model"]
 
     asyncio.run(scenario())
@@ -1198,8 +1197,8 @@ def test_one_large_root_compacts_in_step_batches_and_keeps_latest_step(
             assert len(reads) > 1
             read_inputs = []
             for step in reads:
-                assert isinstance(step.given, ToolStepGiven)
-                read_inputs.append(step.given.call.input)
+                assert isinstance(step.spec, ToolStepSpec)
+                read_inputs.append(step.spec.call.input)
             covered = [ref for value in read_inputs for ref in value["units"]]
             assert covered == [str(u.ref) for u in units[:-1]]
             assert all(
@@ -1383,7 +1382,7 @@ def test_summary_must_fit_before_publication(tmp_path, repaired):
             assert len(controls) == int(repaired)
             (child,) = compact_runs(h, thread)
             steps = h.store.list_steps(run_id=child.id)
-            reads = [s.given.call.input["units"] for s in steps if s.kind == "tool"]
+            reads = [s.spec.call.input["units"] for s in steps if s.kind == "tool"]
             assert reads and all(refs == reads[0] for refs in reads)
             assert len(reads) == (2 if repaired else 3)
 

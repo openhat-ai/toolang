@@ -21,7 +21,7 @@ from tests.support.execution_harness import (
 from toolang.base.types.message import Message, message_text
 from toolang.base.types.policy import AgentCeiling
 from toolang.base.types.run import ModelCallResult, ToolCall
-from toolang.execution.records import RunControlPayload, StoredModelStepGiven
+from toolang.execution.records import RunControlPayload, StoredModelStepSpec
 from toolang.execution.events import StepEnd
 from toolang.execution.types import ControlRef, ThreadPrefix
 from toolang.state.prepare import prepare_agent_state
@@ -417,8 +417,8 @@ def test_model_frame_is_frozen_but_acceptance_selects_latest(
                     for m in harness.adapter.invocations[1].call.messages
                 )
             first = harness.store.list_steps(run_id=root.id)[0]
-            assert isinstance(first.given, StoredModelStepGiven)
-            assert first.given.state == advertised.revision
+            assert isinstance(first.spec, StoredModelStepSpec)
+            assert first.spec.state == advertised.revision
             assert (
                 harness.store.resolve_state_revision(first.state)
                 == harness.state.revision
@@ -553,9 +553,9 @@ def test_tool_batch_reuses_frame_and_next_model_adopts_publication(tmp_path, rou
             assert finished_tools == 2 and len(tool.calls) == 1
             assert "tools" not in reads
             frames = [
-                step.given
+                step.spec
                 for step in harness.store.list_steps(run_id=root.id)
-                if isinstance(step.given, StoredModelStepGiven)
+                if isinstance(step.spec, StoredModelStepSpec)
             ]
             assert [frame.state for frame in frames] == [
                 harness.state.revision,
@@ -610,8 +610,8 @@ def test_exec_uses_latest_snapshot_and_records_explicit_binding(tmp_path):
             transfer = harness.store.list_run_controls(run_id=root.id, kind="exec")[0]
             assert harness.store.resolve_state_revision(transfer.ref) == latest.revision
             steps = harness.store.list_steps(run_id=root.id)
-            assert isinstance(steps[0].given, StoredModelStepGiven)
-            assert steps[0].given.state == advertised.revision
+            assert isinstance(steps[0].spec, StoredModelStepSpec)
+            assert steps[0].spec.state == advertised.revision
             assert steps[0].state == ControlRef.for_run(root.id, 0)
             assert steps[-1].state == transfer.ref
             assert "Latest body." in str(harness.adapter.invocations[1].call.messages)
@@ -784,8 +784,8 @@ def test_discovery_uses_bound_state_without_publication_source(tmp_path):
                 ("hands", "handoffs", "spawns"), "ALL"
             )
             first = harness.store.list_steps(run_id=root.id)[0]
-            assert isinstance(first.given, StoredModelStepGiven)
-            assert first.given.state == harness.state.revision
+            assert isinstance(first.spec, StoredModelStepSpec)
+            assert first.spec.state == harness.state.revision
             result = last_tool_result(harness.adapter.invocations[1].call)
             assert result.error is None
             assert [item["ref"] for item in result.output["runnables"]] == [
@@ -953,11 +953,11 @@ agic grow() -> Text:
                 "New skill body.",
             ]
             models = [
-                (s, s.given)
+                (s, s.spec)
                 for s in harness.store.list_steps(run_id=root.id)
-                if isinstance(s.given, StoredModelStepGiven)
+                if isinstance(s.spec, StoredModelStepSpec)
             ]
-            assert [given.state for _, given in models] == [
+            assert [spec.state for _, spec in models] == [
                 harness.state.revision,
                 latest.revision,
                 latest.revision,
@@ -1183,9 +1183,9 @@ agic worker() -> Text:
                 "failed",
             ]
             models = [
-                (s, s.given) for s in steps if isinstance(s.given, StoredModelStepGiven)
+                (s, s.spec) for s in steps if isinstance(s.spec, StoredModelStepSpec)
             ]
-            assert [given.state for _, given in models] == [
+            assert [spec.state for _, spec in models] == [
                 harness.state.revision,
                 latest.revision,
                 latest.revision,

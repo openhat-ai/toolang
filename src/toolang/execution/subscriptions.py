@@ -27,11 +27,11 @@ from .events import (
     event_to_data,
 )
 from .records import CreateControlPayload, ForkControlPayload, RewindControlPayload
-from .records import RunRecord, StepRecord, RunControlPayload
+from .records import RunRecord, StepRecord, RunControlPayload, ExecControlPayload
 from .schemas import StreamFrame
 from .store import RunStore
 from .stream import CanonicalEvent, CanonicalStream, StreamReader
-from .types import ErrorRef, EventCursor, StepRef
+from .types import ErrorRef, EventCursor, StepRef, ExecStepReport
 
 from .event_projection import step_begin_event, step_end_event, direct_output
 from .observation import (
@@ -199,7 +199,7 @@ class RecordSnapshot(StructuralSnapshot):
                     run.started_at or "",
                     str(run.thread),
                 ),
-                run.begin_cursor,
+                run._begin_cursor,
             )
             self.children[run.parent].append(run.id)
             if run.status in _TERMINAL:
@@ -219,7 +219,7 @@ class RecordSnapshot(StructuralSnapshot):
                         if isinstance(run.error, ErrorRef)
                         else None,
                     ),
-                    run.end_cursor,
+                    run._end_cursor,
                 )
             budget.take(event_to_data(self.begins[run.id][0]))
             if run.id in self.ends:
@@ -227,10 +227,23 @@ class RecordSnapshot(StructuralSnapshot):
         for step in steps:
             self.begins[step.ref] = (
                 step_begin_event(step),
-                step.begin_cursor,
+                step._begin_cursor,
             )
             self.children[step.parent or step.run_id].append(step.ref)
             if step.status != "running":
+                exec_runnable = None
+                if isinstance(step.report, ExecStepReport):
+                    control = store.get_control(
+                        target=str(step.report.control.target),
+                        index=step.report.control.index,
+                    )
+                    if control is None or not isinstance(
+                        control.payload, ExecControlPayload
+                    ):
+                        raise ValueError(
+                            f"exec control is missing: {step.report.control}"
+                        )
+                    exec_runnable = control.payload.runnable
                 self.ends[step.ref] = (
                     step_end_event(
                         step,
@@ -240,8 +253,9 @@ class RecordSnapshot(StructuralSnapshot):
                         store.resolve_error(step.error)
                         if step.error is not None
                         else None,
+                        exec_runnable=exec_runnable,
                     ),
-                    step.end_cursor,
+                    step._end_cursor,
                 )
 
             budget.take(event_to_data(self.begins[step.ref][0]))
@@ -286,7 +300,7 @@ def record_controls(
             )
         else:
             continue
-        yield StreamFrame.source(event, control.event_cursor, context=True)
+        yield StreamFrame.source(event, control._event_cursor, context=True)
 
 
 class EventSubscription(StreamNormalizer):

@@ -29,7 +29,7 @@ from toolang.execution.events import (
     event_to_data,
 )
 from toolang.execution.stream import CanonicalStream, StreamLimits
-from toolang.execution.types import ControlRef, EventCursor, ModelStepGiven
+from toolang.execution.types import ControlRef, EventCursor, ModelStepSpec
 
 
 def emit(source, event, *, root="run_a", thread="term_a"):
@@ -45,7 +45,7 @@ def test_large_model_context_does_not_overflow_live_observers():
     event = step_begin(
         StepRef.parse("run_a.0"),
         "model",
-        ModelStepGiven("test/model", call, setup="test-setup", state="test-state"),
+        ModelStepSpec("test/model", call, setup="test-setup", state="test-state"),
     )
     assert len(context.encode()) > StreamLimits().batch_bytes
     assert len(str(event_to_data(event)).encode()) < 512
@@ -59,11 +59,11 @@ def test_large_model_context_does_not_overflow_live_observers():
             observed = batch.events[0]
             assert observed.size < 1024
             data = event_to_data(observed.event)
-            assert data["given"] == {
+            assert data["spec"] == {
                 "model": "test/model",
                 "type": "model",
             }
-            assert isinstance(event.given, ModelStepInfo)
+            assert isinstance(event.spec, ModelStepInfo)
         finally:
             reader.close()
             source.close()

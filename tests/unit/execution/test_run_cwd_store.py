@@ -16,8 +16,8 @@ from toolang.execution.store import RunStore
 from toolang.execution.types import (
     Output,
     StepRef,
-    ToolStepGiven,
-    ToolStepNoted,
+    ToolStepSpec,
+    ToolStepReport,
     value_for_type,
 )
 
@@ -38,7 +38,7 @@ def test_cd_step_end_and_cwd_control_commit_atomically(tmp_path, monkeypatch):
             ref=ref,
             kind="tool",
             input=(),
-            given=ToolStepGiven("runtime", call),
+            spec=ToolStepSpec("runtime", call),
             started_at="2026-09-27T00:00:00Z",
         )
         part = ToolResultPart(
@@ -51,7 +51,7 @@ def test_cd_step_end_and_cwd_control_commit_atomically(tmp_path, monkeypatch):
                 kind="tool",
                 status="succeeded",
                 output=Output(value_for_type("ToolResultPart", part)),
-                noted=ToolStepNoted(summary="Changed directory"),
+                report=ToolStepReport(summary="Changed directory"),
                 error=None,
                 finished_at="2026-09-27T00:00:01Z",
             )

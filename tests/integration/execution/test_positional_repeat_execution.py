@@ -23,7 +23,7 @@ from toolang.execution.executor.executor import _Execution
 from toolang.execution.inspection.trees import build_execution_tree, tree_to_data
 from toolang.execution.store import RunStore
 from toolang.execution.types import (
-    LoopStepNoted,
+    LoopStepReport,
     AwaitableHandle,
     ThreadPrefix,
     StepRef,
@@ -137,7 +137,7 @@ def test_position_controls_order_count_and_retained_output(
     assert root.status == "succeeded", error
     assert actual == output
     loop = next(step for step in steps if step.parent is None)
-    assert loop.noted == LoopStepNoted(iterations, "satisfied", 3)
+    assert loop.report == LoopStepReport(iterations, "satisfied", 3)
     body = [step for step in steps if step.parent == loop.ref]
     assert [step.ref.indices[-1] for step in body] == list(range(len(body)))
     assert all(step.occur.iteration.phase == "body" for step in body)
@@ -177,7 +177,7 @@ def test_first_true_condition_skips_exactly_the_suffix(tmp_path, index):
     root, steps, _, output, error = _run(harness)
     assert root.status == "succeeded", error
     assert output == ["seed", "p0", "s0"][index]
-    assert steps[0].noted == LoopStepNoted(int(index == 2), "satisfied", None)
+    assert steps[0].report == LoopStepReport(int(index == 2), "satisfied", None)
     assert len(harness.adapter.invocations) == index + 1
 
 
@@ -193,7 +193,7 @@ def test_count_limit_does_not_add_a_condition_check(tmp_path, index):
     root, steps, _, output, error = _run(harness)
     assert root.status == "succeeded", error
     assert output == "s0"
-    assert steps[0].noted == LoopStepNoted(1, "exhausted", 1)
+    assert steps[0].report == LoopStepReport(1, "exhausted", 1)
     assert len(harness.adapter.invocations) == 3
 
 
@@ -205,7 +205,7 @@ def test_zero_count_makes_no_calls(tmp_path, index):
     root, steps, runs, output, error = _run(harness)
     assert root.status == "succeeded", error
     assert output == "seed" and len(runs) == 1
-    assert steps[0].noted == LoopStepNoted(0, "exhausted", 0)
+    assert steps[0].report == LoopStepReport(0, "exhausted", 0)
     assert not harness.adapter.invocations
 
 
@@ -222,7 +222,7 @@ def test_failed_trailing_condition_does_not_count_body(tmp_path, failure):
     )
     root, steps, _, _, error = _run(harness)
     assert root.status == "failed" and error is not None
-    assert steps[0].noted == LoopStepNoted(0, "failed", 3)
+    assert steps[0].report == LoopStepReport(0, "failed", 3)
     assert all(step.status == "succeeded" for step in steps[1:])
 
 
@@ -251,7 +251,7 @@ def test_canceled_trailing_condition_does_not_count_body(tmp_path):
             handle.cancel()
             root = await asyncio.wait_for(handle, 2)
             assert root.status == "canceled"
-            assert harness.store.list_steps(run_id=root.id)[0].noted == LoopStepNoted(
+            assert harness.store.list_steps(run_id=root.id)[0].report == LoopStepReport(
                 0, "canceled", 3
             )
 
@@ -287,10 +287,10 @@ def test_unbounded_local_only_repeat_yields_to_cancellation(tmp_path):
             root = await asyncio.wait_for(handle, 2)
             assert root.status == "canceled"
             steps = harness.store.list_steps(run_id=root.id)
-            noted = steps[0].noted
-            assert isinstance(noted, LoopStepNoted)
-            assert noted.iterations > 0
-            assert noted.termination == "canceled"
+            report = steps[0].report
+            assert isinstance(report, LoopStepReport)
+            assert report.iterations > 0
+            assert report.termination == "canceled"
             assert not harness.adapter.invocations
 
     asyncio.run(scenario())
@@ -309,7 +309,7 @@ def test_leading_history_condition_uses_only_previous_complete_passes(tmp_path, 
     root, steps, _, output, error = _run(harness)
     assert root.status == "succeeded", error
     assert output == "suffix"
-    assert steps[0].noted == LoopStepNoted(1, "satisfied", 3)
+    assert steps[0].report == LoopStepReport(1, "satisfied", 3)
     assert "condition suffix current suffix" in str(
         harness.adapter.invocations[-1].call.messages
     )
@@ -324,7 +324,7 @@ def test_named_flow_has_no_recursive_history_warmup(tmp_path, guarded):
     )
     root, steps, _, output, error = _run(harness)
     assert root.status == ("succeeded" if guarded else "failed"), error
-    assert steps[0].noted.iterations == 0
+    assert steps[0].report.iterations == 0
     assert len(harness.adapter.invocations) == int(guarded)
     if guarded:
         assert output == "seed"
@@ -385,7 +385,7 @@ def test_changed_condition_signature_is_rejected_at_its_position(tmp_path, index
     root, steps, _, _, error = _run(harness)
     assert root.status == "failed"
     assert "signature changed" in str(error)
-    assert steps[0].noted.iterations == 0
+    assert steps[0].report.iterations == 0
     assert len(harness.adapter.invocations) == index
 
 
@@ -405,10 +405,10 @@ def test_nested_condition_exits_only_its_own_repeat(tmp_path):
     root, steps, _, output, error = _run(harness)
     assert root.status == "succeeded", error
     assert output == "second"
-    assert [step.noted for step in steps if step.kind == "loop"] == [
-        LoopStepNoted(2, "exhausted", 2),
-        LoopStepNoted(0, "satisfied", None),
-        LoopStepNoted(0, "satisfied", None),
+    assert [step.report for step in steps if step.kind == "loop"] == [
+        LoopStepReport(2, "exhausted", 2),
+        LoopStepReport(0, "satisfied", None),
+        LoopStepReport(0, "satisfied", None),
     ]
     assert len(harness.adapter.invocations) == 4
 
@@ -422,7 +422,7 @@ def test_named_condition_rejects_active_runnable(tmp_path):
     root, steps, runs, _, error = _run(harness)
     assert root.status == "failed"
     assert "current or an ancestor runnable: flow:main" in str(error)
-    assert steps[0].noted == LoopStepNoted(0, "failed", None)
+    assert steps[0].report == LoopStepReport(0, "failed", None)
     assert len(runs) == 1 and not harness.adapter.invocations
 
 
@@ -447,7 +447,7 @@ flow main(_: Text):
     )
     root, steps, _, output, error = _run(harness)
     assert root.status == ("succeeded" if valid else "failed"), error
-    assert steps[0].noted.iterations == 0
+    assert steps[0].report.iterations == 0
     if valid:
         assert output == "seed"
         assert "Check 2." in str(harness.adapter.invocations[-1].call.messages)
@@ -498,7 +498,7 @@ def test_exec_inside_named_flow_condition_stays_in_child_run(tmp_path):
             assert (
                 len(harness.store.list_run_controls(run_id=child.id, kind="exec")) == 1
             )
-            assert harness.store.list_steps(run_id=root.id)[0].noted == LoopStepNoted(
+            assert harness.store.list_steps(run_id=root.id)[0].report == LoopStepReport(
                 0, "satisfied", 3
             )
 
@@ -520,7 +520,7 @@ flow main(_: Text):
     root, steps, runs, output, error = _run(harness)
     assert root.status == "succeeded", error
     assert output == "finished" and len(runs) == 1
-    assert steps[0].noted.iterations == 0
+    assert steps[0].report.iterations == 0
     assert len(harness.adapter.invocations) == 1
 
 
@@ -631,7 +631,7 @@ def test_until_refreshes_handle_status_on_each_evaluation(tmp_path, prefix):
             body_gate.release()
             root = await asyncio.wait_for(parent, 2)
             assert root.status == "succeeded", root.error
-            assert harness.store.list_steps(run_id=root.id)[1].noted == LoopStepNoted(
+            assert harness.store.list_steps(run_id=root.id)[1].report == LoopStepReport(
                 1, "satisfied", 2
             )
 

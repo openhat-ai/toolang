@@ -43,7 +43,7 @@ from .schemas import stream_id
 def _canonical(data: str) -> CanonicalEvent:
     try:
         row = json.loads(data)
-        if row.get("v") != 1:
+        if row.get("v") != 2:
             raise ValueError("Unsupported event version")
         return CanonicalEvent(
             EventCursor.parse(row["source_cursor"]),

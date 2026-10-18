@@ -107,7 +107,7 @@ flow child(_: Text) -> Text:
             ((source, controls),) = committed
             assert source is not None and source.status == "succeeded"
             assert source.finished_at is not None
-            assert source.end_cursor is not None
+            assert source._end_cursor is not None
             assert {c.kind for c in controls} == (
                 {"create", "run"} if operation == "spawn" else {"exec"}
             )
@@ -124,12 +124,12 @@ flow child(_: Text) -> Text:
             assert (
                 end.status,
                 end.output,
-                end.noted,
+                end.report,
                 end.finished_at,
             ) == (
                 source.status,
                 direct_output(source.output),
-                step_summary(source.noted),
+                step_summary(source.report, exec_runnable="flow:child"),
                 source.finished_at,
             )
             if operation == "spawn":

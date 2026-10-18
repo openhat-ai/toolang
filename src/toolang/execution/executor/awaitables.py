@@ -21,7 +21,7 @@ from ..types import (
     FieldRef,
     Output,
     RunRef,
-    ToolStepGiven,
+    ToolStepSpec,
     TypedRef,
 )
 from .common import BoundRun, Local, _ExecutionFailed, control_text
@@ -91,14 +91,14 @@ def admission(
                 source = execution.store.get_step(ref=binding.parent)
                 if source is None:
                     raise RuntimeError("async admission requires its source Step")
-                if isinstance(source.given, RunStmt) and source.given.asynchronous:
-                    output = Output(handle, source.given.binding)
-                    noted = None
+                if isinstance(source.spec, RunStmt) and source.spec.asynchronous:
+                    output = Output(handle, source.spec.binding)
+                    report = None
                 elif (
-                    isinstance(source.given, ToolStepGiven)
-                    and source.given.call.input.get("async") is True
+                    isinstance(source.spec, ToolStepSpec)
+                    and source.spec.call.input.get("async") is True
                 ):
-                    call = source.given.call
+                    call = source.spec.call
                     output = Output(
                         ToolResultPart(
                             tool_call_id=call.tool_call_id,
@@ -112,7 +112,7 @@ def admission(
                             },
                         )
                     )
-                    noted = execution.tool_admission_noted(source.ref)
+                    report = execution.tool_admission_report(source.ref)
                 else:
                     raise RuntimeError("async admission requires an async run Step")
                 completed = execution.store.finish_step(
@@ -120,7 +120,7 @@ def admission(
                     kind=source.kind,
                     status="succeeded",
                     output=output,
-                    noted=noted,
+                    report=report,
                     error=None,
                     finished_at=binding.created_at,
                 )

@@ -164,9 +164,9 @@ def test_busy_chore_thread_keeps_its_source_trigger_until_admission(
             await scheduler.start()
             assert await asyncio.to_thread(rejected.wait, 2)
             deferred = await _wait_record(
-                scheduler, "review", lambda item: item.active_run_id is not None
+                scheduler, "review", lambda item: item.active_run is not None
             )
-            assert deferred.active_run_id != occupant.run_id
+            assert deferred.active_run != occupant.run_id
             assert deferred.active_trigger == "source" and deferred.error is None
             assert len(harness.store.list_runs()) == 1
             gate.release()
@@ -174,7 +174,7 @@ def test_busy_chore_thread_keeps_its_source_trigger_until_admission(
             finished = await _wait_record(
                 scheduler, "review", lambda item: item.status == "done"
             )
-            assert finished.error is None and finished.active_run_id is None
+            assert finished.error is None and finished.active_run is None
             assert (
                 len(harness.store.list_runs()) == len(harness.adapter.invocations) == 2
             )
@@ -217,7 +217,7 @@ def test_scheduler_rejects_invalid_input_without_creating_a_run(
                 lambda item: item.status == "failed",
             )
 
-            assert record.active_run_id is None
+            assert record.active_run is None
             assert record.error is not None
             assert "colon commands cannot be used in a run submission" in record.error
             assert not harness.store.list_runs(limit=None)
@@ -304,7 +304,7 @@ def test_scheduler_submits_and_awaits_runs_on_the_execution_loop(
                 lambda item: item.status == "done",
             )
 
-            assert record.active_run_id is None
+            assert record.active_run is None
             assert scheduler._thread is not None
             assert scheduler._thread.ident != execution_thread
             assert run_threads == [execution_thread]
@@ -518,7 +518,7 @@ def test_scheduler_serializes_body_changes(tmp_path) -> None:
                 "review",
                 lambda item: item.status == "running",
             )
-            first_run = running.active_run_id
+            first_run = running.active_run
             assert first_run is not None
 
             catalog.update(
@@ -530,7 +530,7 @@ def test_scheduler_serializes_body_changes(tmp_path) -> None:
             edited = await scheduler.get("review")
             assert edited is not None
             assert edited.status == "running"
-            assert edited.active_run_id == first_run
+            assert edited.active_run == first_run
             assert len(harness.store.list_runs(limit=None)) == 1
 
             gate.release()
@@ -593,7 +593,7 @@ def test_scheduler_allows_different_chores_to_run_concurrently(tmp_path) -> None
 
             assert alpha is not None and alpha.status == "running"
             assert beta is not None and beta.status == "running"
-            assert alpha.active_run_id != beta.active_run_id
+            assert alpha.active_run != beta.active_run
             assert len(harness.adapter.invocations) == 2
 
             first_gate.release()
@@ -789,19 +789,19 @@ def test_invalid_edit_preserves_active_run_and_manual_cancellation(tmp_path):
                 driver, "review", lambda record: record.status == "running"
             )
             assert original.path is not None
-            assert before.active_run_id is not None
+            assert before.active_run is not None
             original.path.write_text("---\nschedule: invalid\n---\nRejected.")
             await driver.refresh()
             assert driver.get_agent_state().chores == ()
             current = await driver.get("review")
             assert current is not None
-            assert current.active_run_id == before.active_run_id
+            assert current.active_run == before.active_run
             with pytest.raises(FileNotFoundError):
                 await driver.run_chore("review")
             canceled = await driver.cancel_chore("review")
-            assert canceled.active_run_id == before.active_run_id
+            assert canceled.active_run == before.active_run
             harness.executor.cancel(
-                run_id=before.active_run_id, reason="Manual cancellation"
+                run_id=before.active_run, reason="Manual cancellation"
             )
             gate.release()
             terminal = await _wait_record(

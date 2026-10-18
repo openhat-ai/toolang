@@ -13,15 +13,15 @@ from .records import StepRecord
 from .schemas import LiveNode, LiveTreeSnapshot, RunNode, StepNode
 from .types import (
     CallCounters,
-    ModelStepNoted,
+    ModelStepReport,
     Occurrence,
-    RunNoted,
+    RunReport,
     RunStatus,
     StepKind,
-    StepNoted,
+    StepReport,
     StepRef,
     TokenUsage,
-    ToolStepNoted,
+    ToolStepReport,
 )
 
 _TERMINAL = {"succeeded", "failed", "canceled"}
@@ -75,7 +75,7 @@ class LiveTree:
         )
 
     def begin_step(self, record: StepRecord) -> None:
-        info = step_info(record.given)
+        info = step_info(record.spec)
         name = info.model if isinstance(info, ModelStepInfo) else info.name
         target = (
             info.target
@@ -91,7 +91,7 @@ class LiveTree:
                 record.kind,
                 getattr(info, "kind", record.kind),
                 record.status,
-                record.created_at,
+                record.started_at,
                 record.started_at,
                 name=name[:240],
                 plugin=info.plugin[:240] if isinstance(info, ToolStepInfo) else "",
@@ -116,23 +116,23 @@ class LiveTree:
                 ),
             )
 
-    def note_model(self, step: StepRef, noted: ModelStepNoted) -> None:
+    def note_model(self, step: StepRef, report: ModelStepReport) -> None:
         node = self._step(step)
-        cost = selected_usd_cost(noted.cost)
-        approximate = selected_cost_is_approximate(noted.cost)
+        cost = selected_usd_cost(report.cost)
+        approximate = selected_cost_is_approximate(report.cost)
         self._nodes[node.id] = replace(
-            node, usage=noted.usage, cost=cost, cost_approximate=approximate
+            node, usage=report.usage, cost=cost, cost_approximate=approximate
         )
-        if noted.usage is None and noted.cost is None:
+        if report.usage is None and report.cost is None:
             return
-        assert noted.usage is not None, "model cost requires provider token usage"
+        assert report.usage is not None, "model cost requires provider token usage"
         for run in self._runs_above(node.id):
             # A missing initial total means no contributions. Thereafter None
             # represents an unknown contribution and remains unknown.
             first = run.usage is None
             self._nodes[run.id] = replace(
                 run,
-                usage=_add_usage(run.usage, noted.usage),
+                usage=_add_usage(run.usage, report.usage),
                 cost=cost
                 if first
                 else add_cost(run.cost, cost)
@@ -141,29 +141,31 @@ class LiveTree:
                 cost_approximate=run.cost_approximate or approximate,
             )
 
-    def terminal_noted(self, step: StepRef, noted: StepNoted) -> StepNoted:
+    def terminal_report(self, step: StepRef, report: StepReport) -> StepReport:
         node = self._nodes.get(str(step))
         if node is None:
             # A committed receipt or pre-restart compact Step adds no resident facts.
-            return noted
+            return report
         assert isinstance(node, StepNode)
         if node.kind == "model":
             return replace(
-                noted if isinstance(noted, ModelStepNoted) else ModelStepNoted(),
+                report if isinstance(report, ModelStepReport) else ModelStepReport(),
                 invoked=node.invoked,
             )
         if node.kind == "tool":
             return replace(
-                noted
-                if isinstance(noted, ToolStepNoted)
-                else ToolStepNoted(node.summary.strip() or node.name or node.operation),
+                report
+                if isinstance(report, ToolStepReport)
+                else ToolStepReport(
+                    node.summary.strip() or node.name or node.operation
+                ),
                 invoked=node.invoked,
             )
-        return noted
+        return report
 
-    def run_noted(self, run_id: str) -> RunNoted:
+    def run_report(self, run_id: str) -> RunReport:
         node = self._run(run_id)
-        return RunNoted(node.calls, node.usage, node.cost, node.cost_approximate)
+        return RunReport(node.calls, node.usage, node.cost, node.cost_approximate)
 
     def end_step(self, record: StepRecord) -> None:
         node = self._nodes.get(record.id)

@@ -27,11 +27,11 @@ from toolang.execution.assembly.message_buffer import MessageBuffer
 from toolang.execution.assembly.utils import literal_delta, render_delta
 from toolang.execution.records import (
     ModelCallRefs,
-    StoredModelStepGiven,
+    StoredModelStepSpec,
     delta_from_data,
     delta_to_data,
-    stored_step_given_from_data,
-    stored_step_given_to_data,
+    stored_step_spec_from_data,
+    stored_step_spec_to_data,
 )
 from toolang.execution.recall import recall_revisions
 from toolang.execution.types import (
@@ -39,7 +39,7 @@ from toolang.execution.types import (
     ModelMessages,
     ContentRef,
     MessageTemplate,
-    ModelStepGiven,
+    ModelStepSpec,
     StepRef,
     SkillRecallTarget,
     SkillTriggerRecallTarget,
@@ -238,19 +238,19 @@ def test_unknown_versions_and_non_part_references_fail_explicitly() -> None:
 
 def test_delta_metadata_does_not_change_public_model_events() -> None:
     call = ModelCall("instruct", [Message.user("hello")])
-    given = ModelStepGiven(
+    spec = ModelStepSpec(
         "test/model",
         call,
         ModelMessages(StepRef.parse("run_ab12.0"), literal_delta(call.messages)),
         setup="test-setup",
     )
-    event = step_begin(StepRef.parse("run_ab12.0"), "model", given)
+    event = step_begin(StepRef.parse("run_ab12.0"), "model", spec)
     payload = run_event_to_data(event)
-    assert "messages" not in payload["given"]
+    assert "messages" not in payload["spec"]
     assert run_event_from_data(payload) == step_begin(
-        StepRef.parse("run_ab12.0"), "model", replace(given, messages=None)
+        StepRef.parse("run_ab12.0"), "model", replace(spec, messages=None)
     )
-    assert "messages" not in TypeAdapter(ModelStepGiven).dump_python(given, mode="json")
+    assert "messages" not in TypeAdapter(ModelStepSpec).dump_python(spec, mode="json")
 
 
 def test_shared_resource_ref_keeps_trigger_and_guidance_visibility_separate() -> None:
@@ -297,21 +297,21 @@ def test_shared_resource_ref_keeps_trigger_and_guidance_visibility_separate() ->
 
 @pytest.mark.parametrize("version", [0, 2, True, "1", None])
 def test_call_version_is_checked_before_decoding_future_messages(version) -> None:
-    given = StoredModelStepGiven(
+    spec = StoredModelStepSpec(
         "test/model",
         ModelCallRefs(
             "hash", ModelMessages(StepRef.parse("run_ab12.0")), None, None, None
         ),
         setup="test-setup",
     )
-    data = stored_step_given_to_data("model", given)
+    data = stored_step_spec_to_data("model", spec)
     call = cast(dict[str, Any], data["call"])
     assert set(call["messages"]) == {"head", "delta"}
     assert "recall" not in call and "delta" not in call
     call["version"] = version
     call["messages"] = {"future": "unknown format"}
     with pytest.raises(ValueError, match="unsupported durable model call version"):
-        stored_step_given_from_data("model", data)
+        stored_step_spec_from_data("model", data)
 
 
 @pytest.mark.parametrize(

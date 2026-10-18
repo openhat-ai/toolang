@@ -15,7 +15,7 @@ from toolang.base.types.message import Message as RunMessage, ToolResultPart
 from toolang.base.types.run import ToolCall
 from toolang.base.types.tool import ConvoToolContext
 from toolang.execution.store import RunStore
-from toolang.execution.types import Output, StepRef, ToolStepGiven, ToolStepNoted
+from toolang.execution.types import Output, StepRef, ToolStepSpec, ToolStepReport
 from toolang.plugin.toolsets.convo import ConvoToolset
 from toolang.teaming.agent_client import AgentClient
 from toolang.teaming.api import create_app
@@ -140,7 +140,7 @@ def test_conversation_metadata_results_persist_as_completed_tool_steps(
                     ref=ref,
                     kind="tool",
                     input=(),
-                    given=ToolStepGiven("convo", call),
+                    spec=ToolStepSpec("convo", call),
                     started_at="2026-10-13T00:00:00Z",
                 )
                 finished = store.finish_step(
@@ -148,7 +148,7 @@ def test_conversation_metadata_results_persist_as_completed_tool_steps(
                     kind="tool",
                     status="succeeded",
                     output=Output(part),
-                    noted=ToolStepNoted("Completed"),
+                    report=ToolStepReport("Completed"),
                     error=None,
                     finished_at="2026-10-13T00:00:01Z",
                 )

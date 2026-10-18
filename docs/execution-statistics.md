@@ -36,7 +36,9 @@ pending refresh work, and a bounded refresh error. After initialization, pending
 archival does not omit usage: queries merge cached and unarchived roots.
 An unavailable statistics store returns 503 without stopping execution.
 
-The independent module writes `AGENT_HOME/.runtime/stats.db`. Only completed root
+The independent module writes schema 2 of `AGENT_HOME/.runtime/stats.db`, with
+`roots`, `buckets`, and `state` tables. An older cache can be discarded while
+the server is stopped and rebuilt from compatible execution records. Only completed root
 trees older than the configured waiting period are archived. Requests wake one
 lazy background thread; it does not poll, modify execution records, or retain an
 automatic server. Publication and the root's archive receipt commit atomically.
@@ -53,5 +55,5 @@ archive_after_seconds = 86400
 
 Keep the original `runs.db` records: exact partial-minute boundaries still read
 their fields. Replacing the source or changing archived records requires rebuilding
-the derived statistics database. See the [design and SQL](plans/execution-period-statistics.md)
-for the archive receipt partition and query rules.
+the derived statistics database. See the [current SQL](../src/toolang/stats/_sql.py)
+and [archive/query design](plans/execution-period-statistics.md).

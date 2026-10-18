@@ -388,6 +388,11 @@ active agent lease and conversation membership. The existing
 
 ## Storage, events, and statistics
 
+Execution-event publication, recovery datasets and projection entities use
+version `2`; old execution-event datasets are rejected without rewriting.
+Conversation schema `3` and team-change events are unchanged. Stop all publishers
+and Hub readers before upgrading and preserve required old event data separately.
+
 With `P = too:teaming:v1`, the messaging key spaces are:
 
 | Key | Type | Contents |

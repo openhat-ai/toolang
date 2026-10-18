@@ -45,13 +45,13 @@ records and observes only new live events.
 
 Persistence makes completed history available after process restart and for
 later model calls. Toolang does not resume an unfinished run after its owner
-process exits. The execution store reads and writes only schema 59. Older schemas
+process exits. The execution store reads and writes only schema 60. Older schemas
 are rejected without modification, including read-only opens; writable opens also
 reject adjacent legacy `ids.json` files. There is no migration or old-record
 compatibility path. Stop old writers, preserve any required old runtime data
 separately, and start with fresh storage. See
 [terminal usage and cost records](#terminal-usage-and-cost-records) for the current
-Noted fields.
+Report fields.
 
 
 ## IDs And Indexes
@@ -215,7 +215,7 @@ without generating a failure notice.
 
 ## Mandatory Persistence And Tracing
 
-Execution boundaries call `RunStore` directly with complete internal Given/Noted
+Execution boundaries call `RunStore` directly with complete internal Spec/Report
 values and compact output references. Persistence cannot be replaced or disabled.
 `RunEvent` is exclusively a subscriber contract; no persistence adapter consumes it.
 
@@ -268,15 +268,15 @@ is durable record truth. Events use scalar Run/Step IDs and explicit correlation
 Producers guarantee causal order: Parts close before their Step, nested Steps and
 synchronous child Runs close before their owning Step, and owned child Runs close
 before their owning Run. An asynchronous launch Step ends when admission commits;
-its explicit `given.asynchronous` flag permits the target to outlive that Step.
+its explicit `spec.asynchronous` flag permits the target to outlive that Step.
 Sibling work may interleave. Live clients consume arrival order and reject a Run
 ending with an active child; they do not defer or reorder terminal notifications.
 Record-based replacement snapshots arrive in structural order from the server.
 
-`StepBegin.given` is an event-owned discriminated payload: model identity, tool
+`StepBegin.spec` is an event-owned discriminated payload: model identity, tool
 identity/summary/target, or the Flow operation's presentation fields. It contains
 no complete model/tool call, Flow AST, State reference or input pointers.
-`StepEnd.noted` contains only completion facts and client usage/cost summaries.
+`StepEnd.report` contains only completion facts and client usage/cost summaries.
 Its `usage` is `TokenUsage(input_tokens, output_tokens, cache_read_tokens,
 reasoning_tokens)`; `cost` (USD) and `cost_approximate` are separate summary
 fields. Events reuse the normalized usage directly. Provider continuation,
@@ -306,8 +306,8 @@ shapes and existing budgets; they never rebuild model calls. Complete calls rema
 available through `too AGENT inspect STEP call --json`.
 
 This event schema requires HTTP subscribers and runtimes to upgrade together and
-reconnect. Earlier complete-Given event payloads are not accepted. Stored history
-and explicit inspection/query formats are unchanged.
+reconnect. Record and inspection/query consumers must also adopt the renamed
+[canonical fields and Pointer paths](run-step-records.md).
 
 
 ## Run Controls
@@ -426,15 +426,15 @@ Publication never rebinds accepted Runs. Invalid source is not published.
 For time windows, model breakdowns, and daily heatmaps, see
 [execution statistics](execution-statistics.md).
 
-`ModelStepNoted` stores `usage: TokenUsage | None`, `cost: ModelCost | None`,
-`invoked: bool`, and continuation encoded as `cont`. `ToolStepNoted` stores
+`ModelStepReport` stores `usage: TokenUsage | None`, `cost: ModelCost | None`,
+`invoked: bool`, and continuation encoded as `cont`. `ToolStepReport` stores
 `summary` and `invoked`. `ModelCost` holds the selected `amount`, `currency`,
 `source`, `complete`, `pricing`, `meters` and `lines`; there is no accounting
 envelope or separate reported/estimated amount wrapper. Calculation lines explain
 the catalog estimate, which can differ from a provider-reported final amount.
 
-`RunRecord.noted` is absent while pending/running. At termination it holds
-`RunNoted(calls, usage, cost, cost_approximate)` for that Run's resident subtree,
+`RunRecord.report` is absent while pending/running. At termination it holds
+`RunReport(calls, usage, cost, cost_approximate)` for that Run's resident subtree,
 including already pruned branches. `calls` contains only `model_calls` and
 `tool_calls`; entry counts include failed/canceled invocations and exclude skipped
 or unprepared calls. Run cost is USD only; non-USD selected charges remain in
@@ -442,9 +442,9 @@ per-call records and make the aggregate USD amount unknown. Unknown optional
 token/cost contributions remain unknown; known zero stays zero. These are captured
 values, not a historical statistics index.
 
-This format requires Store schema 59 and fresh storage. Older schemas are rejected
+This format requires Store schema 60 and fresh storage. Older schemas are rejected
 for both reads and writes; no migration or compatibility decoder is provided.
 Retain any required old runtime data separately, then use a fresh runtime database.
-Record consumers must replace `noted.accounting` with `noted.usage`/`noted.cost`.
-Event subscribers must upgrade and reconnect, replacing `noted.usage.cost` and
-`noted.usage.approximate` with `noted.cost` and `noted.cost_approximate`.
+Record/event consumers must adopt `spec`/`report` and matching `Spec`/`Report`
+types, then reconnect subscriptions. See the [canonical record fields and Pointer
+paths](run-step-records.md) for the complete contract.

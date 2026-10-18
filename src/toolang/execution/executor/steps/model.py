@@ -49,8 +49,8 @@ from ...types import (
     FieldRef,
     ModelMessages,
     MessageTemplate,
-    ModelStepGiven,
-    ModelStepNoted,
+    ModelStepSpec,
+    ModelStepReport,
     Output,
     RunRef,
     StepRef,
@@ -494,7 +494,7 @@ async def execute(state: _AgicState) -> ModelCallResult:
             ),
             preceded_by=tuple(item.ref for item in preceding),
             started_at=utc_now(),
-            given=ModelStepGiven(
+            spec=ModelStepSpec(
                 model=prepared.model.ref,
                 setup=prepared.run.setup.revision,
                 state=prepared.state.revision,
@@ -595,7 +595,7 @@ async def execute(state: _AgicState) -> ModelCallResult:
         run_id=run.run_id,
         step_index=step_index,
     )
-    noted: ModelStepNoted | None = None
+    report: ModelStepReport | None = None
     try:
         state.before_call()
         if state.execution is not None:
@@ -615,7 +615,7 @@ async def execute(state: _AgicState) -> ModelCallResult:
                 request,
                 environ=prepared.environ,
             )
-        noted = state.note_usage(
+        report = state.note_usage(
             StepRef.from_local(run.run_id, (step_index,)), current.usage
         )
         _validate_stream_result(stream, current)
@@ -628,7 +628,7 @@ async def execute(state: _AgicState) -> ModelCallResult:
                 prepared.input_overhead,
             )
     except asyncio.CancelledError:
-        await _end_incomplete(state, stream, noted=noted)
+        await _end_incomplete(state, stream, report=report)
         raise
     except ModelResponseError as exc:
         # The adapter may have received more text than it emitted as deltas.
@@ -653,12 +653,16 @@ async def execute(state: _AgicState) -> ModelCallResult:
                     index = max(stream.part_types, default=-1) + 1
                     stream.completed_parts[index] = TextPart(suffix)
         await _end_incomplete(
-            state, stream, error=ErrorMessage(str(exc)), response_error=exc, noted=noted
+            state,
+            stream,
+            error=ErrorMessage(str(exc)),
+            response_error=exc,
+            report=report,
         )
         raise
     except Exception as exc:
         message = str(exc) or type(exc).__name__
-        await _end_incomplete(state, stream, error=ErrorMessage(message), noted=noted)
+        await _end_incomplete(state, stream, error=ErrorMessage(message), report=report)
         _LOGGER.error(
             "Step failed thread=%s run=%s step=%s kind=model error=%r duration_ms=%s",
             run.thread,
@@ -668,14 +672,14 @@ async def execute(state: _AgicState) -> ModelCallResult:
             elapsed_ms(step_started),
         )
         raise _StepFailed(StepRef.from_local(run.run_id, (step_index,)), exc) from exc
-    assert noted is not None
+    assert report is not None
     return await _apply_response(
         state,
         current,
         output,
         step_index=step_index,
         duration_ms=elapsed_ms(step_started),
-        noted=noted,
+        report=report,
     )
 
 
@@ -720,7 +724,7 @@ async def _apply_response(
     *,
     step_index: int,
     duration_ms: int,
-    noted: ModelStepNoted,
+    report: ModelStepReport,
 ) -> ModelCallResult:
     run = state.prepared.run
     local = value_for_type("Part[]", output)
@@ -742,8 +746,8 @@ async def _apply_response(
             kind="model",
             status="succeeded",
             output=Output(local, "_") if local is not None else None,
-            noted=replace(
-                noted,
+            report=replace(
+                report,
                 continuation=dict(current.continuation)
                 if current.continuation is not None
                 else None,
@@ -756,7 +760,7 @@ async def _apply_response(
             raise
         # The complete response is durable and already in the message prefix.
         # Return its calls so steer recovery records their skipped results.
-    state.record_usage(noted)
+    state.record_usage(report)
     usage = current.usage
     _LOGGER.info(
         "Step finished thread=%s run=%s step=%s kind=model input=%s output=%s tool_calls=%s duration_ms=%s",
@@ -949,7 +953,7 @@ async def _end_incomplete(
     *,
     error: ErrorMessage | None = None,
     response_error: ModelResponseError | None = None,
-    noted: ModelStepNoted | None = None,
+    report: ModelStepReport | None = None,
 ) -> None:
     """Retain execution facts even when interrupted while closing display events."""
 
@@ -981,11 +985,11 @@ async def _end_incomplete(
         for part in retained.values()
         if isinstance(part, ToolCallPart)
     )
-    if noted is None:
-        noted = (
+    if report is None:
+        report = (
             state.note_usage(step, response_error.usage)
             if response_error
-            else ModelStepNoted()
+            else ModelStepReport()
         )
     if retained and response_error is None:
         refs = tuple(
@@ -1017,12 +1021,12 @@ async def _end_incomplete(
                 status="failed" if error is not None else "canceled",
                 output=Output(local, "_") if local is not None else None,
                 error=error,
-                noted=noted,
+                report=report,
                 finished_at=utc_now(),
             )
         finally:
-            if response_error is not None or noted.usage is not None:
-                state.record_usage(noted)
+            if response_error is not None or report.usage is not None:
+                state.record_usage(report)
             if error is None:
                 await tool_step.skip(state, calls, canceled=not state.immediate_steer())
 

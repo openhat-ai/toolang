@@ -16,7 +16,7 @@ from toolang.execution.executor import executor as executor_module
 from toolang.base.types.message import TextPart
 from toolang.execution.events import RunEnd
 from toolang.execution.store import RunStore
-from toolang.execution.types import ErrorMessage, RunNoted, ThreadPrefix
+from toolang.execution.types import ErrorMessage, RunReport, ThreadPrefix
 
 
 @pytest.mark.parametrize("stage", ["task", "monitor", "observer"])
@@ -72,8 +72,8 @@ def test_failed_root_startup_is_durable_and_published_once(
                 assert record is not None and record.status == "failed"
                 assert record.error is not None
                 assert saved.resolve_error(record.error) == (message or "RuntimeError")
-                assert record.finished_at is not None and record.end_cursor is not None
-                assert record.begin_cursor is None and not saved.list_steps(
+                assert record.finished_at is not None and record._end_cursor is not None
+                assert record._begin_cursor is None and not saved.list_steps(
                     run_id=record.id
                 )
             with harness.executor.stream.boundary() as (_, _, frames):
@@ -82,7 +82,7 @@ def test_failed_root_startup_is_durable_and_published_once(
             frame = failed[0]
             assert isinstance(frame.event, RunEnd) and frame.event.status == "failed"
             assert frame.event.error == (message or "RuntimeError")
-            assert frame.thread_id == thread and str(frame.cursor) == record.end_cursor
+            assert frame.thread_id == thread and str(frame.cursor) == record._end_cursor
             assert tracer.events == ([] if stage == "observer" else [frame.event])
             following = await harness.executor.run(
                 harness.run_spec(
@@ -138,7 +138,7 @@ def test_owned_initialization_failure_finishes_without_waiting_for_stop(
             assert record.status == "failed"
             assert record.error is not None
             assert harness.store.resolve_error(record.error) == "initialization failed"
-            assert record.end_cursor is not None and record.begin_cursor is None
+            assert record._end_cursor is not None and record._begin_cursor is None
             assert len(tracer.events) == 1 and isinstance(tracer.events[0], RunEnd)
             await harness.executor.stop()
             with harness.executor.stream.boundary() as (_, _, frames):
@@ -178,9 +178,9 @@ def test_pre_entry_cancellation_applies_pending_cancel_and_preserves_reason(
                 run_id=handle.run_id, index=control.index
             )
             assert saved_control is not None and saved_control.status == "applied"
-            assert record.status == "canceled" and record.noted == RunNoted()
+            assert record.status == "canceled" and record.report == RunReport()
             assert record.error == ErrorMessage("requested before execution")
-            assert record.begin_cursor is None and record.end_cursor is not None
+            assert record._begin_cursor is None and record._end_cursor is not None
             assert len(tracer.events) == 1
             terminal = tracer.events[0]
             assert isinstance(terminal, RunEnd) and terminal.status == "canceled"
@@ -234,7 +234,7 @@ def test_startup_interruption_reads_ancestry_without_holding_registry(
                     )
                 )
             assert reads == [record.id]
-            assert record.status == "canceled" and record.noted == RunNoted()
+            assert record.status == "canceled" and record.report == RunReport()
             assert record.error == ErrorMessage("startup interrupted")
 
     asyncio.run(scenario())
@@ -315,8 +315,8 @@ agic child() -> Text:
                 for step in harness.store.list_steps(run_id=run.id)
             )
             root = harness.store.get_run(run_id=parent.run_id)
-            assert root is not None and root.noted is not None
-            assert root.noted.calls == CallCounters(
+            assert root is not None and root.report is not None
+            assert root.report.calls == CallCounters(
                 2 if launch == "async run" else 1, 0
             )
             assert not harness.executor._active_runs and not harness.executor._root_runs

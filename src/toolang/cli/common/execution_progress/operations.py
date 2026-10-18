@@ -15,41 +15,39 @@ def normalize_operation(
 ) -> StepOperation:
     """Identify the operation once at StepBegin; preserve source-specific styling."""
 
-    given = begin.given
-    if isinstance(given, ToolStepInfo):
-        name = runtime_operation_name(given.name) if given.plugin == "runtime" else None
-        if name == "run" and given.asynchronous:
+    spec = begin.spec
+    if isinstance(spec, ToolStepInfo):
+        name = runtime_operation_name(spec.name) if spec.plugin == "runtime" else None
+        if name == "run" and spec.asynchronous:
             name = "async run"
         return StepOperation(
             begin,
             name or "tool",
             "tool",
-            tool=given,
-            runnable=runnable_label(given.target),
+            tool=spec,
+            runnable=runnable_label(spec.target),
             run_scope=name == "run",
             tool_marker="✧" if name in {"pick", "honor", "compact"} else "›",
         )
-    if isinstance(given, ModelStepInfo):
+    if isinstance(spec, ModelStepInfo):
         return StepOperation(begin, "model", "model")
     return StepOperation(
         begin,
-        "async run" if getattr(given, "asynchronous", False) else given.kind,
+        "async run" if getattr(spec, "asynchronous", False) else spec.kind,
         "flow",
-        statement=given,
-        runnable=runnable_label(
-            getattr(given, "runnable", getattr(given, "handle", ""))
-        ),
+        statement=spec,
+        runnable=runnable_label(getattr(spec, "runnable", getattr(spec, "handle", ""))),
         run_scope=begin.kind == "run"
         and owner_is_agic
-        and not getattr(given, "asynchronous", False),
+        and not getattr(spec, "asynchronous", False),
     )
 
 
 def committed_exec_target(operation: StepOperation, end: StepEnd) -> str | None:
     """Read one committed handoff from either native exec or its tool reply."""
 
-    if end.noted is not None and end.noted.runnable is not None:
-        return end.noted.runnable
+    if end.report is not None and end.report.runnable is not None:
+        return end.report.runnable
     if (
         operation.name == "exec"
         and operation.source == "tool"

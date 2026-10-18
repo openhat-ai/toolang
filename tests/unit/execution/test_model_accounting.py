@@ -8,18 +8,18 @@ import pytest
 
 from toolang.base.types.run import ModelUsage
 from toolang.execution.accounting import (
-    build_model_noted,
+    build_model_report,
     cache_hit_ratio,
     selected_cost_is_approximate,
     selected_usd_cost,
     token_meter_quantity,
 )
-from toolang.execution.records import step_noted_from_data, step_noted_to_data
+from toolang.execution.records import step_report_from_data, step_report_to_data
 from toolang.execution.types import (
     ModelUsageMeter,
     ModelCost,
     TokenUsage,
-    ModelStepNoted,
+    ModelStepReport,
 )
 from toolang.plugin.catalogs._local import LOCAL_ZERO_COST
 
@@ -65,7 +65,7 @@ def test_accounting_prices_cache_and_reasoning_without_double_counting() -> None
 
 
 def test_token_meter_quantity_treats_ambiguous_or_invalid_values_as_unknown() -> None:
-    duplicate = ModelStepNoted(
+    duplicate = ModelStepReport(
         usage=TokenUsage(input_tokens=0, output_tokens=2),
         cost=ModelCost(
             meters=(
@@ -74,11 +74,11 @@ def test_token_meter_quantity_treats_ambiguous_or_invalid_values_as_unknown() ->
             )
         ),
     )
-    fractional = ModelStepNoted(
+    fractional = ModelStepReport(
         usage=TokenUsage(input_tokens=0, output_tokens=1),
         cost=ModelCost(meters=(ModelUsageMeter("output.reasoning", 0.5, "token"),)),
     )
-    other_unit = ModelStepNoted(
+    other_unit = ModelStepReport(
         usage=TokenUsage(input_tokens=0, output_tokens=1),
         cost=ModelCost(meters=(ModelUsageMeter("output.reasoning", 1.0, "request"),)),
     )
@@ -193,7 +193,7 @@ def test_zero_prices_produce_a_complete_zero_cost() -> None:
 
 def test_local_zero_price_remains_exact_when_cache_usage_is_reported() -> None:
     model = _model(dict(LOCAL_ZERO_COST))
-    accounting = build_model_noted(
+    accounting = build_model_report(
         model,
         ModelUsage(
             input_tokens=4100,
@@ -210,7 +210,7 @@ def test_local_zero_price_remains_exact_when_cache_usage_is_reported() -> None:
 
 
 def test_local_zero_price_is_exact_without_cache_breakdown() -> None:
-    accounting = build_model_noted(
+    accounting = build_model_report(
         _model(dict(LOCAL_ZERO_COST)),
         ModelUsage(input_tokens=4100, output_tokens=15),
     )
@@ -241,7 +241,7 @@ def test_local_zero_price_is_exact_without_cache_breakdown() -> None:
 def test_incomplete_usage_breakdown_marks_estimate_partial(
     rates: dict[str, object], usage: ModelUsage
 ) -> None:
-    accounting = build_model_noted(
+    accounting = build_model_report(
         _model(rates),
         usage,
     )
@@ -252,7 +252,7 @@ def test_incomplete_usage_breakdown_marks_estimate_partial(
 
 
 def test_unknown_cache_write_breakdown_marks_estimate_partial() -> None:
-    accounting = build_model_noted(
+    accounting = build_model_report(
         _model({"input": 0, "output": 0, "cache_write": 1}),
         ModelUsage(input_tokens=100, output_tokens=15),
     )
@@ -269,7 +269,7 @@ def test_cache_write_usage_is_excluded_from_uncached_input(
     rates: dict[str, object] = {"input": 2, "output": 0, "cache_write": 3}
     if cache_rate is not None:
         rates["cache_read"] = cache_rate
-    accounting = build_model_noted(
+    accounting = build_model_report(
         _model(rates),
         ModelUsage(input_tokens=100, output_tokens=15, input_cache_write_tokens=10),
     )
@@ -280,7 +280,7 @@ def test_cache_write_usage_is_excluded_from_uncached_input(
 
 
 def test_missing_cache_write_usage_keeps_inferred_input_partial() -> None:
-    accounting = build_model_noted(
+    accounting = build_model_report(
         _model({"input": 0, "output": 0, "cache_read": 0, "cache_write": 1}),
         ModelUsage(input_tokens=100, output_tokens=15, input_cache_read_tokens=20),
     )
@@ -333,7 +333,7 @@ def test_accounting_selects_advertised_mode_price() -> None:
         override=ModelProvider(mode="fast"),
         experimental={"modes": {"fast": {"cost": {"input": 3, "output": 4}}}},
     )
-    accounting = build_model_noted(
+    accounting = build_model_report(
         model,
         ModelUsage(input_tokens=100, output_tokens=50),
     )
@@ -408,7 +408,7 @@ def test_accounting_preserves_billing_context_without_catalog_price() -> None:
 
 def test_accounting_records_only_applied_pricing_plan() -> None:
     model = _model({"input": 0, "output": 0})
-    accounting = build_model_noted(
+    accounting = build_model_report(
         model,
         ModelUsage(input_tokens=10, output_tokens=5),
     )
@@ -464,17 +464,17 @@ def test_durable_model_accounting_round_trips_without_repricing() -> None:
         ),
         _catalog({"input": 2, "output": 10, "cache_read": 1}),
     )
-    noted = accounting or ModelStepNoted()
+    report = accounting or ModelStepReport()
 
-    data = step_noted_to_data("model", noted)
-    restored = step_noted_from_data("model", data)
+    data = step_report_to_data("model", report)
+    restored = step_report_from_data("model", data)
 
-    assert restored == noted
+    assert restored == report
 
 
-def test_model_noted_rejects_legacy_duplicate_fields() -> None:
+def test_model_report_rejects_legacy_duplicate_fields() -> None:
     with pytest.raises(ValueError):
-        step_noted_from_data(
+        step_report_from_data(
             "model", {"tokens": None, "price": None, "cost": None, "cont": None}
         )
 
@@ -511,16 +511,16 @@ def _accounting(
     model: Model,
     usage: ModelUsage | None,
     cost: dict[str, object] | None = None,
-) -> ModelStepNoted | None:
+) -> ModelStepReport | None:
     resolved = replace(model, cost=cost) if cost is not None else model
-    return build_model_noted(resolved, usage)
+    return build_model_report(resolved, usage)
 
 
 def test_call_settlement_keeps_sub_micro_token_prices_until_total() -> None:
     from toolang.base.money import cost_units
 
     # Both components cost 0.4 micro-USD; round the combined call, not each line.
-    accounting = build_model_noted(
+    accounting = build_model_report(
         _model({"input": 0.2, "output": 0.2}),
         ModelUsage(input_tokens=2, output_tokens=2),
     )
@@ -538,7 +538,7 @@ def test_call_settlement_keeps_sub_micro_token_prices_until_total() -> None:
 def test_call_settlement_preserves_decimal_half_micro_boundaries(
     rate: float, expected: float
 ) -> None:
-    accounting = build_model_noted(
+    accounting = build_model_report(
         _model({"input": rate, "output": 0}),
         ModelUsage(input_tokens=25, output_tokens=0),
     )

@@ -101,7 +101,7 @@ class EventProjection:
             value = dict(
                 previous
                 or {
-                    "v": 1,
+                    "v": 2,
                     "root": frame.root_run_id,
                     "thread": frame.thread_id,
                     "run": event.run
@@ -122,7 +122,7 @@ class EventProjection:
             self.entities[key] = value
         else:
             self.entities[field("control", str(event.control))] = {
-                "v": 1,
+                "v": 2,
                 "thread": frame.thread_id,
                 "root": None,
                 "event": event_to_data(event),
@@ -131,7 +131,7 @@ class EventProjection:
             }
         if frame.root_run_id is not None:
             self.entities[field("root", frame.root_run_id)] = {
-                "v": 1,
+                "v": 2,
                 "root": frame.root_run_id,
                 "thread": frame.thread_id,
                 "source": cursor,

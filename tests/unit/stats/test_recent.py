@@ -9,8 +9,8 @@ from toolang.base.types.run import ModelCall
 from toolang.execution.store import RunStore
 from toolang.execution.types import (
     CallCounters,
-    ModelStepGiven,
-    RunNoted,
+    ModelStepSpec,
+    RunReport,
     StepRef,
     TokenUsage,
 )
@@ -34,14 +34,14 @@ def source(tmp_path, monkeypatch):
     store.close()
 
 
-@pytest.mark.parametrize("stats_state", ["missing", "corrupt", "initializing"])
+@pytest.mark.parametrize("state", ["missing", "corrupt", "initializing"])
 @pytest.mark.parametrize("period", [3600, 14400, 28800])
 def test_recent_source_ignores_statistics_store_and_settles_active_roots(
-    source, tmp_path, stats_state, period
+    source, tmp_path, state, period
 ):
     stats_path = tmp_path / "stats.db"
-    if stats_state != "missing":
-        stats_path.write_bytes(b"not sqlite" if stats_state == "corrupt" else b"")
+    if state != "missing":
+        stats_path.write_bytes(b"not sqlite" if state == "corrupt" else b"")
     before = stats_path.read_bytes() if stats_path.exists() else None
     run = source.root("active", NOW - 40000)
     source.call(run, NOW - period, NOW - 1, tokens=100)
@@ -53,7 +53,7 @@ def test_recent_source_ignores_statistics_store_and_settles_active_roots(
         ref=StepRef.from_local(run, (99,)),
         kind="model",
         input=(),
-        given=ModelStepGiven(
+        spec=ModelStepSpec(
             model="test/model",
             call=ModelCall(instructions="", messages=[]),
             setup="fixture",
@@ -92,7 +92,7 @@ def test_completed_roots_count_statuses_current_second_and_page_without_child_ru
             run_id=run,
             status=state,
             finished_at=timestamp(NOW - index % 2),
-            noted=RunNoted(CallCounters(5, 9), TokenUsage(100, 20, 30), 0.16),
+            report=RunReport(CallCounters(5, 9), TokenUsage(100, 20, 30), 0.16),
         )
         terminal.append(run)
     old = source.root("old", NOW - 2000)

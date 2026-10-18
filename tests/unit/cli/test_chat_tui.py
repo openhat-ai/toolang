@@ -133,16 +133,16 @@ from toolang.execution.types import (
     FieldRef,
     ModelCostLine,
     ModelOverride,
-    ModelStepGiven,
+    ModelStepSpec,
     ModelUsageMeter,
     Occurrence,
     OccurrencePosition,
     RunOverride,
     SessionSetting,
-    ToolStepGiven,
+    ToolStepSpec,
     ModelCost,
     TokenUsage,
-    ModelStepNoted,
+    ModelStepReport,
     StepRef,
 )
 from toolang.lang.ast import MapStmt, RunStmt, Span
@@ -218,14 +218,14 @@ def _output(step: StepRef) -> Output:
     )
 
 
-def _model_given(model: str = "test/model") -> ModelStepGiven:
-    return ModelStepGiven(
+def _model_spec(model: str = "test/model") -> ModelStepSpec:
+    return ModelStepSpec(
         setup="test-setup", model=model, call=ModelCall(instructions="", messages=[])
     )
 
 
-def _tool_given(name: str = "shell__execute") -> ToolStepGiven:
-    return ToolStepGiven(
+def _tool_spec(name: str = "shell__execute") -> ToolStepSpec:
+    return ToolStepSpec(
         plugin="shell",
         call=ToolCall(
             tool_call_id="call_1",
@@ -436,7 +436,7 @@ def test_chat_tool_call_only_model_step_vacates_live_position_for_tool() -> None
                     input={"command": "echo ok"},
                 )
             ),
-            noted=ModelStepNoted(
+            report=ModelStepReport(
                 usage=TokenUsage(input_tokens=12, output_tokens=3), cost=ModelCost()
             ),
         ),
@@ -538,7 +538,7 @@ def test_chat_parallel_terminal_update_replaces_every_lane_atomically() -> None:
         step_begin(
             step=par_path,
             kind="par",
-            given=MapStmt(span=Span(line=1), runnable="summarize", lanes=2),
+            spec=MapStmt(span=Span(line=1), runnable="summarize", lanes=2),
         ),
         app,
     )
@@ -746,7 +746,7 @@ def test_progress_marks_complete_zero_price_as_exact() -> None:
             step=StepRef.parse("run_1.0"),
             kind="model",
             status="succeeded",
-            noted=ModelStepNoted(
+            report=ModelStepReport(
                 usage=TokenUsage(
                     input_tokens=3800, output_tokens=120, reasoning_tokens=0
                 ),
@@ -795,10 +795,10 @@ def test_progress_marks_complete_zero_price_as_exact() -> None:
     "accounting",
     [
         None,
-        ModelStepNoted(
+        ModelStepReport(
             usage=TokenUsage(input_tokens=10, output_tokens=5), cost=ModelCost()
         ),
-        ModelStepNoted(
+        ModelStepReport(
             usage=TokenUsage(input_tokens=10, output_tokens=5),
             cost=ModelCost(
                 amount=1.0, currency="EUR", complete=True, source="reported"
@@ -807,12 +807,12 @@ def test_progress_marks_complete_zero_price_as_exact() -> None:
     ],
 )
 def test_progress_marks_incomplete_usd_totals_as_approximate(
-    accounting: ModelStepNoted | None,
+    accounting: ModelStepReport | None,
 ) -> None:
     metrics = Metrics()
     for index, item in enumerate(
         (
-            ModelStepNoted(
+            ModelStepReport(
                 usage=TokenUsage(input_tokens=10, output_tokens=5),
                 cost=ModelCost(
                     amount=0.03, currency="USD", complete=True, source="reported"
@@ -826,7 +826,7 @@ def test_progress_marks_incomplete_usd_totals_as_approximate(
                 step=StepRef.parse(f"run_1.{index}"),
                 kind="model",
                 status="succeeded",
-                noted=item or ModelStepNoted(),
+                report=item or ModelStepReport(),
             )
         )
 
@@ -865,7 +865,7 @@ def test_progress_cost_uses_adaptive_precision(
 def test_progress_marks_partial_reasoning_as_a_lower_bound() -> None:
     metrics = Metrics()
     for accounting in (
-        ModelStepNoted(
+        ModelStepReport(
             usage=TokenUsage(
                 input_tokens=1000, output_tokens=200, reasoning_tokens=150
             ),
@@ -877,7 +877,7 @@ def test_progress_marks_partial_reasoning_as_a_lower_bound() -> None:
                 )
             ),
         ),
-        ModelStepNoted(
+        ModelStepReport(
             usage=TokenUsage(input_tokens=100, output_tokens=20), cost=ModelCost()
         ),
     ):
@@ -886,7 +886,7 @@ def test_progress_marks_partial_reasoning_as_a_lower_bound() -> None:
                 step=StepRef.parse(f"run_1.{metrics.model_calls}"),
                 kind="model",
                 status="succeeded",
-                noted=accounting or ModelStepNoted(),
+                report=accounting or ModelStepReport(),
             )
         )
 
@@ -3890,7 +3890,7 @@ def test_chat_ticker_refreshes_compact_progress_without_replacing_the_block() ->
             step=StepRef.parse("run_compact.0"),
             kind="tool",
             started_at=now[0],
-            given=ToolStepGiven(
+            spec=ToolStepSpec(
                 plugin="runtime",
                 trigger="runtime",
                 call=ToolCall("compact", "compact", "runtime__compact", {}),
@@ -6101,7 +6101,7 @@ def _model_step_begin(
         step=StepRef.parse(f"{run_id}.{step_index}"),
         kind="model",
         input=(),
-        given=_model_given(model or "test/model"),
+        spec=_model_spec(model or "test/model"),
         started_at="2026-01-01T00:00:01Z",
     )
 
@@ -6111,7 +6111,7 @@ def _tool_step_begin(*, step_index: int = 1) -> StepBegin:
         step=StepRef.parse(f"run_1.{step_index}"),
         kind="tool",
         input=(),
-        given=_tool_given(),
+        spec=_tool_spec(),
         started_at="2026-01-01T00:00:01Z",
     )
 
@@ -6128,7 +6128,7 @@ def _model_step_end(
         kind="model",
         status="succeeded",
         output=_parts(TextPart(text=output)),
-        noted=ModelStepNoted(
+        report=ModelStepReport(
             usage=TokenUsage(input_tokens=1, output_tokens=1), cost=ModelCost()
         ),
         finished_at=finished_at,
@@ -6141,7 +6141,7 @@ def _flow_step_begin(*, step_index: int = 1) -> StepBegin:
         kind="par",
         input=(),
         started_at="2026-01-01T00:00:01Z",
-        given=MapStmt(span=Span(line=1), runnable="summarize", lanes=2),
+        spec=MapStmt(span=Span(line=1), runnable="summarize", lanes=2),
     )
 
 
@@ -6163,7 +6163,7 @@ def _child_run_step_begin(
         kind="run",
         input=(),
         started_at="2026-01-01T00:00:01Z",
-        given=RunStmt(span=Span(line=1), runnable="summarize"),
+        spec=RunStmt(span=Span(line=1), runnable="summarize"),
     )
 
 

@@ -28,14 +28,14 @@ from toolang.execution.types import (
     Output,
     ControlRef,
     ErrorMessage,
-    ModelStepGiven,
+    ModelStepSpec,
     Occurrence,
     OccurrencePosition,
-    ToolStepGiven,
-    ToolStepNoted,
+    ToolStepSpec,
+    ToolStepReport,
     ModelCost,
     TokenUsage,
-    ModelStepNoted,
+    ModelStepReport,
     StepRef,
     value_for_type,
 )
@@ -51,8 +51,8 @@ def _run_stmt(runnable: str = "agic:summarize") -> RunStmt:
     return RunStmt(span=Span(line=1), runnable=runnable)
 
 
-def _model_given() -> ModelStepGiven:
-    return ModelStepGiven(
+def _model_spec() -> ModelStepSpec:
+    return ModelStepSpec(
         setup="test-setup",
         model="test/scripted",
         call=ModelCall(instructions="", messages=[]),
@@ -82,7 +82,7 @@ def _execute_step(
         step_begin(
             step=step,
             kind="tool",
-            given=ToolStepGiven(
+            spec=ToolStepSpec(
                 plugin="runtime",
                 call=ToolCall(
                     "execute-1",
@@ -119,7 +119,7 @@ def _execute_step(
             status="failed" if error else "succeeded",
             output=Output(value_for_type("ToolResultPart", result), None),
             error=ErrorMessage(error) if error else None,
-            noted=ToolStepNoted(
+            report=ToolStepReport(
                 summary=f"Failed to execute {runnable}" if error else "Transferred"
             ),
         )
@@ -161,10 +161,10 @@ def test_dynamic_run_projects_a_flat_header_and_child_id_footer(source) -> None:
     )
 
     kind = "run" if source == "flow" else "tool"
-    given = (
+    spec = (
         _run_stmt()
         if source == "flow"
-        else ToolStepGiven(
+        else ToolStepSpec(
             plugin="runtime",
             call=ToolCall(
                 "call", "call", "runtime__run", {"runnable": "agic:summarize"}
@@ -174,7 +174,7 @@ def test_dynamic_run_projects_a_flat_header_and_child_id_footer(source) -> None:
     )
     starting = projector.handle(
         step_begin(
-            step=dynamic, kind=kind, given=given, started_at="2026-01-01T00:00:00Z"
+            step=dynamic, kind=kind, spec=spec, started_at="2026-01-01T00:00:00Z"
         )
     )
     assert starting.committed == ()
@@ -216,7 +216,7 @@ def test_dynamic_run_projects_a_flat_header_and_child_id_footer(source) -> None:
         step_begin(
             step=child_model,
             kind="model",
-            given=ModelStepGiven(
+            spec=ModelStepSpec(
                 setup="test-setup",
                 model="test/scripted",
                 call=ModelCall(instructions="", messages=[]),
@@ -230,7 +230,7 @@ def test_dynamic_run_projects_a_flat_header_and_child_id_footer(source) -> None:
             kind="model",
             status="succeeded",
             output=Output(value_for_type("Part[]", (TextPart("summary"),)), "_"),
-            noted=ModelStepNoted(
+            report=ModelStepReport(
                 usage=TokenUsage(input_tokens=4, output_tokens=2), cost=ModelCost()
             ),
             finished_at="2026-01-01T00:00:01Z",
@@ -276,7 +276,7 @@ def test_dynamic_run_preaccept_failure_uses_a_trace_marker_without_boundaries() 
         step_begin(
             step=path,
             kind="run",
-            given=_run_stmt("flow:missing"),
+            spec=_run_stmt("flow:missing"),
         )
     )
     assert starting.committed == ()
@@ -318,7 +318,7 @@ def test_execute_projects_a_live_marker_then_a_handoff_header() -> None:
             runnable="agic:caller",
         )
     )
-    projector.handle(step_begin(step=caller, kind="model", given=_model_given()))
+    projector.handle(step_begin(step=caller, kind="model", spec=_model_spec()))
 
     starting = projector.handle(
         step_end(
@@ -337,9 +337,7 @@ def test_execute_projects_a_live_marker_then_a_handoff_header() -> None:
     transferred = _execute_step(projector, tool_name=tool_name)
     assert transferred.committed == ()
     assert transferred.live == ()
-    header = projector.handle(
-        step_begin(step=target, kind="model", given=_model_given())
-    )
+    header = projector.handle(step_begin(step=target, kind="model", spec=_model_spec()))
 
     assert header.committed[0].rows == (
         ProgressRow(
@@ -460,7 +458,7 @@ def test_execute_uses_its_persisted_running_description() -> None:
         step_begin(
             step=StepRef.parse("run_root.0"),
             kind="tool",
-            given=ToolStepGiven(
+            spec=ToolStepSpec(
                 plugin="runtime",
                 call=ToolCall(
                     "execute-1", "execute-1", "runtime__exec", {"runnable": "next"}
@@ -497,7 +495,7 @@ def test_uncommitted_execute_uses_its_tool_outcome(
         step_begin(
             step=step,
             kind="tool",
-            given=ToolStepGiven(
+            spec=ToolStepSpec(
                 plugin="runtime",
                 call=ToolCall(
                     "execute-1", "execute-1", "runtime__exec", {"runnable": "next"}
@@ -512,7 +510,7 @@ def test_uncommitted_execute_uses_its_tool_outcome(
             kind="tool",
             status=status,
             error=ErrorMessage("Execution stopped:\nreason"),
-            noted=ToolStepNoted(summary=summary),
+            report=ToolStepReport(summary=summary),
         )
     )
     expected = (
@@ -579,7 +577,7 @@ def test_confirmed_execute_stays_in_its_parallel_lane(
         step_begin(
             step=par,
             kind="par",
-            given=MapStmt(span=Span(line=1), runnable="worker", lanes=1),
+            spec=MapStmt(span=Span(line=1), runnable="worker", lanes=1),
         )
     )
     projector.handle(
@@ -598,7 +596,7 @@ def test_confirmed_execute_stays_in_its_parallel_lane(
         step_begin(
             step=step,
             kind="tool",
-            given=ToolStepGiven(
+            spec=ToolStepSpec(
                 plugin="runtime",
                 call=ToolCall(
                     "execute-1", "execute-1", "runtime__exec", {"runnable": "next"}
@@ -612,7 +610,7 @@ def test_confirmed_execute_stays_in_its_parallel_lane(
             step=step,
             kind="tool",
             status="succeeded",
-            noted=ToolStepNoted(summary="Transferred to next"),
+            report=ToolStepReport(summary="Transferred to next"),
             output=Output(
                 value_for_type(
                     "ToolResultPart",
@@ -638,7 +636,7 @@ def test_confirmed_execute_stays_in_its_parallel_lane(
             step_begin(
                 step=target,
                 kind="tool",
-                given=ToolStepGiven(
+                spec=ToolStepSpec(
                     plugin=plugin,
                     call=ToolCall("target", "target", f"{plugin}__{next_tool}", {}),
                     summary=summary,
@@ -653,7 +651,7 @@ def test_confirmed_execute_stays_in_its_parallel_lane(
                 step=target,
                 kind="tool",
                 status="succeeded",
-                noted=ToolStepNoted(summary="Finished"),
+                report=ToolStepReport(summary="Finished"),
             )
         )
         assert completed.live[0].rows[-1].text == f"  0 | #0 | {marker} Finished"
@@ -676,7 +674,7 @@ def test_execute_prestart_failure_uses_a_correlated_trace_marker() -> None:
             runnable="agic:caller",
         )
     )
-    projector.handle(step_begin(step=caller, kind="model", given=_model_given()))
+    projector.handle(step_begin(step=caller, kind="model", spec=_model_spec()))
     projector.handle(
         step_end(
             step=caller,
@@ -704,7 +702,7 @@ def test_execute_prestart_failure_uses_a_correlated_trace_marker() -> None:
     )
     assert failed.live == ()
     recovered = projector.handle(
-        step_begin(step=recovery, kind="model", given=_model_given())
+        step_begin(step=recovery, kind="model", spec=_model_spec())
     )
     assert recovered.committed == ()
     assert recovered.live[0].rows == (ProgressRow("• Thinking", "active"),)
@@ -721,7 +719,7 @@ def test_handoff_to_flow_keeps_the_first_run_statement_flow_owned() -> None:
             runnable="agic:caller",
         )
     )
-    projector.handle(step_begin(step=caller, kind="model", given=_model_given()))
+    projector.handle(step_begin(step=caller, kind="model", spec=_model_spec()))
     projector.handle(
         step_end(
             step=caller,
@@ -738,7 +736,7 @@ def test_handoff_to_flow_keeps_the_first_run_statement_flow_owned() -> None:
         step_begin(
             step=target,
             kind="run",
-            given=_run_stmt("agic:worker"),
+            spec=_run_stmt("agic:worker"),
         )
     )
 
@@ -859,7 +857,7 @@ def test_flow_owned_run_step_keeps_numbered_header_and_step_path_footer() -> Non
     )
 
     header = projector.handle(
-        step_begin(step=step, kind="run", given=_run_stmt("summarize"))
+        step_begin(step=step, kind="run", spec=_run_stmt("summarize"))
     )
     assert header.committed[0].rows == (
         ProgressRow("[0] Run summarize"),
@@ -899,7 +897,7 @@ def test_agic_to_flow_keeps_child_flow_run_steps_numbered() -> None:
         step_begin(
             step=dynamic,
             kind="run",
-            given=_run_stmt("flow:publish"),
+            spec=_run_stmt("flow:publish"),
         )
     )
     outer_header = projector.handle(
@@ -915,7 +913,7 @@ def test_agic_to_flow_keeps_child_flow_run_steps_numbered() -> None:
         step_begin(
             step=authored,
             kind="run",
-            given=_run_stmt("validate"),
+            spec=_run_stmt("validate"),
         )
     )
     projector.handle(
@@ -955,7 +953,7 @@ def test_nested_dynamic_run_footers_pair_with_their_direct_children() -> None:
             runnable="agic:parent",
         )
     )
-    projector.handle(step_begin(step=outer, kind="run", given=_run_stmt("agic:child")))
+    projector.handle(step_begin(step=outer, kind="run", spec=_run_stmt("agic:child")))
     outer_header = projector.handle(
         run_begin(
             run="run_child",
@@ -964,7 +962,7 @@ def test_nested_dynamic_run_footers_pair_with_their_direct_children() -> None:
             parent=outer,
         )
     )
-    projector.handle(step_begin(step=inner, kind="run", given=_run_stmt("agic:leaf")))
+    projector.handle(step_begin(step=inner, kind="run", spec=_run_stmt("agic:leaf")))
     inner_header = projector.handle(
         run_begin(
             run="run_leaf",
@@ -1012,7 +1010,7 @@ def test_dynamic_run_inside_parallel_lane_stays_on_one_lane_row() -> None:
         step_begin(
             step=parallel,
             kind="par",
-            given=MapStmt(span=Span(line=1), runnable="worker", lanes=1),
+            spec=MapStmt(span=Span(line=1), runnable="worker", lanes=1),
         )
     )
     projector.handle(
@@ -1029,7 +1027,7 @@ def test_dynamic_run_inside_parallel_lane_stays_on_one_lane_row() -> None:
     )
 
     update = projector.handle(
-        step_begin(step=dynamic, kind="run", given=_run_stmt("agic:leaf"))
+        step_begin(step=dynamic, kind="run", spec=_run_stmt("agic:leaf"))
     )
 
     rows = update.live[0].rows
@@ -1115,7 +1113,7 @@ def test_dynamic_scope_suppresses_internal_call_and_protocol_result_rows() -> No
             runnable="agic:parent",
         )
     )
-    projector.handle(step_begin(step=model, kind="model", given=_model_given()))
+    projector.handle(step_begin(step=model, kind="model", spec=_model_spec()))
     hidden = projector.handle(
         step_end(
             step=model,
@@ -1137,9 +1135,7 @@ def test_dynamic_scope_suppresses_internal_call_and_protocol_result_rows() -> No
             ),
         )
     )
-    projector.handle(
-        step_begin(step=dynamic, kind="run", given=_run_stmt("agic:child"))
-    )
+    projector.handle(step_begin(step=dynamic, kind="run", spec=_run_stmt("agic:child")))
     header = projector.handle(
         run_begin(
             run="run_child",
@@ -1198,7 +1194,7 @@ def test_dynamic_header_normalizes_untrusted_runnable_text() -> None:
         step_begin(
             step=path,
             kind="run",
-            given=_run_stmt("flow:\x00missing\nname" + "x" * 300),
+            spec=_run_stmt("flow:\x00missing\nname" + "x" * 300),
         )
     )
     header = projector.handle(

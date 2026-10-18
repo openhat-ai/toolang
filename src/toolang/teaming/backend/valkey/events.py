@@ -83,7 +83,7 @@ class ValkeyEvents:
         try:
             origins = {key: json.loads(value) for key, value in _hash(agents).items()}
             for value in origins.values():
-                if value.get("v") != 1:
+                if value.get("v") != 2:
                     raise ValueError("Origin schema version")
                 stream_id(value.get("floor", "0-0"))
             public = {}
@@ -110,11 +110,11 @@ class ValkeyEvents:
                     raise EventProtocolError("Oversized event generation")
                 try:
                     data = json.loads(value)
-                    if not isinstance(data, dict) or data.get("v") != 1:
+                    if not isinstance(data, dict) or data.get("v") != 2:
                         raise ValueError("Unsupported event entity version")
                     if "entity" in data:
                         entity = data["entity"]
-                        if not isinstance(entity, dict) or entity.get("v") != 1:
+                        if not isinstance(entity, dict) or entity.get("v") != 2:
                             raise ValueError("Unsupported event entity version")
                         data = {**entity, "delivery": data["delivery"]}
                     if name == MANIFEST:

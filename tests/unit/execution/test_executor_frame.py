@@ -44,7 +44,7 @@ from toolang.execution.recall import recall_sources
 from toolang.execution.inspection.history import RunHistory
 from toolang.execution.records import (
     RunControlPayload,
-    StoredModelStepGiven,
+    StoredModelStepSpec,
     model_call_from_data,
 )
 from toolang.execution.schemas import RunDetail
@@ -57,8 +57,8 @@ from toolang.execution.types import (
     ControlRef,
     StepRef,
     FieldRef,
-    ModelStepGiven,
-    ModelStepNoted,
+    ModelStepSpec,
+    ModelStepReport,
 )
 from toolang.lang.ast import (
     AgicDecl,
@@ -680,12 +680,12 @@ def test_run_executor_uses_prepared_model_input_end_to_end(tmp_path: Path) -> No
         assert image in adapter.requests[0].messages[0].parts
         assert store.rebuild_model_call(steps[0]) == adapter.requests[0]
         begin = next(event for event in tracer.events if isinstance(event, StepBegin))
-        assert begin.given == ModelStepInfo(
+        assert begin.spec == ModelStepInfo(
             model="test/model",
         )
-        assert isinstance(steps[0].given, StoredModelStepGiven)
-        assert steps[0].given.model == "test/model"
-        assert steps[0].noted == ModelStepNoted(invoked=True)
+        assert isinstance(steps[0].spec, StoredModelStepSpec)
+        assert steps[0].spec.model == "test/model"
+        assert steps[0].report == ModelStepReport(invoked=True)
         detail = RunHistory(store).get_run(record.id)
         assert detail is not None
         run_payload = detail.controls[0].payload
@@ -702,7 +702,7 @@ def test_run_executor_uses_prepared_model_input_end_to_end(tmp_path: Path) -> No
             ),
             "_",
         )
-        assert detail.steps[0].given == ModelStepGiven(
+        assert detail.steps[0].spec == ModelStepSpec(
             state=state.revision,
             setup="test-setup",
             model="test/model",
@@ -711,13 +711,13 @@ def test_run_executor_uses_prepared_model_input_end_to_end(tmp_path: Path) -> No
         payload = TypeAdapter(RunDetail).dump_python(detail, mode="json")
         serialized_call = cast(
             dict[str, Any],
-            payload["steps"][0]["given"]["call"],
+            payload["steps"][0]["spec"]["call"],
         )
         assert model_call_from_data(serialized_call) == adapter.requests[0]
         store.begin_step(
             ref=steps[0].ref,
             kind="model",
-            given=detail.steps[0].given,
+            spec=detail.steps[0].spec,
             state=steps[0].state,
             input=steps[0].input,
             preceded_by=steps[0].preceded_by,

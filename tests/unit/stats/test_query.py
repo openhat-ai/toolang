@@ -54,7 +54,7 @@ def test_dual_store_summary_models_and_daily_equal_raw_results(
         == daily
     )
     with fixture.stats.records.snapshot() as connection:
-        assert connection.execute("SELECT COUNT(*) FROM stats_roots").fetchone()[0] == 1
+        assert connection.execute("SELECT COUNT(*) FROM roots").fetchone()[0] == 1
     if scope_kind == "agent" and model is None:
         assert summary[0].in_ == 600 and summary[0].model_calls == 6
         assert summary[0].tool_calls == 1 and summary[0].root_runs == 3
@@ -155,7 +155,7 @@ def test_publication_between_snapshot_pins_does_not_lose_or_duplicate_root(
 
             def trace(statement):
                 nonlocal pending
-                if "SELECT initialized,updated_at FROM main.stats_state" in statement:
+                if "SELECT initialized,updated_at FROM main.state" in statement:
                     pins.append("stats")
                 if "SELECT id FROM src.runs LIMIT 1" in statement:
                     pins.append("source")
@@ -236,7 +236,7 @@ def test_source_and_query_connections_cannot_write_persistent_databases(fixture)
     with fixture.stats.records.snapshot() as connection:
         for statement in (
             "CREATE TABLE src.forbidden(x)",
-            "DELETE FROM main.stats_roots",
+            "DELETE FROM main.roots",
         ):
             with pytest.raises(sqlite3.OperationalError, match="readonly"):
                 connection.execute(statement)

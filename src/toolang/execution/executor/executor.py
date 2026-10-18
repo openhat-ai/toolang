@@ -71,7 +71,7 @@ from toolang.state.builtin import with_runtime_handlers
 from toolang.state.types import StateSync
 from toolang.setup import AgentSetup
 
-from ..accounting import build_model_noted, selected_usd_cost
+from ..accounting import build_model_report, selected_usd_cost
 from ..live import LiveTree
 from ..schemas import LiveSnapshot
 from ..assembly.history import MessageHistory, adopted_horizon
@@ -99,13 +99,13 @@ from ..records import (
     ControlRecord,
     RunRecord,
     StepRecord,
-    StoredModelStepGiven,
+    StoredModelStepSpec,
 )
 from ..store import RunStore
 from ..stream import CanonicalStream, Publication, TraceObserver, OBSERVER_DRAIN_SEC
 from ..schemas import RerunRequest, RunRequest
 from ..types import (
-    RunNoted,
+    RunReport,
     valid_run_id,
     value_for_type,
     value_type,
@@ -120,17 +120,17 @@ from ..types import (
     Output,
     ControlKind,
     StepRef,
-    StepGiven,
+    StepSpec,
     StepKind,
-    StepNoted,
+    StepReport,
     StepStatus,
     RunStatus,
     RunRef,
     AwaitableHandle,
-    ModelStepNoted,
-    LoopStepNoted,
-    ToolStepGiven,
-    ToolStepNoted,
+    ModelStepReport,
+    LoopStepReport,
+    ToolStepSpec,
+    ToolStepReport,
     Occurrence,
     OccurrencePosition,
     TypedRef,
@@ -887,7 +887,7 @@ class RunExecutor:
                             finished_at=utc_now(),
                             thread_id=bound.thread,
                             root_run_id=bound.root_run_id,
-                            noted=RunNoted(),
+                            report=RunReport(),
                         )
             finally:
                 if observer is not None:
@@ -1135,7 +1135,7 @@ class RunExecutor:
                     )
                 finished_at = utc_now()
                 status = "canceled"
-                noted = root.tree.run_noted(run_id)
+                report = root.tree.run_report(run_id)
                 with self.stream.publication() as publication:
                     with self.store.write_transaction():
                         self._finish_run(
@@ -1147,7 +1147,7 @@ class RunExecutor:
                             finished_at=finished_at,
                             thread_id=root.thread_id,
                             root_run_id=run_id,
-                            noted=noted,
+                            report=report,
                         )
                     root.tree.end_run(run_id, status, finished_at)
             if observer is not None and (task.cancelled() or task.exception() is None):
@@ -1173,7 +1173,7 @@ class RunExecutor:
         status: RunStatus,
         thread_id: str,
         root_run_id: str,
-        noted: RunNoted,
+        report: RunReport,
         control: ControlRef | None = None,
         output: Output | None = None,
         error: ErrorMessage | ErrorRef | None = None,
@@ -1184,7 +1184,7 @@ class RunExecutor:
         """Write detached terminal facts without acquiring the owner registry."""
         record = self.store.finish_run(
             run_id=run,
-            noted=noted,
+            report=report,
             status=status,
             output=output,
             error=error,
@@ -1236,6 +1236,7 @@ class RunExecutor:
         *,
         thread_id: str,
         root_run_id: str,
+        exec_runnable: str | None = None,
     ) -> tuple[StepRecord, ...]:
         completed: list[StepRecord] = []
         for item in steps:
@@ -1269,6 +1270,7 @@ class RunExecutor:
                         step.error.message
                         if isinstance(step.error, ErrorMessage)
                         else error_text,
+                        exec_runnable=exec_runnable,
                     ),
                     thread_id=thread_id,
                     root_run_id=root_run_id,
@@ -1477,8 +1479,10 @@ class RunExecutor:
             )
         elif record is not None:
             with self.stream.publication() as publication:
-                noted = (
-                    active.tree.run_noted(run_id) if active is not None else RunNoted()
+                report = (
+                    active.tree.run_report(run_id)
+                    if active is not None
+                    else RunReport()
                 )
                 with self.store.write_transaction():
                     self._finish_run(
@@ -1490,7 +1494,7 @@ class RunExecutor:
                         finished_at=finished_at,
                         thread_id=str(record.thread),
                         root_run_id=active.run_id if active is not None else run_id,
-                        noted=noted,
+                        report=report,
                     )
                 if active is not None:
                     active.tree.end_run(run_id, status, finished_at)
@@ -1827,16 +1831,16 @@ class _Execution:
                 or (
                     step.run_id in internal
                     and step.status in {"failed", "canceled"}
-                    and isinstance(step.noted, ModelStepNoted)
-                    and step.noted.usage is not None
+                    and isinstance(step.report, ModelStepReport)
+                    and step.report.usage is not None
                 )
             )
         ):
-            noted = step.noted if isinstance(step.noted, ModelStepNoted) else None
-            usage = noted.usage if noted is not None else None
+            report = step.report if isinstance(step.report, ModelStepReport) else None
+            usage = report.usage if report is not None else None
             input_tokens = usage.input_tokens if usage is not None else None
             output_tokens = usage.output_tokens if usage is not None else None
-            cost = selected_usd_cost(noted.cost if noted is not None else None)
+            cost = selected_usd_cost(report.cost if report is not None else None)
             self._limits.restore(
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
@@ -2130,7 +2134,7 @@ class _Execution:
             )
         return binding, _execute_locals(input, runnable, control_input)
 
-    def tool_admission_noted(self, source: StepRef) -> ToolStepNoted | None:
+    def tool_admission_report(self, source: StepRef) -> ToolStepReport | None:
         """Format successful runtime admission before its atomic Step completion."""
         from toolang.base.types.tool import ToolResult
         from .steps.tool import _tool_summary, _tool_summary_context
@@ -2138,10 +2142,10 @@ class _Execution:
         step = self.store.get_step(ref=source)
         if step is None:
             raise RuntimeError(f"admission requires its source Step: {source}")
-        if not isinstance(step.given, ToolStepGiven):
+        if not isinstance(step.spec, ToolStepSpec):
             return None
-        call = step.given.call
-        noted = ToolStepNoted(
+        call = step.spec.call
+        report = ToolStepReport(
             _tool_summary(
                 _tool_summary_context(call, self.setup.tools().get(call.name)),
                 "succeeded",
@@ -2149,17 +2153,17 @@ class _Execution:
             )
         )
         if self._root_run is not None:
-            result = self._root_run.tree.terminal_noted(source, noted)
-            assert isinstance(result, ToolStepNoted)
+            result = self._root_run.tree.terminal_report(source, report)
+            assert isinstance(result, ToolStepReport)
             return result
-        return noted
+        return report
 
     def commit_execute(
         self,
         binding: BoundRun,
         *,
         triggered_by: StepRef,
-        loops: Sequence[tuple[StepRef, LoopStepNoted]] = (),
+        loops: Sequence[tuple[StepRef, LoopStepReport]] = (),
     ) -> BoundRun:
         """Persist and activate one prepared same-Run runnable replacement."""
 
@@ -2173,14 +2177,15 @@ class _Execution:
                     triggered_by=triggered_by,
                     input=binding.control_input,
                     created_at=utc_now(),
-                    tool_noted=self.tool_admission_noted(triggered_by),
+                    tool_report=self.tool_admission_report(triggered_by),
                     loops=loops,
                 )
                 completed_steps = self.executor._publish_step_ends(
                     publication,
-                    (triggered_by, *(ref for ref, _noted in loops)),
+                    (triggered_by, *(ref for ref, _report in loops)),
                     thread_id=binding.thread,
                     root_run_id=binding.root_run_id,
+                    exec_runnable=ref,
                 )
             if self._root_run is not None:
                 for completed in completed_steps:
@@ -2224,25 +2229,25 @@ class _Execution:
             with self.executor.stream.gate():
                 self._root_run.tree.invoke(step, kind)
 
-    def model_noted(
+    def model_report(
         self, step: StepRef, model: Model, usage: ModelUsage | None
-    ) -> ModelStepNoted:
+    ) -> ModelStepReport:
         """Create result facts once and expose their available resident totals."""
-        noted = build_model_noted(model, usage)
+        report = build_model_report(model, usage)
         if self._root_run is not None:
             with self.executor.stream.gate():
-                self._root_run.tree.note_model(step, noted)
-        return noted
+                self._root_run.tree.note_model(step, report)
+        return report
 
     def record_model_usage(
         self,
         model: Model,
-        noted: ModelStepNoted,
+        report: ModelStepReport,
     ) -> None:
         """Apply the prepared provider result to existing Run limits."""
 
         try:
-            self._limits.record_model(model, noted)
+            self._limits.record_model(model, report)
         except _RunLimitExceeded as exc:
             self._limits.error = str(exc)
             if self._root_run is not None and self._background_tasks:
@@ -2783,13 +2788,13 @@ class _Execution:
     ) -> None:
         record = self.store.get_step(ref=step)
         if record is not None and not isinstance(
-            record.given, StoredModelStepGiven | ToolStepGiven
+            record.spec, StoredModelStepSpec | ToolStepSpec
         ):
             validate_operation_contract(
-                record.given.kind,
+                record.spec.kind,
                 runnable,
                 name=name,
-                line=record.given.span.line,
+                line=record.spec.span.line,
             )
 
     async def parallel_children(
@@ -3185,10 +3190,10 @@ class _Execution:
         if self._root_run is not None and run in self._ended:
             return
         with self.executor.stream.publication() as publication:
-            noted = (
-                self._root_run.tree.run_noted(run)
+            report = (
+                self._root_run.tree.run_report(run)
                 if self._root_run is not None
-                else RunNoted()
+                else RunReport()
             )
             with self.store.write_transaction():
                 self.executor._finish_run(
@@ -3203,7 +3208,7 @@ class _Execution:
                     finished_at=finished_at,
                     result=result,
                     error_text=error_text,
-                    noted=noted,
+                    report=report,
                 )
             if self._root_run is not None:
                 self._root_run.tree.end_run(run, status, finished_at)
@@ -3232,7 +3237,7 @@ class _Execution:
         *,
         step: StepRef,
         kind: StepKind,
-        given: StepGiven,
+        spec: StepSpec,
         state: ControlRef | None = None,
         input: tuple[FieldRef, ...] = (),
         preceded_by: tuple[ControlRef, ...] = (),
@@ -3245,7 +3250,7 @@ class _Execution:
                 record = self.store.begin_step(
                     ref=step,
                     kind=kind,
-                    given=given,
+                    spec=spec,
                     state=state,
                     input=input,
                     preceded_by=preceded_by,
@@ -3282,7 +3287,7 @@ class _Execution:
         kind: StepKind,
         status: StepStatus,
         output: Output | None = None,
-        noted: StepNoted = None,
+        report: StepReport = None,
         error: ErrorMessage | ErrorRef | None = None,
         aborted_by: ControlRef | None = None,
         finished_at: str,
@@ -3295,7 +3300,7 @@ class _Execution:
                 kind=kind,
                 status=status,
                 output=output,
-                noted=noted,
+                report=report,
                 error=error,
                 aborted_by=aborted_by,
                 finished_at=finished_at,
@@ -3310,7 +3315,7 @@ class _Execution:
         kind: StepKind,
         status: StepStatus,
         output: Output | None = None,
-        noted: StepNoted = None,
+        report: StepReport = None,
         error: ErrorMessage | ErrorRef | None = None,
         aborted_by: ControlRef | None = None,
         finished_at: str,
@@ -3325,14 +3330,14 @@ class _Execution:
                 aborted_by = interruption.ref
         with self.executor.stream.publication() as publication:
             if self._root_run is not None and step not in self._early_ends:
-                noted = self._root_run.tree.terminal_noted(step, noted)
+                report = self._root_run.tree.terminal_report(step, report)
             with self.store.write_transaction():
                 record = self.store.finish_step(
                     ref=step,
                     kind=kind,
                     status=status,
                     output=output,
-                    noted=noted,
+                    report=report,
                     error=error,
                     aborted_by=aborted_by,
                     finished_at=finished_at,
@@ -3350,8 +3355,8 @@ class _Execution:
         if (
             record.kind == "tool"
             and record.status == "succeeded"
-            and isinstance(record.given, ToolStepGiven)
-            and record.given.call.name == "runtime__chdir"
+            and isinstance(record.spec, ToolStepSpec)
+            and record.spec.call.name == "runtime__chdir"
         ):
             self._cwd_cache[step.run_id] = self.store.current_cwd(step.run_id)
         if self._root_run is not None:
@@ -3363,8 +3368,8 @@ class _Execution:
         try:
             self.raise_if_canceling(
                 record.run_id,
-                call=isinstance(record.given, (StoredModelStepGiven, ToolStepGiven))
-                or statement_has_call(record.given),
+                call=isinstance(record.spec, (StoredModelStepSpec, ToolStepSpec))
+                or statement_has_call(record.spec),
             )
         except _RunCanceled as exc:
             from .steps.tool import (
@@ -3373,30 +3378,30 @@ class _Execution:
                 canceled_result,
             )
 
-            given = record.given
+            spec = record.spec
             self._finish_step(
                 step=record.ref,
                 kind=record.kind,
                 status="canceled",
-                noted=ToolStepNoted(
+                report=ToolStepReport(
                     summary=_tool_summary(
                         _tool_summary_context(
-                            given.call, self.setup.tools().get(given.call.name)
+                            spec.call, self.setup.tools().get(spec.call.name)
                         ),
                         "canceled",
                     )
                 )
-                if isinstance(given, ToolStepGiven)
+                if isinstance(spec, ToolStepSpec)
                 else None,
                 output=Output(
                     value_for_type(
                         "ToolResultPart",
                         canceled_result(
-                            given.call, reason="canceled; operation not executed"
+                            spec.call, reason="canceled; operation not executed"
                         ),
                     )
                 )
-                if isinstance(given, ToolStepGiven)
+                if isinstance(spec, ToolStepSpec)
                 else None,
                 aborted_by=exc.control.ref,
                 finished_at=utc_now(),

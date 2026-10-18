@@ -10,19 +10,19 @@ from dataclasses import dataclass
 from toolang.lang.ast import FlowStmt
 
 from ...records import ControlRecord, StepRef
-from ...types import LoopStepNoted, LoopTermination, Occurrence, StepStatus
+from ...types import LoopStepReport, LoopTermination, Occurrence, StepStatus
 from ..common import BoundRun, Local, execute_step
 
 
 @dataclass(slots=True)
 class LoopProgress:
-    """Mutable loop outcome used to produce typed terminal noted facts."""
+    """Mutable loop outcome used to produce typed terminal report facts."""
 
     iterations: int = 0
     termination: LoopTermination = "exhausted"
     total: int | None = None
 
-    def noted(self, status: StepStatus) -> LoopStepNoted:
+    def report(self, status: StepStatus) -> LoopStepReport:
         termination: LoopTermination
         if status == "failed":
             termination = "failed"
@@ -30,7 +30,7 @@ class LoopProgress:
             termination = "canceled"
         else:
             termination = self.termination
-        return LoopStepNoted(self.iterations, termination, self.total)
+        return LoopStepReport(self.iterations, termination, self.total)
 
 
 if TYPE_CHECKING:
@@ -61,5 +61,5 @@ async def execute(
         controls=controls,
         occurrence=occurrence,
         evaluate=evaluate,
-        note=progress.noted,
+        note=progress.report,
     )

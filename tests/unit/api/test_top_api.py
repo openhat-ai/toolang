@@ -13,7 +13,7 @@ from toolang.api.routers import stats, top
 from toolang.base.types.message import Message
 from toolang.execution.schemas import LiveSnapshot, LiveTreeSnapshot, RunNode
 from toolang.execution.store import RunStore
-from toolang.execution.types import RunNoted
+from toolang.execution.types import RunReport
 from toolang.stats.types import timestamp
 from toolang.up.schemas import ActivitySnapshot
 
@@ -43,7 +43,7 @@ def test_activity_handoff_pins_before_live_and_scans_after_gate(tmp_path, monkey
             gate_held = False
             if not finished:
                 store.finish_run(
-                    run_id="run_top", finished_at=timestamp(NOW), noted=RunNoted()
+                    run_id="run_top", finished_at=timestamp(NOW), report=RunReport()
                 )
                 finished = True
 

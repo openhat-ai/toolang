@@ -27,13 +27,13 @@ from ...assembly import prompting
 from ...events import PartBegin, PartDelta, PartEnd
 from ...records import ControlRecord, RecallControlPayload
 from ...types import (
-    ModelStepNoted,
+    ModelStepReport,
     TokenUsage,
     ControlRef,
     FieldRef,
     RunRef,
     RecallTarget,
-    StepNoted,
+    StepReport,
     StepKind,
     StepStatus,
     Output,
@@ -83,14 +83,14 @@ class _AgicState:
     before_call: Callable[[], None]
     messages: MessageBuffer
     execution: _Execution | None = None
-    note_usage: Callable[[StepRef, ModelUsage | None], ModelStepNoted] = (
-        lambda _step, usage: ModelStepNoted(
+    note_usage: Callable[[StepRef, ModelUsage | None], ModelStepReport] = (
+        lambda _step, usage: ModelStepReport(
             usage=TokenUsage(usage.input_tokens, usage.output_tokens)
             if usage is not None
             else None
         )
     )
-    record_usage: Callable[[ModelStepNoted], None] = lambda _noted: None
+    record_usage: Callable[[ModelStepReport], None] = lambda _report: None
     limits: RunLimits = RunLimits()
     record_output: Callable[[FieldRef], None] = lambda _ref: None
     output: FieldRef | None = None
@@ -145,11 +145,11 @@ class _AgicState:
         kind: StepKind,
         status: StepStatus,
         output: Output | None = None,
-        noted: StepNoted = None,
+        report: StepReport = None,
         error: ErrorMessage | ErrorRef | None = None,
         aborted_by: ControlRef | None = None,
         finished_at: str,
-        canceled_noted: StepNoted | None = None,
+        canceled_report: StepReport | None = None,
         error_text: str | None = None,
     ) -> None:
         """Record terminal facts before propagating a delivery interruption."""
@@ -163,7 +163,7 @@ class _AgicState:
                     kind=kind,
                     status=status,
                     output=output,
-                    noted=noted,
+                    report=report,
                     error=error,
                     aborted_by=aborted_by,
                     finished_at=finished_at,
@@ -175,9 +175,9 @@ class _AgicState:
                 if record is None or record.status != "running":
                     raise
                 if status != "canceled":
-                    status, noted, error, finished_at = (
+                    status, report, error, finished_at = (
                         "canceled",
-                        canceled_noted or noted,
+                        canceled_report or report,
                         None,
                         utc_now(),
                     )
@@ -259,13 +259,13 @@ async def execute(
         steer_before_next_step=lambda: execution.steer_before_next_step(binding.run_id),
         immediate_steer=lambda: execution.immediate_steer(binding.run_id),
         before_call=lambda: execution.raise_if_canceling(binding.run_id, call=True),
-        note_usage=lambda step, usage: execution.model_noted(
+        note_usage=lambda step, usage: execution.model_report(
             step,
             state.prepared.model,
             usage,
         ),
-        record_usage=lambda noted: execution.record_model_usage(
-            state.prepared.model, noted
+        record_usage=lambda report: execution.record_model_usage(
+            state.prepared.model, report
         ),
         limits=binding.limits,
         record_output=lambda ref: execution.record_output(binding.run_id, ref),

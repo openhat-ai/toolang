@@ -57,8 +57,8 @@ class StatsRecords:
                 for statement in sql.STATS_SCHEMA.split(";"):
                     if statement.strip() and "PRAGMA journal_mode" not in statement:
                         connection.execute(statement)
-                connection.execute("PRAGMA user_version=1")
-            elif version != 1:
+                connection.execute("PRAGMA user_version=2")
+            elif version != 2:
                 raise ValueError(f"unsupported statistics schema: {version}")
             connection.commit()
 
@@ -175,7 +175,7 @@ class StatsRecords:
             # Only temporary storage disables journaling; persistent stores use WAL.
             additions.execute("PRAGMA journal_mode=OFF")
             bucket_ddl = sql.STATS_SCHEMA[
-                sql.STATS_SCHEMA.index("CREATE TABLE stats_buckets") :
+                sql.STATS_SCHEMA.index("CREATE TABLE buckets") :
             ]
             additions.execute(bucket_ddl.split(";")[0])
             with self.snapshot() as reader:
@@ -251,7 +251,7 @@ class StatsRecords:
                 return False
             writer.executemany(
                 sql.UPSERT_BUCKET,
-                (dict(row) for row in additions.execute("SELECT * FROM stats_buckets")),
+                (dict(row) for row in additions.execute("SELECT * FROM buckets")),
             )
             writer.execute(
                 sql.INSERT_RECEIPT,

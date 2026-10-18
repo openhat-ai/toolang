@@ -25,7 +25,7 @@ from toolang.execution.types import (
     ModelUsageMeter,
     ModelCost,
     TokenUsage,
-    ModelStepNoted,
+    ModelStepReport,
 )
 
 
@@ -289,7 +289,7 @@ def test_model_call_human_view_omits_empty_sections() -> None:
 
 def test_model_call_usage_shows_known_reasoning_breakdown() -> None:
     usage = inspect_commands._model_usage_fact(
-        ModelStepNoted(
+        ModelStepReport(
             usage=TokenUsage(
                 input_tokens=12400, output_tokens=2300, reasoning_tokens=1800
             ),

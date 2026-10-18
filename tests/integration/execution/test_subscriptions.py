@@ -25,7 +25,7 @@ def test_large_model_history_prefill_preserves_calls_without_expanding_them(
     from toolang.execution.inspection.history import RunHistory
     from toolang.execution.store import RunStore
     from toolang.execution.stream import CanonicalStream
-    from toolang.execution.types import ModelStepGiven
+    from toolang.execution.types import ModelStepSpec
 
     store = RunStore(tmp_path / "runs.db")
     call = ModelCall("context " * (256 * 1024), [Message.user("question")])
@@ -41,7 +41,7 @@ def test_large_model_history_prefill_preserves_calls_without_expanding_them(
         store.begin_step(
             ref=ref,
             kind="model",
-            given=ModelStepGiven("test/model", call, setup="test"),
+            spec=ModelStepSpec("test/model", call, setup="test"),
             started_at="",
             input=(),
         )
@@ -51,7 +51,7 @@ def test_large_model_history_prefill_preserves_calls_without_expanding_them(
             status="succeeded",
             finished_at="",
             output=None,
-            noted=None,
+            report=None,
             error=None,
         )
     store.finish_run(run_id=run.id, status="succeeded", finished_at="")
@@ -86,7 +86,7 @@ def test_large_model_history_prefill_preserves_calls_without_expanding_them(
             model_frames = [frame for frame in frames if frame.event == "step_begin"]
             assert len(model_frames) == len(refs)
             assert all(
-                frame.data["given"] == {"type": "model", "model": "test/model"}
+                frame.data["spec"] == {"type": "model", "model": "test/model"}
                 for frame in model_frames
             )
             client = StreamClientState()

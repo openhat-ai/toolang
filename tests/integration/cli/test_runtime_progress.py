@@ -20,7 +20,7 @@ from toolang.base.types.message import Message, ToolResultPart
 from toolang.base.types.run import ModelCallResult, ToolCall
 from toolang.cli.common.execution_progress import ProgressProjector
 from toolang.execution.events import StepBegin, StepEnd
-from toolang.execution.types import ThreadPrefix, ToolStepNoted
+from toolang.execution.types import ThreadPrefix, ToolStepReport
 from toolang.execution.values import parts_from_value
 from tests.support.execution_assertions import assert_run_event_integrity
 
@@ -178,8 +178,8 @@ agic child() -> Text:
             for event in tracer.events:
                 if (
                     isinstance(event, StepBegin)
-                    and isinstance(event.given, ToolStepInfo)
-                    and event.given.name == "runtime__exec"
+                    and isinstance(event.spec, ToolStepInfo)
+                    and event.spec.name == "runtime__exec"
                 ):
                     execute_step = StepRef.parse(event.step)
                 if (
@@ -220,7 +220,7 @@ agic child() -> Text:
                     assert execute_step is not None
                     skipped = harness.store.get_step(ref=execute_step)
                     assert skipped is not None and skipped.status == "canceled"
-                    assert isinstance(skipped.noted, ToolStepNoted)
+                    assert isinstance(skipped.report, ToolStepReport)
                     assert any(
                         row.text == f"› Canceled: Switching to runnable: {target}"
                         for row in rows

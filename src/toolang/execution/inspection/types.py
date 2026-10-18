@@ -11,9 +11,9 @@ from ..records import (
     RunControlPayload,
     RunRecord,
     StepRecord,
-    StoredModelStepGiven,
+    StoredModelStepSpec,
 )
-from ..types import StepRef, ToolStepGiven
+from ..types import StepRef, ToolStepSpec
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,11 +69,11 @@ class ExecutionSnapshot:
 def step_operation(step: StepRecord) -> str:
     """Return the durable operation owned by one Step."""
 
-    if isinstance(step.given, StoredModelStepGiven):
-        return step.given.model
-    if isinstance(step.given, ToolStepGiven):
-        return step.given.call.name
-    return format_statement_head(step.given)
+    if isinstance(step.spec, StoredModelStepSpec):
+        return step.spec.model
+    if isinstance(step.spec, ToolStepSpec):
+        return step.spec.call.name
+    return format_statement_head(step.spec)
 
 
 def direct_step_parent(ref: StepRef) -> StepRef | None:

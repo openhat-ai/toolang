@@ -8,7 +8,7 @@ import json
 from pathlib import Path
 import sqlite3
 
-from toolang.execution.records import run_noted_from_data
+from toolang.execution.records import run_report_from_data
 from toolang.execution.schemas import RunNode
 from toolang.execution.types import CallCounters
 
@@ -22,7 +22,7 @@ from .types import Metrics, timestamp
 
 
 def _root_node(row: sqlite3.Row) -> RunNode:
-    noted = run_noted_from_data(json.loads(row["noted"]) if row["noted"] else None)
+    report = run_report_from_data(json.loads(row["report"]) if row["report"] else None)
     return RunNode(
         row["id"],
         None,
@@ -31,10 +31,10 @@ def _root_node(row: sqlite3.Row) -> RunNode:
         row["created_at"],
         started_at=row["started_at"],
         finished_at=row["finished_at"],
-        calls=noted.calls if noted else CallCounters(),
-        usage=noted.usage if noted else None,
-        cost=noted.cost if noted else None,
-        cost_approximate=noted.cost_approximate if noted else False,
+        calls=report.calls if report else CallCounters(),
+        usage=report.usage if report else None,
+        cost=report.cost if report else None,
+        cost_approximate=report.cost_approximate if report else False,
     )
 
 

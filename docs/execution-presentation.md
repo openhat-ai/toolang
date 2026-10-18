@@ -68,7 +68,7 @@ Parallel activity and terminal rows retain both fields. Renderers add a textual
 or by parsing summary text. Long toolset labels leave room for the description.
 No icons or icon configuration are implemented. Active Step state retains that projection;
 headers, lanes, timers, and terminal rows consume it. The same module recognizes
-committed exec outcomes from either `ExecStepNoted` or a tool reply. Raw tool-name
+committed exec outcomes from either `ExecStepReport` or a tool reply. Raw tool-name
 matching belongs there, including result-only UI updates such as Chat's cwd label.
 Persisted Step kinds and execution metrics keep their original meaning. Script and
 Chat retain their existing source-specific styling.
