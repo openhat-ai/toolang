@@ -36,7 +36,7 @@ from toolang.cli.common.parameters import (
 
 from toolang.common.layout import AgentLayout
 from toolang.up.types import ServerLifetime
-from toolang.up.config import format_drivers, parse_drivers
+from toolang.up.config import parse_drivers
 from toolang.cli.common.agent_server import (
     acquire_agent_server,
     AgentServerAcquisitionError,
@@ -382,10 +382,7 @@ def start(
                 development_build=development_source()[0],
             )
         ) from exc
-    typer.echo(
-        f"Agent {launch.target.name} started: {handle.state.ref.endpoint} "
-        f"drivers={format_drivers(launch.startup.serve.drivers)} lifetime=persistent"
-    )
+    typer.echo(f"Agent {launch.target.name} started: {handle.state.ref.endpoint}")
 
 
 def _retain_started(
@@ -451,17 +448,7 @@ def _retain_started(
                             json={"launch_id": server.launch_id},
                         )
                         response.raise_for_status()
-                actual = process.state() or {}
-                raw_drivers = actual.get("drivers")
-                running = (
-                    parse_drivers(",".join(str(d) for d in raw_drivers) or "none")
-                    if isinstance(raw_drivers, list)
-                    else parse_drivers("none")
-                )
-                typer.echo(
-                    f"Agent {layout.name} running: {server.endpoint} "
-                    f"drivers={format_drivers(running)} lifetime=persistent"
-                )
+                typer.echo(f"Agent {layout.name} running: {server.endpoint}")
                 return True
         except ServerClosingError:
             return False

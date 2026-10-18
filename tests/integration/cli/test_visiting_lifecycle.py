@@ -166,11 +166,14 @@ def test_start_promotes_same_generation_without_fetch_or_driver_changes(tmp_path
         wrong_port = command(url, "start", "--port", "1", success=False)
         assert "--port differs" in wrong_port.stderr
         promoted = command(url, "start")
-        assert "drivers=chat lifetime=persistent" in promoted.stdout
+        expected = f"Agent {layout.name} running: {original['endpoint']}"
+        assert promoted.stdout.strip() == expected
         assert len(requests) == fetched
         current = AgentProcess(layout).state()
         assert current is not None and current["launch_id"] == original["launch_id"]
-        assert "drivers=chat lifetime=persistent" in command("start", url).stdout
+        assert current["drivers"] == original["drivers"]
+        assert current["lifetime"] == "persistent"
+        assert command("start", url).stdout.strip() == expected
         client.stdin.close()
         assert client.wait(timeout=10) == 0
         endpoint = original["endpoint"]
