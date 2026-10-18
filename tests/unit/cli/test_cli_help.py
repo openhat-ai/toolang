@@ -293,7 +293,7 @@ def test_lazy_command_exposes_short_help_without_loading():
 @pytest.mark.parametrize(
     ("command", "description"),
     [
-        ("workspace", "Manage workspaces"),
+        ("workspace", "Manage agent workspaces"),
         ("hub", "Manage the hub service"),
         ("talk", "Have conversations with agents"),
         ("chat", "Chat directly with an agent"),

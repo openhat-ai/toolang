@@ -397,7 +397,7 @@ _registered_command(
 _registered_group(
     "toolang.cli.toolang.commands.workspace:workspace_app",
     name="workspace",
-    help="Manage workspaces",
+    help="Manage agent workspaces",
     no_args_is_help=True,
     rich_help_panel=WORK_COMMAND_PANEL,
 )

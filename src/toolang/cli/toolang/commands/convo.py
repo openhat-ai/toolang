@@ -77,12 +77,12 @@ def _membership(ctx: typer.Context, operation: str, conversation: str) -> None:
 
 
 def join(ctx: typer.Context, conversation: ConversationArgument) -> None:
-    """Join a conversation"""
+    """Join a group conversation"""
     _membership(ctx, "join", conversation)
 
 
 def leave(ctx: typer.Context, conversation: ConversationArgument) -> None:
-    """Leave a conversation"""
+    """Leave a group conversation"""
     _membership(ctx, "leave", conversation)
 
 
@@ -92,7 +92,7 @@ def create(
         str | None, typer.Argument(help="Optional group name (1–128 characters)")
     ] = None,
 ) -> None:
-    """Create a conversation"""
+    """Create a group conversation"""
     try:
         config, _ = settings(context_root(ctx))
 
@@ -111,7 +111,10 @@ def rules(
     output: Annotated[
         str | None,
         typer.Option(
-            "--output", "-o", metavar="PATH", help="Download to PATH; - selects stdout"
+            "--output",
+            "-o",
+            metavar="PATH",
+            help="Retrieve rules to PATH; - selects stdout",
         ),
     ] = None,
     update: Annotated[
@@ -120,7 +123,7 @@ def rules(
             "--update",
             "-u",
             metavar="[PATH]",
-            help="Upload PATH; omitted PATH or - reads stdin",
+            help="Update rules from PATH; omitted PATH or - reads stdin",
         ),
     ] = None,
     revision: Annotated[
@@ -128,16 +131,11 @@ def rules(
         typer.Option(
             "--revision",
             metavar="REVISION",
-            help="Rules revision from a prior read; required with --update",
+            help="Expected revision for --update",
         ),
     ] = None,
 ) -> None:
-    """Retrieve or update rules
-
-    Downloads go to stdout by default; status and revision go to stderr.
-    Missing rules have revision 0. An empty upload clears rules.
-    Uploads must be UTF-8 and at most 64 KiB.
-    """
+    """Retrieve or update rules"""
     if output is not None and update is not None:
         raise typer.BadParameter("--output and --update are mutually exclusive")
     if (update is not None) != (revision is not None):
