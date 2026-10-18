@@ -456,7 +456,7 @@ _registered_group(
 _registered_group(
     "toolang.cli.toolang.commands.hub:hub_app",
     name="hub",
-    help="Show or control the teaming service",
+    help="Manage the hub service",
     rich_help_panel=RUNTIME_COMMAND_PANEL,
 )
 

@@ -19,14 +19,16 @@ from toolang.up.observation import RuntimeInstanceSnapshot, runtime_snapshot
 from .hub_status import HubSnapshot, render_hub_snapshot
 
 PortOption = Annotated[
-    int | None, typer.Option("--port", min=1, max=65535, help="Hub API port")
+    int | None,
+    typer.Option("--port", min=1, max=65535, help="Bind the hub API to this port"),
 ]
 
 
 def hub_app() -> typer.Typer:
     app = typer.Typer(
         cls=CliGroup,
-        help="Show or control the teaming service",
+        help="Manage the hub service",
+        epilog="Run 'too hub' to show hub and agent status.",
         add_completion=False,
         invoke_without_command=True,
         no_args_is_help=False,
@@ -57,7 +59,7 @@ def _settings(ctx: typer.Context, port: int | None):
 
 
 def start(ctx: typer.Context, port: PortOption = None) -> None:
-    """Start the hub in the background; requires Redis/Valkey"""
+    """Start the hub in the background"""
     _, selected = _settings(ctx, port)
     root = context_root(ctx)
     record = user_call(
@@ -92,17 +94,17 @@ def serve(ctx: typer.Context, port: PortOption = None) -> None:
 def stop(
     ctx: typer.Context,
     force: Annotated[
-        bool, typer.Option(help="Kill after graceful shutdown times out")
+        bool, typer.Option(help="Force-stop when graceful shutdown does not complete")
     ] = False,
 ) -> None:
-    """Stop this root's hub; keep agents and Redis/Valkey running"""
+    """Stop the hub"""
     if not user_call(HubProcess(context_root(ctx)).stop, force=force):
         raise ClickException("Hub is not running")
     typer.echo("Hub stopped")
 
 
 def status(ctx: typer.Context) -> None:
-    """Show Hub readiness and agent instance states"""
+    """Show hub and agent status"""
     if ctx.invoked_subcommand is not None:
         return
     root = context_root(ctx)
