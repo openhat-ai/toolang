@@ -66,10 +66,9 @@ _AGENT_PANEL_COMMAND_ORDER = (
     "list",
     "info",
     "home",
-    "workspace",
 )
 _RUNTIME_PANEL_COMMAND_ORDER = ("serve", "start", "stop", "hub")
-_WORK_PANEL_COMMAND_ORDER = ("chat", "talk", "chore", "convo")
+_WORK_PANEL_COMMAND_ORDER = ("chat", "talk", "chore", "convo", "workspace")
 _CAPS_PANEL_COMMAND_ORDER = ("psyche", "skill", "service", "prompt")
 _RUN_PANEL_COMMAND_ORDER = ("steer", "cancel", "rerun")
 _THREAD_PANEL_COMMAND_ORDER = ("fork", "rewind")
@@ -398,9 +397,9 @@ _registered_command(
 _registered_group(
     "toolang.cli.toolang.commands.workspace:workspace_app",
     name="workspace",
-    help="Configure agent workspaces",
+    help="Manage workspaces",
     no_args_is_help=True,
-    rich_help_panel=AGENT_COMMAND_PANEL,
+    rich_help_panel=WORK_COMMAND_PANEL,
 )
 _registered_command(
     "serve",

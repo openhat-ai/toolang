@@ -345,11 +345,10 @@ def test_cli_visible_commands_follow_the_public_panel_order(arguments, capsys) -
             "list",
             "info",
             "home",
-            "workspace",
         ),
         "Cap commands": ("psyche", "skill", "service", "prompt"),
         "Runtime commands": ("serve", "start", "stop", "hub"),
-        "Work commands": ("chat", "talk", "chore", "convo"),
+        "Work commands": ("chat", "talk", "chore", "convo", "workspace"),
         "Inspection commands": (
             "caps",
             "tools",
@@ -662,9 +661,9 @@ def test_cli_bare_resident_target_shows_its_command_help(
     assert "Teaming commands" not in stdout
     sections = {
         panel: stdout.split(f"{panel}:\n", 1)[1].split("\n\n", 1)[0]
-        for panel in ("Agent commands", "Runtime commands", "Inspection commands")
+        for panel in ("Work commands", "Runtime commands", "Inspection commands")
     }
-    assert "workspace" in sections["Agent commands"]
+    assert "workspace" in sections["Work commands"]
     for command in ("serve", "start", "stop"):
         assert command in sections["Runtime commands"]
     assert "top" in sections["Inspection commands"]
