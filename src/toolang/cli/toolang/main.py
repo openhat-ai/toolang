@@ -66,20 +66,19 @@ _AGENT_PANEL_COMMAND_ORDER = (
     "list",
     "info",
     "home",
-    "workspace",
 )
 _RUNTIME_PANEL_COMMAND_ORDER = ("serve", "start", "stop", "hub")
-_WORK_PANEL_COMMAND_ORDER = ("chat", "talk", "chore", "convo")
+_WORK_PANEL_COMMAND_ORDER = ("chat", "talk", "chore", "convo", "workspace")
 _CAPS_PANEL_COMMAND_ORDER = ("psyche", "skill", "service", "prompt")
 _RUN_PANEL_COMMAND_ORDER = ("steer", "cancel", "rerun")
 _THREAD_PANEL_COMMAND_ORDER = ("fork", "rewind")
 _INSPECTION_PANEL_COMMAND_ORDER = (
-    "top",
     "caps",
     "tools",
     "models",
     "providers",
     "inspect",
+    "top",
 )
 _SCRIPT_PANEL_COMMAND_ORDER = ("init", "run")
 # Root-hidden run and thread commands stay discoverable in target help.
@@ -293,7 +292,7 @@ def callback(
             "--version",
             "-V",
             callback=_version_callback,
-            help="Show current version and exit",
+            help="Show version and exit",
             is_eager=True,
         ),
     ] = False,
@@ -398,9 +397,9 @@ _registered_command(
 _registered_group(
     "toolang.cli.toolang.commands.workspace:workspace_app",
     name="workspace",
-    help="Configure agent workspaces",
+    help="Manage workspaces",
     no_args_is_help=True,
-    rich_help_panel=AGENT_COMMAND_PANEL,
+    rich_help_panel=WORK_COMMAND_PANEL,
 )
 _registered_command(
     "serve",
@@ -471,7 +470,7 @@ _registered_command(
 _registered_command(
     "inspect",
     "toolang.cli.toolang.commands.inspect:inspect_command",
-    help="Inspect run history and details",
+    help="Inspect runs in detail",
     no_args_is_help=True,
     cls=_InspectCommand,
     rich_help_panel=INSPECTION_COMMAND_PANEL,
@@ -533,7 +532,7 @@ _registered_command(
 _registered_command(
     "top",
     "toolang.cli.toolang.commands.top:top",
-    help="Show live trees and recent usage",
+    help="Monitor active runs",
     cls=_TopCommand,
     rich_help_panel=INSPECTION_COMMAND_PANEL,
 )

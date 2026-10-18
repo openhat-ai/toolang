@@ -293,14 +293,15 @@ def test_lazy_command_exposes_short_help_without_loading():
 @pytest.mark.parametrize(
     ("command", "description"),
     [
-        ("workspace", "Configure agent workspaces"),
+        ("workspace", "Manage workspaces"),
         ("hub", "Manage the hub service"),
         ("talk", "Have conversations with agents"),
         ("chat", "Chat directly with an agent"),
         ("chore", "Manage one-off and scheduled tasks"),
         ("convo", "Manage conversations and rules"),
         ("start", "Start an agent in the background"),
-        ("inspect", "Inspect run history and details"),
+        ("inspect", "Inspect runs in detail"),
+        ("top", "Monitor active runs"),
     ],
 )
 def test_command_descriptions_match_root_and_command_help(
