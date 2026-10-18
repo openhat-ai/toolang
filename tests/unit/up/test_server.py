@@ -369,3 +369,62 @@ def test_guest_without_explicit_launch_identity_does_not_adopt_status(
             location="guest",
         )
     assert layout.runtime_status.read_bytes() == before
+
+
+def test_server_owns_statistics_and_joins_worker_before_closing_source(
+    tmp_path, monkeypatch
+):
+    from unittest.mock import AsyncMock, MagicMock
+    from fastapi.testclient import TestClient
+    from toolang.execution.store import RunStore
+
+    layout = AgentLayout.resident(tmp_path, "alice")
+    source = RunStore(layout.run_store)
+    layout.config.write_text("[stats]\narchive_after_seconds = 3600\n")
+    core = MagicMock()
+    core.store = source
+    core.lifecycle = None
+    core.setup.current.return_value.teaming = None
+    core.setup.current.return_value.models_effective.return_value = ()
+    core.setup.run = AsyncMock()
+    core.state.run = AsyncMock()
+    owned = []
+
+    async def close():
+        assert owned[0]._stop.is_set()
+        assert owned[0]._thread is None or not owned[0]._thread.is_alive()
+        source.close()
+
+    core.close = AsyncMock(side_effect=close)
+    monkeypatch.setattr(server, "AgentCore", lambda *args, **kwargs: core)
+    monkeypatch.setattr(server, "_refresh_core", AsyncMock())
+    monkeypatch.setattr(server, "validate_agent_ceiling", lambda *args: None)
+    monkeypatch.setattr(server, "_log_state_loaded", lambda *args, **kwargs: None)
+    monkeypatch.setattr(server, "configure_logging", lambda **kwargs: None)
+    monkeypatch.setattr(server, "_restore_termination_signal_defaults", lambda: None)
+    monkeypatch.setattr(
+        "toolang.up.records.patch_workload", lambda *args, **kwargs: True
+    )
+    monkeypatch.setattr(
+        server.agents, "write_runtime_state", lambda *args, **kwargs: None
+    )
+    monkeypatch.setattr(
+        server.agents, "stop_runtime_state", lambda *args, **kwargs: None
+    )
+
+    def run(app, **kwargs):
+        with TestClient(app) as client:
+            service = app.state.stats
+            owned.append(service)
+            assert service.config.archive_after_seconds == 3600
+            assert service.records.path == layout.stats_store
+            assert service._thread is None
+            assert client.get("/api/v1/stats/models?window=1h").json()["data"] == []
+            client.get("/api/v1/stats/summary")
+
+    monkeypatch.setattr(server, "_run_uvicorn_app", run)
+    spec = resolve_serve(
+        layout=layout, port=8123, drivers=frozenset(), launch_id="launch"
+    )
+    assert server.serve(spec, environ={}, sandbox="host", location="guest") == 0
+    core.close.assert_awaited_once()

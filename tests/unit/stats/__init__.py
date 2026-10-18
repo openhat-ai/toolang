@@ -1,0 +1,1 @@
+"""Independent statistics acceptance tests."""

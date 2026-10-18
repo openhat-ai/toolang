@@ -9,6 +9,19 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Added
 
+- Agent servers expose read-only execution statistics at
+  `GET /api/v1/stats/summary`, `/api/v1/stats/models`, and `/api/v1/stats/daily`,
+  scoped to the agent or one `thread_id` or `root_run_id`. Summary reports
+  all-time and 365d, 30d, 7d, 24h, 4h, 1h, and 30m windows; models groups one
+  window by historical model ref; and daily returns timezone-aware rows for
+  contribution heatmaps. Rows report input, output, and cached tokens, USD spend
+  with its approximation flag, model and tool calls, and root Runs. A background
+  worker archives completed root trees older than the agent-home `[stats]`
+  setting (default `archive_after_seconds = 86400`, minimum 60) into the derived
+  `AGENT_HOME/.runtime/stats.db`; the first historical request can return
+  `data=null` while initialization runs, and an unavailable statistics store
+  returns 503 without affecting execution.
+
 - Resident execution exposes LiveTree snapshots for active Runs:
   `GET /api/v1/runs/live` returns `LiveSnapshot(epoch, observed_at, trees)` from
   executor memory without reading history or the Store, and local and remote

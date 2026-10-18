@@ -188,6 +188,10 @@ class AgentLayout:
         return self.runtime / "runs.db"
 
     @property
+    def stats_store(self) -> Path:
+        return self.runtime / "stats.db"
+
+    @property
     def chore_store(self) -> Path:
         return self.run_store
 

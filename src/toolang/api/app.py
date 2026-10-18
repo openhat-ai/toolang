@@ -69,6 +69,7 @@ OPENAPI_TAGS = [
     {"name": "chores", "description": "Chore definition and execution endpoints."},
     {"name": "runs", "description": "Run execution and inspection endpoints."},
     {"name": "threads", "description": "Thread lifecycle and inspection endpoints."},
+    {"name": "stats", "description": "Execution usage by time, scope, and model."},
 ]
 
 
