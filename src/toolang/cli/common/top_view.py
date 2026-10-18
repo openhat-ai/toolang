@@ -7,6 +7,7 @@ from datetime import datetime
 
 from rich.cells import cell_len, set_cell_size
 from rich.console import Console
+from rich.style import Style
 from rich.text import Text
 
 from toolang.base.utils.tools import decode_tool_name, display_tool_name
@@ -20,6 +21,11 @@ PERIODS = (3600, 14400, 28800)
 RECENTS = (60, 300, 900)
 Key = tuple[str, str, str]
 TERMINAL = frozenset(("succeeded", "failed", "canceled"))
+NORMAL = Style(bold=False, dim=False)
+TABLE_HEADER = Style(color="black", bgcolor="green", bold=False, dim=False)
+SELECTED = Style(bgcolor="#005f5f")
+STATUS_BAR = Style(color="black", bgcolor="cyan", bold=False, dim=False)
+FUNCTION_KEY = Style(color="white", bgcolor="black", bold=False, dim=False)
 
 
 def window(value: int) -> str:
@@ -95,19 +101,12 @@ def compact(value: int | None) -> str:
     return str(value)
 
 
-def spend(
-    value: float | None, approximate: bool = False, *, abbreviate: bool = False
-) -> str:
-    if value is None:
-        return "-"
-    prefix = "~$" if approximate else "$"
-    if abbreviate and value >= 1000:
-        for scale, suffix in ((1e12, "t"), (1e9, "b"), (1e6, "m"), (1000, "k")):
-            if value >= scale:
-                number = f"{value / scale:.1f}".rstrip("0").rstrip(".")
-                text = f"{prefix}{number}{suffix}"
-                return text if len(text) <= 9 else f"{prefix}{value:.0e}"
-    return f"{prefix}{value:.2f}"
+def spend(value: float | None) -> str:
+    return "-" if value is None else f"${value:.4f}"
+
+
+def instance_name(source: SourceActivity) -> str:
+    return source.label.partition("#")[0]
 
 
 def duration(node: LiveNode, observed_at: str) -> str:
@@ -134,6 +133,7 @@ class Row:
     branch: str
     status: str
     has_children: bool
+    root_finished: bool
 
 
 @dataclass
@@ -150,6 +150,7 @@ class TopView:
 
     def project(self, snapshot: TopSnapshot) -> list[Row]:
         roots: list[tuple[SourceActivity, RunNode, tuple[LiveNode, ...]]] = []
+        current = {instance.identity for instance in snapshot.inventory.instances}
         for source in snapshot.sources:
             active_roots = set()
             known_completed = (
@@ -157,7 +158,7 @@ class TopView:
                 if source.completed
                 else set()
             )
-            if source.live is not None:
+            if source.live is not None and source.identity in current:
                 for tree in source.live.trees:
                     root = next(
                         (n for n in tree.nodes if n.id == tree.root_run_id), None
@@ -255,8 +256,6 @@ class TopView:
                 position = occurrence(node)
                 if position:
                     label += " · " + position
-                if folded:
-                    label += " [+]"
                 if (
                     node.id == root.id
                     and source.live_stale
@@ -274,6 +273,7 @@ class TopView:
                         branch,
                         label,
                         bool(group),
+                        root.status in TERMINAL,
                     )
                 )
                 if not folded:
@@ -363,20 +363,26 @@ class TopView:
                 if child is not None:
                     self.selected = child.key
 
-    def footer(self, snapshot: TopSnapshot) -> str:
-        return (
+    def footer(self, snapshot: TopSnapshot) -> Text:
+        text = Text(
             f"F1 Help   F3 {'Close' if self.details else 'Details'}   "
             f"F5 {'Tree' if self.list_mode else 'List'}   "
             f"F7 Runs({window(next_value(RECENTS, snapshot.recent))})   "
-            f"F8 Stats({window(next_value(PERIODS, snapshot.period))})   F10 Quit"
+            f"F8 Stats({window(next_value(PERIODS, snapshot.period))})   F10 Quit",
+            style=STATUS_BAR,
         )
+        text.highlight_regex(r"\bF\d+\b", FUNCTION_KEY)
+        return text
 
     def header(self, snapshot: TopSnapshot, width: int) -> list[Text]:
         clock = datetime.fromtimestamp(seconds(snapshot.observed_at)).strftime(
             "%H:%M:%S"
         )
         lines = [
-            Text(self.scope + " " * max(1, width - cell_len(self.scope) - 8) + clock),
+            Text(
+                self.scope + " " * max(1, width - cell_len(self.scope) - 8) + clock,
+                style=NORMAL,
+            ),
             Text(),
         ]
         summary = snapshot.summary
@@ -407,7 +413,6 @@ class TopView:
                     total.spend_micros / 1e6
                     if total.spend_micros is not None
                     else None,
-                    total.spend_approximate,
                 )
                 if total
                 else "-",
@@ -440,15 +445,13 @@ class TopView:
             (runs, f"runs last {window(snapshot.recent)}"),
             (stats, f"stats last {window(snapshot.period)}"),
         ):
-            text = Text(value, style="dim")
-            text.highlight_regex(r"(?:~?\$)?\d[\d.,]*[kmhb]?|-", "bold not dim")
+            text = Text(value, style=NORMAL)
             wrapped = text.wrap(console, left_width)
             for index, line in enumerate(wrapped):
                 line.pad_right(max(0, left_width - line.cell_len))
                 line.append(
                     "  "
                     + (title.rjust(title_width) if index == 0 else " " * title_width),
-                    style="dim",
                 )
                 lines.append(line)
         return [*lines, Text()]
@@ -458,9 +461,12 @@ class TopView:
     ) -> Text:
         self.project(snapshot)
         lines = self.header(snapshot, width)
-        agent_width = max([5, *(cell_len(row.source.label) for row in self.rows)])
+        agent_width = max(
+            [5, *(cell_len(instance_name(row.source)) for row in self.rows)]
+        )
         run_width = max([3, *(cell_len(row.root) for row in self.rows)])
-        widths = [agent_width, run_width, 5, 5, 6, 6, 6, 9, 7]
+        spend_width = max([9, *(len(spend(row.node.cost)) for row in self.rows)])
+        widths = [agent_width, run_width, 5, 5, 6, 6, 6, spend_width, 7]
         headings = (
             "AGENT",
             "RUN",
@@ -482,7 +488,7 @@ class TopView:
                 + " "
             )
 
-        lines.append(Text(prefix(headings) + "STATUS", style="bold"))
+        lines.append(Text(prefix(headings) + "STATUS", style=TABLE_HEADER))
         panel = []
         if self.help:
             panel = [
@@ -528,13 +534,13 @@ class TopView:
             )
             usage = node.usage
             values = [
-                row.source.label,
+                instance_name(row.source),
                 row.root,
                 *calls,
                 compact(usage.input_tokens if usage else None),
                 compact(usage.cache_read_tokens if usage else None),
                 compact(usage.output_tokens if usage else None),
-                spend(node.cost, node.cost_approximate, abbreviate=True),
+                spend(node.cost),
                 duration(
                     node,
                     row.source.live.observed_at
@@ -543,32 +549,29 @@ class TopView:
                 ),
             ]
             start = prefix(values)
+            marker = "+ " if node.id == row.root and not row.root_finished else "  "
             label = Text(
-                (row.branch + row.status)
+                (marker + row.branch + row.status)
                 .replace("\n", " ")
                 .replace("\r", " ")
                 .replace("\t", " ")
             )
             label.truncate(max(0, width - cell_len(start)), overflow="ellipsis")
-            line = Text(start)
+            line = Text(start, style=Style(bold=False, dim=row.root_finished))
             line.append_text(label)
-            if node.status in TERMINAL:
-                line.stylize(
-                    {"succeeded": "green", "failed": "red", "canceled": "yellow"}[
-                        node.status
-                    ]
-                )
+            line.pad_right(max(0, width - line.cell_len))
             if height is not None and row.key == self.selected:
-                line.stylize("reverse")
+                line.stylize(SELECTED)
             lines.append(line)
         if height is not None:
             while len(lines) < height - len(panel) - 2:
                 lines.append(Text())
         lines.extend(panel)
         coverage = []
+        current = {instance.identity for instance in snapshot.inventory.instances}
         for source in snapshot.sources:
             issues = []
-            if source.live_stale:
+            if source.live_stale and source.identity in current:
                 issues.append("live stale" if source.live else "live unavailable")
             if source.activity_error or source.usage_error:
                 issues.append("source unavailable")
@@ -581,16 +584,18 @@ class TopView:
             ):
                 issues.append("stats as of " + source.usage.observed_at)
             if issues:
-                coverage.append(source.label + ": " + "; ".join(issues))
+                coverage.append(instance_name(source) + ": " + "; ".join(issues))
             if (
                 source.completed is not None
                 and len(source.completed.roots) < source.completed.counts.total
             ):
                 coverage.append(
-                    f"{source.label}: {len(source.completed.roots)}/{source.completed.counts.total} completed loaded (PgDn)"
+                    f"{instance_name(source)}: {len(source.completed.roots)}/{source.completed.counts.total} completed loaded (PgDn)"
                 )
-        lines.append(
-            Text(" · ".join([*snapshot.inventory.diagnostics, *coverage]), style="dim")
-        )
-        lines.append(Text(self.footer(snapshot), style="bold"))
+        status = " · ".join([*snapshot.inventory.diagnostics, *coverage])
+        lines.append(Text(status, style=STATUS_BAR if status else NORMAL))
+        lines.append(self.footer(snapshot))
+        for line in lines:
+            line.truncate(width, overflow="ellipsis")
+            line.pad_right(max(0, width - line.cell_len))
         return Text("\n").join(lines)

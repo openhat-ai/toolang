@@ -35,6 +35,7 @@ def test_function_keys_aliases_and_application_exit(tmp_path, monkeypatch, exit_
         ("\x1bOR", "\r", "\x1b[15~", "\x1b[18~", "\x1b[19~", "\x1bOP", exit_key)
     )
     states = []
+    cursor_states = []
 
     async def scenario():
         with create_pipe_input() as pipe:
@@ -42,6 +43,8 @@ def test_function_keys_aliases_and_application_exit(tmp_path, monkeypatch, exit_
 
             def rendered(_):
                 states.append((view.details, view.list_mode, view.help))
+                if app.renderer._last_screen is not None:
+                    cursor_states.append(app.renderer._last_screen.show_cursor)
                 key = next(keys, None)
                 if key is not None:
                     pipe.send_text(key)
@@ -55,5 +58,6 @@ def test_function_keys_aliases_and_application_exit(tmp_path, monkeypatch, exit_
         assert any(details for details, _, _ in states)
         assert view.list_mode and view.help and not view.details
         assert observer.recent == 900 and observer.period == 14400
+        assert cursor_states and not any(cursor_states)
     finally:
         observer.close()

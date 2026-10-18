@@ -110,7 +110,13 @@ def top_application(
             await asyncio.sleep(0.1)
 
     app: Application[None] = Application(
-        layout=Layout(Window(FormattedTextControl(content), wrap_lines=False)),
+        layout=Layout(
+            Window(
+                FormattedTextControl(content),
+                wrap_lines=False,
+                always_hide_cursor=True,
+            )
+        ),
         key_bindings=bindings,
         full_screen=True,
         mouse_support=False,

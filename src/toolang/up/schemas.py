@@ -58,10 +58,22 @@ class TopSnapshot(BaseModel):
             else sum(item.placement == placement for item in self.inventory.instances)
             for placement in ("resident", "visiting", "roaming")
         ]
+        current = {item.identity for item in self.inventory.instances}
+        live_sources = {
+            source.identity: source
+            for source in self.sources
+            if source.identity in current
+        }
         active = (
             None
-            if unknown or any(source.live_stale for source in self.sources)
-            else sum(len(source.live.trees) for source in self.sources if source.live)
+            if unknown
+            or len(live_sources) != len(current)
+            or any(source.live_stale for source in live_sources.values())
+            else sum(
+                len(source.live.trees)
+                for source in live_sources.values()
+                if source.live
+            )
         )
         completed = None
         if not unknown and all(

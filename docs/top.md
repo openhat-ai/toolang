@@ -4,6 +4,9 @@
 roaming inventory. `too alice top` selects one resident agent. Observation neither
 starts agents nor acquires server leases. Discovery refreshes every five seconds;
 known source paths remain available for eight hours after inventory removal.
+These retained sources contribute historical completions and usage only; their
+departure does not make current active-root coverage unavailable. Sources still
+in inventory retain the normal unavailable/stale live diagnostics.
 
 ```sh
 too top
@@ -23,9 +26,25 @@ statuses, then model/tool calls, input/cached/output tokens and USD spend.
 The table combines active trees and recently completed roots. Row consumption is
 lifetime consumption; a parent Run includes descendants, while a Step shows only
 its own invocation facts. Large numeric values use compact units to keep columns
-aligned; JSON retains the source amounts. Period and folds do not change these
-values. RUN always shows the full owning physical root ID. Terminal Runs show
-only their state.
+aligned; USD spend uses four decimal places without an approximation marker.
+JSON retains source amounts and approximation metadata. Period and folds do not
+change these values. RUN always shows the full owning physical root ID. Terminal Runs show
+only their state. AGENT and source diagnostics show the existing instance name
+(for example, `aid@r70200d1f`) without the appended `#runtime_instance` ID.
+
+Interactive Top fills the terminal: a green table heading, deep cyan selected
+row, and cyan status/function-key bars anchored at the bottom. Fn numbers use
+white on black; action labels use black on cyan. The title, clock and summary
+fields have normal intensity and weight. Active roots and their entire visible
+subtrees use normal text; finished roots use dim text across the whole row,
+including when selected. Active roots have a leading `+` whether expanded or
+collapsed. Child rows retain tree branches, and finished roots show only their
+state. The physical cursor stays hidden.
+
+Interactive OSC titles are `top team` or `top AGENT`, using the existing
+`terminal.title.prefix.top` and `TOOLANG_TITLE_PREFIX_TOP` settings. Top publishes
+its pane identity through the same terminal session and clears both publishers
+on exit. Snapshot and JSON output do not publish titles or pane identity.
 
 Top reads persisted facts through `toolang.stats.recent` and current paths through
 LiveTree. The recent reader opens only `runs.db`, read-only, without historical

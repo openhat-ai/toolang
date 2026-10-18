@@ -411,6 +411,7 @@ def test_offline_completion_outside_first_page_replaces_the_known_live_root(
     try:
         from toolang.cli.common.top_view import TopView
 
+        observer.inventory = RuntimeInstanceSnapshot((source.instance,))
         view = TopView()
         view.project(observer.tick())
         selected_key = view.selected

@@ -6,6 +6,7 @@ import json
 
 import pytest
 from rich.cells import cell_len
+from rich.console import Console
 from typer.testing import CliRunner
 from tests.support.execution_fixtures import project_run_start
 from toolang.base.types.message import Message
@@ -19,6 +20,7 @@ from toolang.cli.common.top_view import (
     next_value,
     operation,
     runnable,
+    spend,
 )
 from toolang.cli.toolang.main import app
 from toolang.execution.schemas import LiveSnapshot, LiveTreeSnapshot, RunNode, StepNode
@@ -222,18 +224,18 @@ def test_expansion_folding_parallel_boundaries_and_lifetime_identity():
     view.selected = rows[2].key
     view.left()
     rows = view.project(snapshot)
-    assert rows[2].status == "agic:worker · openai/gpt-5 · item 3/8 [+]"
+    assert rows[2].status == "agic:worker · openai/gpt-5 · item 3/8"
     view.selected = rows[0].key
     view.left()
     rows = view.project(snapshot)
-    assert len(rows) == 1 and rows[0].status == "flow:review · openai/gpt-5 [+]"
+    assert len(rows) == 1 and rows[0].status == "flow:review · openai/gpt-5"
     assert rows[0].node is parent and rows[0].node.calls.model_calls == 12
     parallel = replace(serial, kind="par", operation="par", target="")
     rows = view.project(frame((parent, parallel, child, model)))
-    assert rows[0].status == "flow:review · par · 1 active [+]"
+    assert rows[0].status == "flow:review · par · 1 active"
     second = replace(child, id="run_sibling")
     rows = view.project(frame((parent, parallel, child, model, second)))
-    assert rows[0].status == "flow:review · par · 2 active [+]"
+    assert rows[0].status == "flow:review · par · 2 active"
     assert "openai" not in rows[0].status
 
 
@@ -252,7 +254,7 @@ def test_retained_terminal_step_does_not_claim_its_child_activity_or_target_owne
     view.selected = view.rows[1].key
     view.left()
     rows = view.project(snapshot)
-    assert rows[1].status == "succeeded · spawn agic:external · 1 active [+]"
+    assert rows[1].status == "succeeded · spawn agic:external · 1 active"
     assert len(rows) == 2
 
 
@@ -308,7 +310,7 @@ def test_header_fixed_fields_right_edge_footer_and_normal_width_clipping():
     assert header[4].plain.endswith("stats last 1h")
     assert all(line.cell_len == 140 for line in header if line.plain)
     assert (
-        "76 model calls, 188 tool calls, 512k input, 360k cached, 54k output, $2.46 spend"
+        "76 model calls, 188 tool calls, 512k input, 360k cached, 54k output, $2.4600 spend"
         in header[4].plain
     )
     text = view.render(snapshot, width=140).plain
@@ -326,7 +328,8 @@ def test_header_fixed_fields_right_edge_footer_and_normal_width_clipping():
     assert "…" in text
     empty = view.render(frame(), width=140).plain
     assert (
-        "0 model calls, 0 tool calls, 0 input, 0 cached, 0 output, $0.00 spend" in empty
+        "0 model calls, 0 tool calls, 0 input, 0 cached, 0 output, $0.0000 spend"
+        in empty
     )
     assert "0 active, 0 completed: 0 succeeded, 0 failed, 0 canceled" in empty
     assert next_value(RECENTS, 900) == 60 and next_value(PERIODS, 28800) == 3600
@@ -346,6 +349,142 @@ def test_unknown_coverage_stale_duration_and_details_placeholder():
     assert len(text.splitlines()) == 25
 
 
+@pytest.mark.parametrize("present", [False, True])
+def test_retained_roaming_history_affects_live_coverage_only_while_in_inventory(
+    present,
+):
+    completed = tuple(
+        root(id=f"run_closed_{index}", status="succeeded", finished_at=AT)
+        for index in range(2)
+    )
+    snapshot = frame(
+        (root(), step()),
+        completed=completed,
+        stale=True,
+        metrics=Metrics(model_calls=5),
+    )
+    snapshot.sources[0].placement = "roaming"
+    snapshot.sources[0].label = "aid@r70200d1f#instance"
+    snapshot.inventory = RuntimeInstanceSnapshot(
+        tuple(
+            replace(instance, placement="roaming", name="aid")
+            for instance in snapshot.inventory.instances
+        )
+        if present
+        else ()
+    )
+    summary = snapshot.summary
+    assert summary.active == (None if present else 0)
+    assert summary.completed is not None and summary.completed.total == 2
+    assert summary.usage is not None and summary.usage.model_calls == 5
+    view = TopView()
+    text = view.render(snapshot, width=160, height=30).plain
+    assert ("live stale" in text) == present
+    assert ("partial" in text) == present
+    assert any(row.root == ROOT for row in view.rows) == present
+    assert {row.root for row in view.rows if row.root_finished} == {
+        node.id for node in completed
+    }
+
+
+def test_summary_has_normal_intensity_including_numbers_and_right_titles():
+    console = Console()
+    header = TopView().header(
+        frame(metrics=Metrics(512000, 54000, 360000, 2460000, 76, 188)), 140
+    )
+    for line in header:
+        for index in range(len(line)):
+            style = line.get_style_at_offset(console, index)
+            assert style.bold is False and style.dim is False
+            assert style.color is None and style.bgcolor is None
+
+
+@pytest.mark.parametrize("status", ["succeeded", "failed", "canceled"])
+def test_whole_rows_follow_root_intensity_and_selection_keeps_finished_dim(status):
+    launch = step(status="succeeded")
+    child = RunNode("run_child", launch.id, "agic:worker", "running", START)
+    completed = root(id="run_finished", status=status, finished_at=AT)
+    snapshot = frame((root(), launch, child), completed=(completed,))
+    view = TopView()
+    view.project(snapshot)
+    view.selected = view.rows[-1].key
+    lines = view.render(snapshot, width=140, height=25).split("\n")
+    console = Console()
+    active_rows = [line for line in lines if ROOT in line.plain]
+    assert len(active_rows) == 3
+    assert "succeeded" in active_rows[1].plain
+    for line in active_rows:
+        assert line.cell_len == 140
+        for index in range(len(line)):
+            style = line.get_style_at_offset(console, index)
+            assert style.dim is False and style.bold is False
+            assert style.color is None and style.bgcolor is None
+    finished = next(line for line in lines if completed.id in line.plain)
+    assert finished.cell_len == 140
+    for index in range(len(finished)):
+        style = finished.get_style_at_offset(console, index)
+        assert style.dim is True and style.bold is False
+        assert style.color is None and style.reverse is not True
+        assert style.bgcolor is not None
+        assert style.bgcolor.get_truecolor() == (0, 95, 95)
+
+
+def test_active_root_marker_stays_lightweight_when_expanded_folded_or_listed():
+    completed = root(id="run_finished", status="succeeded", finished_at=AT)
+    snapshot = frame((root(), step()), completed=(completed,))
+    view = TopView()
+
+    def statuses():
+        lines = view.render(snapshot, width=140, height=25).plain.splitlines()
+        start = next(line.index("STATUS") for line in lines if "AGENT RUN" in line)
+        return [
+            line[start:].rstrip()
+            for line in lines
+            if ROOT in line or completed.id in line
+        ]
+
+    assert statuses() == ["+ flow:review", "  └─ shell.exec", "  succeeded"]
+    view.left()
+    assert statuses() == ["+ flow:review · shell.exec", "  succeeded"]
+    view.list_mode = True
+    assert statuses() == ["+ flow:review · shell.exec", "  succeeded"]
+
+
+def test_htop_header_selection_and_bottom_bars_cover_the_terminal_width():
+    snapshot = frame((root(), step()), stale=True)
+    view = TopView()
+    lines = view.render(snapshot, width=160, height=35).split("\n")
+    console = Console()
+    assert len(lines) == 35 and all(line.cell_len == 160 for line in lines)
+    headings = next(line for line in lines if "AGENT RUN" in line.plain)
+    selected = next(line for line in lines if "+ flow:review" in line.plain)
+    for index in range(160):
+        heading = headings.get_style_at_offset(console, index)
+        assert heading.color is not None and heading.color.name == "black"
+        assert heading.bgcolor is not None and heading.bgcolor.name == "green"
+        assert heading.bold is False and heading.dim is False
+        style = selected.get_style_at_offset(console, index)
+        assert style.bgcolor is not None and style.bgcolor.get_truecolor() == (
+            0,
+            95,
+            95,
+        )
+        assert style.dim is False
+        coverage = lines[-2].get_style_at_offset(console, index)
+        assert coverage.color is not None and coverage.color.name == "black"
+        assert coverage.bgcolor is not None and coverage.bgcolor.name == "cyan"
+        assert coverage.dim is False
+    footer = lines[-1]
+    for label in ("F1", "F3", "F5", "F7", "F8", "F10"):
+        key_style = footer.get_style_at_offset(console, footer.plain.index(label))
+        assert key_style.color is not None and key_style.color.name == "white"
+        assert key_style.bgcolor is not None and key_style.bgcolor.name == "black"
+    for index in (footer.plain.index("Help"), len(footer) - 1):
+        action = footer.get_style_at_offset(console, index)
+        assert action.color is not None and action.color.name == "black"
+        assert action.bgcolor is not None and action.bgcolor.name == "cyan"
+
+
 def test_unicode_and_captured_line_breaks_stay_in_one_table_row():
     node = step(name="unrecognized\n工具\t" + "名" * 100)
     snapshot = frame((root(), node))
@@ -356,14 +495,44 @@ def test_unicode_and_captured_line_breaks_stay_in_one_table_row():
     assert node.name.startswith("unrecognized\n")
 
 
-@pytest.mark.parametrize("amount", [999.99, 1234.56, 999999.99])
+@pytest.mark.parametrize("amount", [0.0001, 999.99, 1234.56, 999999.99])
 def test_approximate_or_large_spend_keeps_numeric_and_status_columns_aligned(amount):
     snapshot = frame((root(cost=amount, cost_approximate=True), step()))
     lines = TopView().render(snapshot, width=140).plain.splitlines()
     parent = next(line for line in lines if "flow:review" in line)
     child = next(line for line in lines if "└─" in line)
     assert parent.index("flow:review") == child.index("└─")
-    assert "~$" in parent
+    assert f"${amount:.4f}" in parent and "~" not in parent
+    assert snapshot.sources[0].live.trees[0].nodes[0].cost_approximate
+
+
+@pytest.mark.parametrize(
+    ("amount", "expected"),
+    [(None, "-"), (0, "$0.0000"), (0.00384, "$0.0038"), (2.46, "$2.4600")],
+)
+def test_spend_uses_four_decimal_places(amount, expected):
+    assert spend(amount) == expected
+
+
+@pytest.mark.parametrize(
+    "label", ["gus#runtime", "aid@r70200d1f#runtime", "worker@v12345678#runtime"]
+)
+def test_table_and_coverage_use_instance_name_without_runtime_id(label):
+    snapshot = frame((root(),), stale=True, counts=CompletionCounts(succeeded=2))
+    source = snapshot.sources[0]
+    source.label = label
+    view = TopView()
+    view.project(snapshot)
+    selected = view.selected
+    text = view.render(snapshot, width=160).plain
+    name = label.partition("#")[0]
+    assert next(line for line in text.splitlines() if ROOT in line).startswith(
+        name + " "
+    )
+    assert f"{name}: live stale" in text
+    assert f"{name}: 0/2 completed loaded" in text
+    assert "#runtime" not in text
+    assert source.label == label and view.selected == selected
 
 
 def test_large_call_counts_keep_numeric_and_status_columns_aligned():

@@ -1,8 +1,8 @@
 # Top recent activity
 
-Status: approved by the human on 2026-10-18. Definition only; implementation
-requires a separate change. The implementation scope was amended by the human
-to defer Details content: only its open/close placeholder is required now.
+Status: approved by the human on 2026-10-18, including terminal styling,
+lightweight root markers, instance-name labels and four-decimal USD presentation.
+Details content remains deferred; only its open/close placeholder is required.
 
 ## Goal and scope
 
@@ -30,11 +30,16 @@ historical Stats has a separate definition and implementation scope.
   Reuse `up.observation.runtime_snapshot` and its validated runtime registrations,
   refreshed every five seconds, rather than resident-only `AgentProcess.list`.
   Count unique instance identities using the existing inventory contract; use
-  `RuntimeInstance.label` to distinguish same-name placements/instances. Never
+  `RuntimeInstance.label` without the `#runtime_instance` suffix for display,
+  retaining its existing resident/visiting/roaming instance-name rule (for
+  example, `aid@r70200d1f`). Preserve full source identities internally. Never
   scan arbitrary source directories, start agents or retain server leases.
 - Query discovered readable source stores even when execution is offline. Retain
   known source locations for the current observation's windows after a runtime
   disappears; expose unavailable coverage if its store can no longer be read.
+  Once an instance leaves inventory, its retained source contributes completions
+  and usage only, not active roots, frozen live paths or live-coverage warnings.
+  Current inventory members still expose unavailable/stale live coverage normally.
   Reopening recovers recent completions from discoverable stores. Do not promise
   discovery of arbitrary detached temporary histories.
 - Options: `--period 1h|4h|8h` (default `1h`),
@@ -98,13 +103,35 @@ sentence-style summaries in order: agents, runs, stats. Metrics start at the
 left; their titles (`agents`, `runs last 5m`, `stats last 1h`) sit without colons
 in a fixed-width column at the far right, flush right and top-aligned with the
 first metric line. Wrap continuation metrics under the left metric column.
-Emphasize numbers and subdue labels. Use comma-separated values without boxes
-or a statistics table heading.
+Use normal intensity and weight throughout the title, clock and summaries,
+including numbers and right-side labels. Use comma-separated values without
+boxes or a statistics table heading.
+
+Fill the terminal screen and width. Use a green table-heading background with
+black text, a deep cyan (`#005f5f`) selection background, and cyan bottom bars
+with black text. In the function-key bar, render Fn numbers white on black and
+action labels on cyan; extend the remaining bar background to the right edge.
+Keep the coverage/status line directly above the function keys, using the same
+cyan style when it has content. Leave an empty coverage line uncolored. Anchor
+both lines at the bottom and clip long status messages to one line.
+
+The owning root determines whole-row intensity: active roots and every row in
+their subtrees use normal text, including retained terminal Steps. Finished roots
+use dim text across all columns and padding. Selection changes only the row's
+background, preserving dim finished rows. Do not color whole rows by terminal
+status. Hide the physical terminal cursor throughout interaction and restore
+terminal state on exit.
+
+Prefix active root STATUS with `+ ` in Tree and List, expanded or collapsed.
+Leave two spaces before finished-root states and descendant tree branches;
+descendants retain only the existing branch guides. The marker has the same
+color and weight as its row. Add no result icons, disclosure triangles or
+trailing `[+]` markers.
 
 Keep every field in each group visible in a fixed order, including all three
 agent placements and all three terminal states. A complete empty inventory,
 completed-root selection or usage window displays `0` for counts/tokens and
-`$0.00` for spend. Missing provider usage/pricing, loading and unavailable sources
+`$0.0000` for spend. Missing provider usage/pricing, loading and unavailable sources
 remain unknown (`-`, with the existing Updating/coverage indication); never
 convert unknown or incomplete observations to zero or hide their field labels.
 
@@ -121,26 +148,26 @@ roots follow by completion time descending then source/root identity.
 Illustrative values and IDs below are sample data.
 
 ```text
-too top                                                                                         14:32:10
+too top                                                                                                                             14:32:10
 
-2 resident, 3 visiting, 1 roaming                                                                 agents
-3 active, 4 completed: 2 succeeded, 1 failed, 1 canceled                                    runs last 5m
-76 model calls, 188 tool calls, 512k input, 360k cached, 54k output, $2.46 spend           stats last 1h
+2 resident, 3 visiting, 1 roaming                                                                                                     agents
+3 active, 4 completed: 2 succeeded, 1 failed, 1 canceled                                                                        runs last 5m
+76 model calls, 188 tool calls, 512k input, 360k cached, 54k output, $2.4600 spend                                             stats last 1h
 
-AGENT RUN          MODEL TOOL INPUT CACHED OUTPUT SPEND  TIME+ STATUS
-alice run_7p2m9k4w    12   18   42k    26k   3.1k $0.38  2m14s flow:review_project
-alice run_7p2m9k4w     -    -     -      -      -     -   1m8s └─ map agic:review_file
-alice run_7p2m9k4w     3    4   11k     8k    800 $0.09    38s    ├─ agic:review_file · item 3/8
-alice run_7p2m9k4w     1    0     -      -      -     -    12s    │  └─ openai/gpt-5
-alice run_7p2m9k4w     2    3    7k     4k    500 $0.06    31s    └─ agic:review_file · item 4/8
-alice run_7p2m9k4w     0    1     -      -      -     -     9s       └─ shell.exec
-bob   run_7p2m3c8n     5    9   18k     9k   1.3k $0.16   8m2s flow:
-bob   run_7p2m3c8n     -    -     -      -      -     -    24s └─ await worker
-bob   run_7p2m5t6x     0    0     -      -      -     -       - pending · agic:
-alice run_7p2m1b7z     8   12   28k    17k   2.4k $0.24     45s failed
-bob   run_7p2m4f9s     4    3   13k     8k    900 $0.11     58s succeeded
-alice run_7p2m8g2y     3    5   10k     6k    600 $0.08    2m8s canceled
-bob   run_7p2m5n3v     2    4    7k     4k    400 $0.05     32s succeeded
+AGENT RUN          MODEL  TOOL  INPUT CACHED OUTPUT     SPEND   TIME+ STATUS
+alice run_7p2m9k4w    12    18    42k    26k   3.1k   $0.3800   2m14s + flow:review_project
+alice run_7p2m9k4w     -     -      -      -      -         -    1m8s   └─ map agic:review_file
+alice run_7p2m9k4w     3     4    11k     8k    800   $0.0900     38s      ├─ agic:review_file · item 3/8
+alice run_7p2m9k4w     1     0      -      -      -         -     12s      │  └─ openai/gpt-5
+alice run_7p2m9k4w     2     3     7k     4k    500   $0.0600     31s      └─ agic:review_file · item 4/8
+alice run_7p2m9k4w     0     1      -      -      -         -      9s         └─ shell.exec
+bob   run_7p2m3c8n     5     9    18k     9k   1.3k   $0.1600    8m2s + flow:
+bob   run_7p2m3c8n     -     -      -      -      -         -     24s   └─ await worker
+bob   run_7p2m5t6x     0     0      -      -      -         -       - + pending · agic:
+alice run_7p2m1b7z     8    12    28k    17k   2.4k   $0.2400     45s   failed
+bob   run_7p2m4f9s     4     3    13k     8k    900   $0.1100     58s   succeeded
+alice run_7p2m8g2y     3     5    10k     6k    600   $0.0800    2m8s   canceled
+bob   run_7p2m5n3v     2     4     7k     4k    400   $0.0500     32s   succeeded
 
 F1 Help   F3 Details   F5 List   F7 Runs(15m)   F8 Stats(4h)   F10 Quit
 ```
@@ -166,10 +193,12 @@ F1 Help   F3 Details   F5 List   F7 Runs(15m)   F8 Stats(4h)   F10 Quit
   branches out of ID/numeric columns. Always retain MODEL and TOOL call-count
   columns alongside INPUT, CACHED and OUTPUT token columns, using compact values;
   exact values remain in Details. These are node lifetime metrics, independent
-  of Period. Preserve unknown/approximate-cost metadata in Details.
+  of Period. Show USD spend with four decimal places and no approximation
+  marker in both summaries and rows; preserve unknown/approximate-cost metadata
+  in the source data and future Details.
 - Design one layout for normal terminal widths, keeping the same columns and
-  full headings. Numeric columns have stable widths; STATUS uses the remaining
-  space when resized. Keep rows to one line and clip long STATUS text at display-cell
+  full headings. Numeric columns have stable minimum widths; SPEND widens for
+  large amounts. STATUS uses the remaining space when resized. Keep rows to one line and clip long STATUS text at display-cell
   boundaries, with
   complete references/text in Details. Never abbreviate the root run_id.
   Use a vertical table viewport and restore terminal state on exit.
@@ -241,7 +270,7 @@ Use the same rules for root Runs, child Runs and flow/runtime Step subtrees:
   follow an await/spawn/exec target outside the owned tree.
 - A collapsed Run keeps its own runnable, then appends the selected operation
   once. A collapsed Step displays the selected operation. Skip intermediate Run
-  names and serial operations; append `[+]` only when descendants are hidden.
+  names and serial operations; do not add a separate collapsed-state marker.
   Preserve the selected row's occurrence; it remains a position, not progress.
   A retained terminal Step keeps its own state/operation and reports only its
   hidden active-branch count, rather than assigning its state to a child activity.
@@ -252,12 +281,12 @@ Use the same rules for root Runs, child Runs and flow/runtime Step subtrees:
 For the example above, folding roots changes only their STATUS:
 
 ```text
-flow:review_project · map agic:review_file · 2 active [+]
-flow: · await worker [+]
++ flow:review_project · map agic:review_file · 2 active
++ flow: · await worker
 ```
 
 Folding only the first map child gives
-`agic:review_file · openai/gpt-5 · item 3/8 [+]`; its visible sibling continues
+`agic:review_file · openai/gpt-5 · item 3/8`; its visible sibling continues
 to show `agic:review_file · item 4/8` with a separate `shell.exec` child row.
 
 ## Lifecycle and controls
@@ -288,6 +317,13 @@ labels show the next setting, not the current one: with Recent `5m` and Period
 `1h`, show `Runs(15m)` and `Stats(4h)`. Header titles always show the current
 windows. F3 shows Details/Close and F5 shows List/Tree for the next action.
 CLI options remain `--recent` and `--period`.
+
+Interactive Top uses the existing terminal-session publisher: OSC title
+`top team` for all local instances and `top AGENT` for one resident, honoring
+the existing `terminal.title.prefix.top` and `TOOLANG_TITLE_PREFIX_TOP` settings.
+Publish the normal Top pane identity/agent or root context through that same
+session, and clear the title and pane marks on exit. Snapshot and JSON output
+never publish terminal titles or pane identity.
 
 ## Observation, touchpoints and verification
 
@@ -326,11 +362,15 @@ factory/routing and a focused presenter.
 | Missing/corrupt/initializing `stats.db` | Top works from available sources without opening/creating that database or starting archival; persisted aggregates come through `toolang.stats`. |
 | Every Period, boundary timestamps, long-running roots and archived facts | Totals match a direct-source oracle, including settled active-root contributions and nullable/approximate quantities; unfinished consumption is not invented or counted twice. |
 | Inventory changes, idle instances and parallel children | Placement counts follow inventory; active counts follow physical-root lifecycle and remain independent of folds/windows. |
+| Roaming departure with retained history | Retained completion/usage facts remain visible; departed instances add no live rows or live-coverage warnings and cannot make healthy current active counts unknown. |
 | Native/runtime run, async run, spawn, await and exec | Equivalent labels preserve source kind, invocation state, ownership and tool counts; lookalikes/runtime-only tools keep tool identities. |
 | Expanded/folded serial paths, one/many parallel lanes and retained async ancestors | No repeated visible child activity or representative lane; row identity/metrics and restored folds are stable; occurrence never claims completion progress. |
 | Root/child/Step rows and Details | Full owning root ID stays in RUN; child IDs are Details-only; typed/unnamed runnable, provider/model and toolset.tool formatting is correct; finished Runs show terminal state only. |
+| Instance labels and USD formatting | Table and source diagnostics retain the existing instance name without `#runtime_instance`; USD has four decimals and no `~`, including zero and approximate costs; JSON metadata is unchanged and large costs keep STATUS aligned. |
 | Both scopes, empty/idle data and normal-terminal resize | All columns and fixed header fields remain; right-side titles share the clock's edge; known empty is zero, unknown is explicit; no group subheaders or started-root metric. |
 | Window/Tree/List/Details controls | Footer shows only Fn keys and the next setting through wraparound; header shows current windows; F3/Enter share Details; Period/folds do not change lifetime values. |
+| Terminal appearance, selection and resize | Normal-weight/intensity summaries; green full-width heading, deep cyan full-row selection and cyan bottom bars; active owned subtrees remain normal and selected terminal roots remain dim through the last column; root `+` is unchanged by folds/List. |
+| Cursor and terminal publication | Cursor stays hidden through refresh, keys and overlays; both scopes publish configured OSC titles and pane identities, clear them on exit, and leave snapshot/JSON output free of terminal publication. |
 | Completion during refresh, current-second completion, reopen and idle expiry | Exactly one durable root row, stable selection and correct eligibility; Recent counts include unloaded rows and equal terminal-status subtotals. |
 | Many roots, busy eight-hour stores, slow/partial/offline sources and epoch/query changes | Bounded indexed paging, fresh live input/counters, explicit coverage and no obsolete or falsely fresh replacements. |
 | Single/all-agent snapshot/JSON, Unicode, paging and exit | Equivalent metrics, correct clipping, placeholder interaction and restored terminal state. |
