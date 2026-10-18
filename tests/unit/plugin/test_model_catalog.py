@@ -55,17 +55,33 @@ def test_packaged_catalog_matches_pinned_release_and_keeps_model_overrides() -> 
     assert PACKAGED_MODEL_CATALOG.name == "catalog.json"
     assert not PACKAGED_MODEL_CATALOG.with_name("models.json").exists()
     assert sha256(PACKAGED_MODEL_CATALOG.read_bytes()).hexdigest() == (
-        "a9594734ccc502052dd76cf2eff5127e94ffc077d645920dd60e04db6c8ddebe"
+        "912ea7b0e83d3c72c2b92ed4ac954625b1db245970991c96e67caf9458ba23de"
     )
-    assert len(snapshot.providers) == 223
-    assert len(snapshot.models) == 2134
+    assert len(snapshot.providers) == 232
+    assert len(snapshot.models) == 2547
     assert {"anthropic", "deepseek", "google", "openai", "openrouter"} <= set(
         snapshot.providers
     )
-    assert snapshot.models[0].ref == "302ai/deepseek-flash"
+    assert snapshot.models[0].ref == "302ai/gemini-4-argon"
     model = snapshot.find("agentrouter", "claude-opus-5")
     assert model is not None and model.override is not None
     assert model.override.npm == "@ai-sdk/anthropic"
+
+
+@pytest.mark.parametrize(
+    ("provider", "model_id"),
+    (
+        ("openai", "gpt-6.1-sol"),
+        ("anthropic", "claude-sonnet-5-5"),
+        ("google", "gemini-4-argon"),
+    ),
+)
+def test_packaged_catalog_includes_recent_first_party_models(
+    provider: str, model_id: str
+) -> None:
+    snapshot = read_model_catalog_snapshot(PACKAGED_MODEL_CATALOG)
+
+    assert snapshot.find(provider, model_id) is not None
 
 
 def test_merged_catalog_reuses_records_with_complete_origin() -> None:
