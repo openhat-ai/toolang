@@ -25,8 +25,8 @@ availability.
 ## Static Catalog
 
 Toolang loads only the flat catalog format. The bundled data is the
-[2026-09-26 release](https://github.com/openhat-ai/models/releases/download/2026-09-26/catalog.json)
-(223 providers, 2,134 models):
+[2026-10-18 release](https://github.com/openhat-ai/models/releases/download/2026-10-18/catalog.json)
+(232 providers, 2,547 models):
 
 ```json
 {
