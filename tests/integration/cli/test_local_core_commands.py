@@ -3682,6 +3682,9 @@ def test_agent_info_fields_follow_the_compact_layout(
         lambda self: {
             "started_at": "2026-01-01T00:00:00Z",
             "updated_at": "2026-01-02T00:00:00Z",
+            "drivers": ["chat", "chore", "talk"],
+            "lifetime": "persistent",
+            "launch_id": "internal-launch-id",
             "models": ["test/first"],
             "workspace_additions": {
                 "extra": str(tmp_path),

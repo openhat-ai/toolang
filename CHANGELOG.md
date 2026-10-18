@@ -9,6 +9,10 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Changed
 
+- `too start` reports only the agent endpoint, without `drivers=` and
+  `lifetime=`, and `too AGENT info` omits the Drivers, Lifetime, and Launch
+  rows.
+
 - **Breaking:** agent HTTP endpoints move from `/api/v1` to `/api/v0`,
   including execution, capabilities, chores, threads, and top routes. Lifecycle
   payloads report `api_version` instead of `lifecycle_protocol`, pagination and
