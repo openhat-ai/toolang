@@ -205,15 +205,23 @@ def acquire_agent_server(
                     raise AgentServerAcquisitionError(message) from exc
 
 
+def _managed_lifecycle(layout: AgentLayout, state: Mapping[str, object]) -> bool:
+    version = state.get("api_version")
+    if "api_version" in state and (
+        type(version) is not int or version != AGENT_API_VERSION
+    ):
+        raise AgentServerAcquisitionError(
+            f"server API version {version!r} is unsupported; stop and restart it with this Toolang version"
+        )
+    return layout.placement in {"resident", "visiting"} and version == AGENT_API_VERSION
+
+
 def _server_reference(
     layout: AgentLayout, sandbox: str, endpoint: str
 ) -> AgentServerRef:
     entry = read_instance(layout.runtime_status, layout.instance) or {}
     state = entry.get("workload", {})
-    managed = (
-        layout.placement in {"resident", "visiting"}
-        and state.get("api_version") == AGENT_API_VERSION
-    )
+    managed = _managed_lifecycle(layout, state)
     return AgentServerRef(
         sandbox=sandbox,
         endpoint=endpoint,
@@ -297,10 +305,7 @@ def _prepare_agent_server(
     attach_only: bool = False,
 ) -> AgentServerRef | sandbox_runtime.SandboxHandle | None:
     entry = read_instance(layout.runtime_status, layout.instance) or {}
-    managed = (
-        layout.placement in {"resident", "visiting"}
-        and entry.get("workload", {}).get("api_version") == AGENT_API_VERSION
-    )
+    managed = _managed_lifecycle(layout, entry.get("workload", {}))
     status = agents.AgentProcess(layout).status(
         # Managed attachment checks the live profile and registers retention below.
         # A separate health wait would mistake idle shutdown for failed startup.

@@ -45,7 +45,7 @@ from .schemas import stream_id
 def _canonical(data: str) -> CanonicalEvent:
     try:
         row = json.loads(data)
-        if row.get("v") != HUB_API_VERSION:
+        if type(row.get("v")) is not int or row["v"] != HUB_API_VERSION:
             raise ValueError("Unsupported event version")
         return CanonicalEvent(
             EventCursor.parse(row["source_cursor"]),

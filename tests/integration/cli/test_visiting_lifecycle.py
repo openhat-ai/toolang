@@ -9,11 +9,13 @@ import subprocess
 import sys
 import threading
 import time
+from urllib.parse import urlsplit
 
 import httpx
 import pytest
 
 from tests.support.chat_tui_pty import ChatTuiPtySession
+from toolang.up.instance import update_instance
 from toolang.up.process import AgentProcess
 from toolang.up.source import visiting_layout
 
@@ -52,6 +54,15 @@ def _visiting_chat(tmp_path: Path):
         agent_port = listener.getsockname()[1]
     url = f"http://127.0.0.1:{source.server_port}/dev.too"
     layout = visiting_layout(url, toolang_root=root)
+    update_instance(
+        layout.runtime_status,
+        lambda entry: entry["control"].update(
+            last_successful={
+                "endpoint": f"http://localhost:{agent_port}",
+                "sandbox": "host",
+            }
+        ),
+    )
     base = [sys.executable, "-m", "toolang.cli.toolang", "--root", str(root)]
     clients = []
     outputs = []
@@ -80,6 +91,11 @@ def _visiting_chat(tmp_path: Path):
 
         if wait:
             _wait(ready)
+            state = AgentProcess(layout).state()
+            assert state is not None
+            endpoint = state["endpoint"]
+            assert isinstance(endpoint, str)
+            assert urlsplit(endpoint).port == agent_port
         return process
 
     def command(*args, success=True):
@@ -89,23 +105,19 @@ def _visiting_chat(tmp_path: Path):
         assert result.returncode == (0 if success else 1), result.stderr
         return result
 
-    with pytest.MonkeyPatch.context() as environment:
-        environment.setenv("TOOLANG_AGENT_PORT", str(agent_port))
-        try:
-            yield layout, url, chat, command, requests
-        finally:
-            for client in clients:
-                if client.poll() is None:
-                    client.kill()
-                client.wait(timeout=10)
-            subprocess.run(
-                [*base, "stop", url, "--force"], capture_output=True, timeout=20
-            )
-            for output in outputs:
-                output.close()
-            source.shutdown()
-            source.server_close()
-            thread.join()
+    try:
+        yield layout, url, chat, command, requests
+    finally:
+        for client in clients:
+            if client.poll() is None:
+                client.kill()
+            client.wait(timeout=10)
+        subprocess.run([*base, "stop", url, "--force"], capture_output=True, timeout=20)
+        for output in outputs:
+            output.close()
+        source.shutdown()
+        source.server_close()
+        thread.join()
 
 
 @pytest.mark.parametrize("killed", [False, True])

@@ -13,12 +13,14 @@ import httpx
 import pytest
 
 from tests.support.execution_harness import ExecutionHarness
+from tests.support.observations import run_begin
 from tests.support.talk import admitted_handler
 from tests.unit.messaging.test_event_observation import run, publish, prefix
 from tests.unit.messaging.test_protocol import CONFIG, client, snapshot
 from toolang.base.types.tool import ToolContext
 from toolang.common.layout import AgentLayout
 from toolang.execution.errors import SnapshotLimitError
+from toolang.execution.events import event_to_data
 from toolang.execution.types import EventCursor
 from toolang.plugin.toolsets.convo import ConvoToolset
 from toolang.teaming.agent_client import AgentClient, AgentEventClient
@@ -442,10 +444,19 @@ def test_agent_api_rejects_bad_identity_lease_and_publications(tmp_path):
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("operation", ["stage", "recover"])
+@pytest.mark.parametrize(
+    "operation,retry",
+    [
+        ("stage", False),
+        ("recover", False),
+        ("recover", True),
+        ("event", False),
+        ("event", True),
+    ],
+)
 @pytest.mark.parametrize("version", [1, HUB_STORE_SCHEMA + 1, None])
-def test_recovery_rejects_incompatible_stored_versions_without_mutation(
-    tmp_path, operation, version
+def test_publication_rejects_incompatible_stored_versions_without_mutation(
+    tmp_path, operation, retry, version
 ):
     async def scenario():
         human = client(FakeServer(server_type="valkey"), CONNECTION.human)
@@ -473,6 +484,46 @@ def test_recovery_rejects_incompatible_stored_versions_without_mutation(
             digest = sha256(encode({}).encode()).hexdigest()
             staging = base | dict(source=source, entities={}, digest=digest)
             await publisher.stage(staging)
+            recovery_op = base | dict(
+                id=f"{recovery}:commit",
+                kind="recover",
+                source=source,
+                source_epoch=source_epoch,
+                snapshot_digest=digest,
+                old_generation=uuid4().hex,
+            )
+            if operation == "event":
+                await publisher.commit(recovery_op)
+                next_source = str(EventCursor(source_epoch, 1))
+                event = event_to_data(run_begin("run_one", 0, thread_id="chat_one"))
+                commit_op = {
+                    key: value for key, value in base.items() if key != "recovery"
+                } | dict(
+                    id=next_source,
+                    kind="event",
+                    source=next_source,
+                    source_epoch=source_epoch,
+                    prior=source,
+                    data=encode(
+                        dict(
+                            v=HUB_API_VERSION,
+                            source_cursor=next_source,
+                            thread="chat_one",
+                            root="run_one",
+                            event=event,
+                        )
+                    ),
+                    updates={},
+                    removed=[],
+                    structural=True,
+                    evicted=False,
+                    count=0,
+                    bytes=0,
+                )
+            else:
+                commit_op = recovery_op
+            if retry:
+                await publisher.commit(commit_op)
             raw = human.backend._client
             if operation == "stage":
                 key, field = EVENT_AGENTS, alice.actor
@@ -493,17 +544,7 @@ def test_recovery_rejects_incompatible_stored_versions_without_mutation(
                 if operation == "stage":
                     await publisher.stage(staging)
                 else:
-                    await publisher.commit(
-                        base
-                        | dict(
-                            id=f"{recovery}:commit",
-                            kind="recover",
-                            source=source,
-                            source_epoch=source_epoch,
-                            snapshot_digest=digest,
-                            old_generation=uuid4().hex,
-                        )
-                    )
+                    await publisher.commit(commit_op)
 
             assert await snapshot(raw) == before
 

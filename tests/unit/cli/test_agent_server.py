@@ -329,6 +329,23 @@ def test_managed_attachment_checks_its_profile_instead_of_waiting_for_health(
         assert retained == ["launch"]
 
 
+@pytest.mark.parametrize("version", [1, False, 0.0, None])
+def test_attachment_rejects_an_incompatible_api_without_dropping_ownership(
+    tmp_path, monkeypatch, version
+):
+    layout = AgentLayout.resident(tmp_path, "alice")
+    monkeypatch.setattr(
+        agent_server,
+        "read_instance",
+        lambda *_args: {
+            "launch_id": "launch",
+            "workload": {"lifetime": "automatic", "api_version": version},
+        },
+    )
+    with pytest.raises(agent_server.AgentServerAcquisitionError, match="API version"):
+        agent_server._server_reference(layout, "host", "http://server")
+
+
 @pytest.mark.parametrize("dev", [Path("."), Path("dist")])
 def test_agent_server_rejects_dev_for_an_attached_agent(
     dev: Path,

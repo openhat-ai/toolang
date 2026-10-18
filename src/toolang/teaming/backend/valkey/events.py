@@ -90,7 +90,7 @@ class ValkeyEvents:
         try:
             origins = {key: json.loads(value) for key, value in _hash(agents).items()}
             for value in origins.values():
-                if value.get("v") != HUB_STORE_SCHEMA:
+                if type(value.get("v")) is not int or value["v"] != HUB_STORE_SCHEMA:
                     raise ValueError("Origin schema version")
                 stream_id(value.get("floor", "0-0"))
             public = {}
@@ -126,12 +126,13 @@ class ValkeyEvents:
                         if name == MANIFEST or "entity" in data
                         else HUB_API_VERSION
                     )
-                    if data.get("v") != expected:
+                    if type(data.get("v")) is not int or data["v"] != expected:
                         raise ValueError("Unsupported event entity version")
                     if "entity" in data:
                         entity = data["entity"]
                         if (
                             not isinstance(entity, dict)
+                            or type(entity.get("v")) is not int
                             or entity.get("v") != HUB_API_VERSION
                         ):
                             raise ValueError("Unsupported event entity version")

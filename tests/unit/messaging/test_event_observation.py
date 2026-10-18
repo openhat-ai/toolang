@@ -1429,3 +1429,54 @@ def test_old_event_dataset_is_rejected_without_mutation():
             await driver.close()
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("version", [1, False, 0.0, None])
+@pytest.mark.parametrize("representation", ["staged", "stored", "event"])
+def test_event_readers_reject_incompatible_wire_versions(version, representation):
+    from toolang.execution.events import event_to_data
+    from toolang.execution.types import EventCursor
+    from toolang.teaming.backend.valkey.keys import generation_key
+    from toolang.teaming.events import encode
+    from toolang.teaming.records import field
+    from toolang.teaming.subscriptions import _canonical
+
+    source = str(EventCursor("a" * 32, 1))
+    event = event_to_data(run_begin("run_one", 0, thread_id="chat_one"))
+    if representation == "event":
+        with pytest.raises(EventProtocolError):
+            _canonical(
+                encode(
+                    dict(
+                        v=version,
+                        source_cursor=source,
+                        event=event,
+                        thread="chat_one",
+                        root="run_one",
+                    )
+                )
+            )
+        return
+
+    async def scenario():
+        driver = backend(FakeServer(server_type="valkey"))
+        try:
+            await driver.initialize()
+            entity = dict(v=version, begin=event, thread="chat_one", root="run_one")
+            value = (
+                dict(v=HUB_STORE_SCHEMA, entity=entity, delivery="0-0")
+                if representation == "stored"
+                else entity
+            )
+            await driver._call(
+                "HSET",
+                generation_key("agent:alice", "g"),
+                field("run", "run_one"),
+                encode(value),
+            )
+            with pytest.raises(EventProtocolError):
+                await driver.events.projection("agent:alice", "g")
+        finally:
+            await driver.close()
+
+    asyncio.run(scenario())

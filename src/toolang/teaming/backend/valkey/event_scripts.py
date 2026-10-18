@@ -119,6 +119,14 @@ if not lease or lease.token~=op.token then return {'lease'} end
 local raw = redis.call('HGET',KEYS[3],op.agent)
 local agent = raw and cjson.decode(raw) or {v=hub_store_schema,revision=0,status='incomplete',floor='0-0'}
 if agent.v ~= hub_store_schema then error('protocol_error: origin version') end
+local manifest
+if op.kind == 'event' or op.kind == 'recover' then
+  local encoded = redis.call('HGET',KEYS[5],manifest_field)
+  if encoded then
+    manifest = cjson.decode(encoded)
+    if type(manifest) ~= 'table' or manifest.v ~= hub_store_schema then error('protocol_error: manifest version') end
+  end
+end
 if agent.last_id == op.id then
   if agent.last_digest ~= ARGV[5] then error('protocol_error: conflicting operation') end
   return {'ok',agent.last_result}
@@ -129,14 +137,11 @@ if op.kind == 'event' then
   if op.source <= agent.source then return {'ok',agent.last_result or '0-0'} end
   if agent.source ~= op.prior then return {'recover'} end
   if #op.data + #op.agent + 133 > max_event_bytes or op.count > max_entities or op.bytes > max_bytes or cjson.decode(op.data).v ~= hub_api_version then error('protocol_error: publication bounds') end
-  if redis.call('HEXISTS',KEYS[5],manifest_field) == 0 then error('protocol_error: missing generation') end
+  if not manifest then error('protocol_error: missing generation') end
 elseif op.kind == 'recover' then
   if agent.token ~= op.token or agent.recovery ~= op.recovery or agent.staging ~= op.generation then return {'recover'} end
-  local manifest = redis.call('HGET',KEYS[5],manifest_field)
   if not manifest then return {'recover'} end
-  local m = cjson.decode(manifest)
-  if m.v ~= hub_store_schema then error('protocol_error: manifest version') end
-  if m.digest ~= op.snapshot_digest or m.sealed ~= true or m.source ~= op.source or redis.call('HLEN',KEYS[5]) ~= m.count + 1 then return {'recover'} end
+  if manifest.digest ~= op.snapshot_digest or manifest.sealed ~= true or manifest.source ~= op.source or redis.call('HLEN',KEYS[5]) ~= manifest.count + 1 then return {'recover'} end
 elseif op.kind ~= 'incomplete' then error('protocol_error: operation') end
 -- Decode and validate the entire bounded mutation before the first shared write.
 local fields = {}
@@ -158,9 +163,8 @@ if op.kind == 'incomplete' then
   agent.recovery=op.recovery; agent.staging=op.generation
 elseif op.kind == 'recover' then
   sid=append('recovered',op.agent,cjson.encode({v=hub_api_version,recovery=op.recovery}))
-  local m=cjson.decode(redis.call('HGET',KEYS[5],manifest_field))
-  m.baseline=sid
-  redis.call('HSET',KEYS[5],manifest_field,cjson.encode(m))
+  manifest.baseline=sid
+  redis.call('HSET',KEYS[5],manifest_field,cjson.encode(manifest))
   redis.call('PERSIST',KEYS[5])
   if old_generation and old_generation ~= op.generation then redis.call('UNLINK',KEYS[6]) end
   agent.generation=op.generation; agent.staging=nil; agent.status='complete'; agent.reason=nil
@@ -172,9 +176,8 @@ else
   end
   for _,key in ipairs(op.removed or {}) do redis.call('HDEL',KEYS[5],key) end
   if op.structural then
-    local m=cjson.decode(redis.call('HGET',KEYS[5],manifest_field))
-    m.count=op.count; m.bytes=op.bytes
-    redis.call('HSET',KEYS[5],manifest_field,cjson.encode(m))
+    manifest.count=op.count; manifest.bytes=op.bytes
+    redis.call('HSET',KEYS[5],manifest_field,cjson.encode(manifest))
     agent.revision=agent.revision+1
   end
   if op.evicted then agent.floor=sid end

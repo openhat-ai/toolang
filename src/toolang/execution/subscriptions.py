@@ -347,9 +347,7 @@ class EventSubscription(StreamNormalizer):
     def _prepare(self) -> deque[StreamFrame]:
         try:
             same_epoch = (
-                self.after is not None
-                and self.after.epoch == self.boundary.epoch
-                and self.store.stream_has_cursors
+                self.after is not None and self.after.epoch == self.boundary.epoch
             )
             cached = (
                 same_epoch

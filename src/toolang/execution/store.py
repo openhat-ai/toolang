@@ -132,8 +132,6 @@ from . import talk
 from .errors import ThreadBusy
 
 RUN_STORE_SCHEMA = 61
-_SUPPORTED_SCHEMA_VERSIONS = (RUN_STORE_SCHEMA,)
-_WRITABLE_SCHEMA_VERSIONS = (RUN_STORE_SCHEMA,)
 
 
 class RunStore:
@@ -255,10 +253,6 @@ class RunStore:
         except sqlite3.Error:
             pass  # The worker may already have closed its connection.
 
-    @property
-    def stream_has_cursors(self) -> bool:
-        return True
-
     def stream_records(
         self,
         *,
@@ -274,8 +268,7 @@ class RunStore:
         Logical thread history intentionally does not hide rewound runs or copy
         inherited runs into a fork's event scope.
         """
-        changed = (
-            """
+        changed = """
             r.status IN ('pending', 'running')
             OR (:after IS NOT NULL AND (
                 (r._begin_cursor > :after AND r._begin_cursor <= :ceiling)
@@ -287,9 +280,6 @@ class RunStore:
                     AND c.target = r.id AND c._event_cursor > :after
                     AND c._event_cursor <= :ceiling)))
         """
-            if self.stream_has_cursors
-            else "r.status IN ('pending', 'running')"
-        )
         # Materialize parent run IDs once so SQLite can index recursive lookups
         # instead of scanning all historical runs for every node in the forest.
         query = f"""
@@ -347,7 +337,7 @@ class RunStore:
         """Return durable thread mutations, including forks of the selected source."""
         cursor_filter = (
             ""
-            if after is None or not self.stream_has_cursors
+            if after is None
             else (" AND _event_cursor > :after AND _event_cursor <= :ceiling")
         )
         with self._lock:
@@ -3571,23 +3561,15 @@ class RunStore:
                 raise RunStoreSchemaError(
                     version,
                     current=RUN_STORE_SCHEMA,
-                    supported=_WRITABLE_SCHEMA_VERSIONS,
+                    supported=(RUN_STORE_SCHEMA,),
                     read_only=False,
                 )
-            allowed = (
-                _SUPPORTED_SCHEMA_VERSIONS
-                if self.read_only
-                else (0, *_WRITABLE_SCHEMA_VERSIONS)
-            )
+            allowed = (RUN_STORE_SCHEMA,) if self.read_only else (0, RUN_STORE_SCHEMA)
             if version not in allowed:
                 raise RunStoreSchemaError(
                     version,
                     current=RUN_STORE_SCHEMA,
-                    supported=(
-                        _SUPPORTED_SCHEMA_VERSIONS
-                        if self.read_only
-                        else _WRITABLE_SCHEMA_VERSIONS
-                    ),
+                    supported=(RUN_STORE_SCHEMA,),
                     read_only=self.read_only,
                 )
             if self.read_only:
@@ -3598,14 +3580,14 @@ class RunStore:
             self._conn.execute("PRAGMA foreign_keys=ON;")
             self._conn.execute("BEGIN IMMEDIATE")
             version = int(self._conn.execute("PRAGMA user_version").fetchone()[0])
-            if version not in (0, *_WRITABLE_SCHEMA_VERSIONS) or (
+            if version not in (0, RUN_STORE_SCHEMA) or (
                 version == 0 and _database_has_user_schema(self._conn)
             ):
                 self._conn.rollback()
                 raise RunStoreSchemaError(
                     version,
                     current=RUN_STORE_SCHEMA,
-                    supported=_WRITABLE_SCHEMA_VERSIONS,
+                    supported=(RUN_STORE_SCHEMA,),
                     read_only=False,
                 )
             self._conn.execute(

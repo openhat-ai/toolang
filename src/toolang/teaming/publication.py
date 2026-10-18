@@ -52,7 +52,11 @@ def _entities(values: dict[str, str]) -> dict[str, Any]:
     for key, raw in values.items():
         kind, identity = _key(key)
         value = json.loads(raw)
-        if not isinstance(value, dict) or value.get("v") != HUB_API_VERSION:
+        if (
+            not isinstance(value, dict)
+            or type(value.get("v")) is not int
+            or value["v"] != HUB_API_VERSION
+        ):
             raise ValueError("Invalid entity version")
         if not isinstance(value.get("thread"), str):
             raise ValueError("Invalid entity thread")
@@ -156,6 +160,7 @@ def validate_publication(body: CommitRequest | StagingRequest, *, agent: str) ->
                 data = json.loads(body.data)
                 if (
                     set(data) != {"v", "source_cursor", "thread", "root", "event"}
+                    or type(data["v"]) is not int
                     or data["v"] != HUB_API_VERSION
                     or data["source_cursor"] != body.source
                 ):
