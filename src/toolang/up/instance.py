@@ -29,6 +29,7 @@ AGENT_INSTANCE_FORMAT = 3
 
 
 def read_document(path: Path, *, location: str = "host") -> dict[str, Any] | None:
+    """Read a status document with a validated format and instances container."""
     try:
         if location == "guest":
             with file_read_snapshot(path) as stream:
@@ -41,6 +42,13 @@ def read_document(path: Path, *, location: str = "host") -> dict[str, Any] | Non
         raise ValueError(f"invalid runtime status: {path}") from exc
     if not isinstance(payload, dict):
         raise ValueError(f"invalid runtime status: {path}")
+    if (
+        type(payload.get("version")) is not int
+        or payload["version"] != AGENT_INSTANCE_FORMAT
+    ):
+        raise ValueError(f"unsupported runtime status version: {path}")
+    if not isinstance(payload.get("instances"), dict):
+        raise ValueError(f"invalid runtime instances: {path}")
     return payload
 
 
@@ -50,15 +58,7 @@ def read_instance(
     payload = read_document(path, location=location)
     if payload is None:
         return None
-    if (
-        type(payload.get("version")) is not int
-        or payload["version"] != AGENT_INSTANCE_FORMAT
-    ):
-        raise ValueError(f"unsupported runtime status version: {path}")
-    instances = payload.get("instances")
-    if not isinstance(instances, dict):
-        raise ValueError(f"invalid runtime instances: {path}")
-    entry = instances.get(instance or "default")
+    entry = payload["instances"].get(instance or "default")
     if entry is None:
         return None
     if (
@@ -197,11 +197,6 @@ def update_instance(
         payload: dict[str, Any] | None = read_document(path, location=location)
         if payload is None:
             payload = {"version": AGENT_INSTANCE_FORMAT, "instances": {}}
-        elif (
-            type(payload.get("version")) is not int
-            or payload["version"] != AGENT_INSTANCE_FORMAT
-        ):
-            raise ValueError(f"unsupported runtime status version: {path}")
         entries = payload["instances"]
         entry = entries.setdefault(
             instance or "default", {"launch_id": "", "control": {}, "workload": {}}

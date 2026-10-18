@@ -1099,7 +1099,10 @@ def _layer_document(
 def _check_layer_document(
     document: Mapping[str, object], *, scope: LayerScope
 ) -> dict[str, dict[str, object]]:
-    if document.get("schema") != AGENT_STATE_FORMAT:
+    if (
+        type(document.get("schema")) is not int
+        or document["schema"] != AGENT_STATE_FORMAT
+    ):
         raise ValueError(f"unsupported State layer schema: {document.get('schema')!r}")
     if set(document) != {
         "schema",
@@ -1113,8 +1116,8 @@ def _check_layer_document(
         "chores",
     }:
         raise ValueError("layer.json fields do not match the State layer schema")
-    if document["schema"] != AGENT_STATE_FORMAT or document["scope"] != scope:
-        raise ValueError("unsupported State layer schema or scope")
+    if document["scope"] != scope:
+        raise ValueError("unsupported State layer scope")
     _timestamp(document)
     _config(document)
     records = _file_maps(document)
@@ -1184,7 +1187,10 @@ def _validate_layer_dir(
 
 
 def _check_agent_document(document: Mapping[str, object]) -> None:
-    if document.get("schema") != AGENT_STATE_FORMAT:
+    if (
+        type(document.get("schema")) is not int
+        or document["schema"] != AGENT_STATE_FORMAT
+    ):
         raise ValueError("unsupported Agent State schema")
     if set(document) - {"workspace_additions"} != {
         "schema",

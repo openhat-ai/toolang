@@ -83,9 +83,9 @@ def test_layer_json_exact_bytes_are_the_revision(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("owner", ["root", "home", "agent"])
-@pytest.mark.parametrize("version", [22, 24])
+@pytest.mark.parametrize("version", [22, 24, 23.0])
 def test_noncurrent_state_format_is_rejected_and_preparation_rebuilds(
-    tmp_path: Path, owner: str, version: int
+    tmp_path: Path, owner: str, version: int | float
 ) -> None:
     layout = _layout(tmp_path)
     root = _write_root(layout)

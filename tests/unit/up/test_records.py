@@ -14,6 +14,7 @@ from toolang.base.types.sandbox import SandboxRef
 from toolang.common.files import file_lock_path
 from toolang.common.layout import AgentLayout
 from toolang.up.instance import (
+    read_document,
     read_instance,
     update_instance,
     patch_workload,
@@ -196,13 +197,14 @@ def required_record(layout):
 
 
 @pytest.mark.parametrize("version", [2, 4, 3.0, True])
-def test_noncurrent_instance_is_rejected_without_mutation(tmp_path, version):
+@pytest.mark.parametrize("reader", [read_document, read_instance])
+def test_noncurrent_instance_is_rejected_without_mutation(tmp_path, version, reader):
     layout = AgentLayout.resident(tmp_path, "alice")
     layout.runtime_status.parent.mkdir(parents=True)
     layout.runtime_status.write_text(json.dumps({"version": version, "instances": {}}))
     before = layout.runtime_status.read_bytes()
     with pytest.raises(ValueError, match="unsupported runtime status version"):
-        read_instance(layout.runtime_status)
+        reader(layout.runtime_status)
     assert layout.runtime_status.read_bytes() == before
 
 

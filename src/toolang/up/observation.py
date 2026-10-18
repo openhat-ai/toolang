@@ -194,25 +194,23 @@ def running_instances(root: Path) -> tuple[dict, ...]:
             reference = json.loads(path.read_text())
             if (
                 not isinstance(reference, dict)
+                or type(reference.get("version")) is not int
                 or reference.get("version") != AGENT_INSTANCE_FORMAT
             ):
                 continue  # Never adopt legacy registrations.
             status_path = Path(reference["status"])
             if status_path not in records:
                 document = read_document(status_path)
-                entries = (document or {}).get("instances")
                 records[status_path] = (
                     {
                         entry["launch_id"]: entry
-                        for entry in entries.values()
+                        for entry in document["instances"].values()
                         if isinstance(entry, dict)
                         and isinstance(entry.get("launch_id"), str)
                         and isinstance(entry.get("control"), dict)
                         and isinstance(entry.get("workload"), dict)
                     }
                     if document is not None
-                    and document.get("version") == AGENT_INSTANCE_FORMAT
-                    and isinstance(entries, dict)
                     else {}
                 )
             entry = records[status_path].get(reference["launch_id"])
@@ -485,12 +483,7 @@ def runtime_inventory(root: Path) -> RuntimeInventory:
         if document is None:
             add_resident(layout, None)
             continue
-        entries = document.get("instances")
-        if document.get("version") != AGENT_INSTANCE_FORMAT or not isinstance(
-            entries, dict
-        ):
-            add_resident(layout, None, "runtime status document is invalid")
-            continue
+        entries = document["instances"]
         default_entry = entries.get("default")
         if default_entry is None:
             add_resident(layout, None)
@@ -552,6 +545,7 @@ def runtime_inventory(root: Path) -> RuntimeInventory:
             reference = json.loads(reference_path.read_text(encoding="utf-8"))
             if (
                 not isinstance(reference, dict)
+                or type(reference.get("version")) is not int
                 or reference.get("version") != AGENT_INSTANCE_FORMAT
             ):
                 diagnostics.append(
@@ -584,7 +578,7 @@ def runtime_inventory(root: Path) -> RuntimeInventory:
                     )
                 )
                 continue
-            if document is None or document.get("version") != AGENT_INSTANCE_FORMAT:
+            if document is None:
                 add(
                     _SnapshotCandidate(
                         status_path,
@@ -598,21 +592,7 @@ def runtime_inventory(root: Path) -> RuntimeInventory:
                     )
                 )
                 continue
-            entries = document.get("instances")
-            if not isinstance(entries, dict):
-                add(
-                    _SnapshotCandidate(
-                        status_path,
-                        fallback.instance
-                        if fallback and fallback.instance
-                        else "default",
-                        launch_id,
-                        fallback,
-                        None,
-                        "runtime instances are invalid",
-                    )
-                )
-                continue
+            entries = document["instances"]
             matches = [
                 (key, value)
                 for key, value in entries.items()

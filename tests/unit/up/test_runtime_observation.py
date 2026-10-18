@@ -133,6 +133,33 @@ def test_discovery_ignores_invalid_status_instances(tmp_path, instances):
             layout.runtime_status.write_bytes(before)
 
 
+@pytest.mark.parametrize("owner", ["reference", "status"])
+@pytest.mark.parametrize("version", [2, 4, 3.0, True])
+def test_discovery_rejects_noncurrent_formats_without_mutation(
+    tmp_path, owner, version
+):
+    root = tmp_path / "toolang"
+    layout = AgentLayout.roaming(tmp_path / "aid.too")
+    with RuntimeRegistration(
+        layout, toolang_root=root, drivers=frozenset()
+    ) as registration:
+        assert len(running_instances(root)) == 1
+        path = registration.path if owner == "reference" else layout.runtime_status
+        original = path.read_bytes()
+        document = json.loads(original)
+        document["version"] = version
+        path.write_text(json.dumps(document))
+        before = path.read_bytes()
+        try:
+            assert running_instances(root) == ()
+            assert all(
+                item.state != "running" for item in runtime_snapshot(root).instances
+            )
+            assert path.read_bytes() == before
+        finally:
+            path.write_bytes(original)
+
+
 @pytest.mark.parametrize("invalid", [None, [], "invalid", {"launch_id": "bad"}])
 def test_discovery_preserves_valid_entries_beside_a_malformed_peer(tmp_path, invalid):
     layout = AgentLayout.resident(tmp_path, "gus")
