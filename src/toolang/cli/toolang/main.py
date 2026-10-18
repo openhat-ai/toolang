@@ -470,7 +470,7 @@ _registered_command(
 _registered_command(
     "inspect",
     "toolang.cli.toolang.commands.inspect:inspect_command",
-    help="Inspect finished runs",
+    help="Inspect runs in detail",
     no_args_is_help=True,
     cls=_InspectCommand,
     rich_help_panel=INSPECTION_COMMAND_PANEL,
