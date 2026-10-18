@@ -510,7 +510,7 @@ def assigned_runtime_ports(
     *,
     exclude_agent: str | None = None,
 ) -> set[int]:
-    """Return ports already recorded by local agents, including stopped ones."""
+    """Return readable local agents' recorded ports, including stopped ones."""
 
     from .discovery import agent_layouts
 
@@ -521,7 +521,10 @@ def assigned_runtime_ports(
     for layout in agent_layouts(toolang_root):
         if layout.name == exclude_agent:
             continue
-        port = preferred_runtime_port(layout)
+        try:
+            port = preferred_runtime_port(layout)
+        except (OSError, ValueError):
+            continue  # An unreadable peer must not block another agent's startup.
         if port is not None:
             ports.add(port)
     return ports

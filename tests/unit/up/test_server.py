@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 from pathlib import Path
 from types import SimpleNamespace
@@ -108,6 +109,68 @@ def test_automatic_port_selection_ignores_invalid_legacy_peers(
     assert server.resolve_runtime_port(
         host="127.0.0.1", explicit_port=None, layout=layout, temporary=False
     ) == (preferred or 7003)
+
+
+@pytest.mark.parametrize(
+    "peer_status",
+    [
+        '{"version": 2, "instances": {}}',
+        '{"version": 4, "instances": {}}',
+        '{"status": "running", "pid": 123}',
+        '{"version": 3, "instances": {"default": {}}}',
+        "{broken",
+    ],
+)
+@pytest.mark.parametrize("preferred", [None, 7123])
+def test_automatic_port_selection_ignores_unreadable_peer_status(
+    tmp_path, monkeypatch, peer_status, preferred
+):
+    from toolang.up.instance import update_instance
+
+    layout = AgentLayout.resident(tmp_path, "gus")
+    if preferred is not None:
+        update_instance(
+            layout.runtime_status,
+            lambda entry: entry["control"].update(
+                last_successful={"endpoint": f"http://localhost:{preferred}"}
+            ),
+        )
+    peer = AgentLayout.resident(tmp_path, "hak")
+    peer.runtime_status.parent.mkdir(parents=True)
+    peer.runtime_status.write_text(peer_status)
+    current = AgentLayout.resident(tmp_path, "zoe")
+    update_instance(
+        current.runtime_status,
+        lambda entry: entry["control"].update(
+            last_successful={"endpoint": "http://localhost:7002"}
+        ),
+    )
+    before = {
+        path: path.read_bytes()
+        for path in (peer.runtime_status, current.runtime_status)
+    }
+    monkeypatch.setattr(server, "_port_is_available", lambda host, port: port != 7003)
+
+    assert server.resolve_runtime_port(
+        host="127.0.0.1", explicit_port=None, layout=layout, temporary=False
+    ) == (preferred or 7004)
+    assert {path: path.read_bytes() for path in before} == before
+
+
+def test_automatic_port_selection_rejects_incompatible_selected_status(
+    tmp_path, monkeypatch
+):
+    layout = AgentLayout.resident(tmp_path, "gus")
+    layout.runtime_status.parent.mkdir(parents=True)
+    layout.runtime_status.write_text(json.dumps({"version": 2, "instances": {}}))
+    before = layout.runtime_status.read_bytes()
+    monkeypatch.setattr(server, "_port_is_available", lambda host, port: True)
+
+    with pytest.raises(ValueError, match="unsupported runtime status version"):
+        server.resolve_runtime_port(
+            host="127.0.0.1", explicit_port=None, layout=layout, temporary=False
+        )
+    assert layout.runtime_status.read_bytes() == before
 
 
 @pytest.mark.parametrize(
