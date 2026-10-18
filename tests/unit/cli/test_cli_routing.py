@@ -351,12 +351,12 @@ def test_cli_visible_commands_follow_the_public_panel_order(arguments, capsys) -
         "Runtime commands": ("serve", "start", "stop", "hub"),
         "Work commands": ("chat", "talk", "chore", "convo"),
         "Inspection commands": (
-            "top",
             "caps",
             "tools",
             "models",
             "providers",
             "inspect",
+            "top",
         ),
         "Script commands": ("init", "run"),
     }
@@ -403,7 +403,7 @@ def test_workspace_commands_follow_the_public_order() -> None:
 def test_cli_exposes_plural_list_resources_and_removes_channels() -> None:
     group = typer.main.get_command(cli.app)
     expected_help = {
-        "inspect": "Inspect run history and details",
+        "inspect": "Inspect finished runs",
         "home": "Open a shell in agent home",
         "caps": "List available caps",
         "models": "List available models",

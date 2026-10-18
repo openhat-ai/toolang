@@ -235,6 +235,7 @@ def test_version_option_has_uppercase_short_alias(
 
     assert help_result.exit_code == 0, help_result.output
     assert "-V, --version" in help_output
+    assert "Show version and exit" in help_output
     assert short_result.exit_code == 0, short_result.output
     assert short_output == f"{prefix}{displayed_toolang_version()}\n"
 
@@ -250,7 +251,7 @@ def test_inspect_help_is_concise_and_consistent() -> None:
     assert inspect_result.exit_code == 0, inspect_result.output
     for result in (root_result, inspect_result):
         output = strip_ansi(result.output)
-        assert "Inspect run history and details" in output
+        assert "Inspect finished runs" in output
         assert "Inspect run records." not in output
         assert "Inspect a historical record or one of its fields." not in output
 

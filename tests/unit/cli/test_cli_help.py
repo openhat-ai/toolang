@@ -300,7 +300,8 @@ def test_lazy_command_exposes_short_help_without_loading():
         ("chore", "Manage one-off and scheduled tasks"),
         ("convo", "Manage conversations and rules"),
         ("start", "Start an agent in the background"),
-        ("inspect", "Inspect run history and details"),
+        ("inspect", "Inspect finished runs"),
+        ("top", "Monitor active runs"),
     ],
 )
 def test_command_descriptions_match_root_and_command_help(
