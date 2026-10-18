@@ -12,6 +12,14 @@ from toolang.cli.toolang.commands.hub_status import HubSnapshot, render_hub_snap
 from toolang.up.observation import RuntimeInstance, RuntimeInstanceSnapshot
 
 
+@pytest.fixture(autouse=True)
+def rendering_terminal(monkeypatch):
+    """Keep this module's rendering inputs independent of the caller's terminal."""
+    monkeypatch.setenv("TERM", "xterm-256color")
+    for variable in ("NO_COLOR", "FORCE_COLOR", "COLORTERM"):
+        monkeypatch.delenv(variable, raising=False)
+
+
 def instance(
     name: str,
     *,
@@ -212,13 +220,19 @@ def test_large_roster_is_complete_and_deterministically_counted(count):
     assert output.count("├──") + output.count("└──") == count
 
 
-def test_dumb_terminal_uses_ascii_branches_without_controls(monkeypatch):
-    monkeypatch.setenv("TERM", "dumb")
+@pytest.mark.parametrize(
+    ("term", "first_branch", "last_branch"),
+    [("xterm-256color", "├──", "└──"), ("dumb", "+--", r"\--")],
+)
+def test_terminal_type_selects_tree_branches_without_controls(
+    monkeypatch, term, first_branch, last_branch
+):
+    monkeypatch.setenv("TERM", term)
     roster = RuntimeInstanceSnapshot((instance("gus"), instance("bob")))
     output = render(HubSnapshot("running", "v0.3.4", roster))
 
-    assert "+-- gus" in output
-    assert r"\-- bob" in output
+    assert output.splitlines()[1].startswith(f"{first_branch} gus")
+    assert output.splitlines()[2].startswith(f"{last_branch} bob")
     assert "\x1b[" not in output
 
 
