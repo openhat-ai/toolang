@@ -9,7 +9,8 @@ from rich.console import Console
 import typer
 from typer._click.exceptions import ClickException
 
-from toolang.cli.common.context import context_agent, context_root
+from toolang.cli.common.context import context_agent, context_layout, context_root
+from toolang.cli.common.terminal_session import prepare_terminal
 from toolang.cli.common.top_view import TopView
 from toolang.up.top import TopObserver
 
@@ -42,8 +43,9 @@ def top(
     if not math.isfinite(refresh) or refresh <= 0:
         raise typer.BadParameter("must be finite and positive", param_hint="--refresh")
     agent = context_agent(ctx)
+    root = context_root(ctx)
     observer = TopObserver(
-        context_root(ctx),
+        root,
         agent=agent,
         period=int(period.value[:-1]) * 3600,
         recent=int(recent.value[:-1]) * 60,
@@ -63,7 +65,14 @@ def top(
         else:
             from toolang.cli.common.top import run_top
 
-            run_top(observer, view)
+            with prepare_terminal(
+                "top",
+                root=root,
+                layout=context_layout(ctx) if agent else None,
+                label=f"top {agent}" if agent else "top team",
+                context="" if agent else str(root.resolve()),
+            ):
+                run_top(observer, view)
     except KeyboardInterrupt:
         pass
     except (OSError, RuntimeError, ValueError) as exc:

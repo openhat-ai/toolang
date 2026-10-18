@@ -9,7 +9,7 @@ import typer
 from toolang.cli.common.context import CliContext
 from toolang.cli.common.terminal_session import TerminalSession
 from toolang.cli.toolang import main as cli
-from toolang.cli.toolang.commands import hub, script, thread
+from toolang.cli.toolang.commands import hub, script, thread, top
 from toolang.common.layout import AgentLayout
 from toolang.execution.types import RunOverride
 from toolang.lang.input import CallInput
@@ -21,12 +21,14 @@ from toolang.up.types import AgentServerRef
     [
         ["chat"],
         ["talk"],
+        ["top"],
         ["serve"],
         ["hub", "serve"],
         ["rerun"],
         ["rerun"],
         ["agent:sample", "chat"],
         ["agent:sample", "serve"],
+        ["agent:sample", "top"],
     ],
 )
 def test_terminal_commands_remove_title_prefix_option(tmp_path, capsys, command):
@@ -186,6 +188,40 @@ def test_hub_serve_has_one_outer_lifecycle(tmp_path, monkeypatch, publication):
     assert error.value.exit_code == 0
     assert entries[0][0] == "serve" and entries[0][1]["label"] == "serve hub"
     assert events == ["start", "close"]
+
+
+@pytest.mark.parametrize("agent", [None, "alice"])
+def test_interactive_top_publishes_scoped_title_and_closes_on_exit(
+    tmp_path, monkeypatch, publication, agent
+):
+    import sys
+
+    entries, events = publication(top)
+    layout = AgentLayout.resident(tmp_path, agent) if agent else None
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
+
+    class Observer:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def close(self):
+            events.append("observer closed")
+
+    def run(*_args):
+        assert events == ["start"]
+
+    monkeypatch.setattr(top, "TopObserver", Observer)
+    monkeypatch.setattr("toolang.cli.common.top.run_top", run)
+    context = typer.Context(
+        typer.main.get_command(cli.app), obj=CliContext(tmp_path, agent, layout)
+    )
+    top.top(context)
+    assert entries[0][0] == "top"
+    assert entries[0][1]["label"] == (f"top {agent}" if agent else "top team")
+    assert entries[0][1]["layout"] == layout
+    assert entries[0][1]["context"] == ("" if agent else str(tmp_path.resolve()))
+    assert events == ["start", "close", "observer closed"]
 
 
 def test_agent_serve_publishes_once_at_outer_cli(tmp_path, monkeypatch, publication):

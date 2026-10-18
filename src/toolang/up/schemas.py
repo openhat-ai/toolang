@@ -58,15 +58,31 @@ class TopSnapshot(BaseModel):
             else sum(item.placement == placement for item in self.inventory.instances)
             for placement in ("resident", "visiting", "roaming")
         ]
+        current = {item.identity for item in self.inventory.instances}
+        live_sources = {
+            source.identity: source
+            for source in self.sources
+            if source.identity in current
+        }
         active = (
             None
-            if unknown or any(source.live_stale for source in self.sources)
-            else sum(len(source.live.trees) for source in self.sources if source.live)
+            if unknown
+            or len(live_sources) != len(current)
+            or any(source.live_stale for source in live_sources.values())
+            else sum(
+                len(source.live.trees)
+                for source in live_sources.values()
+                if source.live
+            )
         )
         completed = None
-        if not unknown and all(
-            source.completed is not None and source.activity_error is None
-            for source in self.sources
+        if (
+            not unknown
+            and not self._missing_sources()
+            and all(
+                source.completed is not None and source.activity_error is None
+                for source in self.sources
+            )
         ):
             completed = CompletionCounts(
                 **{
@@ -88,7 +104,7 @@ class TopSnapshot(BaseModel):
         )
 
     def usage_total(self) -> Metrics | None:
-        if self.inventory_updating or self.inventory.partial:
+        if self.inventory_updating or self.inventory.partial or self._missing_sources():
             return None
         result = Metrics()
         for source in self.sources:
@@ -96,3 +112,7 @@ class TopSnapshot(BaseModel):
                 return None
             result += source.usage.metrics
         return result
+
+    def _missing_sources(self) -> bool:
+        available = {source.identity for source in self.sources}
+        return any(item.identity not in available for item in self.inventory.instances)

@@ -1,15 +1,17 @@
 # Top recent activity
 
-Status: approved by the human on 2026-10-18. Definition only; implementation
-requires a separate change. The implementation scope was amended by the human
-to defer Details content: only its open/close placeholder is required now.
+Status: approved by the human on 2026-10-18, including terminal styling,
+lightweight root markers, instance-name labels, four-decimal USD presentation,
+recent-change/default and numeric sorting, and mouse selection/sorting.
+Details content remains deferred; only its open/close placeholder is required.
 
 ## Goal and scope
 
 Make `too top` a dashboard of current and recent execution: a switchable rolling
 usage summary and one table of live trees and recently completed root Runs.
 Success means useful observation without `stats.db`, active-root contributions,
-accurate current activity, and recovery of recent completions after reopening.
+accurate current activity, and recent completions from discoverable or
+session-observed sources.
 Historical exploration has a separate Stats plan and approval.
 
 This definition replaces the older [Top activity](top-activity.md) and
@@ -30,13 +32,13 @@ historical Stats has a separate definition and implementation scope.
   Reuse `up.observation.runtime_snapshot` and its validated runtime registrations,
   refreshed every five seconds, rather than resident-only `AgentProcess.list`.
   Count unique instance identities using the existing inventory contract; use
-  `RuntimeInstance.label` to distinguish same-name placements/instances. Never
+  `RuntimeInstance.label` without the `#runtime_instance` suffix for display,
+  retaining its existing resident/visiting/roaming instance-name rule (for
+  example, `aid@r70200d1f`). Preserve full source identities internally. Never
   scan arbitrary source directories, start agents or retain server leases.
 - Query discovered readable source stores even when execution is offline. Retain
-  known source locations for the current observation's windows after a runtime
-  disappears; expose unavailable coverage if its store can no longer be read.
-  Reopening recovers recent completions from discoverable stores. Do not promise
-  discovery of arbitrary detached temporary histories.
+  sources only in the current Top session, following the lifecycle below. Do not
+  add persistent source catalogs or registration/shutdown hooks for Top.
 - Options: `--period 1h|4h|8h` (default `1h`),
   `--recent 1m|5m|15m` (default `5m`), `--refresh SECONDS` (finite, positive,
   default `1`), `--once`, `--json`. Non-TTY and JSON output are single snapshots.
@@ -61,6 +63,31 @@ PR #843's retention contract. CLI/TUI code owns no SQL, accounting or duplicate
 statistics implementation. Execution never imports Stats. Hosting composes the
 readers, with concrete paths/time resolved at call sites. Implementation builds
 on PR #844; this definition can be merged independently.
+
+## Source lifecycle
+
+Keep two sets with distinct responsibilities: the latest validated inventory
+defines current membership; an in-memory map contains sources observed during
+this Top session. Key both by the existing full instance identity. Reuse
+`up.observation.runtime_inventory` for resident discovery, registration validation
+and liveness; Top does not implement another discovery or process-liveness rule.
+
+| Source state | Observation behavior |
+| --- | --- |
+| Current | Follow the inventory's latest binding. Read live activity when available and query completion/usage windows through `toolang.stats`. Only current members contribute instance counts, active roots and live coverage. |
+| Departed during this session | Retain its source in memory for at most eight hours after its last discovery, matching the largest supported window. Query only persisted completions and usage; stop polling its old live endpoint. Do not infer a terminal Run status from instance departure. |
+| Forgotten or Top reopened | Discard session memory. Discover only residents and currently registered instances under the selected root. Do not recover previously deregistered visiting/roaming instances or scan their old directories. |
+
+Rediscovery updates the same map entry rather than adding its statistics twice.
+`too alice top` applies its resident-only scope before adding sources. Window
+changes query the same observed sources; they neither discover old sources nor
+freeze an aggregate that would stop aging correctly. Read errors retain their
+unavailable/stale meaning and never become zero or proof of completion.
+
+`TopObserver` owns discovery, source lifetime and asynchronous query state;
+`toolang.stats` owns persisted selection/accounting; the summary and presenter
+consume the resulting snapshot. Runtime start, stop and registration cleanup
+remain independent of Top.
 
 ## Windows and accounting
 
@@ -98,13 +125,35 @@ sentence-style summaries in order: agents, runs, stats. Metrics start at the
 left; their titles (`agents`, `runs last 5m`, `stats last 1h`) sit without colons
 in a fixed-width column at the far right, flush right and top-aligned with the
 first metric line. Wrap continuation metrics under the left metric column.
-Emphasize numbers and subdue labels. Use comma-separated values without boxes
-or a statistics table heading.
+Use normal intensity and weight throughout the title, clock and summaries,
+including numbers and right-side labels. Use comma-separated values without
+boxes or a statistics table heading.
+
+Fill the terminal screen and width. Use a green table-heading background with
+black text, a deep cyan (`#005f5f`) selection background, and cyan bottom bars
+with black text. In the function-key bar, render Fn numbers white on black and
+action labels on cyan; extend the remaining bar background to the right edge.
+Keep the coverage/status line directly above the function keys, using the same
+cyan style when it has content. Leave an empty coverage line uncolored. Anchor
+both lines at the bottom and clip long status messages to one line.
+
+The owning root determines whole-row intensity: active roots and every row in
+their subtrees use normal text, including retained terminal Steps. Finished roots
+use dim text across all columns and padding. Selection changes only the row's
+background, preserving dim finished rows. Do not color whole rows by terminal
+status. Hide the physical terminal cursor throughout interaction and restore
+terminal state on exit.
+
+Prefix active root STATUS with `+ ` in Tree and List, expanded or collapsed.
+Leave two spaces before finished-root states and descendant tree branches;
+descendants retain only the existing branch guides. The marker has the same
+color and weight as its row. Add no result icons, disclosure triangles or
+trailing `[+]` markers.
 
 Keep every field in each group visible in a fixed order, including all three
 agent placements and all three terminal states. A complete empty inventory,
 completed-root selection or usage window displays `0` for counts/tokens and
-`$0.00` for spend. Missing provider usage/pricing, loading and unavailable sources
+`$0.0000` for spend. Missing provider usage/pricing, loading and unavailable sources
 remain unknown (`-`, with the existing Updating/coverage indication); never
 convert unknown or incomplete observations to zero or hide their field labels.
 
@@ -115,34 +164,50 @@ convert unknown or incomplete observations to zero or hide their field labels.
 | `stats last 1h` | Period usage: model calls, tool calls, input/cached/output tokens and spend; omit started roots. |
 
 One body table follows, with one column heading and no Active/Completed
-subheaders, separators or empty group placeholders. Active roots sort first in
-admission order, sorted by creation time then source/root identity; terminal
-roots follow by completion time descending then source/root identity.
+subheaders, separators or empty group placeholders. Active roots always precede
+finished roots. By default, active roots sort by most recently observed tree
+change (status, invocation, counters, usage or structure), excluding clock/elapsed
+refreshes and presentation changes. Seed newly observed trees from their latest
+node lifecycle timestamp. Finished roots sort by completion time descending.
+Use source/root identity for deterministic ties and preserve selection by identity.
+
+F6 opens a sort picker with Default and MODEL, TOOL, INPUT, CACHED, OUTPUT, SPEND,
+TIME+. Up/Down chooses, Left selects ascending, Right selects descending, and
+F6/Enter applies; Esc cancels. Newly chosen fields start descending. Clicking a
+sortable table heading selects descending, then toggles direction on repeat;
+mark that heading with `↓`/`↑`. Default restores recent-change ordering.
+Sort each partition independently by the root's lifetime numeric values, with
+unknowns last in either direction and default order breaking ties. TIME+ uses
+elapsed seconds, frozen at the last observation for stale live data. Keep each
+owned subtree attached to its root and its internal execution order unchanged.
+Sorting covers loaded roots; paging can insert newly loaded completions in order.
+Mouse clicks select visible rows without changing folds. Keyboard interaction
+and exact source/node identities remain available.
 Illustrative values and IDs below are sample data.
 
 ```text
-too top                                                                                         14:32:10
+too top                                                                                                                             14:32:10
 
-2 resident, 3 visiting, 1 roaming                                                                 agents
-3 active, 4 completed: 2 succeeded, 1 failed, 1 canceled                                    runs last 5m
-76 model calls, 188 tool calls, 512k input, 360k cached, 54k output, $2.46 spend           stats last 1h
+2 resident, 3 visiting, 1 roaming                                                                                                     agents
+3 active, 4 completed: 2 succeeded, 1 failed, 1 canceled                                                                        runs last 5m
+76 model calls, 188 tool calls, 512k input, 360k cached, 54k output, $2.4600 spend                                             stats last 1h
 
-AGENT RUN          MODEL TOOL INPUT CACHED OUTPUT SPEND  TIME+ STATUS
-alice run_7p2m9k4w    12   18   42k    26k   3.1k $0.38  2m14s flow:review_project
-alice run_7p2m9k4w     -    -     -      -      -     -   1m8s └─ map agic:review_file
-alice run_7p2m9k4w     3    4   11k     8k    800 $0.09    38s    ├─ agic:review_file · item 3/8
-alice run_7p2m9k4w     1    0     -      -      -     -    12s    │  └─ openai/gpt-5
-alice run_7p2m9k4w     2    3    7k     4k    500 $0.06    31s    └─ agic:review_file · item 4/8
-alice run_7p2m9k4w     0    1     -      -      -     -     9s       └─ shell.exec
-bob   run_7p2m3c8n     5    9   18k     9k   1.3k $0.16   8m2s flow:
-bob   run_7p2m3c8n     -    -     -      -      -     -    24s └─ await worker
-bob   run_7p2m5t6x     0    0     -      -      -     -       - pending · agic:
-alice run_7p2m1b7z     8   12   28k    17k   2.4k $0.24     45s failed
-bob   run_7p2m4f9s     4    3   13k     8k    900 $0.11     58s succeeded
-alice run_7p2m8g2y     3    5   10k     6k    600 $0.08    2m8s canceled
-bob   run_7p2m5n3v     2    4    7k     4k    400 $0.05     32s succeeded
+AGENT RUN          MODEL  TOOL  INPUT CACHED OUTPUT     SPEND   TIME+ STATUS
+alice run_7p2m9k4w    12    18    42k    26k   3.1k   $0.3800   2m14s + flow:review_project
+alice run_7p2m9k4w     -     -      -      -      -         -    1m8s   └─ map agic:review_file
+alice run_7p2m9k4w     3     4    11k     8k    800   $0.0900     38s      ├─ agic:review_file · item 3/8
+alice run_7p2m9k4w     1     0      -      -      -         -     12s      │  └─ openai/gpt-5
+alice run_7p2m9k4w     2     3     7k     4k    500   $0.0600     31s      └─ agic:review_file · item 4/8
+alice run_7p2m9k4w     0     1      -      -      -         -      9s         └─ shell.exec
+bob   run_7p2m3c8n     5     9    18k     9k   1.3k   $0.1600    8m2s + flow:
+bob   run_7p2m3c8n     -     -      -      -      -         -     24s   └─ await worker
+bob   run_7p2m5t6x     0     0      -      -      -         -       - + pending · agic:
+alice run_7p2m1b7z     8    12    28k    17k   2.4k   $0.2400     45s   failed
+bob   run_7p2m4f9s     4     3    13k     8k    900   $0.1100     58s   succeeded
+alice run_7p2m8g2y     3     5    10k     6k    600   $0.0800    2m8s   canceled
+bob   run_7p2m5n3v     2     4     7k     4k    400   $0.0500     32s   succeeded
 
-F1 Help   F3 Details   F5 List   F7 Runs(15m)   F8 Stats(4h)   F10 Quit
+F1 Help   F3 Details   F5 List   F6 Sort   F7 Runs(15m)   F8 Stats(4h)   F10 Quit
 ```
 
 - Agent placement counts follow the discovered instance inventory, including
@@ -166,10 +231,12 @@ F1 Help   F3 Details   F5 List   F7 Runs(15m)   F8 Stats(4h)   F10 Quit
   branches out of ID/numeric columns. Always retain MODEL and TOOL call-count
   columns alongside INPUT, CACHED and OUTPUT token columns, using compact values;
   exact values remain in Details. These are node lifetime metrics, independent
-  of Period. Preserve unknown/approximate-cost metadata in Details.
+  of Period. Show USD spend with four decimal places and no approximation
+  marker in both summaries and rows; preserve unknown/approximate-cost metadata
+  in the source data and future Details.
 - Design one layout for normal terminal widths, keeping the same columns and
-  full headings. Numeric columns have stable widths; STATUS uses the remaining
-  space when resized. Keep rows to one line and clip long STATUS text at display-cell
+  full headings. Numeric columns have stable minimum widths; SPEND widens for
+  large amounts. STATUS uses the remaining space when resized. Keep rows to one line and clip long STATUS text at display-cell
   boundaries, with
   complete references/text in Details. Never abbreviate the root run_id.
   Use a vertical table viewport and restore terminal state on exit.
@@ -241,7 +308,7 @@ Use the same rules for root Runs, child Runs and flow/runtime Step subtrees:
   follow an await/spawn/exec target outside the owned tree.
 - A collapsed Run keeps its own runnable, then appends the selected operation
   once. A collapsed Step displays the selected operation. Skip intermediate Run
-  names and serial operations; append `[+]` only when descendants are hidden.
+  names and serial operations; do not add a separate collapsed-state marker.
   Preserve the selected row's occurrence; it remains a position, not progress.
   A retained terminal Step keeps its own state/operation and reports only its
   hidden active-branch count, rather than assigning its state to a child activity.
@@ -252,12 +319,12 @@ Use the same rules for root Runs, child Runs and flow/runtime Step subtrees:
 For the example above, folding roots changes only their STATUS:
 
 ```text
-flow:review_project · map agic:review_file · 2 active [+]
-flow: · await worker [+]
++ flow:review_project · map agic:review_file · 2 active
++ flow: · await worker
 ```
 
 Folding only the first map child gives
-`agic:review_file · openai/gpt-5 · item 3/8 [+]`; its visible sibling continues
+`agic:review_file · openai/gpt-5 · item 3/8`; its visible sibling continues
 to show `agic:review_file · item 4/8` with a separate `shell.exec` child row.
 
 ## Lifecycle and controls
@@ -273,6 +340,8 @@ first visible child. Start in Tree with current paths expanded.
 F5 toggles Tree/List: List folds all roots for presentation;
 returning to Tree restores individual folds. Keep folds by exact node identity
 within the source epoch; move hidden selection to its visible ancestor.
+F6 opens/applies the sort picker; mouse row selection and heading sorting use
+the same selection and ordering state as the keyboard.
 F7 cycles Recent `1m / 5m / 15m`; F8 cycles Period `1h / 4h / 8h`.
 F3 toggles the Details placeholder (Enter is an alias), Esc closes it,
 PgUp/PgDn pages the table, F1 opens Help, and F10 exits (q/Ctrl-C are aliases).
@@ -288,6 +357,13 @@ labels show the next setting, not the current one: with Recent `5m` and Period
 `1h`, show `Runs(15m)` and `Stats(4h)`. Header titles always show the current
 windows. F3 shows Details/Close and F5 shows List/Tree for the next action.
 CLI options remain `--recent` and `--period`.
+
+Interactive Top uses the existing terminal-session publisher: OSC title
+`top team` for all local instances and `top AGENT` for one resident, honoring
+the existing `terminal.title.prefix.top` and `TOOLANG_TITLE_PREFIX_TOP` settings.
+Publish the normal Top pane identity/agent or root context through that same
+session, and clear the title and pane marks on exit. Snapshot and JSON output
+never publish terminal titles or pane identity.
 
 ## Observation, touchpoints and verification
 
@@ -326,11 +402,19 @@ factory/routing and a focused presenter.
 | Missing/corrupt/initializing `stats.db` | Top works from available sources without opening/creating that database or starting archival; persisted aggregates come through `toolang.stats`. |
 | Every Period, boundary timestamps, long-running roots and archived facts | Totals match a direct-source oracle, including settled active-root contributions and nullable/approximate quantities; unfinished consumption is not invented or counted twice. |
 | Inventory changes, idle instances and parallel children | Placement counts follow inventory; active counts follow physical-root lifecycle and remain independent of folds/windows. |
+| Reopen and source rediscovery | Fresh Top discovers only residents/current registrations; departed temporary histories from another Top session stay absent; rediscovery updates one source without duplicate totals. |
+| Roaming departure with retained history | Retained completion/usage facts remain visible; departed instances add no live rows or live-coverage warnings and cannot make healthy current active counts unknown. |
+| Departure during an in-flight query | Queued old-endpoint polls are canceled and subsequent polls read only source statistics; durable terminal facts remain eligible, an old live result cannot restore active rows, and window changes/expiry still apply. |
 | Native/runtime run, async run, spawn, await and exec | Equivalent labels preserve source kind, invocation state, ownership and tool counts; lookalikes/runtime-only tools keep tool identities. |
 | Expanded/folded serial paths, one/many parallel lanes and retained async ancestors | No repeated visible child activity or representative lane; row identity/metrics and restored folds are stable; occurrence never claims completion progress. |
 | Root/child/Step rows and Details | Full owning root ID stays in RUN; child IDs are Details-only; typed/unnamed runnable, provider/model and toolset.tool formatting is correct; finished Runs show terminal state only. |
+| Instance labels and USD formatting | Table and source diagnostics retain the existing instance name without `#runtime_instance`; USD has four decimals and no `~`, including zero and approximate costs; JSON metadata is unchanged and large costs keep STATUS aligned. |
+| Default and field sorting | Real tree changes move active roots above unchanged peers; clock/fold changes do not; all seven numeric fields sort both directions with unknowns last, finished roots below active roots, attached subtrees and stable selection. |
+| Keyboard and mouse sorting/selection | F6 picker applies/cancels and restores Default; heading clicks choose/toggle and show direction; row clicks select correctly after scrolling, overlays, resize and reorder. |
 | Both scopes, empty/idle data and normal-terminal resize | All columns and fixed header fields remain; right-side titles share the clock's edge; known empty is zero, unknown is explicit; no group subheaders or started-root metric. |
 | Window/Tree/List/Details controls | Footer shows only Fn keys and the next setting through wraparound; header shows current windows; F3/Enter share Details; Period/folds do not change lifetime values. |
+| Terminal appearance, selection and resize | Normal-weight/intensity summaries; green full-width heading, deep cyan full-row selection and cyan bottom bars; active owned subtrees remain normal and selected terminal roots remain dim through the last column; root `+` is unchanged by folds/List. |
+| Cursor and terminal publication | Cursor stays hidden through refresh, keys and overlays; both scopes publish configured OSC titles and pane identities, clear them on exit, and leave snapshot/JSON output free of terminal publication. |
 | Completion during refresh, current-second completion, reopen and idle expiry | Exactly one durable root row, stable selection and correct eligibility; Recent counts include unloaded rows and equal terminal-status subtotals. |
 | Many roots, busy eight-hour stores, slow/partial/offline sources and epoch/query changes | Bounded indexed paging, fresh live input/counters, explicit coverage and no obsolete or falsely fresh replacements. |
 | Single/all-agent snapshot/JSON, Unicode, paging and exit | Equivalent metrics, correct clipping, placeholder interaction and restored terminal state. |

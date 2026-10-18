@@ -839,6 +839,8 @@ def runtime_inventory(root: Path) -> RuntimeInventory:
             observed = str(workload_state or reported_state)
             detail = status.message or f"observed {observed}"
             diagnostic = f"{detail[:180]}"
+        if layout.placement != "resident" and normalized_state == "not running":
+            continue
         if diagnostic is not None:
             observed_state = str(workload_state or reported_state)
         else:

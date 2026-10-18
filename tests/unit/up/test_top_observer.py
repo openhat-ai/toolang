@@ -1,6 +1,7 @@
 """Observation generations, discovery retention and slow scans stay independent."""
 
 from concurrent.futures import Future
+from contextlib import closing
 from threading import Event
 from dataclasses import replace
 
@@ -18,7 +19,7 @@ from toolang.stats.errors import StatsUnavailable
 from toolang.stats.schemas import CompletedRoots, CompletionCounts, RecentUsage
 from toolang.stats.types import Metrics, timestamp
 from toolang.up import top
-from toolang.up.observation import RuntimeInventory, RuntimeSource
+from toolang.up.observation import RuntimeInventory, RuntimeRegistration, RuntimeSource
 from toolang.up.schemas import ActivitySnapshot, SourceActivity
 from toolang.up.types import RuntimeInstance, RuntimeInstanceSnapshot
 
@@ -56,6 +57,234 @@ def resolved(value):
     result = Future()
     result.set_result(value)
     return result
+
+
+@pytest.mark.parametrize("started", [False, True])
+def test_departure_stops_endpoint_polling_and_rejects_inflight_live(
+    tmp_path, monkeypatch, started
+):
+    source = binding(tmp_path)
+    now = [NOW]
+    calls = []
+    monkeypatch.setattr(top.time, "time", lambda: now[0])
+
+    def read(source, recent, **kwargs):
+        calls.append(source.endpoint)
+        return ActivitySnapshot(live=None, completed=completed(now[0], recent))
+
+    monkeypatch.setattr(top, "read_activity", read)
+    with closing(
+        top.TopObserver(tmp_path, agent=None, period=3600, recent=300, refresh=60)
+    ) as observer:
+        observer.discovery_job = resolved(
+            RuntimeInventory(RuntimeInstanceSnapshot((source.instance,)), (source,))
+        )
+        observer._inventory(NOW)
+        state = observer.sources[source.instance.identity]
+        inflight = Future()
+        if started:
+            inflight.set_running_or_notify_cancel()
+        state.activity, state.activity_recent = inflight, 300
+        state.next_usage = NOW + 100
+        observer.discovery_job = resolved(
+            RuntimeInventory(RuntimeInstanceSnapshot(()), ())
+        )
+        now[0] += 1
+        observer._inventory(now[0])
+        assert state.binding.endpoint is None
+        assert not observer.inventory.instances
+        assert calls == []
+        if not started:
+            assert inflight.cancelled() and state.activity is None
+            return
+        root = RunNode("run_old", None, "agic:work", "running", timestamp(NOW - 10))
+        late_live = LiveSnapshot(
+            "old", timestamp(NOW), (LiveTreeSnapshot(root.id, "chat_top", (root,)),)
+        )
+        done = replace(root, status="succeeded", finished_at=timestamp(NOW))
+        inflight.set_result(
+            ActivitySnapshot(
+                live=late_live,
+                completed=completed().model_copy(
+                    update={"counts": CompletionCounts(succeeded=1), "roots": (done,)}
+                ),
+            )
+        )
+        observer._collect(state, now[0])
+        assert state.value.live is None and state.value.live_stale
+        assert state.value.completed is not None
+        assert state.value.completed.roots == (done,)
+        assert state.next_activity <= now[0]
+        observer.tick()
+        assert state.activity is not None
+        state.activity.result(timeout=1)
+        assert calls == [None]
+
+
+def test_rediscovery_refreshes_binding_without_accepting_a_predeparture_live_result(
+    tmp_path,
+):
+    source = binding(tmp_path)
+    with closing(
+        top.TopObserver(tmp_path, agent=None, period=3600, recent=300, refresh=60)
+    ) as observer:
+        inventory = RuntimeInventory(
+            RuntimeInstanceSnapshot((source.instance,)), (source,)
+        )
+        observer.discovery_job = resolved(inventory)
+        observer._inventory(NOW)
+        state = observer.sources[source.instance.identity]
+        state.value.usage = usage()
+        inflight = Future()
+        inflight.set_running_or_notify_cancel()
+        state.activity, state.activity_recent = inflight, 300
+        observer.discovery_job = resolved(
+            RuntimeInventory(RuntimeInstanceSnapshot(()), ())
+        )
+        observer._inventory(NOW + 1)
+        observer.discovery_job = resolved(inventory)
+        observer._inventory(NOW + 2)
+        assert observer.sources == {source.instance.identity: state}
+        assert state.binding.endpoint == source.endpoint and state.seen == NOW + 2
+        inflight.set_result(
+            ActivitySnapshot(
+                live=LiveSnapshot("obsolete", timestamp(NOW), ()), completed=completed()
+            )
+        )
+        observer._collect(state, NOW + 2)
+        assert state.value.live is None and state.value.live_stale
+        assert state.next_activity <= NOW + 2
+        assert (
+            state.value.usage is not None
+            and state.value.usage.metrics.model_calls == 76
+        )
+
+
+def test_current_membership_is_not_inferred_from_readable_source_bindings(tmp_path):
+    source = binding(tmp_path)
+    with closing(
+        top.TopObserver(tmp_path, agent=None, period=3600, recent=300, refresh=60)
+    ) as observer:
+        observer.discovery_job = resolved(
+            RuntimeInventory(RuntimeInstanceSnapshot((source.instance,)), ())
+        )
+        observer._inventory(NOW)
+        assert observer.inventory.instances == (source.instance,)
+        summary = observer.tick().summary
+        assert summary.resident == 1 and summary.active is None
+        assert summary.completed is None and summary.usage is None
+
+
+def test_discovery_failure_preserves_current_bindings_and_departed_sources_expire(
+    tmp_path,
+):
+    source = binding(tmp_path)
+    with closing(
+        top.TopObserver(tmp_path, agent=None, period=3600, recent=300, refresh=60)
+    ) as observer:
+        observer.discovery_job = resolved(
+            RuntimeInventory(RuntimeInstanceSnapshot((source.instance,)), (source,))
+        )
+        observer._inventory(NOW)
+        state = observer.sources[source.instance.identity]
+        failure = Future()
+        failure.set_exception(OSError("registry temporarily unavailable"))
+        observer.discovery_job = failure
+        observer._inventory(NOW + 1)
+        assert observer.inventory.instances == (source.instance,)
+        assert observer.inventory.partial and state.binding.endpoint == source.endpoint
+        observer.discovery_job = resolved(
+            RuntimeInventory(RuntimeInstanceSnapshot(()), ())
+        )
+        observer._inventory(NOW + 2)
+        queued = Future()
+        state.activity = queued
+        observer.next_discovery = NOW + 30000
+        observer._inventory(NOW + 28800)
+        assert observer.sources[source.instance.identity] is state
+        observer._inventory(NOW + 28801)
+        assert not observer.sources and queued.cancelled()
+
+
+@pytest.mark.parametrize("placement", ["visiting", "roaming"])
+def test_session_retains_departed_history_but_fresh_top_discovers_only_current_sources(
+    tmp_path, monkeypatch, placement
+):
+    now = [NOW]
+    monkeypatch.setattr(top.time, "time", lambda: now[0])
+    resident = AgentLayout.resident(tmp_path, "alice")
+    resident.home.mkdir(parents=True)
+    layout = (
+        AgentLayout.visiting(
+            "https://example.com/worker.too", "worker", toolang_root=tmp_path
+        )
+        if placement == "visiting"
+        else replace(AgentLayout.roaming(tmp_path / "worker.too"), instance="one")
+    )
+    with (
+        closing(RunStore(resident.run_store)),
+        closing(
+            top.TopObserver(tmp_path, agent=None, period=3600, recent=300, refresh=60)
+        ) as observer,
+    ):
+        with RuntimeRegistration(layout, toolang_root=tmp_path, drivers=frozenset()):
+            with closing(RunStore(layout.run_store)) as store:
+                project_run_start(
+                    store,
+                    run_id="run_done",
+                    thread_id="chat_top",
+                    origin="chat",
+                    input=Message.user("fixture"),
+                    started_at=timestamp(NOW - 10),
+                )
+                store.finish_run(run_id="run_done", finished_at=timestamp(NOW - 1))
+            first = observer.once()
+            assert len(first.inventory.instances) == 2
+            assert (
+                first.summary.completed is not None
+                and first.summary.completed.total == 1
+            )
+        observer.discovery_job = resolved(top.runtime_inventory(tmp_path))
+        now[0] += 1
+        snapshot = observer.tick()
+        assert len(snapshot.inventory.instances) == 1
+        assert len(snapshot.sources) == 2
+        assert (
+            snapshot.summary.completed is not None
+            and snapshot.summary.completed.total == 1
+        )
+        from toolang.cli.common.top_view import TopView
+
+        assert "run_done" in TopView().render(snapshot, width=140).plain
+        observer.set_recent(60)
+        now[0] += 61
+        for state in observer.sources.values():
+            if state.activity is not None:
+                state.activity.result(timeout=1)
+        observer.tick()
+        for state in observer.sources.values():
+            if state.activity is not None:
+                state.activity.result(timeout=1)
+        expired = observer.tick()
+        assert (
+            expired.summary.completed is not None
+            and expired.summary.completed.total == 0
+        )
+        assert "run_done" not in TopView().render(expired, width=140).plain
+        with closing(
+            top.TopObserver(tmp_path, agent=None, period=3600, recent=300, refresh=60)
+        ) as fresh:
+            restarted = fresh.once()
+            assert (
+                len(restarted.sources) == 1
+                and restarted.sources[0].placement == "resident"
+            )
+            assert (
+                restarted.summary.completed is not None
+                and restarted.summary.completed.total == 0
+            )
+        assert not layout.stats_store.exists()
+        assert not (tmp_path / ".runtime" / "recent-sources").exists()
 
 
 def test_slow_usage_never_blocks_live_or_marks_new_window_with_old_metrics(
@@ -411,6 +640,7 @@ def test_offline_completion_outside_first_page_replaces_the_known_live_root(
     try:
         from toolang.cli.common.top_view import TopView
 
+        observer.inventory = RuntimeInstanceSnapshot((source.instance,))
         view = TopView()
         view.project(observer.tick())
         selected_key = view.selected

@@ -7,6 +7,7 @@ from datetime import datetime
 
 from rich.cells import cell_len, set_cell_size
 from rich.console import Console
+from rich.style import Style
 from rich.text import Text
 
 from toolang.base.utils.tools import decode_tool_name, display_tool_name
@@ -18,8 +19,14 @@ from toolang.up.schemas import SourceActivity, TopSnapshot
 
 PERIODS = (3600, 14400, 28800)
 RECENTS = (60, 300, 900)
+SORT_FIELDS = ("MODEL", "TOOL", "INPUT", "CACHED", "OUTPUT", "SPEND", "TIME+")
 Key = tuple[str, str, str]
 TERMINAL = frozenset(("succeeded", "failed", "canceled"))
+NORMAL = Style(bold=False, dim=False)
+TABLE_HEADER = Style(color="black", bgcolor="green", bold=False, dim=False)
+SELECTED = Style(bgcolor="#005f5f")
+STATUS_BAR = Style(color="black", bgcolor="cyan", bold=False, dim=False)
+FUNCTION_KEY = Style(color="white", bgcolor="black", bold=False, dim=False)
 
 
 def window(value: int) -> str:
@@ -95,32 +102,37 @@ def compact(value: int | None) -> str:
     return str(value)
 
 
-def spend(
-    value: float | None, approximate: bool = False, *, abbreviate: bool = False
-) -> str:
-    if value is None:
-        return "-"
-    prefix = "~$" if approximate else "$"
-    if abbreviate and value >= 1000:
-        for scale, suffix in ((1e12, "t"), (1e9, "b"), (1e6, "m"), (1000, "k")):
-            if value >= scale:
-                number = f"{value / scale:.1f}".rstrip("0").rstrip(".")
-                text = f"{prefix}{number}{suffix}"
-                return text if len(text) <= 9 else f"{prefix}{value:.0e}"
-    return f"{prefix}{value:.2f}"
+def spend(value: float | None) -> str:
+    return "-" if value is None else f"${value:.4f}"
+
+
+def instance_name(source: SourceActivity) -> str:
+    return source.label.partition("#")[0]
+
+
+def elapsed(node: LiveNode, observed_at: str) -> int | None:
+    if node.started_at is None:
+        return None
+    return max(0, seconds(node.finished_at or observed_at) - seconds(node.started_at))
 
 
 def duration(node: LiveNode, observed_at: str) -> str:
-    if node.started_at is None:
+    value = elapsed(node, observed_at)
+    if value is None:
         return "-"
-    elapsed = max(
-        0, seconds(node.finished_at or observed_at) - seconds(node.started_at)
+    if value >= 3600:
+        return f"{value // 3600}h{value % 3600 // 60}m"
+    if value >= 60:
+        return f"{value // 60}m{value % 60}s"
+    return f"{value}s"
+
+
+def observed_at(source: SourceActivity, snapshot: TopSnapshot) -> str:
+    return (
+        source.live.observed_at
+        if source.live_stale and source.live
+        else snapshot.observed_at
     )
-    if elapsed >= 3600:
-        return f"{elapsed // 3600}h{elapsed % 3600 // 60}m"
-    if elapsed >= 60:
-        return f"{elapsed // 60}m{elapsed % 60}s"
-    return f"{elapsed}s"
 
 
 @dataclass(frozen=True)
@@ -134,6 +146,7 @@ class Row:
     branch: str
     status: str
     has_children: bool
+    root_finished: bool
 
 
 @dataclass
@@ -147,9 +160,21 @@ class TopView:
     offset: int = 0
     rows: list[Row] = field(default_factory=list)
     page_size: int = 10
+    sort_field: str | None = None
+    sort_descending: bool = True
+    sort_menu: bool = False
+    sort_choice: int = 0
+    sort_choice_descending: bool = True
+    _activity: dict[Key, tuple[tuple[LiveNode, ...], tuple[int, int]]] = field(
+        default_factory=dict
+    )
+    _revision: int = 0
+    _row_hits: dict[int, Key] = field(default_factory=dict)
+    _sort_hits: list[tuple[int, int, int, str]] = field(default_factory=list)
 
     def project(self, snapshot: TopSnapshot) -> list[Row]:
         roots: list[tuple[SourceActivity, RunNode, tuple[LiveNode, ...]]] = []
+        current = {instance.identity for instance in snapshot.inventory.instances}
         for source in snapshot.sources:
             active_roots = set()
             known_completed = (
@@ -157,7 +182,7 @@ class TopView:
                 if source.completed
                 else set()
             )
-            if source.live is not None:
+            if source.live is not None and source.identity in current:
                 for tree in source.live.trees:
                     root = next(
                         (n for n in tree.nodes if n.id == tree.root_run_id), None
@@ -178,16 +203,62 @@ class TopView:
                         <= cutoff
                     ):
                         roots.append((source, root, (root,)))
-        roots.sort(
-            key=lambda item: (
-                item[1].status in TERMINAL,
-                -seconds(item[1].finished_at or item[1].created_at)
-                if item[1].status in TERMINAL
-                else seconds(item[1].created_at),
-                item[0].identity,
-                item[1].id,
+        self._revision += 1
+        activity = {}
+        for source, root, nodes in roots:
+            if root.status in TERMINAL:
+                continue
+            key = (source.identity, source.live.epoch if source.live else "", root.id)
+            previous = self._activity.get(key)
+            if previous is None:
+                rank = (
+                    max(
+                        seconds(node.finished_at or node.started_at or node.created_at)
+                        for node in nodes
+                    ),
+                    self._revision,
+                )
+            elif nodes != previous[0]:
+                rank = (seconds(snapshot.observed_at), self._revision)
+            else:
+                rank = previous[1]
+            activity[key] = (nodes, rank)
+        self._activity = activity
+
+        def default_order(item):
+            source, node, _ = item
+            finished = node.status in TERMINAL
+            rank = (
+                (seconds(node.finished_at or node.created_at), 0)
+                if finished
+                else activity[
+                    (source.identity, source.live.epoch if source.live else "", node.id)
+                ][1]
             )
-        )
+            return finished, -rank[0], -rank[1], source.identity, node.id
+
+        roots.sort(key=default_order)
+        sort_field = self.sort_field
+        if sort_field is not None:
+
+            def metric(item):
+                source, node, _ = item
+                value = {
+                    "MODEL": node.calls.model_calls,
+                    "TOOL": node.calls.tool_calls,
+                    "INPUT": node.usage.input_tokens if node.usage else None,
+                    "CACHED": node.usage.cache_read_tokens if node.usage else None,
+                    "OUTPUT": node.usage.output_tokens if node.usage else None,
+                    "SPEND": node.cost,
+                    "TIME+": elapsed(node, observed_at(source, snapshot)),
+                }[sort_field]
+                return (
+                    node.status in TERMINAL,
+                    value is None,
+                    -(value or 0) if self.sort_descending else (value or 0),
+                )
+
+            roots.sort(key=metric)
         rows: list[Row] = []
         all_parents: dict[Key, Key | None] = {}
         keys: set[Key] = set()
@@ -255,8 +326,6 @@ class TopView:
                 position = occurrence(node)
                 if position:
                     label += " · " + position
-                if folded:
-                    label += " [+]"
                 if (
                     node.id == root.id
                     and source.live_stale
@@ -274,6 +343,7 @@ class TopView:
                         branch,
                         label,
                         bool(group),
+                        root.status in TERMINAL,
                     )
                 )
                 if not folded:
@@ -335,6 +405,12 @@ class TopView:
         return rows
 
     def move(self, delta: int) -> None:
+        if self.sort_menu:
+            choice = max(0, min(len(SORT_FIELDS), self.sort_choice + delta))
+            if choice != self.sort_choice:
+                self.sort_choice = choice
+                self.sort_choice_descending = True
+            return
         if self.rows:
             index = next(
                 (i for i, row in enumerate(self.rows) if row.key == self.selected), 0
@@ -344,6 +420,9 @@ class TopView:
             ].key
 
     def left(self) -> None:
+        if self.sort_menu:
+            self.sort_choice_descending = False
+            return
         row = next((row for row in self.rows if row.key == self.selected), None)
         if row is not None:
             if row.has_children and row.key not in self.folded and not self.list_mode:
@@ -352,6 +431,9 @@ class TopView:
                 self.selected = row.parent
 
     def right(self) -> None:
+        if self.sort_menu:
+            self.sort_choice_descending = True
+            return
         row = next((row for row in self.rows if row.key == self.selected), None)
         if row is not None:
             if row.key in self.folded and not self.list_mode:
@@ -363,20 +445,53 @@ class TopView:
                 if child is not None:
                     self.selected = child.key
 
-    def footer(self, snapshot: TopSnapshot) -> str:
-        return (
+    def sort(self) -> None:
+        if self.sort_menu:
+            self.sort_field = (
+                SORT_FIELDS[self.sort_choice - 1] if self.sort_choice else None
+            )
+            self.sort_descending = self.sort_choice_descending
+        else:
+            self.sort_choice = (
+                SORT_FIELDS.index(self.sort_field) + 1 if self.sort_field else 0
+            )
+            self.sort_choice_descending = self.sort_descending
+        self.sort_menu = not self.sort_menu
+        self.details = self.help = False
+
+    def click(self, x: int, y: int) -> None:
+        if y in self._row_hits:
+            self.selected = self._row_hits[y]
+        for row, start, end, name in self._sort_hits:
+            if y == row and start <= x < end:
+                self.sort_descending = (
+                    not self.sort_descending if self.sort_field == name else True
+                )
+                self.sort_field = name
+                self.sort_menu = False
+                break
+
+    def footer(self, snapshot: TopSnapshot) -> Text:
+        text = Text(
             f"F1 Help   F3 {'Close' if self.details else 'Details'}   "
             f"F5 {'Tree' if self.list_mode else 'List'}   "
+            f"F6 {'Apply' if self.sort_menu else 'Sort'}   "
             f"F7 Runs({window(next_value(RECENTS, snapshot.recent))})   "
-            f"F8 Stats({window(next_value(PERIODS, snapshot.period))})   F10 Quit"
+            f"F8 Stats({window(next_value(PERIODS, snapshot.period))})   F10 Quit",
+            style=STATUS_BAR,
         )
+        text.highlight_regex(r"\bF\d+\b", FUNCTION_KEY)
+        return text
 
     def header(self, snapshot: TopSnapshot, width: int) -> list[Text]:
         clock = datetime.fromtimestamp(seconds(snapshot.observed_at)).strftime(
             "%H:%M:%S"
         )
         lines = [
-            Text(self.scope + " " * max(1, width - cell_len(self.scope) - 8) + clock),
+            Text(
+                self.scope + " " * max(1, width - cell_len(self.scope) - 8) + clock,
+                style=NORMAL,
+            ),
             Text(),
         ]
         summary = snapshot.summary
@@ -407,7 +522,6 @@ class TopView:
                     total.spend_micros / 1e6
                     if total.spend_micros is not None
                     else None,
-                    total.spend_approximate,
                 )
                 if total
                 else "-",
@@ -418,10 +532,12 @@ class TopView:
         if unknown_inventory:
             agents += " · updating" if snapshot.inventory_updating else " · partial"
         if active_unknown or completed_unknown:
+            current = {item.identity for item in snapshot.inventory.instances}
             runs += (
                 " · partial"
                 if any(
-                    source.activity_error or source.live_stale
+                    source.activity_error
+                    or (source.identity in current and source.live_stale)
                     for source in snapshot.sources
                 )
                 else " · updating"
@@ -440,15 +556,13 @@ class TopView:
             (runs, f"runs last {window(snapshot.recent)}"),
             (stats, f"stats last {window(snapshot.period)}"),
         ):
-            text = Text(value, style="dim")
-            text.highlight_regex(r"(?:~?\$)?\d[\d.,]*[kmhb]?|-", "bold not dim")
+            text = Text(value, style=NORMAL)
             wrapped = text.wrap(console, left_width)
             for index, line in enumerate(wrapped):
                 line.pad_right(max(0, left_width - line.cell_len))
                 line.append(
                     "  "
                     + (title.rjust(title_width) if index == 0 else " " * title_width),
-                    style="dim",
                 )
                 lines.append(line)
         return [*lines, Text()]
@@ -458,10 +572,13 @@ class TopView:
     ) -> Text:
         self.project(snapshot)
         lines = self.header(snapshot, width)
-        agent_width = max([5, *(cell_len(row.source.label) for row in self.rows)])
+        agent_width = max(
+            [5, *(cell_len(instance_name(row.source)) for row in self.rows)]
+        )
         run_width = max([3, *(cell_len(row.root) for row in self.rows)])
-        widths = [agent_width, run_width, 5, 5, 6, 6, 6, 9, 7]
-        headings = (
+        spend_width = max([9, *(len(spend(row.node.cost)) for row in self.rows)])
+        widths = [agent_width, run_width, 5, 5, 6, 6, 6, spend_width, 7]
+        headings = [
             "AGENT",
             "RUN",
             "MODEL",
@@ -471,7 +588,18 @@ class TopView:
             "OUTPUT",
             "SPEND",
             "TIME+",
-        )
+        ]
+        for index, name in enumerate(headings):
+            if name == self.sort_field:
+                headings[index] += "↓" if self.sort_descending else "↑"
+                widths[index] = max(widths[index], cell_len(headings[index]))
+        self._row_hits.clear()
+        self._sort_hits.clear()
+        column = 0
+        for name, size in zip(("AGENT", "RUN", *SORT_FIELDS), widths, strict=True):
+            if name in SORT_FIELDS:
+                self._sort_hits.append((len(lines), column, column + size, name))
+            column += size + 1
 
         def prefix(values: list[str] | tuple[str, ...]) -> str:
             return (
@@ -482,7 +610,7 @@ class TopView:
                 + " "
             )
 
-        lines.append(Text(prefix(headings) + "STATUS", style="bold"))
+        lines.append(Text(prefix(headings) + "STATUS", style=TABLE_HEADER))
         panel = []
         if self.help:
             panel = [
@@ -490,7 +618,8 @@ class TopView:
                 for value in (
                     "Help — F1 or Esc closes",
                     "↑/↓ select · ← fold/parent · → expand/child · PgUp/PgDn page",
-                    "F3/Enter details · F5 Tree/List · F7 recent completions · F8 usage period",
+                    "F3/Enter details · F5 Tree/List · F6 sort · F7 recent completions · F8 usage period",
+                    "Click a row to select; click a numeric heading to sort or reverse its direction.",
                     "F10, q or Ctrl-C quit. Rows show lifetime consumption; parents include children.",
                     "Window calls settle at Step completion and belong to Step start; usage belongs to finish.",
                     "Unfinished calls appear in live rows. Stale live data freezes; '-' means unknown.",
@@ -503,18 +632,37 @@ class TopView:
                     "Details are not defined yet. F3, Enter or Esc closes this placeholder."
                 ),
             ]
+        elif self.sort_menu:
+            panel = [
+                Text(
+                    "Sort — ↑/↓ field · ← ascending · → descending · F6/Enter apply · Esc cancel"
+                ),
+                Text(
+                    "  ".join(
+                        f"[{name}]" if index == self.sort_choice else name
+                        for index, name in enumerate(("Default", *SORT_FIELDS))
+                    )
+                ),
+                Text(
+                    "Order: "
+                    + ("descending" if self.sort_choice_descending else "ascending")
+                ),
+            ]
         if height is not None:
             panel = panel[: max(1, (height - len(lines) - 2) // 2)]
             self.page_size = max(1, height - len(lines) - len(panel) - 2)
             index = next(
                 (i for i, row in enumerate(self.rows) if row.key == self.selected), 0
             )
-            self.offset = min(self.offset, index)
+            self.offset = min(
+                self.offset, index, max(0, len(self.rows) - self.page_size)
+            )
             self.offset = max(self.offset, index - self.page_size + 1)
             displayed = self.rows[self.offset : self.offset + self.page_size]
         else:
             displayed = self.rows
         for row in displayed:
+            self._row_hits[len(lines)] = row.key
             node = row.node
             calls = (
                 [compact(node.calls.model_calls), compact(node.calls.tool_calls)]
@@ -528,47 +676,39 @@ class TopView:
             )
             usage = node.usage
             values = [
-                row.source.label,
+                instance_name(row.source),
                 row.root,
                 *calls,
                 compact(usage.input_tokens if usage else None),
                 compact(usage.cache_read_tokens if usage else None),
                 compact(usage.output_tokens if usage else None),
-                spend(node.cost, node.cost_approximate, abbreviate=True),
-                duration(
-                    node,
-                    row.source.live.observed_at
-                    if row.source.live_stale and row.source.live
-                    else snapshot.observed_at,
-                ),
+                spend(node.cost),
+                duration(node, observed_at(row.source, snapshot)),
             ]
             start = prefix(values)
+            marker = "+ " if node.id == row.root and not row.root_finished else "  "
             label = Text(
-                (row.branch + row.status)
+                (marker + row.branch + row.status)
                 .replace("\n", " ")
                 .replace("\r", " ")
                 .replace("\t", " ")
             )
             label.truncate(max(0, width - cell_len(start)), overflow="ellipsis")
-            line = Text(start)
+            line = Text(start, style=Style(bold=False, dim=row.root_finished))
             line.append_text(label)
-            if node.status in TERMINAL:
-                line.stylize(
-                    {"succeeded": "green", "failed": "red", "canceled": "yellow"}[
-                        node.status
-                    ]
-                )
+            line.pad_right(max(0, width - line.cell_len))
             if height is not None and row.key == self.selected:
-                line.stylize("reverse")
+                line.stylize(SELECTED)
             lines.append(line)
         if height is not None:
             while len(lines) < height - len(panel) - 2:
                 lines.append(Text())
         lines.extend(panel)
         coverage = []
+        current = {instance.identity for instance in snapshot.inventory.instances}
         for source in snapshot.sources:
             issues = []
-            if source.live_stale:
+            if source.live_stale and source.identity in current:
                 issues.append("live stale" if source.live else "live unavailable")
             if source.activity_error or source.usage_error:
                 issues.append("source unavailable")
@@ -581,16 +721,18 @@ class TopView:
             ):
                 issues.append("stats as of " + source.usage.observed_at)
             if issues:
-                coverage.append(source.label + ": " + "; ".join(issues))
+                coverage.append(instance_name(source) + ": " + "; ".join(issues))
             if (
                 source.completed is not None
                 and len(source.completed.roots) < source.completed.counts.total
             ):
                 coverage.append(
-                    f"{source.label}: {len(source.completed.roots)}/{source.completed.counts.total} completed loaded (PgDn)"
+                    f"{instance_name(source)}: {len(source.completed.roots)}/{source.completed.counts.total} completed loaded (PgDn)"
                 )
-        lines.append(
-            Text(" · ".join([*snapshot.inventory.diagnostics, *coverage]), style="dim")
-        )
-        lines.append(Text(self.footer(snapshot), style="bold"))
+        status = " · ".join([*snapshot.inventory.diagnostics, *coverage])
+        lines.append(Text(status, style=STATUS_BAR if status else NORMAL))
+        lines.append(self.footer(snapshot))
+        for line in lines:
+            line.truncate(width, overflow="ellipsis")
+            line.pad_right(max(0, width - line.cell_len))
         return Text("\n").join(lines)
