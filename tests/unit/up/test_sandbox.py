@@ -1389,6 +1389,7 @@ def test_launch_prepares_state_once_before_workload_with_state_overrides(
     complete = next(
         i for i, e in enumerate(events) if e.subject == "state" and e.complete
     )
+    assert events[complete].label == "Prepared agent state"
     ready_event = next(
         i for i, e in enumerate(events) if e.kind == "runtime" and e.stage == "start"
     )
@@ -1416,7 +1417,8 @@ def test_local_prepare_failure_never_creates_a_workload_and_allows_retry(
     assert not any(
         isinstance(call, tuple) and call[0] == "launch" for call in implementation.calls
     )
-    assert any(e.subject == "state" and e.status == "failed" for e in events)
+    failure = next(e for e in events if e.subject == "state" and e.status == "failed")
+    assert failure.label == "Failed to prepare agent state"
     monkeypatch.setattr(sandbox, "prepare_agent_state", original)
 
     async def ready(*_args, **_kwargs):

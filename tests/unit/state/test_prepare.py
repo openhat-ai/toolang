@@ -835,6 +835,40 @@ def test_concurrent_processes_publish_one_root_and_home_revision(
     assert [path.name for path in agent_revs.iterdir()] == [results[0][0]]
 
 
+@pytest.mark.parametrize(
+    ("scope", "label"),
+    [("root", "root state"), ("home", "home state"), (None, "agent alice state")],
+)
+def test_state_lock_progress_uses_sentence_case(tmp_path, scope, label):
+    import fcntl
+    from toolang.state import cache
+
+    layout = _layout(tmp_path)
+    events = []
+
+    def release_on_wait(event):
+        events.append(event)
+        if event.status == "running":
+            fcntl.flock(held_lock.fileno(), fcntl.LOCK_UN)
+
+    if scope is None:
+        path = cache._agent_publish_lock_path(layout)
+        lock = cache._agent_publish_lock(layout, progress=release_on_wait)
+    else:
+        path = cache.layer_build_lock_path(layout, scope)
+        lock = cache.layer_build_lock(layout, scope, progress=release_on_wait)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a+b") as held_lock:
+        fcntl.flock(held_lock.fileno(), fcntl.LOCK_EX)
+        with lock:
+            pass
+
+    assert [event.label for event in events] == [
+        f"Waiting for {label}...",
+        f"{label.capitalize()} available",
+    ]
+
+
 def test_agent_publish_lock_blocks_same_agent_process(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     home = toolang_root / "agents" / "alice"

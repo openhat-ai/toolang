@@ -567,12 +567,39 @@ def _finish_startup(progress: CliProgress) -> None:
             id="state",
             kind="prepare",
             stage="materialize",
-            label="Prepared State",
+            label="Prepared state",
             status="ok",
             subject="state",
             complete=True,
         )
     )
+
+
+@pytest.mark.parametrize("terminal", [False, True])
+@pytest.mark.parametrize("completion", ["event", "cli"])
+def test_state_only_preparation_summary_uses_sentence_case(terminal, completion):
+    from dataclasses import replace
+    from toolang.cli.common.progress import PreparationProgress
+    from typer._click.utils import strip_ansi
+
+    stream = _TTYBuffer() if terminal else StringIO()
+    now = [0.0]
+    with PreparationProgress(stream=stream, _clock=lambda: now[0]) as progress:
+        progress(
+            replace(
+                _startup_event("state", stage="materialize"),
+                subject="state",
+                label="Preparing state...",
+            )
+        )
+        now[0] = 2.0
+        for _ in range(2):
+            if completion == "event":
+                _finish_startup(progress)
+            else:
+                progress.complete_preparation()
+
+    assert strip_ansi(stream.getvalue()) == "Prepared state in 2s\n"
 
 
 def test_startup_slots_reuse_rows_then_collapse_to_one_dim_summary(monkeypatch) -> None:
