@@ -423,6 +423,9 @@ Publication never rebinds accepted Runs. Invalid source is not published.
 
 ## Terminal usage and cost records
 
+For time windows, model breakdowns, and daily heatmaps, see
+[execution statistics](execution-statistics.md).
+
 `ModelStepNoted` stores `usage: TokenUsage | None`, `cost: ModelCost | None`,
 `invoked: bool`, and continuation encoded as `cont`. `ToolStepNoted` stores
 `summary` and `invoked`. `ModelCost` holds the selected `amount`, `currency`,

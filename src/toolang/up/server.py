@@ -30,6 +30,7 @@ from toolang.catalog import CapsManager, ChoresManager
 from toolang.common.config import resolve_ui_base_url
 from toolang.common.env_logger import PY_LOG_ENV_VAR
 from toolang.common.layout import AgentLayout
+from toolang.common.config_sources import config_sources
 from toolang.execution.executor.resources import validate_agent_ceiling
 from toolang.plugin.sandboxes.host import HOST_SANDBOX_DESCRIPTION_ENV
 from toolang.setup import AgentSetup
@@ -37,6 +38,8 @@ from toolang.plugin.models.query import filter_models
 from toolang.setup.config import load_setup_config
 from toolang.state import watcher as state_watcher
 from toolang.state.state import AgentState
+from toolang.stats.config import stats_config
+from toolang.stats.service import StatsService
 from toolang.up import process as agents
 from toolang.up.config import (
     default_drivers,
@@ -357,6 +360,9 @@ def serve(
         shutdown_signal = threading.Event()
         caps_manager = CapsManager(spec.layout)
         chores_manager = ChoresManager(spec.layout)
+        statistics_config = stats_config(
+            config_sources(spec.layout), home=spec.layout.config
+        )
 
         @asynccontextmanager
         async def lifespan(app: FastAPI):
@@ -365,7 +371,12 @@ def serve(
             tasks: list[asyncio.Task[None]] = []
             scheduler: ChoreDriver | None = None
             teaming: TeamingLoop | None = None
+            statistics = StatsService(
+                core.store.db_path, spec.layout.stats_store, config=statistics_config
+            )
             try:
+                statistics.start()
+                app.state.stats = statistics
                 agents.write_runtime_state(
                     spec.layout,
                     endpoint=spec.endpoint,
@@ -460,6 +471,7 @@ def serve(
                         if teaming is not None:
                             cleanup.push_async_callback(teaming.close)
                         cleanup.push_async_callback(close_core)
+                        cleanup.push_async_callback(asyncio.to_thread, statistics.close)
                         if teaming is not None:
                             cleanup.push_async_callback(teaming.stop_messages)
                         cleanup.push_async_callback(_finish_runtime_tasks, tasks)

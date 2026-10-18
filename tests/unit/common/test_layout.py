@@ -44,6 +44,7 @@ def test_resident_layout_derives_agent_paths(tmp_path: Path) -> None:
     assert layout.sandbox_stage == layout.sandbox_home / "launches"
     assert layout.runtime_status.is_relative_to(layout.home)
     assert layout.run_store == layout.home / ".runtime" / "runs.db"
+    assert layout.stats_store == layout.home / ".runtime" / "stats.db"
 
 
 def test_visiting_layout_is_stable_and_root_and_source_specific(tmp_path: Path) -> None:

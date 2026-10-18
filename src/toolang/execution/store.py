@@ -3711,7 +3711,26 @@ class RunStore:
             self._conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_threads_updated ON threads(updated_at)"
             )
-            self._conn.execute("CREATE INDEX IF NOT EXISTS idx_steps_run ON steps(run)")
+            # Index-only upgrades preserve the durable schema and record format.
+            step_columns = [
+                row[2] for row in self._conn.execute("PRAGMA index_info(idx_steps_run)")
+            ]
+            if step_columns != ["run", "id"]:
+                self._conn.execute("DROP INDEX IF EXISTS idx_steps_run")
+                self._conn.execute("CREATE INDEX idx_steps_run ON steps(run,id)")
+            for statement in (
+                "CREATE INDEX IF NOT EXISTS idx_runs_roots ON runs(id) WHERE parent IS NULL",
+                "CREATE INDEX IF NOT EXISTS idx_runs_closed_roots ON runs(finished_at,id) "
+                "WHERE parent IS NULL AND status IN ('succeeded','failed','canceled') AND finished_at IS NOT NULL",
+                "CREATE INDEX IF NOT EXISTS idx_runs_parent ON runs(parent) WHERE parent IS NOT NULL",
+                "CREATE INDEX IF NOT EXISTS idx_runs_root_started ON runs(started_at,id) "
+                "WHERE parent IS NULL AND started_at IS NOT NULL",
+                "CREATE INDEX IF NOT EXISTS idx_steps_call_started ON steps(started_at,run) "
+                "WHERE kind IN ('model','tool') AND started_at IS NOT NULL",
+                "CREATE INDEX IF NOT EXISTS idx_steps_call_finished ON steps(finished_at,run) "
+                "WHERE kind IN ('model','tool') AND finished_at IS NOT NULL",
+            ):
+                self._conn.execute(statement)
             for table, names in (
                 ("runs", ("begin_cursor", "end_cursor")),
                 ("steps", ("begin_cursor", "end_cursor")),

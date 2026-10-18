@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter
 
-from toolang.api.routers import agent, caps, chores, runs, threads
+from toolang.api.routers import agent, caps, chores, runs, stats, threads
 
 API_PREFIX = "/api/v1"
 
@@ -13,3 +13,4 @@ router.include_router(chores.router)
 router.include_router(runs.router)
 router.include_router(runs.chat_router)
 router.include_router(threads.router)
+router.include_router(stats.router)
