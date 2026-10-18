@@ -14,10 +14,10 @@ from typing import TYPE_CHECKING
 
 from toolang.common.layout import AgentLayout
 from ..common.progress import ProgressSink, emit_progress
-from toolang.up.records import (
+from toolang.up.instance import (
     SandboxState,
-    read_record,
-    update_record,
+    read_instance,
+    update_instance,
     patch_workload,
     process_alive,
     recover_control_write_lock,
@@ -82,8 +82,8 @@ class AgentProcess:
     def state(self) -> dict[str, object] | None:
         """Return descriptive data only for the referenced workload."""
 
-        entry = read_record(self.layout.runtime_status, self.layout.instance)
-        return self._report(entry, SandboxState.from_record(entry))
+        entry = read_instance(self.layout.runtime_status, self.layout.instance)
+        return self._report(entry, SandboxState.from_instance(entry))
 
     def wait_ready(
         self,
@@ -201,9 +201,9 @@ class AgentProcess:
             observed = (
                 snapshot
                 if snapshot is not None
-                else read_record(self.layout.runtime_status, self.layout.instance)
+                else read_instance(self.layout.runtime_status, self.layout.instance)
             )
-            reference = SandboxState.from_record(observed)
+            reference = SandboxState.from_instance(observed)
             report = self._report(observed, reference) or {}
             if reference is not None:
                 sandbox = reference.sandbox
@@ -371,7 +371,7 @@ class AgentProcess:
             changed = True
 
         try:
-            update_record(
+            update_instance(
                 self.layout.runtime_status,
                 correct,
                 instance=self.layout.instance,
@@ -417,7 +417,7 @@ def write_runtime_state(
     launch_id: str | None = None,
     location: str = "host",
     lifetime: str | None = None,
-    lifecycle_protocol: int | None = None,
+    api_version: int | None = None,
 ) -> Path:
     """Persist one minimal runtime state file for a running agent."""
 
@@ -438,18 +438,18 @@ def write_runtime_state(
     }
     if lifetime is not None:
         payload["lifetime"] = lifetime
-        payload["lifecycle_protocol"] = lifecycle_protocol
+        payload["api_version"] = api_version
     if sandbox_instance is not None:
         payload["sandbox_instance"] = sandbox_instance
     if sandbox_description is not None:
         payload["sandbox_description"] = sandbox_description
-    entry = read_record(path, layout.instance, location=location)
+    entry = read_instance(path, layout.instance, location=location)
     identity = launch_id or (entry or {}).get("launch_id")
     if not identity:
         from uuid import uuid4
 
         identity = uuid4().hex
-        update_record(
+        update_instance(
             path,
             lambda entry: entry.update(launch_id=identity),
             instance=layout.instance,
@@ -491,7 +491,7 @@ def stop_runtime_state(
         )
         changed = True
 
-    update_record(
+    update_instance(
         path, finish, instance=layout.instance, launch_id=launch_id, location=location
     )
     return changed
@@ -500,7 +500,7 @@ def stop_runtime_state(
 def preferred_runtime_port(layout: AgentLayout) -> int | None:
     """Return one previously used port for an agent when available."""
 
-    entry = read_record(layout.runtime_status, layout.instance)
+    entry = read_instance(layout.runtime_status, layout.instance)
     remembered = (entry or {}).get("control", {}).get("last_successful", {})
     return _runtime_state_port(remembered)
 
@@ -564,10 +564,7 @@ def runtime_identity_row(
                     )
                     else ref.runtime_id
                 )
-                legacy_name = ref.meta.get("container_name")
                 runtime_name = ref.runtime_name
-                if runtime_name is None and isinstance(legacy_name, str):
-                    runtime_name = legacy_name or None
                 value = (
                     f"{runtime_name} ({short_id})"
                     if runtime_name is not None and runtime_name != short_id
@@ -585,7 +582,7 @@ def runtime_identity_row(
 def _load_runtime_state(
     path: Path, *, instance: str | None = None
 ) -> dict[str, object] | None:
-    return _runtime_report(read_record(path, instance))
+    return _runtime_report(read_instance(path, instance))
 
 
 def _runtime_report(entry) -> dict[str, object] | None:

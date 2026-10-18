@@ -142,7 +142,7 @@ def test_history_response_keeps_one_snapshot_during_concurrent_write(
             cors_allowed_origins=(),
         )
         with TestClient(app) as client:
-            response = client.get(f"/api/v1/{endpoint}")
+            response = client.get(f"/api/v0/{endpoint}")
         assert changed
         assert response.status_code == 200
         data = response.json()
@@ -212,31 +212,31 @@ agic chat:
     try:
         with TestClient(app) as client:
             models = client.get(
-                "/api/v1/models",
+                "/api/v0/models",
                 params=[("query", "missing/*"), ("query", "test/*")],
             )
             no_models = client.get(
-                "/api/v1/models",
+                "/api/v0/models",
                 params={"query": "missing/*"},
             )
             tools = client.get(
-                "/api/v1/tools",
+                "/api/v0/tools",
                 params={"query": "test/*"},
             )
             caps = client.get(
-                "/api/v1/caps",
+                "/api/v0/caps",
                 params={"query": "prompt/review"},
             )
             prompts = client.get(
-                "/api/v1/prompts",
+                "/api/v0/prompts",
                 params={"query": "prompt/review"},
             )
             invalid = client.get(
-                "/api/v1/models",
+                "/api/v0/models",
                 params={"query": "*[unknown=true]"},
             )
             invalid_tools = client.get(
-                "/api/v1/tools",
+                "/api/v0/tools",
                 params={"query": "*[unknown=true]"},
             )
 
@@ -340,34 +340,34 @@ agic chat(_: Part[]) -> Part[]:
 
     try:
         with TestClient(app) as client:
-            runtime = client.get("/api/v1/profile").json()["runtime"]
-            models = client.get("/api/v1/models")
-            defaults = client.get("/api/v1/runs/defaults")
-            created = client.post("/api/v1/threads", json={"client_id": "test-tui"})
+            runtime = client.get("/api/v0/profile").json()["runtime"]
+            models = client.get("/api/v0/models")
+            defaults = client.get("/api/v0/runs/defaults")
+            created = client.post("/api/v0/threads", json={"client_id": "test-tui"})
             thread_id = created.json()["thread"]["id"]
             thread_defaults = client.get(
-                "/api/v1/runs/defaults", params={"thread_id": thread_id}
+                "/api/v0/runs/defaults", params={"thread_id": thread_id}
             )
             absolute_workdir = client.post(
-                "/api/v1/runs/workdir/resolve",
+                "/api/v0/runs/workdir/resolve",
                 json={
                     "thread_id": thread_id,
                     "workdir": str(core.layout.home / ".lab" / "subdir"),
                 },
             )
             relative_workdir = client.post(
-                "/api/v1/runs/workdir/resolve",
+                "/api/v0/runs/workdir/resolve",
                 json={
                     "thread_id": thread_id,
                     "workdir": "subdir",
                     "workdir_base": "lab://",
                 },
             )
-            empty = client.get(f"/api/v1/threads/{thread_id}/result")
-            unknown = client.get("/api/v1/threads/term_missing/result")
-            wrong_namespace = client.get("/api/v1/threads/run_missing/result")
+            empty = client.get(f"/api/v0/threads/{thread_id}/result")
+            unknown = client.get("/api/v0/threads/term_missing/result")
+            wrong_namespace = client.get("/api/v0/threads/run_missing/result")
             executed = client.post(
-                "/api/v1/runs/authored/stream",
+                "/api/v0/runs/authored/stream",
                 json={
                     "thread_id": thread_id,
                     "request_id": "term_remote_chat",
@@ -381,12 +381,12 @@ agic chat(_: Part[]) -> Part[]:
                 },
             )
             run_id = executed.headers["X-Toolang-Run-ID"]
-            explicit_response = client.get(f"/api/v1/runs/{run_id}")
-            latest_response = client.get(f"/api/v1/threads/{thread_id}/result")
+            explicit_response = client.get(f"/api/v0/runs/{run_id}")
+            latest_response = client.get(f"/api/v0/threads/{thread_id}/result")
             final_thread_defaults = client.get(
-                "/api/v1/runs/defaults", params={"thread_id": thread_id}
+                "/api/v0/runs/defaults", params={"thread_id": thread_id}
             )
-            new_session_defaults = client.get("/api/v1/runs/defaults")
+            new_session_defaults = client.get("/api/v0/runs/defaults")
 
         explicit = TypeAdapter(RunDetail).validate_python(explicit_response.json())
         latest = TypeAdapter(RunDetail).validate_python(latest_response.json())

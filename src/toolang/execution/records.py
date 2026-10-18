@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from functools import cached_property
 from typing import Annotated, Any, Literal, TypeAlias, cast
 
@@ -38,9 +38,6 @@ from toolang.lang.input import (
 from toolang.lang.types import Array, Struct, Value, validate_type, value_type
 from toolang.lang.contracts import OutputContract
 from toolang.common.immutable import freeze_mapping, mutable_data
-
-from .legacy import LegacyRetryPayload as _LegacyRetryPayload
-from .legacy import LegacyRetryPayloadField
 
 from .types import (
     AgentResources,
@@ -472,7 +469,6 @@ class RewindControlPayload:
 _CONTROL_PAYLOAD_TYPES = {
     "run": RunControlPayload,
     "chdir": ChdirControlPayload,
-    "retry": _LegacyRetryPayload,
     "compact": CompactControlPayload,
     "exec": ExecControlPayload,
     "steer": SteerControlPayload,
@@ -500,7 +496,6 @@ def _control_payload_variant(value: object, info: ValidationInfo) -> object:
 
 ControlPayloadUnion: TypeAlias = (
     RunControlPayload
-    | LegacyRetryPayloadField
     | ChdirControlPayload
     | CompactControlPayload
     | ExecControlPayload
@@ -516,7 +511,7 @@ ControlPayloadUnion: TypeAlias = (
 def run_preparation(
     run: RunRecord, controls: Sequence[ControlRecord]
 ) -> RunControlPayload:
-    """Read initial Run facts, retaining effective settings from legacy history."""
+    """Read initial Run facts from the canonical preparation control."""
 
     initial = next(
         (
@@ -528,16 +523,9 @@ def run_preparation(
     )
     current = next((item.payload for item in controls if item.ref == run.control), None)
     if not isinstance(initial, RunControlPayload) or not isinstance(
-        current, (RunControlPayload, _LegacyRetryPayload)
+        current, RunControlPayload
     ):
         raise ValueError(f"run preparation control not found: {run.control}")
-    if isinstance(current, _LegacyRetryPayload):
-        return replace(
-            initial,
-            resources=current.resources,
-            limits=current.limits,
-            model_request=current.model_request,
-        )
     return initial
 
 
@@ -565,13 +553,10 @@ class ModelCallRefs:
     tools: str | None
     output_schema: dict[str, object] | None
     continuation: ModelContinuation | None
-    version: int = 1
     max_output_tokens: int | None = None
     reasoning: Reasoning | None = None
 
     def __post_init__(self) -> None:
-        if type(self.version) is not int or self.version != 1:
-            raise ValueError(f"unsupported durable model call version: {self.version}")
         if self.reasoning is not None and not isinstance(self.reasoning, Reasoning):
             raise TypeError("stored model reasoning requires Reasoning")
         if self.max_output_tokens is not None and (
@@ -933,8 +918,6 @@ def control_payload_from_data(kind: ControlKind, data: object) -> ControlPayload
             revision=_required_payload_text(payload, "revision"),
             content=content,
         )
-    if kind == "retry":
-        return _LegacyRetryPayload.from_data(payload)
     if kind == "run":
         resources_raw = payload.get("resources")
         limits_raw = payload.get("limits")
@@ -968,6 +951,9 @@ def control_payload_from_data(kind: ControlKind, data: object) -> ControlPayload
         prompt_invocations = _prompt_invocations_from_data(
             payload.get("prompt_invocations", ())
         )
+        cwd = payload.get("cwd")
+        if not isinstance(cwd, str):
+            raise ValueError("run payload requires cwd")
         return RunControlPayload(
             spawn_thread=cast(str | None, payload.get("spawn_thread")),
             conversation=TypeAdapter(ConversationScope).validate_python(
@@ -986,7 +972,7 @@ def control_payload_from_data(kind: ControlKind, data: object) -> ControlPayload
             else None,
             model_request=model_request,
             sandbox=sandbox,
-            cwd=cast(str, payload.get("cwd", "")),
+            cwd=cwd,
             authored_input=authored_input,
             authored_commands=authored_commands,
             authored_session_commands=authored_session_commands,
@@ -1050,8 +1036,6 @@ def control_payload_to_data(payload: ControlPayloadUnion) -> dict[str, object]:
 
     if isinstance(payload, RunControlPayload):
         return _run_payload_data(payload)
-    if isinstance(payload, _LegacyRetryPayload):
-        return payload.to_data()
     if isinstance(payload, RecallControlPayload):
         return {
             "target": _RECALL_TARGET_ADAPTER.dump_python(payload.target, mode="json"),
@@ -1289,7 +1273,6 @@ def stored_step_spec_from_data(kind: StepKind, data: object) -> StoredStepSpec:
         raise ValueError("stored model identity must be text")
     raw_call = payload["call"]
     if not isinstance(raw_call, Mapping) or set(raw_call) != {
-        "version",
         "cont",
         "instructions",
         "messages",
@@ -1299,11 +1282,9 @@ def stored_step_spec_from_data(kind: StepKind, data: object) -> StoredStepSpec:
         "reasoning",
     }:
         raise ValueError(
-            "stored model call requires: version, cont, instructions, messages, tools, output_schema, max_output_tokens, reasoning"
+            "stored model call requires: cont, instructions, messages, tools, output_schema, max_output_tokens, reasoning"
         )
     call = cast(Mapping[str, object], raw_call)
-    if type(call["version"]) is not int or call["version"] != 1:
-        raise ValueError(f"unsupported durable model call version: {call['version']}")
     instructions = call["instructions"]
     raw_messages = _canonical_object(
         call["messages"], fields={"head", "delta"}, label="model messages"
@@ -1327,7 +1308,6 @@ def stored_step_spec_from_data(kind: StepKind, data: object) -> StoredStepSpec:
         else None,
         call=ModelCallRefs(
             instructions=instructions,
-            version=call["version"],
             messages=ModelMessages(
                 head=StepRef.parse(cast(str, raw_messages["head"])),
                 delta=delta_from_data(raw_messages["delta"]),
@@ -1365,7 +1345,6 @@ def stored_step_spec_to_data(
             "model": spec.model,
             "setup": spec.setup,
             "call": {
-                "version": spec.call.version,
                 "instructions": spec.call.instructions,
                 "messages": {
                     "head": str(spec.call.messages.head),
@@ -1611,12 +1590,8 @@ def _required_dict(value: object, *, label: str) -> dict[str, Any]:
 def model_call_from_data(data: object) -> ModelCall:
     """Parse one normalized model call from durable data."""
 
-    if isinstance(data, Mapping):
-        payload = dict(data)
-        if "output_schema" not in payload and "structured_output" in payload:
-            payload["output_schema"] = payload["structured_output"]
-        payload.pop("structured_output", None)
-        data = payload
+    if isinstance(data, Mapping) and "structured_output" in data:
+        raise ValueError("retired model call field: structured_output")
     return _MODEL_CALL_ADAPTER.validate_python(data)
 
 
@@ -1819,6 +1794,8 @@ def _prompt_invocations_from_data(value: object) -> tuple[PromptInvocation, ...]
         if not isinstance(item, Mapping):
             raise ValueError("preparation contains an invalid prompt invocation")
         invocation = cast(Mapping[str, object], item)
+        if "input_scope" in invocation:
+            raise ValueError("prompt invocation contains retired input_scope")
         raw_arguments = invocation.get("arguments", ())
         if not isinstance(raw_arguments, Sequence) or isinstance(
             raw_arguments, (str, bytes, bytearray)

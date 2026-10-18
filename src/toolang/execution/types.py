@@ -366,14 +366,11 @@ def _resource_object(
         if kind == "tool"
         else {"kind", "name", "ref"}
     )
-    legacy_tool_fields = {"model_name", "plugin", "namespace", "name"}
     if not isinstance(value, Mapping):
         raise ValueError(f"agent resources {kind} must contain canonical fields")
     if not all(isinstance(item, str) for item in value.values()):
         raise ValueError(f"agent resources {kind} fields must be text")
     data = dict(cast(Mapping[str, object], value))
-    if kind == "tool" and set(data) == legacy_tool_fields:
-        data["toolset"] = data.pop("namespace")
     if set(data) != fields:
         raise ValueError(f"agent resources {kind} must contain canonical fields")
     return {name: cast(str, data[name]) for name in fields}
@@ -2068,7 +2065,6 @@ ControlKind = Literal[
     "run",
     "chdir",
     "recall",
-    "retry",
     "compact",
     "exec",
     "steer",

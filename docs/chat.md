@@ -269,13 +269,13 @@ inspection pages.
 
 Run control endpoints are:
 
-- `POST /api/v1/chat/runs/{run_id}/steer`
-- `POST /api/v1/runs/{run_id}/cancel`
+- `POST /api/v0/chat/runs/{run_id}/steer`
+- `POST /api/v0/runs/{run_id}/cancel`
 
 Thread lifecycle endpoints are:
 
-- `POST /api/v1/threads/{thread_id}/rewind`
-- `POST /api/v1/threads/{thread_id}/fork`
+- `POST /api/v0/threads/{thread_id}/rewind`
+- `POST /api/v0/threads/{thread_id}/fork`
 
 `steer` and `cancel` require a running run. They can target chat, talk, and
 chore runs.
@@ -304,16 +304,16 @@ does not expose a separate `/chat` resource.
 
 A client starts a new conversation by calling:
 
-1. `POST /api/v1/threads` with `client_id` and `request_id`.
-2. `GET /api/v1/runs/defaults` once to adopt concrete session defaults.
-3. `POST /api/v1/chat/runs/authored/stream` with the returned thread id, concrete
+1. `POST /api/v0/threads` with `client_id` and `request_id`.
+2. `GET /api/v0/runs/defaults` once to adopt concrete session defaults.
+3. `POST /api/v0/chat/runs/authored/stream` with the returned thread id, concrete
    runnable and model requests, authored input, and materialized policy.
 
 Subsequent turns reuse the same thread id. The client explicitly selects the
 chat/default runnable. Persisted state is read through the normal thread and run
 detail endpoints.
 
-`GET /api/v1/models` returns concrete refs from the server's current effective
+`GET /api/v0/models` returns concrete refs from the server's current effective
 `AgentSetup.models_effective()` collection, base per-million input/output prices, and
 structured reasoning-effort metadata. A run
 resolves the submitted ref with singular-selection semantics, validates its
@@ -380,7 +380,7 @@ or digest. Container IDs and agent-home paths are omitted from the banner;
 the runtime profile still exposes its container identity.
 
 The workspace names are a startup snapshot from the connected runtime's
-`GET /api/v1/workspaces`. Only available workspaces are listed, in response
+`GET /api/v0/workspaces`. Only available workspaces are listed, in response
 order, without filesystem paths. An empty list renders `none`; failed or
 malformed inspection renders `unavailable` without blocking Chat. The existing
 status bar continues to show the current workspace as it changes. Use

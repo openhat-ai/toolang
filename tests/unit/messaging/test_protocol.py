@@ -18,6 +18,8 @@ from toolang.teaming.backend.valkey.keys import (
     STATS,
     GC_ALLOCATOR,
     SCHEMA,
+    EVENT_META,
+    EVENT_AGENTS,
     convo_key,
     name_key,
 )
@@ -431,7 +433,12 @@ def test_uncertain_send_is_not_retried_and_returns_recoverable_id(monkeypatch):
 
 def test_partial_datasets_are_never_initialized():
     async def scenario():
-        for key in (CONVOS, "too:teaming:v1:agent:alice:talk"):
+        for key in (
+            CONVOS,
+            "too:teaming:v1:agent:alice:talk",
+            EVENT_META,
+            EVENT_AGENTS,
+        ):
             raw = FakeAsyncValkey(decode_responses=True)
             await raw.execute_command("HSET", key, "old", "record")
             before = await snapshot(raw)
@@ -446,7 +453,7 @@ def test_partial_datasets_are_never_initialized():
         await raw.delete(GC_ALLOCATOR)
         with pytest.raises(StorageIntegrityError):
             await backend.initialize()
-        assert await raw.get(SCHEMA) == "3" and not await raw.exists(GC_ALLOCATOR)
+        assert await raw.get(SCHEMA) == "4" and not await raw.exists(GC_ALLOCATOR)
         await backend.close()
 
     asyncio.run(scenario())

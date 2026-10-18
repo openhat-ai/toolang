@@ -8,7 +8,6 @@ from toolang.base.types.message import Message, ToolResultPart
 from toolang.base.types.run import ToolCall
 from toolang.execution.records import (
     ChdirControlPayload,
-    RunControlPayload,
     control_payload_from_data,
 )
 from toolang.execution.schemas import record_to_data
@@ -87,7 +86,7 @@ def test_cd_step_end_and_cwd_control_commit_atomically(tmp_path, monkeypatch):
         store.close()
 
 
-def test_legacy_run_control_without_cwd_starts_unselected(tmp_path):
+def test_run_control_without_cwd_is_rejected(tmp_path):
     store = RunStore(tmp_path / "runs.db")
     try:
         run = project_run_start(
@@ -103,9 +102,8 @@ def test_legacy_run_control_without_cwd_starts_unselected(tmp_path):
         assert isinstance(serialized, dict)
         payload = dict(serialized)
         del payload["cwd"]
-        loaded = control_payload_from_data("run", payload)
-        assert isinstance(loaded, RunControlPayload)
-        assert loaded.cwd == ""
+        with pytest.raises(ValueError, match="requires cwd"):
+            control_payload_from_data("run", payload)
     finally:
         store.close()
 

@@ -122,7 +122,7 @@ def test_talk_thread_id_requires_a_canonical_conversation(conversation):
         talk_thread_id(conversation, agent_name="alice")
 
 
-@pytest.mark.parametrize("schema", ["1", "2", "4"])
+@pytest.mark.parametrize("schema", ["1", "2", "3", "5"])
 def test_other_conversation_schemas_fail_without_mutation(schema):
     async def scenario():
         raw = FakeAsyncValkey(decode_responses=True)

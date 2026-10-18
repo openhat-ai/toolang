@@ -29,8 +29,8 @@ and explicit start/serve retain availability. See [execution ownership](executio
 
 The management HTTP API, health, inspection, cancellation, and script execution
 remain available with chat disabled. Interactive clients create threads at
-`POST /api/v1/threads` and submit/control execution under `/api/v1/chat/runs`.
-Scripts create contexts at `POST /api/v1/runs/threads` and use `/api/v1/runs`.
+`POST /api/v0/threads` and submit/control execution under `/api/v0/chat/runs`.
+Scripts create contexts at `POST /api/v0/runs/threads` and use `/api/v0/runs`.
 Interactive creation, submission, rerun, and steer are gated before writes;
 client IDs and thread prefixes do not decide admission.
 

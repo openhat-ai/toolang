@@ -23,6 +23,7 @@ from .types import (
     timestamp,
 )
 
+STATS_STORE_SCHEMA = 2
 PAGE_SIZE = 500
 
 
@@ -37,6 +38,20 @@ def connect(path: Path, *, read_only: bool = False) -> sqlite3.Connection:
     return connection
 
 
+def _schema_version(connection: sqlite3.Connection) -> int:
+    version = connection.execute("PRAGMA user_version").fetchone()[0]
+    if version not in (0, STATS_STORE_SCHEMA):
+        raise ValueError(f"unsupported statistics schema: {version}")
+    if (
+        version == 0
+        and connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type IN ('table','index','view','trigger') AND name NOT LIKE 'sqlite_%'"
+        ).fetchone()
+    ):
+        raise ValueError("unversioned statistics database is not empty")
+    return version
+
+
 class StatsRecords:
     def __init__(self, source: Path, path: Path) -> None:
         self.source = source
@@ -45,21 +60,16 @@ class StatsRecords:
     def initialize(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.writer() as connection:
+            _schema_version(connection)
             connection.execute("PRAGMA journal_mode=WAL")
             connection.execute("BEGIN IMMEDIATE")
-            version = connection.execute("PRAGMA user_version").fetchone()[0]
+            version = _schema_version(connection)
             if version == 0:
-                if connection.execute(
-                    "SELECT 1 FROM sqlite_master WHERE type='table'"
-                ).fetchone():
-                    raise ValueError("unversioned statistics database is not empty")
                 # Execute DDL individually: executescript would commit BEGIN early.
                 for statement in sql.STATS_SCHEMA.split(";"):
                     if statement.strip() and "PRAGMA journal_mode" not in statement:
                         connection.execute(statement)
-                connection.execute("PRAGMA user_version=2")
-            elif version != 2:
-                raise ValueError(f"unsupported statistics schema: {version}")
+                connection.execute(f"PRAGMA user_version={STATS_STORE_SCHEMA}")
             connection.commit()
 
     @contextmanager

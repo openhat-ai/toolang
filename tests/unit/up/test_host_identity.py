@@ -9,7 +9,7 @@ import pytest
 from toolang.common.layout import AgentLayout
 from toolang.plugin.sandboxes import host
 from toolang.up import sandbox
-from toolang.up.records import SandboxState
+from toolang.up.instance import SandboxState
 
 
 def test_direct_registration_blocks_duplicate_and_removal(tmp_path: Path) -> None:

@@ -7,9 +7,9 @@ import shutil
 import pytest
 
 from toolang.state.source import (
-    SOURCE_SCHEMA,
     SourceChangedError,
     SourceManifest,
+    SourceManifestEntry,
     build_source_manifest,
     is_source_path,
     observe_source,
@@ -20,7 +20,7 @@ from toolang.state.source import (
 )
 
 
-def test_source_manifest_round_trips_nested_content(tmp_path: Path) -> None:
+def test_source_manifest_captures_nested_content(tmp_path: Path) -> None:
     source = tmp_path / "source"
     skill = source / "skills" / "pdf" / "scripts"
     skill.mkdir(parents=True)
@@ -28,7 +28,7 @@ def test_source_manifest_round_trips_nested_content(tmp_path: Path) -> None:
     (skill / "convert.py").write_text("pass\n", encoding="utf-8")
 
     manifest = scan_source(source, ("skills", "config.toml"))
-    loaded = SourceManifest.from_data(manifest.to_data())
+    loaded = scan_source(source, ("skills", "config.toml"))
 
     assert loaded == manifest
     assert [item.path for item in manifest.files] == [
@@ -117,57 +117,6 @@ def test_source_manifest_is_portable_across_absolute_roots(tmp_path: Path) -> No
     shutil.copytree(host, guest)
 
     assert scan_source(host, ("skills",)) == scan_source(guest, ("skills",))
-
-
-@pytest.mark.parametrize(
-    "data, message",
-    (
-        (
-            {
-                "files": [{"path": "../escape", "sha256": "0" * 64, "size": 1}],
-                "schema": SOURCE_SCHEMA,
-            },
-            "portable and relative",
-        ),
-        (
-            {
-                "files": [{"path": ".", "sha256": "0" * 64, "size": 1}],
-                "schema": SOURCE_SCHEMA,
-            },
-            "portable and relative",
-        ),
-        (
-            {
-                "files": [{"path": "flows\\escape.too", "sha256": "0" * 64, "size": 1}],
-                "schema": SOURCE_SCHEMA,
-            },
-            "portable and relative",
-        ),
-        (
-            {
-                "files": [{"path": "agent.too", "sha256": "invalid", "size": 1}],
-                "schema": SOURCE_SCHEMA,
-            },
-            "SHA-256",
-        ),
-        (
-            {
-                "files": [
-                    {"path": "b", "sha256": "0" * 64, "size": 1},
-                    {"path": "a", "sha256": "0" * 64, "size": 1},
-                ],
-                "schema": SOURCE_SCHEMA,
-            },
-            "sorted and unique",
-        ),
-    ),
-)
-def test_source_manifest_rejects_unsafe_or_noncanonical_data(
-    data: dict[str, object],
-    message: str,
-) -> None:
-    with pytest.raises(ValueError, match=message):
-        SourceManifest.from_data(data)
 
 
 def test_source_manifest_rejects_symbolic_link_directories(tmp_path: Path) -> None:
@@ -309,20 +258,19 @@ def test_home_source_discovers_only_direct_lowercase_too_runnables(
     assert all(not is_source_path(root, "alice", path) for path in ignored)
 
 
-@pytest.mark.parametrize("schema", [2, 3, SOURCE_SCHEMA])
-def test_source_manifest_rejects_old_schemas_and_missing_raw_digests(schema):
-    from hashlib import sha256
+@pytest.mark.parametrize("path", ["../escape", ".", "flows\\escape.too"])
+def test_source_entry_rejects_unsafe_paths(path):
+    with pytest.raises(ValueError, match="portable and relative"):
+        SourceManifestEntry(path, 1, "0" * 64, "0" * 64)
 
-    old_data = {
-        "schema": schema,
-        "files": [
-            {
-                "path": "agent.too",
-                "sha256": sha256(b"# Hello\r\n").hexdigest(),
-                "size": 9,
-            }
-        ],
-    }
-    message = "requires raw file digests" if schema == SOURCE_SCHEMA else "unsupported"
-    with pytest.raises(ValueError, match=message):
-        SourceManifest.from_data(old_data)
+
+def test_source_manifest_requires_canonical_content_identities():
+    with pytest.raises(ValueError, match="SHA-256"):
+        SourceManifestEntry("agent.too", 1, "invalid", "0" * 64)
+    with pytest.raises(ValueError, match="requires raw file digests"):
+        SourceManifest((SourceManifestEntry("agent.too", 1, "0" * 64),))
+    entries = tuple(
+        SourceManifestEntry(path, 1, "0" * 64, "0" * 64) for path in ("b", "a")
+    )
+    with pytest.raises(ValueError, match="sorted and unique"):
+        SourceManifest(entries)

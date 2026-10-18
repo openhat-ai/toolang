@@ -23,6 +23,7 @@ from .errors import EventProtocolError
 from .events import MAX_EVENT_BYTES, encode
 from .records import EventProjection, MAX_BYTES, MAX_ENTITIES, field
 from .schemas import (
+    HUB_API_VERSION,
     CommitRequest,
     EventRequest,
     IncompleteRequest,
@@ -51,7 +52,11 @@ def _entities(values: dict[str, str]) -> dict[str, Any]:
     for key, raw in values.items():
         kind, identity = _key(key)
         value = json.loads(raw)
-        if not isinstance(value, dict) or value.get("v") != 2:
+        if (
+            not isinstance(value, dict)
+            or type(value.get("v")) is not int
+            or value["v"] != HUB_API_VERSION
+        ):
             raise ValueError("Invalid entity version")
         if not isinstance(value.get("thread"), str):
             raise ValueError("Invalid entity thread")
@@ -155,7 +160,8 @@ def validate_publication(body: CommitRequest | StagingRequest, *, agent: str) ->
                 data = json.loads(body.data)
                 if (
                     set(data) != {"v", "source_cursor", "thread", "root", "event"}
-                    or data["v"] != 2
+                    or type(data["v"]) is not int
+                    or data["v"] != HUB_API_VERSION
                     or data["source_cursor"] != body.source
                 ):
                     raise ValueError("Invalid canonical envelope")

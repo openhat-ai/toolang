@@ -10,6 +10,7 @@ from uuid import uuid4
 
 import httpx
 
+from toolang.api.version import AGENT_API_VERSION
 from toolang.api.schemas import RuntimeLifecyclePayload
 from toolang.up.lifecycle import LEASE_RENEW_SEC, LEASE_TTL_SEC
 from toolang.up.types import AgentServerRef
@@ -35,7 +36,7 @@ class ServerLease:
         with httpx.Client(timeout=3.0) as http:
             response = http.request(
                 method,
-                f"{self.server.endpoint}/api/v1/runtime/leases/{self.client_id}",
+                f"{self.server.endpoint}/api/v{AGENT_API_VERSION}/runtime/leases/{self.client_id}",
                 json={"launch_id": self.server.launch_id},
             )
             response.raise_for_status()

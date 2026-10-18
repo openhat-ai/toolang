@@ -581,18 +581,6 @@ def flow_stmt_from_data(value: object) -> FlowStmt:
     statement = _flow_stmt_adapter().validate_python(value)
     canonical = cast(dict[str, object], to_data(statement))
 
-    def legacy_defaults(raw: object, encoded: dict[str, Any]) -> None:
-        if not isinstance(raw, Mapping):
-            return
-        for name, default in (("window", 3), ("initial", None), ("until_index", None)):
-            if name not in raw and encoded.get(name) == default:
-                encoded.pop(name, None)
-        for child, raw_child in zip(
-            encoded.get("stmts", ()), cast(Mapping[str, Any], raw).get("stmts", ())
-        ):
-            legacy_defaults(raw_child, child)
-
-    legacy_defaults(value, canonical)
     if not isinstance(value, Mapping) or dict(value) != canonical:
         raise ValueError("flow statement requires canonical typed fields")
     return statement

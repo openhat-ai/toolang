@@ -4,21 +4,19 @@ from __future__ import annotations
 
 from collections.abc import Collection, Mapping, Sequence
 from collections import OrderedDict
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from hashlib import sha256
 import os
 from pathlib import Path
 import re
 from threading import RLock
-from typing import Literal, cast
+from typing import Literal
 
 from toolang.catalog.types import CAP_DIRECTORY_NAMES
-
 
 from ..lang.ast import AgicDecl, FlowDecl, Program
 from ..common.progress import ProgressSink, emit_progress
 
-SOURCE_SCHEMA = 4
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _AGENT_PROGRAMS: OrderedDict[tuple[Path, str], Program] = OrderedDict()
 _AGENT_PROGRAMS_LOCK = RLock()
@@ -100,12 +98,6 @@ class SourceIssue:
     code: str
     message: str
 
-    @classmethod
-    def from_data(cls, data: Mapping[str, object]) -> SourceIssue:
-        path, code, message = (str(data[key]) for key in ("path", "code", "message"))
-        _portable_relative_path(path)
-        return cls(path, code, message)
-
 
 def source_issue(path: str, error: Exception) -> SourceIssue:
     message = (
@@ -168,98 +160,20 @@ class SourceManifestEntry:
         ):
             raise ValueError("raw source digest must be a SHA-256 hex value")
 
-    def to_data(self) -> dict[str, object]:
-        result: dict[str, object] = {
-            "path": self.path,
-            "sha256": self.digest,
-            "size": self.size,
-        }
-        if self.raw_digest is not None:
-            result["raw_sha256"] = self.raw_digest
-        return result
-
-    @classmethod
-    def from_data(cls, data: Mapping[str, object]) -> SourceManifestEntry:
-        if set(data) not in (
-            {"path", "sha256", "size"},
-            {"path", "sha256", "size", "raw_sha256"},
-        ):
-            raise ValueError("source manifest file fields do not match schema")
-        path = data.get("path")
-        digest = data.get("sha256")
-        size = data.get("size")
-        raw_digest = data.get("raw_sha256")
-        if "raw_sha256" in data and not isinstance(raw_digest, str):
-            raise TypeError("raw source digest must be a string")
-        if not isinstance(path, str) or not isinstance(digest, str):
-            raise TypeError("source manifest path and digest must be strings")
-        if not isinstance(size, int) or isinstance(size, bool):
-            raise TypeError("source manifest size must be an integer")
-        return cls(
-            path=path, size=size, digest=digest, raw_digest=cast(str | None, raw_digest)
-        )
-
 
 @dataclass(frozen=True, slots=True)
 class SourceManifest:
     """Portable content identity of every selected file in one State scope."""
 
     files: tuple[SourceManifestEntry, ...]
-    schema: int = SOURCE_SCHEMA
     issues: tuple[SourceIssue, ...] = ()
 
     def __post_init__(self) -> None:
-        if self.schema != SOURCE_SCHEMA:
-            raise ValueError(f"unsupported source manifest schema: {self.schema}")
         paths = tuple(item.path for item in self.files)
         if paths != tuple(sorted(paths)) or len(paths) != len(set(paths)):
             raise ValueError("source manifest paths must be sorted and unique")
-        if self.schema == SOURCE_SCHEMA and any(
-            item.raw_digest is None for item in self.files
-        ):
+        if any(item.raw_digest is None for item in self.files):
             raise ValueError("current source manifest requires raw file digests")
-
-    def to_data(self) -> dict[str, object]:
-        return {
-            "files": [item.to_data() for item in self.files],
-            "schema": self.schema,
-            **(
-                {"issues": [asdict(item) for item in self.issues]}
-                if self.issues
-                else {}
-            ),
-        }
-
-    @classmethod
-    def from_data(cls, data: Mapping[str, object]) -> SourceManifest:
-        if set(data) not in ({"files", "schema"}, {"files", "schema", "issues"}):
-            raise ValueError("source manifest fields do not match schema")
-        schema = _integer_field(data, "schema")
-        if schema != SOURCE_SCHEMA:
-            raise ValueError(f"unsupported source manifest schema: {schema}")
-        raw_files = data.get("files")
-        if not isinstance(raw_files, list):
-            raise TypeError("source manifest files must be an array")
-        files = tuple(
-            SourceManifestEntry.from_data(cast(Mapping[str, object], item))
-            for item in raw_files
-            if isinstance(item, Mapping)
-        )
-        if len(files) != len(raw_files):
-            raise TypeError("source manifest file must be an object")
-        raw_issues = data.get("issues", [])
-        if not isinstance(raw_issues, list) or not all(
-            isinstance(item, Mapping) for item in raw_issues
-        ):
-            raise TypeError("source issues must be objects")
-        return cls(
-            files=files,
-            schema=schema,
-            issues=tuple(
-                SourceIssue.from_data(cast(Mapping[str, object], item))
-                for item in raw_issues
-            ),
-        )
 
 
 class SourceChangedError(RuntimeError):
@@ -501,13 +415,6 @@ def _require_source_shape(
     matches = path.is_file() if shape == "file" else path.is_dir()
     if not matches:
         raise ValueError(f"source must be a {shape}: {path}")
-
-
-def _integer_field(data: Mapping[str, object], key: str) -> int:
-    value = data[key]
-    if not isinstance(value, int) or isinstance(value, bool):
-        raise TypeError(f"source field {key!r} must be an integer")
-    return value
 
 
 @dataclass(frozen=True, slots=True)

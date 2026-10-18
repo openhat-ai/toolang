@@ -12,6 +12,7 @@ from urllib.request import Request, urlopen
 import typer
 from typer._click.exceptions import ClickException
 
+from toolang.api.version import AGENT_API_VERSION
 from toolang.up import process as agents
 from toolang.common.layout import AgentLayout
 from toolang.common.progress import ProgressSink, emit_progress
@@ -46,7 +47,7 @@ class RuntimeClient:
         )
         try:
             resources = {
-                name: self.get(f"/api/v1/{name}")
+                name: self.get(f"/api/v{AGENT_API_VERSION}/{name}")
                 for name in ("models", "tools", "caps", "chores", "workspaces")
             }
         except BaseException:
@@ -140,10 +141,10 @@ class RuntimeClient:
                 on_event(event)
 
     def list_models(self) -> Mapping[str, Any]:
-        return self.get("/api/v1/models")
+        return self.get(f"/api/v{AGENT_API_VERSION}/models")
 
     def list_runnables(self, kind: str) -> Mapping[str, Any]:
-        return self.get(f"/api/v1/{kind}s")
+        return self.get(f"/api/v{AGENT_API_VERSION}/{kind}s")
 
     def _request(self, path: str, payload: Mapping[str, object]) -> Request:
         return Request(

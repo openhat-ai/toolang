@@ -1,7 +1,7 @@
 # Contract Version Boundaries
 
 Maintain eight independent contracts: two file formats, three database schemas
-and three API versions. This definition requires human approval before implementation.
+and three API versions. Approved for implementation on 2026-10-18.
 
 ## Contracts
 
@@ -42,10 +42,12 @@ revisions, digests, epochs and software versions retain their existing meanings.
 
 ## Version and compatibility policy
 
-Continue existing version lineages without resetting them for release. Increment
-affected contracts for incompatible changes; newly introduced domains start at 1.
+Continue existing format/schema lineages without resetting them for release.
+Increment affected formats/schemas for incompatible changes; new domains start at 1.
 Merged domains continue from the highest existing counter. Do not preassign final
 version values before implementation.
+
+The three APIs use v0 during prerelease and retain independent version owners.
 
 Support no historical formats: remove legacy decoders, retired-field aliases,
 migrations and compatibility fallbacks. Reject incompatible stored data without

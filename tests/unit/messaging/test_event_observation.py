@@ -16,6 +16,7 @@ from toolang.base.types.message import TextPart
 from toolang.execution.schemas import StreamFrame
 from toolang.execution.types import ThreadPrefix
 from toolang.teaming.backend.valkey import ValkeyBackend
+from toolang.teaming.backend.valkey.schema import HUB_STORE_SCHEMA
 from toolang.teaming.config import BackendConfig
 from toolang.teaming.errors import (
     BackendUnavailable,
@@ -181,6 +182,36 @@ def test_partial_dataset_fails_closed_without_touching_messaging():
         await driver.register("human:other")
         assert "human:other" in await driver.participants()
         await driver.close()
+
+    asyncio.run(scenario())
+
+
+def test_event_and_messaging_paths_reject_the_same_hub_store_schema():
+    from toolang.teaming.backend.valkey.keys import SCHEMA
+    from toolang.teaming.errors import StorageIntegrityError
+
+    async def scenario():
+        driver = backend(FakeServer(server_type="valkey"))
+        try:
+            await driver.initialize()
+            await driver.register("human:owner")
+            await driver.events.initialize()
+            await driver._call("SET", SCHEMA, str(HUB_STORE_SCHEMA - 1))
+            before = await driver._call("HGETALL", EVENT_META)
+            with pytest.raises(
+                EventProtocolError, match="unsupported hub store schema"
+            ):
+                await driver.events.initialize()
+            with pytest.raises(
+                EventProtocolError, match="unsupported hub store schema"
+            ):
+                await driver.events.capture()
+            with pytest.raises(StorageIntegrityError, match="unsupported"):
+                await driver.initialize()
+            assert await driver._call("HGETALL", EVENT_META) == before
+            assert await driver._call("GET", SCHEMA) == str(HUB_STORE_SCHEMA - 1)
+        finally:
+            await driver.close()
 
     asyncio.run(scenario())
 
@@ -471,7 +502,7 @@ def test_hub_filters_and_cursor_errors_have_flat_http_contract(tmp_path):
                 "HSET",
                 EVENT_AGENTS,
                 "agent:alice",
-                json.dumps({"v": 2, "status": "complete"}),
+                json.dumps({"v": HUB_STORE_SCHEMA, "status": "complete"}),
             )
             for scope in ("run", "thread"):
                 response = await http.get(
@@ -490,13 +521,13 @@ def test_hub_filters_and_cursor_errors_have_flat_http_contract(tmp_path):
                 "HSET",
                 EVENT_AGENTS,
                 "agent:alice",
-                json.dumps({"v": 2, "generation": "g"}),
+                json.dumps({"v": HUB_STORE_SCHEMA, "generation": "g"}),
             )
             await driver._call(
                 "HSET",
                 generation_key("agent:alice", "g"),
                 MANIFEST,
-                json.dumps({"v": 2, "count": 1, "baseline": "0-0"}),
+                json.dumps({"v": HUB_STORE_SCHEMA, "count": 1, "baseline": "0-0"}),
                 '["run","r"]',
                 "{",
             )
@@ -1093,8 +1124,8 @@ def test_recovery_bounds_records_work_before_it_consumes_the_snapshot_budget(
         "{",
         "[]",
         "null",
-        '{"v":1,"entity":[],"delivery":"1-0"}',
-        '{"v":1,"entity":{"v":2},"delivery":"1-0"}',
+        '{"v":4,"entity":[],"delivery":"1-0"}',
+        '{"v":4,"entity":{"v":1},"delivery":"1-0"}',
     ],
 )
 def test_malformed_stored_projection_is_a_protocol_failure(stored):
@@ -1103,6 +1134,7 @@ def test_malformed_stored_projection_is_a_protocol_failure(stored):
     async def scenario():
         driver = backend(FakeServer(server_type="valkey"))
         try:
+            await driver.initialize()
             await driver._call(
                 "HSET",
                 generation_key("agent:alice", "generation"),
@@ -1332,8 +1364,8 @@ def test_invalid_recovery_metadata_is_a_backend_error(damage):
             ) as http,
         ):
             await driver.events.initialize()
-            origin = {"v": 2, "generation": "g"}
-            manifest = {"v": 2, "count": 0, "baseline": "0-0"}
+            origin = {"v": HUB_STORE_SCHEMA, "generation": "g"}
+            manifest = {"v": HUB_STORE_SCHEMA, "count": 0, "baseline": "0-0"}
             entities = {}
             if damage == "floor":
                 origin["floor"] = "bad"
@@ -1341,13 +1373,13 @@ def test_invalid_recovery_metadata_is_a_backend_error(damage):
                 del manifest["baseline"]
             elif damage == "root":
                 entities[field("root", "run_one")] = {
-                    "v": 2,
+                    "v": 0,
                     "root": "run_one",
                     "thread": "term_one",
                 }
             else:
                 entities[field("control", "term_one#0")] = {
-                    "v": 2,
+                    "v": 0,
                     "thread": "term_one",
                     "root": None,
                     "source": None,
@@ -1385,13 +1417,65 @@ def test_old_event_dataset_is_rejected_without_mutation():
     async def scenario():
         driver = backend(FakeServer(server_type="valkey"))
         try:
+            await driver.initialize()
             meta = await driver.events.initialize()
-            assert meta["v"] == "2"
+            assert meta["v"] == str(HUB_STORE_SCHEMA)
             await driver._client.hset(EVENT_META, "v", "1")
             before = await driver._client.hgetall(EVENT_META)
             with pytest.raises(EventProtocolError):
                 await driver.events.initialize()
             assert await driver._client.hgetall(EVENT_META) == before
+        finally:
+            await driver.close()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("version", [1, False, 0.0, None])
+@pytest.mark.parametrize("representation", ["staged", "stored", "event"])
+def test_event_readers_reject_incompatible_wire_versions(version, representation):
+    from toolang.execution.events import event_to_data
+    from toolang.execution.types import EventCursor
+    from toolang.teaming.backend.valkey.keys import generation_key
+    from toolang.teaming.events import encode
+    from toolang.teaming.records import field
+    from toolang.teaming.subscriptions import _canonical
+
+    source = str(EventCursor("a" * 32, 1))
+    event = event_to_data(run_begin("run_one", 0, thread_id="chat_one"))
+    if representation == "event":
+        with pytest.raises(EventProtocolError):
+            _canonical(
+                encode(
+                    dict(
+                        v=version,
+                        source_cursor=source,
+                        event=event,
+                        thread="chat_one",
+                        root="run_one",
+                    )
+                )
+            )
+        return
+
+    async def scenario():
+        driver = backend(FakeServer(server_type="valkey"))
+        try:
+            await driver.initialize()
+            entity = dict(v=version, begin=event, thread="chat_one", root="run_one")
+            value = (
+                dict(v=HUB_STORE_SCHEMA, entity=entity, delivery="0-0")
+                if representation == "stored"
+                else entity
+            )
+            await driver._call(
+                "HSET",
+                generation_key("agent:alice", "g"),
+                field("run", "run_one"),
+                encode(value),
+            )
+            with pytest.raises(EventProtocolError):
+                await driver.events.projection("agent:alice", "g")
         finally:
             await driver.close()
 

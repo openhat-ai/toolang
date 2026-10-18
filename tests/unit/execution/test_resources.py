@@ -178,31 +178,22 @@ def test_agent_resources_durable_data_round_trips_every_resource_kind() -> None:
     assert AgentResources.from_data(resources.to_data()) == resources
 
 
-def test_agent_resources_reads_legacy_tool_namespace_field() -> None:
-    resources = AgentResources.from_data(
-        {
-            "models": [],
-            "tools": [
-                {
-                    "model_name": "fs__read",
-                    "plugin": "fs",
-                    "namespace": "fs",
-                    "name": "read",
-                }
-            ],
-            "caps": [],
-        }
-    )
-
-    assert resources.tools[0].toolset == "fs"
-    assert resources.to_data()["tools"] == [
-        {
-            "model_name": "fs__read",
-            "plugin": "fs",
-            "toolset": "fs",
-            "name": "read",
-        }
-    ]
+def test_agent_resources_rejects_retired_tool_namespace_field() -> None:
+    with pytest.raises(ValueError, match="canonical fields"):
+        AgentResources.from_data(
+            {
+                "models": [],
+                "tools": [
+                    {
+                        "model_name": "fs__read",
+                        "plugin": "fs",
+                        "namespace": "fs",
+                        "name": "read",
+                    }
+                ],
+                "caps": [],
+            }
+        )
 
 
 @pytest.mark.parametrize(

@@ -181,9 +181,6 @@ def test_tree_merges_loop_steps_and_runs_at_authored_position(
         until_index=until_index,
     )
     encoded = cast(dict[str, object], to_data(statement))
-    if until_index is None:
-        # Historical records have no positional field and retain trailing order.
-        encoded.pop("until_index")
     loop = replace(loop, spec=flow_stmt_from_data(encoded))
     snapshot = replace(snapshot, steps=(loop, body))
     tree = build_execution_tree(snapshot)

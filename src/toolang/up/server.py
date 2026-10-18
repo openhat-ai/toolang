@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass, field
@@ -22,6 +23,7 @@ from fastapi import FastAPI
 import uvicorn
 from uvicorn.main import STARTUP_FAILURE
 
+from toolang.api.version import AGENT_API_VERSION
 from toolang.api.app import create_app
 from toolang.base.model_settings import format_model_body
 from toolang.base.types.model import ModelOverride
@@ -259,7 +261,7 @@ def serve(
         if location == "host"
         else None
     )
-    from toolang.up.records import patch_workload
+    from toolang.up.instance import patch_workload
     import psutil
 
     if launch_id is None and host_ref is not None:
@@ -390,7 +392,7 @@ def serve(
                     location=location,
                     drivers=sorted(spec.drivers),
                     lifetime=spec.lifetime,
-                    lifecycle_protocol=1,
+                    api_version=AGENT_API_VERSION,
                     workspace_additions=spec.workspace_additions,
                     process_created=psutil.Process().create_time(),
                     sandbox_description=environ.get(HOST_SANDBOX_DESCRIPTION_ENV),
@@ -557,7 +559,7 @@ def serve(
                 )
             if owns_control and failure is None and host_ref is not None:
                 from toolang.up.sandbox import _clear_state
-                from toolang.up.records import SandboxState
+                from toolang.up.instance import SandboxState
 
                 _clear_state(
                     spec.layout, expected=SandboxState(sandbox, host_ref, launch_id)
@@ -806,9 +808,9 @@ def _port_is_available(host: str, port: int) -> bool:
 
 def _record_ready(spec: ServeSpec, launch_id: str, sandbox: str, host_ref) -> None:
     if host_ref is not None:
-        from toolang.up.records import update_record
+        from toolang.up.instance import update_instance
 
-        update_record(
+        update_instance(
             spec.layout.runtime_status,
             lambda entry: entry["control"].update(
                 last_successful={"endpoint": spec.endpoint, "sandbox": sandbox}

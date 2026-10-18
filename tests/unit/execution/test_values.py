@@ -477,10 +477,15 @@ def test_preparation_payload_round_trips_authored_prompt_facts() -> None:
     assert control_payload_from_data("run", data) == payload
 
     prompt_data[0]["input_scope"] = "inline"
+    with pytest.raises(ValueError, match="retired input_scope"):
+        control_payload_from_data("run", data)
+    del prompt_data[0]["input_scope"]
+    prompt_data[0]["arguments"] = [["focus", "security"]]
+    # The current API encodes tuple pairs through its dataclass serializer.
     assert control_payload_from_data("run", data) == payload
 
 
-def test_preparation_payload_reads_legacy_missing_sandbox_as_unknown() -> None:
+def test_preparation_payload_round_trips_unknown_sandbox() -> None:
     payload = RunControlPayload(
         resources=AgentResources(),
         limits=RunLimits(),

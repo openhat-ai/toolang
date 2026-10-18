@@ -186,7 +186,7 @@ def test_index_without_condition_is_rejected():
         RepeatStmt(span=Span(1), until_index=0)
 
 
-def test_historical_nested_repeat_defaults_to_trailing_condition():
+def test_historical_nested_repeat_without_condition_index_is_rejected():
     inner = RepeatStmt(
         span=Span(2),
         count=1,
@@ -197,7 +197,8 @@ def test_historical_nested_repeat_defaults_to_trailing_condition():
     data = cast(dict[str, Any], to_data(outer))
     data.pop("until_index")
     data["stmts"][0].pop("until_index")
-    assert flow_stmt_from_data(data) == outer
+    with pytest.raises(ValueError, match="canonical typed fields"):
+        flow_stmt_from_data(data)
 
 
 @pytest.mark.parametrize("name", ["value", "a0", "two_words", "a__b", "a_", "runtime"])

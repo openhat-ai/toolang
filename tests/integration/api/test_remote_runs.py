@@ -75,10 +75,10 @@ def test_http_rerun_binds_fresh_signature_before_admission(tmp_path, value):
     try:
         with TestClient(app) as client:
             thread = client.post(
-                "/api/v1/threads", json={"client_id": "test-tui"}
+                "/api/v0/threads", json={"client_id": "test-tui"}
             ).json()["thread"]["id"]
             response = client.post(
-                "/api/v1/runs/authored/stream",
+                "/api/v0/runs/authored/stream",
                 json=_authored_request(
                     thread,
                     "source_request",
@@ -93,7 +93,7 @@ def test_http_rerun_binds_fresh_signature_before_admission(tmp_path, value):
             core.layout.program.write_text(source.replace("Text", "Number"))
             core.state = _Snapshot(prepare_agent_state(core.layout))
             rerun = client.post(
-                f"/api/v1/runs/{original_id}/rerun/stream",
+                f"/api/v0/runs/{original_id}/rerun/stream",
                 json={"request_id": "rerun_request"},
             )
             if value == "7":
@@ -187,7 +187,7 @@ agic chat(_: Text, count: Number, enabled: Boolean, primary: Text, named: Text, 
     try:
         with TestClient(app) as client:
             thread = client.post(
-                "/api/v1/runs/threads", json={"client_id": "test-script"}
+                "/api/v0/runs/threads", json={"client_id": "test-script"}
             ).json()["thread"]["id"]
             envelope = {
                 "thread_id": thread,
@@ -204,7 +204,7 @@ agic chat(_: Text, count: Number, enabled: Boolean, primary: Text, named: Text, 
                 )
             ):
                 response = client.post(
-                    f"/api/v1/runs/{endpoint}",
+                    f"/api/v0/runs/{endpoint}",
                     json={
                         **envelope,
                         "request_id": f"flat_{index}",
@@ -232,7 +232,7 @@ agic chat(_: Text, count: Number, enabled: Boolean, primary: Text, named: Text, 
                     {},
                 ):
                     response = client.post(
-                        f"/api/v1/runs/{endpoint}",
+                        f"/api/v0/runs/{endpoint}",
                         json={
                             **envelope,
                             "request_id": "invalid_flat",
@@ -241,7 +241,7 @@ agic chat(_: Text, count: Number, enabled: Boolean, primary: Text, named: Text, 
                     )
                     assert response.status_code == 422, response.text
                 response = client.post(
-                    f"/api/v1/runs/{endpoint}",
+                    f"/api/v0/runs/{endpoint}",
                     json={
                         **envelope,
                         "request_id": "old_flat",
@@ -257,7 +257,7 @@ agic chat(_: Text, count: Number, enabled: Boolean, primary: Text, named: Text, 
                     }
                 ).replace('"_": ""', '"_": "first", "_": "second"')
                 response = client.post(
-                    f"/api/v1/runs/{endpoint}",
+                    f"/api/v0/runs/{endpoint}",
                     content=encoded,
                     headers={"content-type": "application/json"},
                 )
@@ -302,10 +302,10 @@ agic chat(_: Part[]) -> Part[]:
     try:
         with TestClient(app) as client:
             thread = client.post(
-                "/api/v1/runs/threads", json={"client_id": "test-script"}
+                "/api/v0/runs/threads", json={"client_id": "test-script"}
             ).json()["thread"]["id"]
             response = client.post(
-                "/api/v1/runs/stream",
+                "/api/v0/runs/stream",
                 json={
                     "thread_id": thread,
                     "request_id": "invalid_part",
@@ -358,7 +358,7 @@ agic chat(_: Part[], part: Part, rows: Part[][], packet: Packet, data: Json) -> 
     try:
         with TestClient(app) as client:
             thread = client.post(
-                "/api/v1/runs/threads", json={"client_id": "test-script"}
+                "/api/v0/runs/threads", json={"client_id": "test-script"}
             ).json()["thread"]["id"]
             envelope = {
                 "thread_id": thread,
@@ -374,7 +374,7 @@ agic chat(_: Part[], part: Part, rows: Part[][], packet: Packet, data: Json) -> 
                 {"packet": {"part": invalid, "data": data}},
             ):
                 response = client.post(
-                    "/api/v1/runs/stream",
+                    "/api/v0/runs/stream",
                     json={
                         **envelope,
                         "runnable": {"ref": "agic:chat", "input": {**values, **change}},
@@ -383,7 +383,7 @@ agic chat(_: Part[], part: Part, rows: Part[][], packet: Packet, data: Json) -> 
                 assert response.status_code == 422, response.text
             assert core.store.list_runs(thread_id=thread, limit=None) == []
             response = client.post(
-                "/api/v1/runs/stream",
+                "/api/v0/runs/stream",
                 json={
                     **envelope,
                     "runnable": {"ref": "agic:chat", "input": values},
@@ -456,7 +456,7 @@ agic selected(_: Part[], tone: Text) -> Part[]:
     try:
         with TestClient(app) as client:
             prompt_completions = client.get(
-                "/api/v1/prompt-completions",
+                "/api/v0/prompt-completions",
                 params={"runnable": "agic:selected"},
             )
             assert prompt_completions.json() == {
@@ -467,10 +467,10 @@ agic selected(_: Part[], tone: Text) -> Part[]:
                     }
                 ]
             }
-            created = client.post("/api/v1/threads", json={"client_id": "test-tui"})
+            created = client.post("/api/v0/threads", json={"client_id": "test-tui"})
             thread_id = created.json()["thread"]["id"]
             fallback = client.post(
-                "/api/v1/runs/authored/stream",
+                "/api/v0/runs/authored/stream",
                 headers={"origin": "https://ui.test"},
                 json=_authored_request(
                     thread_id,
@@ -484,9 +484,9 @@ agic selected(_: Part[], tone: Text) -> Part[]:
             assert fallback.status_code == 200, fallback.text
             fallback_events = _sse_events(fallback.text)
             fallback_id = str(fallback_events[0][1]["run"])
-            fallback_detail_response = client.get(f"/api/v1/runs/{fallback_id}")
+            fallback_detail_response = client.get(f"/api/v0/runs/{fallback_id}")
             selected = client.post(
-                "/api/v1/runs/authored/stream",
+                "/api/v0/runs/authored/stream",
                 json=_authored_request(
                     thread_id,
                     "selected_request",
@@ -496,9 +496,9 @@ agic selected(_: Part[], tone: Text) -> Part[]:
             )
             selected_events = _sse_events(selected.text)
             selected_id = str(selected_events[0][1]["run"])
-            selected_detail_response = client.get(f"/api/v1/runs/{selected_id}")
+            selected_detail_response = client.get(f"/api/v0/runs/{selected_id}")
             duplicate = client.post(
-                "/api/v1/runs/authored/stream",
+                "/api/v0/runs/authored/stream",
                 json=_authored_request(
                     thread_id,
                     "selected_request",
@@ -507,7 +507,7 @@ agic selected(_: Part[], tone: Text) -> Part[]:
                 ),
             )
             invalid_policy = client.post(
-                "/api/v1/runs/authored/stream",
+                "/api/v0/runs/authored/stream",
                 json=_authored_request(
                     thread_id,
                     "invalid_request",
@@ -516,7 +516,7 @@ agic selected(_: Part[], tone: Text) -> Part[]:
                 ),
             )
             invalid_fallback = client.post(
-                "/api/v1/runs/authored/stream",
+                "/api/v0/runs/authored/stream",
                 json=_authored_request(
                     thread_id,
                     "invalid_fallback_request",
@@ -525,7 +525,7 @@ agic selected(_: Part[], tone: Text) -> Part[]:
                 ),
             )
             invalid_input = client.post(
-                "/api/v1/runs/authored/stream",
+                "/api/v0/runs/authored/stream",
                 json=_authored_request(
                     thread_id,
                     "invalid_input_request",
@@ -534,7 +534,7 @@ agic selected(_: Part[], tone: Text) -> Part[]:
                 ),
             )
             invalid_include = client.post(
-                "/api/v1/runs/authored/stream",
+                "/api/v0/runs/authored/stream",
                 json=_authored_request(
                     thread_id,
                     "invalid_include_request",
@@ -543,7 +543,7 @@ agic selected(_: Part[], tone: Text) -> Part[]:
                 ),
             )
             invalid_home_include = client.post(
-                "/api/v1/runs/authored/stream",
+                "/api/v0/runs/authored/stream",
                 json=_authored_request(
                     thread_id,
                     "invalid_home_include_request",
@@ -552,7 +552,7 @@ agic selected(_: Part[], tone: Text) -> Part[]:
                 ),
             )
             missing_thread = client.post(
-                "/api/v1/runs/authored/stream",
+                "/api/v0/runs/authored/stream",
                 json=_authored_request(
                     "term_missing", "missing_request", source="missing"
                 ),
@@ -665,17 +665,17 @@ agic chat(_: Part[]) -> Part[]:
     try:
         with TestClient(app) as client:
             thread_id = client.post(
-                "/api/v1/threads",
+                "/api/v0/threads",
                 json={"client_id": "test-tui"},
             ).json()["thread"]["id"]
             source = client.post(
-                "/api/v1/runs/authored/stream",
+                "/api/v0/runs/authored/stream",
                 json=_authored_request(thread_id, "source_request"),
             )
             source_id = source.headers["X-Toolang-Run-ID"]
 
             rerun = client.post(
-                f"/api/v1/runs/{source_id}/rerun/stream",
+                f"/api/v0/runs/{source_id}/rerun/stream",
                 json={
                     "request_id": "rerun_request",
                     "commands": [{"group": "limit", "field": "time", "value": 30}],
@@ -844,7 +844,7 @@ def test_authored_attachments_reject_changed_state_before_acceptance(tmp_path):
     try:
         with TestClient(app) as client:
             references = client.post(
-                "/api/v1/runs/input-references",
+                "/api/v0/runs/input-references",
                 json={"runnable": "agic:chat", "input": {"_": "@note.txt"}},
             )
             assert references.status_code == 200
@@ -853,7 +853,7 @@ def test_authored_attachments_reject_changed_state_before_acceptance(tmp_path):
                 "references": ["note.txt"],
             }
             thread = client.post(
-                "/api/v1/threads", json={"client_id": "test-tui"}
+                "/api/v0/threads", json={"client_id": "test-tui"}
             ).json()["thread"]["id"]
             payload = _authored_request(
                 thread,
@@ -862,7 +862,7 @@ def test_authored_attachments_reject_changed_state_before_acceptance(tmp_path):
                 attachments={"note.txt": {"type": "text", "text": "client bytes"}},
             )
             payload["source_revision"] = "0" * 64
-            response = client.post("/api/v1/runs/authored/stream", json=payload)
+            response = client.post("/api/v0/runs/authored/stream", json=payload)
             assert response.status_code == 422
             assert "source changed" in response.json()["detail"]
             assert core.store.list_runs(thread_id=thread, limit=None) == []
@@ -889,7 +889,7 @@ def test_post_validates_cursor_before_admission(tmp_path, cursor):
     try:
         with TestClient(app) as client:
             thread = client.post(
-                "/api/v1/threads", json={"client_id": "test-tui"}
+                "/api/v0/threads", json={"client_id": "test-tui"}
             ).json()["thread"]["id"]
             before = core.executor.stream.tail
             after = (
@@ -898,7 +898,7 @@ def test_post_validates_cursor_before_admission(tmp_path, cursor):
                 else cursor
             )
             response = client.post(
-                "/api/v1/runs/authored/stream",
+                "/api/v0/runs/authored/stream",
                 params={"after": after},
                 json=_authored_request(
                     thread, "rejected_cursor", runnable="agic:answer"
@@ -910,10 +910,10 @@ def test_post_validates_cursor_before_admission(tmp_path, cursor):
             assert not core.executor.stream._readers
             paths = client.get("/openapi.json").json()["paths"]
             for path, method in [
-                ("/api/v1/stream", "get"),
-                ("/api/v1/threads/{thread_id}/stream", "get"),
-                ("/api/v1/runs/{run_id}/stream", "get"),
-                ("/api/v1/runs/authored/stream", "post"),
+                ("/api/v0/stream", "get"),
+                ("/api/v0/threads/{thread_id}/stream", "get"),
+                ("/api/v0/runs/{run_id}/stream", "get"),
+                ("/api/v0/runs/authored/stream", "post"),
             ]:
                 assert any(
                     item["name"] == "after"
@@ -949,11 +949,11 @@ def test_new_run_with_old_cursor_still_starts_with_identifying_begin(
         with TestClient(app) as client:
             for _ in range(2):
                 thread = client.post(
-                    "/api/v1/threads", json={"client_id": "test-tui"}
+                    "/api/v0/threads", json={"client_id": "test-tui"}
                 ).json()["thread"]["id"]
             source.limits = StreamLimits()
             response = client.post(
-                "/api/v1/runs/authored/stream",
+                "/api/v0/runs/authored/stream",
                 params={"after": after},
                 json=_authored_request(thread, "old_cursor", runnable="flow:example"),
             )

@@ -21,6 +21,7 @@ from typing import (
 
 from pydantic import BaseModel, BeforeValidator, TypeAdapter, Field
 
+from toolang.api.version import AGENT_API_VERSION
 from toolang.base.types.compaction import CompactionResult
 from toolang.base.types.message import Part, message_summary
 from toolang.base.types.model import ModelOverride, ModelRequest
@@ -76,6 +77,11 @@ from .types import (
     validate_step_report,
 )
 from .values import parts_from_value
+
+
+AgentAPIVersion = Annotated[
+    int, Field(strict=True, ge=AGENT_API_VERSION, le=AGENT_API_VERSION)
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -165,7 +171,7 @@ class HistoryCursor:
     thread: ThreadRecord | None = None
     head: ControlRef | None = None
     members: dict[str, str] = field(default_factory=dict)
-    version: Literal[2] = 2
+    version: AgentAPIVersion = AGENT_API_VERSION
 
 
 @dataclass(frozen=True)
@@ -183,7 +189,7 @@ class ThreadPageCursor:
     entries: tuple[str, ...]
     limit: int
     offset: int
-    version: Literal[1] = 1
+    version: AgentAPIVersion = AGENT_API_VERSION
 
 
 @dataclass(frozen=True)
@@ -193,7 +199,7 @@ class HistoryToolCursor:
     store: str
     tool: Literal["read_threads", "read_runs", "read_steps"]
     cursor: str
-    version: Literal[1] = 1
+    version: AgentAPIVersion = AGENT_API_VERSION
 
 
 @dataclass(frozen=True)

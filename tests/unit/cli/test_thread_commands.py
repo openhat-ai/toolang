@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from tests.support.observations import run_begin, run_end
 
-
 import pytest
 
 from toolang.base.types.model import ModelOverride
@@ -162,11 +161,11 @@ def test_restart_observation_failure_does_not_cancel_accepted_work(
             )
         )
     assert requests == [
-        ("POST", f"/api/v1/runs/run_source/{kind}/stream"),
+        ("POST", f"/api/v0/runs/run_source/{kind}/stream"),
         *(
-            [("GET", f"/api/v1/runs/{run_id}")]
+            [("GET", f"/api/v0/runs/{run_id}")]
             if failure == "detail"
-            else [("GET", f"/api/v1/runs/{run_id}/stream")] * 3
+            else [("GET", f"/api/v0/runs/{run_id}/stream")] * 3
         ),
     ]
     assert run_id in str(error.value)

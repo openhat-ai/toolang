@@ -11,7 +11,7 @@ import pytest
 from toolang.base.types.sandbox import SandboxRef
 from toolang.common.layout import AgentLayout
 from toolang.up import process
-from toolang.up.records import SandboxState
+from toolang.up.instance import SandboxState
 
 
 @pytest.mark.parametrize("matching", [True, False])
@@ -51,7 +51,7 @@ def test_status_uses_saved_identity_not_live_pid_in_report(
 def test_status_keeps_one_snapshot_when_a_restart_changes_the_file(
     tmp_path, monkeypatch
 ):
-    from toolang.up.records import update_record
+    from toolang.up.instance import update_instance
 
     layout = AgentLayout.resident(tmp_path, "alice")
     state = SandboxState(
@@ -66,7 +66,7 @@ def test_status_keeps_one_snapshot_when_a_restart_changes_the_file(
         process_created=state.ref.meta["created"],
         launch_id="first",
     )
-    read = process.read_record
+    read = process.read_instance
     reads = 0
 
     def restart_after_snapshot(path, instance=None):
@@ -75,7 +75,7 @@ def test_status_keeps_one_snapshot_when_a_restart_changes_the_file(
         reads += 1
         if reads == 1:
             replaced = replace(state.ref, meta={**state.ref.meta, "created": 0})
-            update_record(
+            update_instance(
                 path,
                 lambda entry: entry.update(
                     launch_id="second",
@@ -89,7 +89,7 @@ def test_status_keeps_one_snapshot_when_a_restart_changes_the_file(
             )
         return entry
 
-    monkeypatch.setattr(process, "read_record", restart_after_snapshot)
+    monkeypatch.setattr(process, "read_instance", restart_after_snapshot)
     result = process.AgentProcess(layout).status(ui_base_url="")
     assert result is not None and result.status == "running"
     assert result.endpoint == state.ref.endpoint
@@ -148,7 +148,9 @@ def test_runtime_identity_formats_named_docker_container(tmp_path: Path) -> None
     )
 
 
-def test_runtime_identity_formats_legacy_docker_reference(tmp_path: Path) -> None:
+def test_runtime_identity_does_not_use_retired_container_name_alias(
+    tmp_path: Path,
+) -> None:
     layout = AgentLayout.resident(tmp_path, "alice")
     SandboxState(
         sandbox="docker:python:3.13-slim",
@@ -164,7 +166,7 @@ def test_runtime_identity_formats_legacy_docker_reference(tmp_path: Path) -> Non
 
     assert process.runtime_identity_row({"pid": 1}, layout=layout) == (
         "Container",
-        "toolang-alice-legacy (176191c1528b)",
+        "176191c1528b",
     )
 
 
@@ -220,7 +222,7 @@ def test_runtime_registration_waits_for_conditional_stop(tmp_path, monkeypatch):
     read = Event()
     finish_stop = Event()
     waiting = Event()
-    from toolang.up import records
+    from toolang.up import instance as records
 
     load = records.read_document
     scope = local()

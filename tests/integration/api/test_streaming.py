@@ -2,11 +2,9 @@ from __future__ import annotations
 
 from toolang.execution.event_projection import part_data
 
-
 from toolang.execution.types import StepRef
 
 from tests.support.observations import run_begin, run_end, step_begin, step_end
-
 
 import asyncio
 import json
@@ -137,8 +135,8 @@ def test_runnable_module_is_listed_from_the_public_state_catalog(
 
     try:
         with TestClient(app) as client:
-            agics = client.get("/api/v1/agics")
-            flows_response = client.get("/api/v1/flows")
+            agics = client.get("/api/v0/agics")
+            flows_response = client.get("/api/v0/flows")
 
         assert agics.json()["items"] == (
             [{"name": "research"}] if kind == "agic" else []
@@ -208,16 +206,16 @@ agic answer(_: Part[]) -> Part[]:
 
     try:
         with TestClient(app) as client:
-            models = client.get("/api/v1/models")
-            agics = client.get("/api/v1/agics")
-            flows = client.get("/api/v1/flows")
+            models = client.get("/api/v0/models")
+            agics = client.get("/api/v0/agics")
+            flows = client.get("/api/v0/flows")
             created = client.post(
-                "/api/v1/runs/threads",
+                "/api/v0/runs/threads",
                 json={"client_id": "test-script"},
             )
             thread_id = created.json()["thread"]["id"]
             response = client.post(
-                "/api/v1/runs/stream",
+                "/api/v0/runs/stream",
                 json=_direct_request(
                     thread_id,
                     "answer",
@@ -318,10 +316,10 @@ agic answer(_: Part[]) -> Part[]:
     try:
         with TestClient(app) as client:
             created = client.post(
-                "/api/v1/runs/threads", json={"client_id": "test-script"}
+                "/api/v0/runs/threads", json={"client_id": "test-script"}
             )
             response = client.post(
-                "/api/v1/runs/stream",
+                "/api/v0/runs/stream",
                 json=_direct_request(
                     created.json()["thread"]["id"],
                     "answer",
@@ -330,7 +328,7 @@ agic answer(_: Part[]) -> Part[]:
             )
             events = _sse_events(response.text)
             run_id = str(events[0][1]["run"])
-            detail = client.get(f"/api/v1/runs/{run_id}").json()
+            detail = client.get(f"/api/v0/runs/{run_id}").json()
 
         error = f"{run_id}.0/error"
         assert events[-1][1]["error"] == "provider unavailable"
@@ -374,20 +372,20 @@ agic chat(_: Part[]) -> Part[]:
         with TestClient(app) as client:
             assert (
                 client.post(
-                    "/api/v1/threads",
+                    "/api/v0/threads",
                     json={"peer": {"type": "user", "name": "user"}},
                 ).status_code
                 == 422
             )
             created = client.post(
-                "/api/v1/threads",
+                "/api/v0/threads",
                 json={"client_id": "test-web"},
             )
             assert created.status_code == 201
             assert "peer" not in created.json()["thread"]
             thread_id = created.json()["thread"]["id"]
             response = client.post(
-                "/api/v1/runs/stream",
+                "/api/v0/runs/stream",
                 json=_direct_request(
                     thread_id,
                     "chat",
@@ -396,8 +394,8 @@ agic chat(_: Part[]) -> Part[]:
             )
             events = _sse_events(response.text)
             run_id = str(events[0][1]["run"])
-            run_response = client.get(f"/api/v1/runs/{run_id}")
-            thread_response = client.get(f"/api/v1/threads/{thread_id}")
+            run_response = client.get(f"/api/v0/runs/{run_id}")
+            thread_response = client.get(f"/api/v0/threads/{thread_id}")
 
         run_detail = TypeAdapter(RunDetail).validate_python(run_response.json())
         thread_detail = TypeAdapter(ThreadDetail).validate_python(
@@ -456,16 +454,16 @@ def test_stream_validation_fails_before_sse_headers(tmp_path: Path) -> None:
     try:
         with TestClient(app) as client:
             created = client.post(
-                "/api/v1/runs/threads",
+                "/api/v0/runs/threads",
                 json={"client_id": "test-script"},
             )
             thread_id = created.json()["thread"]["id"]
             response = client.post(
-                "/api/v1/runs/stream",
+                "/api/v0/runs/stream",
                 json=_direct_request(thread_id, "missing"),
             )
             missing_thread = client.post(
-                "/api/v1/runs/stream", json={"runnable": {"ref": "answer", "input": {}}}
+                "/api/v0/runs/stream", json={"runnable": {"ref": "answer", "input": {}}}
             )
 
         assert created.status_code == 201
@@ -514,18 +512,18 @@ agic answer(_: Part[]) -> Part[]:
     try:
         with TestClient(app) as client:
             created = client.post(
-                "/api/v1/runs/threads", json={"client_id": "test-script"}
+                "/api/v0/runs/threads", json={"client_id": "test-script"}
             )
             thread_id = created.json()["thread"]["id"]
             short_name = client.post(
-                "/api/v1/runs/stream",
+                "/api/v0/runs/stream",
                 json={
                     **_direct_request(thread_id, "answer"),
                     "request": "short-request",
                 },
             )
             started = client.post(
-                "/api/v1/runs/stream",
+                "/api/v0/runs/stream",
                 json=_direct_request(
                     thread_id,
                     "answer",
@@ -536,7 +534,7 @@ agic answer(_: Part[]) -> Part[]:
             source_id = str(_sse_events(started.text)[0][1]["run"])
 
             selector_rerun = client.post(
-                f"/api/v1/runs/{source_id}/rerun",
+                f"/api/v0/runs/{source_id}/rerun",
                 json={
                     "request_id": "selector-rerun-request",
                     "model": {
@@ -545,7 +543,7 @@ agic answer(_: Part[]) -> Part[]:
                 },
             )
             rerun = client.post(
-                f"/api/v1/runs/{source_id}/rerun",
+                f"/api/v0/runs/{source_id}/rerun",
                 json={
                     "request_id": "rerun-request",
                     "limits": {"cost": None, "time": 30},
@@ -742,7 +740,7 @@ def test_existing_run_stream_attaches_to_live_events(tmp_path: Path) -> None:
     worker.start()
     try:
         with TestClient(app) as client:
-            response = client.get("/api/v1/runs/run_live/stream")
+            response = client.get("/api/v0/runs/run_live/stream")
         worker.join(timeout=2)
         events = _sse_events(response.text)
 
@@ -803,7 +801,7 @@ def test_child_run_stream_redirects_client_to_root_run(tmp_path: Path) -> None:
 
     try:
         with TestClient(app) as client:
-            response = client.get("/api/v1/runs/run_child/stream")
+            response = client.get("/api/v0/runs/run_child/stream")
 
         assert response.status_code == 409
         assert response.json()["detail"] == (
@@ -833,16 +831,16 @@ def test_event_collections_are_removed_and_missing_streams_are_404(
 
     try:
         with TestClient(app) as client:
-            assert client.get("/api/v1/runs/missing/stream").status_code == 404
-            assert client.get("/api/v1/threads/missing/stream").status_code == 404
-            assert client.get("/api/v1/runs/missing/events").status_code == 404
-            assert client.get("/api/v1/threads/missing/events").status_code == 404
+            assert client.get("/api/v0/runs/missing/stream").status_code == 404
+            assert client.get("/api/v0/threads/missing/stream").status_code == 404
+            assert client.get("/api/v0/runs/missing/events").status_code == 404
+            assert client.get("/api/v0/threads/missing/events").status_code == 404
             paths = client.get("/openapi.json").json()["paths"]
             tags = client.get("/openapi.json").json()["tags"]
-            assert "/api/v1/runs/{run_id}/events" not in paths
-            assert "/api/v1/threads/{thread_id}/events" not in paths
-            assert "/api/v1/chat/runs/stream" in paths
-            assert "/api/v1/chat/events" not in paths
+            assert "/api/v0/runs/{run_id}/events" not in paths
+            assert "/api/v0/threads/{thread_id}/events" not in paths
+            assert "/api/v0/chat/runs/stream" in paths
+            assert "/api/v0/chat/events" not in paths
             assert all(tag["name"] != "chat" for tag in tags)
     finally:
         asyncio.run(core.close())

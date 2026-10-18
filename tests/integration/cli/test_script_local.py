@@ -160,7 +160,7 @@ def test_local_script_saves_only_to_an_explicit_destination(
 
     assert result == expected_status
     assert output.out == expected_stdout
-    from toolang.up.records import read_document
+    from toolang.up.instance import read_document
 
     runtime = read_document(layout.runtime_status)
     assert runtime is not None

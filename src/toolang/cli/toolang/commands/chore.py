@@ -7,6 +7,7 @@ from urllib.parse import quote
 
 import typer
 
+from toolang.api.version import AGENT_API_VERSION
 from toolang.catalog.chore import AuthoredChores, ChoreFile
 from toolang.catalog import templates
 from toolang.cli.common.editor import edit_markdown
@@ -148,7 +149,7 @@ def run_chore(ctx: typer.Context, chore: ChoreRef) -> None:
     """Queue one manual chore run"""
     runtime_post(
         ctx,
-        f"/api/v1/chores/{quote(chore.removeprefix('chore/'), safe='')}/run",
+        f"/api/v{AGENT_API_VERSION}/chores/{quote(chore.removeprefix('chore/'), safe='')}/run",
         payload={},
     )
     typer.echo(f"chore {chore} manual run requested")
@@ -158,7 +159,7 @@ def cancel_chore(ctx: typer.Context, chore: ChoreRef) -> None:
     """Cancel the current chore occurrence; keep future scheduled work"""
     runtime_post(
         ctx,
-        f"/api/v1/chores/{quote(chore.removeprefix('chore/'), safe='')}/cancel",
+        f"/api/v{AGENT_API_VERSION}/chores/{quote(chore.removeprefix('chore/'), safe='')}/cancel",
         payload={},
     )
     typer.echo(f"chore {chore} cancel requested")

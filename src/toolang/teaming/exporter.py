@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .schemas import HUB_API_VERSION
+
 from toolang.execution.types import StepRef
 
 import asyncio
@@ -237,7 +239,7 @@ class EventExporter:
             await self.backend.abandon(self.agent, old["staging"], token=self.token)
         generation, recovery = uuid4().hex, uuid4().hex
         base = dict(
-            v=2,
+            v=HUB_API_VERSION,
             epoch=self.epoch,
             agent=self.agent,
             token=self.token,
@@ -299,7 +301,7 @@ class EventExporter:
     async def publish(self, frame: CanonicalEvent) -> None:
         data = encode(
             dict(
-                v=2,
+                v=HUB_API_VERSION,
                 source_cursor=str(frame.cursor),
                 thread=frame.thread_id,
                 root=frame.root_run_id,
@@ -327,7 +329,7 @@ class EventExporter:
             else self._projection_bytes
         )
         op = dict(
-            v=2,
+            v=HUB_API_VERSION,
             epoch=self.epoch,
             agent=self.agent,
             token=self.token,

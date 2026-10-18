@@ -2,6 +2,7 @@
 
 from dataclasses import replace
 from html import escape
+import json
 
 import pytest
 
@@ -58,10 +59,15 @@ def test_bodyless_declaration_round_trip_and_structural_visibility(
     target, tag, attributes, removed
 ):
     revision = "0" if removed else "a" * 64
+    content = (
+        json.dumps({"description": "", "metadata": {}})
+        if not removed and target.kind.endswith("-trigger")
+        else ""
+    )
     control = ControlRecord(
         str(ControlRef.for_run("run_test", 1)),
         "recall",
-        RecallControlPayload(target, revision, ""),
+        RecallControlPayload(target, revision, content),
         status="applied",
     )
     template = control_message(control)
@@ -72,7 +78,11 @@ def test_bodyless_declaration_round_trip_and_structural_visibility(
     suffix = (
         ' removed="true"'
         if removed
-        else (' description=""' if target.kind.endswith("-trigger") else "")
+        else (
+            f' revision="{revision}" description=""'
+            if target.kind.endswith("-trigger")
+            else ""
+        )
     )
     text = f"<toolang:{tag} {attributes}{suffix}/>"
     delta = (template,)
@@ -191,17 +201,13 @@ def test_workspace_remap_retracts_old_rules_without_loading_new_ones():
 
 
 @pytest.mark.parametrize("kind", [SkillTriggerRecallTarget, ServiceTriggerRecallTarget])
-@pytest.mark.parametrize("legacy", [False, True])
-def test_trigger_attributes_preserve_literal_text_metadata_and_recall(kind, legacy):
-    import json
+def test_trigger_attributes_preserve_literal_text_metadata_and_recall(kind):
     from xml.etree import ElementTree
 
     text = 'Route "quotes" & <tags>\nnext\tcolumn\rline'
     metadata = {"space key": {"values": [text, False, 3]}, "empty": ""}
     target = kind('skill/"a&b"')
-    content = (
-        text if legacy else json.dumps({"description": text, "metadata": metadata})
-    )
+    content = json.dumps({"description": text, "metadata": metadata})
     payload = RecallControlPayload(target, "revision", content)
     control = ControlRecord(str(ControlRef.for_run("run_test", 1)), "recall", payload)
     template = control_message(control)
@@ -218,12 +224,21 @@ def test_trigger_attributes_preserve_literal_text_metadata_and_recall(kind, lega
     assert node.attrib["ref"] == target.ref
     assert node.attrib["revision"] == "revision"
     assert node.attrib["description"] == text
-    if legacy:
-        assert "metadata" not in node.attrib
-    else:
-        assert json.loads(node.attrib["metadata"]) == metadata
+    assert json.loads(node.attrib["metadata"]) == metadata
     assert recall_revisions(restored) == {target: "revision"}
     assert required_declarations((payload,), recall_revisions(restored)) == ()
+
+
+@pytest.mark.parametrize("kind", [SkillTriggerRecallTarget, ServiceTriggerRecallTarget])
+@pytest.mark.parametrize("content", ["plain description", "{}", "null"])
+def test_historical_trigger_content_is_rejected(kind, content):
+    control = ControlRecord(
+        str(ControlRef.for_run("run_test", 1)),
+        "recall",
+        RecallControlPayload(kind("x"), "revision", content),
+    )
+    with pytest.raises(ValueError, match="description and metadata"):
+        control_message(control)
 
 
 def test_legacy_trigger_call_template_replays_without_new_serialization():

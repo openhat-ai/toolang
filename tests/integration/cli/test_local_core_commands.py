@@ -22,7 +22,6 @@ from pathlib import Path
 from typing import Any, cast
 from types import SimpleNamespace
 
-
 import httpx
 import pytest
 import typer
@@ -1530,7 +1529,7 @@ def test_inspect_projects_complete_persisted_model_call(
     assert "allowed: steps, output, tree" in " ".join(rejected.stderr.split())
 
     recorded = json.loads(references.stdout)
-    assert recorded["version"] == 1
+    assert "version" not in recorded
     assert recorded["messages"]["head"] == "run_model_call.0"
     assert [m["role"] for m in recorded["messages"]["delta"]] == ["assistant", "user"]
     reopened = RunStore(AgentLayout.resident(root, "alice").run_store)
@@ -2550,8 +2549,8 @@ def test_run_controls_reject_stale_history_without_live_ownership(
     assert "live execution owner" in " ".join(steer.stderr.split())
     assert "live execution owner" in " ".join(cancel.stderr.split())
     assert [path for method, path in requests if method == "POST"] == [
-        "/api/v1/runs/run_active/steer",
-        "/api/v1/runs/run_active/cancel",
+        "/api/v0/runs/run_active/steer",
+        "/api/v0/runs/run_active/cancel",
     ]
     reopened = RunStore(layout.run_store)
     try:
@@ -2842,8 +2841,8 @@ def test_thread_fork_and_rewind_use_thread_manager_semantics(
     assert rewind.exit_code == 0
     assert rewind.stdout.strip() == "rewound chat_source before run_second"
     assert [path for method, path in requests if method == "POST"] == [
-        "/api/v1/threads/chat_source/fork",
-        "/api/v1/threads/chat_source/rewind",
+        "/api/v0/threads/chat_source/fork",
+        "/api/v0/threads/chat_source/rewind",
     ]
     reopened = RunStore(layout.run_store)
     try:
@@ -4073,13 +4072,13 @@ def test_running_roaming_inspection_preserves_runtime_workspaces(
 
     def get(self, path):
         requests.append(path)
-        if path in {"/api/v1/models", "/api/v1/tools"}:
+        if path in {"/api/v0/models", "/api/v0/tools"}:
             return {"items": []}
-        if path == "/api/v1/caps":
+        if path == "/api/v0/caps":
             return {kind: [] for kind in ("psyches", "skills", "services", "prompts")}
-        if path in {"/api/v1/chores", "/api/v1/tasks"}:
+        if path in {"/api/v0/chores", "/api/v0/tasks"}:
             return []
-        assert path == "/api/v1/workspaces"
+        assert path == "/api/v0/workspaces"
         return {
             "revision": "a" * 64,
             "items": [{"name": "lab", "path": "/host/lab", "available": True}],
@@ -4091,7 +4090,7 @@ def test_running_roaming_inspection_preserves_runtime_workspaces(
     output = capsys.readouterr()
 
     assert result == 0, output.err
-    assert requests[-1] == "/api/v1/workspaces"
+    assert requests[-1] == "/api/v0/workspaces"
     assert len(requests) == 5
 
 

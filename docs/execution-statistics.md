@@ -2,11 +2,16 @@
 
 Each agent server exposes read-only usage statistics:
 
+`STATS_API_VERSION = 0` owns these queries and the
+[`recent` activity query](top.md), independently of the agent API.
+`STATS_STORE_SCHEMA = 2` owns `stats.db`; incompatible databases are rejected
+without rewriting them.
+
 | Endpoint | Input | Result |
 | --- | --- | --- |
-| `GET /api/v1/stats/summary` | Optional `model_ref` | All-time, 365d, 30d, 7d, 24h, 4h, 1h, and 30m windows |
-| `GET /api/v1/stats/models` | `window`, default `1mo` | One window grouped by historical model ref |
-| `GET /api/v1/stats/daily` | `start_date`, exclusive `end_date`, IANA `timezone`; optional `model_ref` | Daily rows suitable for a contribution heatmap |
+| `GET /api/v0/stats/summary` | Optional `model_ref` | All-time, 365d, 30d, 7d, 24h, 4h, 1h, and 30m windows |
+| `GET /api/v0/stats/models` | `window`, default `1mo` | One window grouped by historical model ref |
+| `GET /api/v0/stats/daily` | `start_date`, exclusive `end_date`, IANA `timezone`; optional `model_ref` | Daily rows suitable for a contribution heatmap |
 
 All endpoints accept either `thread_id` or `root_run_id`; omitting both selects
 the agent. A root filter includes owned child Runs. Thread statistics use physical

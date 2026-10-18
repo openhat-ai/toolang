@@ -17,6 +17,7 @@ from typing import Literal, cast
 import frontmatter
 
 from toolang.catalog import source as cap_source
+from .format import AGENT_STATE_FORMAT
 from toolang.catalog.chores import Chore, inline_chores, merge_chores
 from toolang.catalog.config import ConfiguredCaps
 from toolang.catalog.types import (
@@ -824,9 +825,6 @@ def _merge_config(
     return merged
 
 
-AGENT_STATE_SCHEMA = 3
-
-
 def agent_layers_document(
     root_revision: str,
     home_revision: str,
@@ -846,7 +844,7 @@ def agent_layers_document(
         "root_revision": root_revision,
         "name": name,
         "allow_overrides": dict(allow_overrides or {}),
-        "schema": AGENT_STATE_SCHEMA,
+        "schema": AGENT_STATE_FORMAT,
         **(
             {"workspace_additions": list(workspace_additions.items())}
             if workspace_additions

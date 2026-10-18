@@ -38,7 +38,7 @@ Generated suffixes use eight lowercase Base32 characters:
 - Talk uses `talk_thread_id` and persists one binding per backend/conversation
   in the agent's `runs.db`. Reuse it across batches/restarts; reject an occupied
   ID with another or no binding. The codec itself creates no thread.
-  Hub/clients use conversation schema 3. Add no compatibility codec or migration.
+  Hub/clients use hub store schema 4. Add no compatibility codec or migration.
 
 Shared primitives live in `common/id_codec.py`; allocation in `common/ids.py`;
 chore rules in `catalog/chore_ids.py`; conversation rules in `teaming/ids.py`.

@@ -23,6 +23,7 @@ from typer.core import TyperCommand, TyperGroup, TyperOption
 from typer.main import get_command_from_info
 from typer.models import CommandInfo
 
+from toolang.api.version import AGENT_API_VERSION
 from toolang.common.errors import ToolangError
 from toolang.common.typer.ui import HelpFormatter as UIHelpFormatter
 from toolang.common.typer.options import (
@@ -1023,7 +1024,7 @@ async def _create_remote_script_thread(
 
     try:
         response = await client.post(
-            f"{endpoint}/api/v1/runs/threads",
+            f"{endpoint}/api/v{AGENT_API_VERSION}/runs/threads",
             json={"client_id": client_id, "request_id": f"request_{uuid4().hex}"},
         )
     except (httpx.HTTPError, RuntimeError) as exc:
@@ -1074,7 +1075,9 @@ async def _remote_script_defaults(
     from toolang.execution.types import SessionSetting
 
     try:
-        response = await client.get(f"{endpoint}/api/v1/runs/defaults")
+        response = await client.get(
+            f"{endpoint}/api/v{AGENT_API_VERSION}/runs/defaults"
+        )
         response.raise_for_status()
         payload = response.json()
         if not isinstance(payload, Mapping) or set(payload) not in (
@@ -1120,7 +1123,7 @@ async def _remote_script_models(
     import httpx
 
     try:
-        response = await client.get(f"{endpoint}/api/v1/models")
+        response = await client.get(f"{endpoint}/api/v{AGENT_API_VERSION}/models")
         response.raise_for_status()
         payload = response.json()
         if not isinstance(payload, Mapping) or not isinstance(

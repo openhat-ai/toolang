@@ -1,4 +1,4 @@
-"""Atomic, generation-checked control and workload records."""
+"""Atomic, generation-checked agent instance files."""
 
 from __future__ import annotations
 
@@ -24,12 +24,12 @@ from toolang.common.files import (
     file_read_snapshot,
     reap_file_lock,
 )
-from toolang.teaming.records import HubRecord as HubRecord
 
-RUNTIME_STATUS_VERSION = 2
+AGENT_INSTANCE_FORMAT = 3
 
 
 def read_document(path: Path, *, location: str = "host") -> dict[str, Any] | None:
+    """Read a status document with a validated format and instances container."""
     try:
         if location == "guest":
             with file_read_snapshot(path) as stream:
@@ -42,35 +42,23 @@ def read_document(path: Path, *, location: str = "host") -> dict[str, Any] | Non
         raise ValueError(f"invalid runtime status: {path}") from exc
     if not isinstance(payload, dict):
         raise ValueError(f"invalid runtime status: {path}")
+    if (
+        type(payload.get("version")) is not int
+        or payload["version"] != AGENT_INSTANCE_FORMAT
+    ):
+        raise ValueError(f"unsupported runtime status version: {path}")
+    if not isinstance(payload.get("instances"), dict):
+        raise ValueError(f"invalid runtime instances: {path}")
     return payload
 
 
-def read_record(
+def read_instance(
     path: Path, instance: str | None = None, *, location: str = "host"
 ) -> dict[str, Any] | None:
     payload = read_document(path, location=location)
     if payload is None:
         return None
-    if payload.get("version") != RUNTIME_STATUS_VERSION:
-        if "version" in payload or "status" not in payload:
-            raise ValueError(f"unsupported runtime status version: {path}")
-        # Legacy reports remain readable, but cannot be adopted while active.
-        return {
-            "launch_id": "",
-            "control": {
-                "last_successful": {
-                    "endpoint": payload.get("endpoint"),
-                    "sandbox": payload.get("sandbox"),
-                }
-                if payload.get("status") == "stopped"
-                else {}
-            },
-            "workload": payload,
-        }
-    instances = payload.get("instances")
-    if not isinstance(instances, dict):
-        raise ValueError(f"invalid runtime instances: {path}")
-    entry = instances.get(instance or "default")
+    entry = payload["instances"].get(instance or "default")
     if entry is None:
         return None
     if (
@@ -97,7 +85,7 @@ def runtime_lock(
 ):
     entry: dict[str, Any] = (
         snapshot
-        or read_record(path, instance, location=location)
+        or read_instance(path, instance, location=location)
         or {
             "control": {},
             "launch_id": "",
@@ -122,7 +110,7 @@ def runtime_lock(
 
     def dead(previous):
         if not previous:
-            return location == "host"  # Upgrade an idle legacy flock guard.
+            return location == "host"  # Only the host may claim an empty guard.
         previous_location = previous.get("location")
         if previous_location == location and (
             location == "host" or previous.get("launch_id") == launch_id
@@ -179,7 +167,7 @@ def runtime_lock(
         yield
 
 
-def update_record(
+def update_instance(
     path: Path,
     update: Callable[[dict[str, Any]], None],
     *,
@@ -191,20 +179,11 @@ def update_record(
     dead_guest_launch: str | None = None,
 ) -> bool:
     """Reread under the shared lock and replace only when data changed."""
-    snapshot = read_record(path, instance, location=location)
+    snapshot = read_instance(path, instance, location=location)
     if launch_id is not None and (
         snapshot is None or snapshot["launch_id"] != launch_id
     ):
         return False
-    # Reject live legacy reports before changing their old lock protocol.
-    if (
-        snapshot
-        and not snapshot["launch_id"]
-        and snapshot["workload"].get("status") in {"running", "starting", "preparing"}
-    ):
-        raise ValueError(
-            "stop the legacy workload with the previous Toolang version before migration"
-        )
     with runtime_lock(
         path,
         instance=instance,
@@ -217,30 +196,7 @@ def update_record(
     ):
         payload: dict[str, Any] | None = read_document(path, location=location)
         if payload is None:
-            payload = {"version": RUNTIME_STATUS_VERSION, "instances": {}}
-        elif payload.get("version") != RUNTIME_STATUS_VERSION:
-            if "version" in payload or "status" not in payload:
-                raise ValueError(f"unsupported runtime status version: {path}")
-            if payload.get("status") in {"running", "starting", "preparing"}:
-                raise ValueError(
-                    "stop the legacy workload with the previous Toolang version before migration"
-                )
-            old = payload
-            payload = {
-                "version": RUNTIME_STATUS_VERSION,
-                "instances": {
-                    "default": {
-                        "launch_id": "",
-                        "control": {
-                            "last_successful": {
-                                "endpoint": old.get("endpoint"),
-                                "sandbox": old.get("sandbox"),
-                            }
-                        },
-                        "workload": old,
-                    }
-                },
-            }
+            payload = {"version": AGENT_INSTANCE_FORMAT, "instances": {}}
         entries = payload["instances"]
         entry = entries.setdefault(
             instance or "default", {"launch_id": "", "control": {}, "workload": {}}
@@ -267,7 +223,7 @@ def patch_workload(
     instance: str | None = None,
     location: str = "host",
 ) -> bool:
-    return update_record(
+    return update_instance(
         path,
         lambda entry: entry["workload"].update(fields),
         instance=instance,
@@ -281,7 +237,7 @@ def remove_finished_instance(layout: AgentLayout, launch_id: str) -> bool:
     if layout.instance is None:
         return False  # Persistent agent settings survive stop.
     path = layout.runtime_status
-    snapshot = read_record(path, layout.instance)
+    snapshot = read_instance(path, layout.instance)
     if snapshot is None or snapshot["launch_id"] != launch_id:
         return False
     with runtime_lock(
@@ -336,8 +292,8 @@ class SandboxState:
                 )
             entry["control"].update(sandbox=self.sandbox, ref=self.ref.to_data())
 
-        current = read_record(path, instance)
-        if not update_record(
+        current = read_instance(path, instance)
+        if not update_instance(
             path,
             bind,
             instance=instance,
@@ -347,10 +303,10 @@ class SandboxState:
 
     @classmethod
     def load(cls, path: Path, *, instance: str | None = None) -> SandboxState | None:
-        return cls.from_record(read_record(path, instance))
+        return cls.from_instance(read_instance(path, instance))
 
     @classmethod
-    def from_record(cls, entry: dict[str, Any] | None) -> SandboxState | None:
+    def from_instance(cls, entry: dict[str, Any] | None) -> SandboxState | None:
         """Decode a resource from the same snapshot as its workload report."""
         if entry is None or entry["control"].get("ref") is None:
             return None
@@ -418,7 +374,7 @@ def management_operation(
             entry["control"]["operation"] = owner
             claimed = True
 
-        update_record(
+        update_instance(
             layout.runtime_status, claim, instance=layout.instance, on_wait=on_wait
         )
         if not claimed:
@@ -439,7 +395,7 @@ def management_operation(
                 entry["control"].pop("operation", None)
 
         if layout.runtime_status.exists():
-            update_record(layout.runtime_status, release, instance=layout.instance)
+            update_instance(layout.runtime_status, release, instance=layout.instance)
             if completed_launch is not None:
                 remove_finished_instance(layout, completed_launch)
 

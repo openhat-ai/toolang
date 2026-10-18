@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from tests.support.observations import run_begin, run_end
 
-
 from collections.abc import AsyncIterator
 from dataclasses import replace
 import json
@@ -67,16 +66,16 @@ def test_remote_chat_initial_workdir_uses_selected_thread() -> None:
         requests.append(request)
         if request.url.path == "/healthz":
             return httpx.Response(200, json={"ok": True})
-        if request.url.path == "/api/v1/workspaces":
+        if request.url.path == "/api/v0/workspaces":
             return httpx.Response(200, json=_workspaces())
-        if request.url.path == "/api/v1/profile":
+        if request.url.path == "/api/v0/profile":
             return httpx.Response(200, json=_profile())
-        if request.url.path == "/api/v1/runs/defaults":
+        if request.url.path == "/api/v0/runs/defaults":
             defaults = _run_defaults()
             if request.url.params.get("thread_id"):
                 defaults["workdir"] = "repo://from-history"
             return httpx.Response(200, json=defaults)
-        if request.url.path == "/api/v1/models":
+        if request.url.path == "/api/v0/models":
             return httpx.Response(200, json=_models())
         raise AssertionError(f"unexpected request: {request.method} {request.url}")
 
@@ -128,11 +127,11 @@ def test_remote_chat_initializes_a_fallback_when_run_defaults_have_no_model() ->
         nonlocal model_requests
         if request.url.path == "/healthz":
             return httpx.Response(200, json={"ok": True})
-        if request.url.path == "/api/v1/workspaces":
+        if request.url.path == "/api/v0/workspaces":
             return httpx.Response(200, json=_workspaces())
-        if request.url.path == "/api/v1/profile":
+        if request.url.path == "/api/v0/profile":
             return httpx.Response(200, json=_profile())
-        if request.url.path == "/api/v1/runs/defaults":
+        if request.url.path == "/api/v0/runs/defaults":
             return httpx.Response(
                 200,
                 json={
@@ -141,7 +140,7 @@ def test_remote_chat_initializes_a_fallback_when_run_defaults_have_no_model() ->
                     "policy": {"allow": [], "limits": {}},
                 },
             )
-        if request.url.path == "/api/v1/models":
+        if request.url.path == "/api/v0/models":
             model_requests += 1
             return httpx.Response(200, json=_models())
         raise AssertionError(f"unexpected request: {request.method} {request.url}")
@@ -349,9 +348,9 @@ def test_remote_chat_non_run_operations_and_executor_metadata() -> None:
         requests.append((request.method, request.url.path, body))
         if request.url.path == "/healthz":
             return httpx.Response(200, json={"ok": True})
-        if request.url.path == "/api/v1/workspaces":
+        if request.url.path == "/api/v0/workspaces":
             return httpx.Response(200, json=_workspaces())
-        if request.url.path == "/api/v1/profile":
+        if request.url.path == "/api/v0/profile":
             return httpx.Response(
                 200,
                 json=_profile(
@@ -360,9 +359,9 @@ def test_remote_chat_non_run_operations_and_executor_metadata() -> None:
                     instance=_CONTAINER_ID[:12],
                 ),
             )
-        if request.url.path == "/api/v1/runs/defaults":
+        if request.url.path == "/api/v0/runs/defaults":
             return httpx.Response(200, json=_run_defaults())
-        if request.url.path == "/api/v1/models":
+        if request.url.path == "/api/v0/models":
             return httpx.Response(
                 200,
                 json={
@@ -377,14 +376,14 @@ def test_remote_chat_non_run_operations_and_executor_metadata() -> None:
                     ],
                 },
             )
-        if request.url.path == "/api/v1/agics":
+        if request.url.path == "/api/v0/agics":
             return httpx.Response(
                 200,
                 json={"default": "chat", "items": [{"name": "chat"}]},
             )
-        if request.url.path == "/api/v1/flows":
+        if request.url.path == "/api/v0/flows":
             return httpx.Response(200, json={"default": None, "items": []})
-        if request.url.path == "/api/v1/prompt-completions":
+        if request.url.path == "/api/v0/prompt-completions":
             assert request.url.params.get("runnable") == "agic:chat"
             return httpx.Response(
                 200,
@@ -397,11 +396,11 @@ def test_remote_chat_non_run_operations_and_executor_metadata() -> None:
                     ]
                 },
             )
-        if request.url.path == "/api/v1/threads" and request.method == "POST":
+        if request.url.path == "/api/v0/threads" and request.method == "POST":
             return httpx.Response(201, json={"thread": _json(_thread())})
         if request.url.path in {
-            "/api/v1/runs/run_remote",
-            "/api/v1/threads/term_remote/result",
+            "/api/v0/runs/run_remote",
+            "/api/v0/threads/term_remote/result",
         }:
             return httpx.Response(200, json=_json(result))
         raise AssertionError(f"unexpected request: {request.method} {request.url}")
@@ -467,13 +466,13 @@ def test_remote_chat_resource_queries_and_model_reconciliation() -> None:
         query = tuple(request.url.params.get_list("query"))
         if path == "/healthz":
             return httpx.Response(200, json={"ok": True})
-        if path == "/api/v1/workspaces":
+        if path == "/api/v0/workspaces":
             return httpx.Response(200, json=_workspaces())
-        if path == "/api/v1/profile":
+        if path == "/api/v0/profile":
             return httpx.Response(200, json=_profile())
-        if path == "/api/v1/runs/defaults":
+        if path == "/api/v0/runs/defaults":
             return httpx.Response(200, json=_run_defaults())
-        if path == "/api/v1/models":
+        if path == "/api/v0/models":
             queries.append(("models", query))
             items = (
                 [
@@ -498,7 +497,7 @@ def test_remote_chat_resource_queries_and_model_reconciliation() -> None:
                     "items": items,
                 },
             )
-        if path == "/api/v1/tools":
+        if path == "/api/v0/tools":
             queries.append(("tools", query))
             return httpx.Response(
                 200,
@@ -512,7 +511,7 @@ def test_remote_chat_resource_queries_and_model_reconciliation() -> None:
                     ]
                 },
             )
-        if path == "/api/v1/caps":
+        if path == "/api/v0/caps":
             queries.append(("caps", query))
             return httpx.Response(
                 200,
@@ -657,11 +656,11 @@ def test_remote_chat_rejects_invalid_runtime_identity(
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/healthz":
             return httpx.Response(200, json={"ok": True})
-        if request.url.path == "/api/v1/workspaces":
+        if request.url.path == "/api/v0/workspaces":
             return httpx.Response(200, json=_workspaces())
-        if request.url.path == "/api/v1/profile":
+        if request.url.path == "/api/v0/profile":
             return httpx.Response(200, json=profile_payload)
-        if request.url.path == "/api/v1/runs/defaults":
+        if request.url.path == "/api/v0/runs/defaults":
             return httpx.Response(200, json=_run_defaults())
         raise AssertionError(f"unexpected request: {request.method} {request.url}")
 
@@ -763,11 +762,11 @@ def test_remote_chat_uses_local_host_description_when_profile_does_not_supply_it
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/healthz":
             return httpx.Response(200, json={"ok": True})
-        if request.url.path == "/api/v1/workspaces":
+        if request.url.path == "/api/v0/workspaces":
             return httpx.Response(200, json=_workspaces())
-        if request.url.path == "/api/v1/profile":
+        if request.url.path == "/api/v0/profile":
             return httpx.Response(200, json=profile_payload)
-        if request.url.path == "/api/v1/runs/defaults":
+        if request.url.path == "/api/v0/runs/defaults":
             return httpx.Response(200, json=_run_defaults())
         raise AssertionError(f"unexpected request: {request.method} {request.url}")
 
@@ -818,11 +817,11 @@ def test_remote_chat_workspace_snapshot_uses_only_valid_available_names(
         requests.append(request.url.path)
         if request.url.path == "/healthz":
             return httpx.Response(200, json={"ok": True})
-        if request.url.path == "/api/v1/profile":
+        if request.url.path == "/api/v0/profile":
             return httpx.Response(200, json=_profile())
-        if request.url.path == "/api/v1/workspaces":
+        if request.url.path == "/api/v0/workspaces":
             return httpx.Response(200, json=payload)
-        if request.url.path == "/api/v1/runs/defaults":
+        if request.url.path == "/api/v0/runs/defaults":
             return httpx.Response(200, json=_run_defaults())
         raise AssertionError(f"unexpected request: {request.method} {request.url}")
 
@@ -834,7 +833,7 @@ def test_remote_chat_workspace_snapshot_uses_only_valid_available_names(
     try:
         assert session.executor_metadata.workspaces == expected
         assert session.initial_setting().model is not None
-        assert requests.count("/api/v1/workspaces") == 1
+        assert requests.count("/api/v0/workspaces") == 1
     finally:
         session.close()
 
@@ -846,15 +845,15 @@ def test_remote_chat_workspace_inspection_failure_does_not_block_startup(
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/healthz":
             return httpx.Response(200, json={"ok": True})
-        if request.url.path == "/api/v1/profile":
+        if request.url.path == "/api/v0/profile":
             return httpx.Response(200, json=_profile())
-        if request.url.path == "/api/v1/workspaces":
+        if request.url.path == "/api/v0/workspaces":
             if failure == "transport":
                 raise httpx.ReadTimeout("workspace timeout")
             if failure == "json":
                 return httpx.Response(200, content="not json")
             return httpx.Response(404, json={"detail": "unavailable"})
-        if request.url.path == "/api/v1/runs/defaults":
+        if request.url.path == "/api/v0/runs/defaults":
             return httpx.Response(200, json=_run_defaults())
         raise AssertionError(f"unexpected request: {request.method} {request.url}")
 
@@ -890,17 +889,17 @@ def test_remote_chat_repeated_concrete_runs_do_not_list_models() -> None:
         requests.append(request.url.path)
         if request.url.path == "/healthz":
             return httpx.Response(200, json={"ok": True})
-        if request.url.path == "/api/v1/workspaces":
+        if request.url.path == "/api/v0/workspaces":
             return httpx.Response(200, json=_workspaces())
-        if request.url.path == "/api/v1/profile":
+        if request.url.path == "/api/v0/profile":
             return httpx.Response(200, json=_profile())
-        if request.url.path == "/api/v1/runs/defaults":
+        if request.url.path == "/api/v0/runs/defaults":
             return httpx.Response(200, json=_run_defaults())
-        if request.url.path == "/api/v1/models":
+        if request.url.path == "/api/v0/models":
             return httpx.Response(200, json=_models())
-        if request.url.path == "/api/v1/chat/runs/authored/stream":
+        if request.url.path == "/api/v0/chat/runs/authored/stream":
             return _stream(_begin(), _end())
-        if request.url.path == "/api/v1/runs/run_remote":
+        if request.url.path == "/api/v0/runs/run_remote":
             return httpx.Response(200, json=_json(detail))
         raise AssertionError(f"unexpected request: {request.method} {request.url}")
 
@@ -942,10 +941,10 @@ def test_remote_chat_repeated_concrete_runs_do_not_list_models() -> None:
     assert [type(item) for item in events] == [RunBegin, RunEnd, RunBegin, RunEnd]
     assert states == [RunAccepted("run_remote"), RunAccepted("run_remote")]
     assert errors == []
-    assert requests.count("/api/v1/models") == 0
-    assert requests.count("/api/v1/agics") == 0
-    assert requests.count("/api/v1/flows") == 0
-    assert requests.count("/api/v1/chat/runs/authored/stream") == 2
+    assert requests.count("/api/v0/models") == 0
+    assert requests.count("/api/v0/agics") == 0
+    assert requests.count("/api/v0/flows") == 0
+    assert requests.count("/api/v0/chat/runs/authored/stream") == 2
 
 
 def test_remote_chat_falls_back_to_detail_without_resubmitting(
@@ -971,20 +970,20 @@ def test_remote_chat_falls_back_to_detail_without_resubmitting(
         nonlocal submissions
         if request.url.path == "/healthz":
             return httpx.Response(200, json={"ok": True})
-        if request.url.path == "/api/v1/workspaces":
+        if request.url.path == "/api/v0/workspaces":
             return httpx.Response(200, json=_workspaces())
-        if request.url.path == "/api/v1/profile":
+        if request.url.path == "/api/v0/profile":
             return httpx.Response(200, json=_profile())
-        if request.url.path == "/api/v1/runs/defaults":
+        if request.url.path == "/api/v0/runs/defaults":
             return httpx.Response(200, json=_run_defaults())
-        if request.url.path == "/api/v1/models":
+        if request.url.path == "/api/v0/models":
             return httpx.Response(200, json=_models())
-        if request.url.path == "/api/v1/chat/runs/authored/stream":
+        if request.url.path == "/api/v0/chat/runs/authored/stream":
             submissions += 1
             return _stream(_begin())
-        if request.url.path == "/api/v1/runs/run_remote/stream":
+        if request.url.path == "/api/v0/runs/run_remote/stream":
             return httpx.Response(503, json={"detail": "private-token-must-not-log"})
-        if request.url.path == "/api/v1/runs/run_remote":
+        if request.url.path == "/api/v0/runs/run_remote":
             return httpx.Response(200, json=_json(next(details)))
         raise AssertionError(f"unexpected request: {request.method} {request.url}")
 
@@ -1038,15 +1037,15 @@ def test_remote_chat_blocks_ambiguous_pre_acceptance_failure() -> None:
         nonlocal submissions
         if request.url.path == "/healthz":
             return httpx.Response(200, json={"ok": True})
-        if request.url.path == "/api/v1/workspaces":
+        if request.url.path == "/api/v0/workspaces":
             return httpx.Response(200, json=_workspaces())
-        if request.url.path == "/api/v1/profile":
+        if request.url.path == "/api/v0/profile":
             return httpx.Response(200, json=_profile())
-        if request.url.path == "/api/v1/runs/defaults":
+        if request.url.path == "/api/v0/runs/defaults":
             return httpx.Response(200, json=_run_defaults())
-        if request.url.path == "/api/v1/models":
+        if request.url.path == "/api/v0/models":
             return httpx.Response(200, json=_models())
-        if request.url.path == "/api/v1/chat/runs/authored/stream":
+        if request.url.path == "/api/v0/chat/runs/authored/stream":
             submissions += 1
             raise httpx.ReadError("private transport detail", request=request)
         raise AssertionError(f"unexpected request: {request.method} {request.url}")
@@ -1105,15 +1104,15 @@ def test_remote_chat_steer_delivers_receipt_or_error_once(failure: str | None) -
         path = request.url.path
         if path == "/healthz":
             return httpx.Response(200, json={"ok": True})
-        if path == "/api/v1/workspaces":
+        if path == "/api/v0/workspaces":
             return httpx.Response(200, json=_workspaces())
-        if path == "/api/v1/profile":
+        if path == "/api/v0/profile":
             return httpx.Response(200, json=_profile())
-        if path == "/api/v1/runs/defaults":
+        if path == "/api/v0/runs/defaults":
             return httpx.Response(200, json=_run_defaults())
-        if path == "/api/v1/models":
+        if path == "/api/v0/models":
             return httpx.Response(200, json=_models())
-        if path == "/api/v1/chat/runs/run_remote/steer":
+        if path == "/api/v0/chat/runs/run_remote/steer":
             requests.append(json.loads(request.content))
             if failure == "transport":
                 raise httpx.ReadError("receipt lost")

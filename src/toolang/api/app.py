@@ -13,6 +13,7 @@ from starlette.types import ASGIApp, Scope, Receive, Send, Message
 
 from toolang.api.common import RUN_ID_HEADER, SSESendDeadline
 from toolang.execution.subscriptions import Subscriptions
+from toolang.stats.schemas import STATS_API_VERSION
 from toolang.catalog import CapsManager, ChoresManager
 from toolang.catalog.errors import CatalogConflictError, CatalogNotFoundError
 from toolang.up import AgentCore
@@ -162,5 +163,8 @@ def create_app(
 
     from toolang.api.router import router
 
+    from toolang.api.routers.stats import router as stats_router
+
     app.include_router(router)
+    app.include_router(stats_router, prefix=f"/api/v{STATS_API_VERSION}")
     return app

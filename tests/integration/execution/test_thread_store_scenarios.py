@@ -383,7 +383,6 @@ def test_stored_model_call_delta_round_trip() -> None:
             "setup": "test-setup",
             "call": {
                 "instructions": "instruction-ref",
-                "version": 1,
                 "messages": {"head": "run_ab12.0", "delta": []},
                 "tools": None,
                 "output_schema": None,
@@ -399,7 +398,6 @@ def test_stored_model_call_delta_round_trip() -> None:
     assert stored.call.continuation == {"cursor": "saved"}
     assert stored_step_spec_to_data("model", stored)["call"] == {
         "instructions": "instruction-ref",
-        "version": 1,
         "messages": {"head": "run_ab12.0", "delta": []},
         "tools": None,
         "output_schema": None,

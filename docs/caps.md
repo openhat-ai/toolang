@@ -284,42 +284,42 @@ published resources.
 
 Read endpoints:
 
-- `GET /api/v1/caps`
-- `GET /api/v1/psyches`
-- `GET /api/v1/skills`
-- `GET /api/v1/services`
-- `GET /api/v1/prompts`
-- `GET /api/v1/psyches/{name}`
-- `GET /api/v1/skills/{name}`
-- `GET /api/v1/services/{name}`
-- `GET /api/v1/prompts/{name}`
-- `GET /api/v1/psyches/templates`
-- `GET /api/v1/skills/templates`
-- `GET /api/v1/services/templates`
-- `GET /api/v1/prompts/templates`
-- `GET /api/v1/psyches/templates/default`
-- `GET /api/v1/skills/templates/default`
-- `GET /api/v1/services/templates/default`
-- `GET /api/v1/prompts/templates/default`
+- `GET /api/v0/caps`
+- `GET /api/v0/psyches`
+- `GET /api/v0/skills`
+- `GET /api/v0/services`
+- `GET /api/v0/prompts`
+- `GET /api/v0/psyches/{name}`
+- `GET /api/v0/skills/{name}`
+- `GET /api/v0/services/{name}`
+- `GET /api/v0/prompts/{name}`
+- `GET /api/v0/psyches/templates`
+- `GET /api/v0/skills/templates`
+- `GET /api/v0/services/templates`
+- `GET /api/v0/prompts/templates`
+- `GET /api/v0/psyches/templates/default`
+- `GET /api/v0/skills/templates/default`
+- `GET /api/v0/services/templates/default`
+- `GET /api/v0/prompts/templates/default`
 
 Write endpoints:
 
-- `PUT /api/v1/psyches/{name}/authored`
-- `PUT /api/v1/skills/{name}/authored`
-- `PUT /api/v1/services/{name}/authored`
-- `PUT /api/v1/prompts/{name}/authored`
-- `DELETE /api/v1/psyches/{name}/authored`
-- `DELETE /api/v1/skills/{name}/authored`
-- `DELETE /api/v1/services/{name}/authored`
-- `DELETE /api/v1/prompts/{name}/authored`
-- `PUT /api/v1/psyches/{name}/configured`
-- `PUT /api/v1/skills/{name}/configured`
-- `PUT /api/v1/services/{name}/configured`
-- `PUT /api/v1/prompts/{name}/configured`
-- `DELETE /api/v1/psyches/{name}/configured`
-- `DELETE /api/v1/skills/{name}/configured`
-- `DELETE /api/v1/services/{name}/configured`
-- `DELETE /api/v1/prompts/{name}/configured`
+- `PUT /api/v0/psyches/{name}/authored`
+- `PUT /api/v0/skills/{name}/authored`
+- `PUT /api/v0/services/{name}/authored`
+- `PUT /api/v0/prompts/{name}/authored`
+- `DELETE /api/v0/psyches/{name}/authored`
+- `DELETE /api/v0/skills/{name}/authored`
+- `DELETE /api/v0/services/{name}/authored`
+- `DELETE /api/v0/prompts/{name}/authored`
+- `PUT /api/v0/psyches/{name}/configured`
+- `PUT /api/v0/skills/{name}/configured`
+- `PUT /api/v0/services/{name}/configured`
+- `PUT /api/v0/prompts/{name}/configured`
+- `DELETE /api/v0/psyches/{name}/configured`
+- `DELETE /api/v0/skills/{name}/configured`
+- `DELETE /api/v0/services/{name}/configured`
+- `DELETE /api/v0/prompts/{name}/configured`
 
 Authored write requests carry `scope` and `content`. Configured write requests
 carry `scope` and `ref`. Deletes use a `scope` query parameter. Scope is

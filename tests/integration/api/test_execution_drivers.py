@@ -44,7 +44,7 @@ def test_flat_authoring_and_inline_shadowing_with_chore_driver_disabled(tmp_path
     )
     try:
         with TestClient(app) as client:
-            items = client.get("/api/v1/chores").json()
+            items = client.get("/api/v0/chores").json()
             assert len(items) == 1
             assert items[0]["id"] == chore_id(
                 "cleanup",
@@ -52,11 +52,11 @@ def test_flat_authoring_and_inline_shadowing_with_chore_driver_disabled(tmp_path
             )
             assert items[0]["ref"] == "chore/cleanup"
             assert "stage" not in items[0] and "kind" not in items[0]
-            detail = client.get("/api/v1/chores/cleanup").json()
+            detail = client.get("/api/v0/chores/cleanup").json()
             assert detail["body"] == "Inline wins."
-            assert client.post("/api/v1/chores/cleanup/run").status_code == 409
+            assert client.post("/api/v0/chores/cleanup/run").status_code == 409
             created = client.post(
-                "/api/v1/chores", json={"name": "once", "body": "Do this once."}
+                "/api/v0/chores", json={"name": "once", "body": "Do this once."}
             )
             assert created.status_code == 201
             assert created.json()["schedule"] is None
@@ -64,7 +64,7 @@ def test_flat_authoring_and_inline_shadowing_with_chore_driver_disabled(tmp_path
             with_store = ChoreStore(layout.run_store)
             try:
                 with_store.reconcile(chores=load_chores(layout))
-                assert client.post("/api/v1/chores/once/cancel").status_code == 200
+                assert client.post("/api/v0/chores/once/cancel").status_code == 200
                 record = with_store.get(
                     chore_id=chore_id(
                         "once",
@@ -72,7 +72,7 @@ def test_flat_authoring_and_inline_shadowing_with_chore_driver_disabled(tmp_path
                     )
                 )
                 assert record is not None and record.status == "canceled"
-                assert client.delete("/api/v1/chores/once").status_code == 204
+                assert client.delete("/api/v0/chores/once").status_code == 204
                 record = with_store.get(
                     chore_id=chore_id(
                         "once",
@@ -90,7 +90,7 @@ def test_flat_authoring_and_inline_shadowing_with_chore_driver_disabled(tmp_path
                 "chores/cleanup/ready",
                 "chores/cleanup/reopen",
             ):
-                assert client.post(f"/api/v1/{path}", json={}).status_code in {404, 405}
+                assert client.post(f"/api/v0/{path}", json={}).status_code in {404, 405}
         assert root_file.path is not None and home_file.path is not None
         assert root_file.path.read_text() == "Root body."
         assert home_file.path.read_text() == "Home body."
@@ -117,12 +117,12 @@ def test_two_clients_share_chat_thread_and_controls_keep_both_identities(tmp_pat
     try:
         with TestClient(app) as client:
             created = client.post(
-                "/api/v1/threads", json={"client_id": "web-1", "request_id": "create-1"}
+                "/api/v0/threads", json={"client_id": "web-1", "request_id": "create-1"}
             )
             thread = created.json()["thread"]["id"]
             for client_id, request_id in (("web-1", "run-1"), ("tui-2", "run-2")):
                 result = client.post(
-                    "/api/v1/chat/runs/authored/stream",
+                    "/api/v0/chat/runs/authored/stream",
                     json={
                         "thread_id": thread,
                         "client_id": client_id,
@@ -165,7 +165,7 @@ def test_chore_inspection_reads_current_source_and_rejects_hidden_mutations(tmp_
     )
     try:
         with TestClient(app) as client:
-            endpoint = "/api/v1/chores/cleanup"
+            endpoint = "/api/v0/chores/cleanup"
             assert client.get(endpoint).json()["body"] == "New inline."
             assert (
                 client.patch(endpoint, json={"body": "Hidden edit."}).status_code == 409
@@ -175,7 +175,7 @@ def test_chore_inspection_reads_current_source_and_rejects_hidden_mutations(tmp_
             assert home.path.read_text() == "Home body."
             assert (
                 client.post(
-                    "/api/v1/chores", json={"name": "cleanup", "body": "Hidden new."}
+                    "/api/v0/chores", json={"name": "cleanup", "body": "Hidden new."}
                 ).status_code
                 == 409
             )
@@ -199,13 +199,13 @@ def test_chore_api_edits_visible_home_file_and_preserves_root(tmp_path):
     )
     try:
         with TestClient(app) as client:
-            endpoint = "/api/v1/chores/cleanup"
+            endpoint = "/api/v0/chores/cleanup"
             assert (
                 client.patch(endpoint, json={"body": "Hidden edit."}).status_code == 404
             )
             assert client.delete(endpoint).status_code == 404
             created = client.post(
-                "/api/v1/chores", json={"name": "cleanup", "body": "Home body."}
+                "/api/v0/chores", json={"name": "cleanup", "body": "Home body."}
             )
             assert created.status_code == 201
             assert client.get(endpoint).json() == created.json()
@@ -245,12 +245,12 @@ def test_invalid_home_file_does_not_duplicate_accepted_inline_chore(tmp_path):
     )
     try:
         with TestClient(app) as client:
-            response = client.get("/api/v1/chores")
+            response = client.get("/api/v0/chores")
             assert response.status_code == 200
             assert len(response.json()) == 1
             assert response.json()[0]["path"] == "agent.too"
             assert response.json()[0]["source_error"] is None
-            assert client.get("/api/v1/chores/cleanup").json()["body"] == "Inline wins."
+            assert client.get("/api/v0/chores/cleanup").json()["body"] == "Inline wins."
     finally:
         asyncio.run(core.close())
 
@@ -272,14 +272,14 @@ def test_invalid_chore_name_does_not_block_api_inspection_or_sibling_deletion(tm
     )
     try:
         with TestClient(app) as client:
-            response = client.get("/api/v1/chores")
+            response = client.get("/api/v0/chores")
             assert response.status_code == 200
             entries = {entry["path"]: entry for entry in response.json()}
             assert entries["chores/ bad.md"]["id"] is None
             assert entries["chores/ bad.md"]["runtime"]["thread_id"] is None
-            assert client.get("/api/v1/chores/%20bad").status_code == 200
-            assert client.delete("/api/v1/chores/good").status_code == 204
-            assert client.delete("/api/v1/chores/%20bad").status_code == 204
+            assert client.get("/api/v0/chores/%20bad").status_code == 200
+            assert client.delete("/api/v0/chores/good").status_code == 204
+            assert client.delete("/api/v0/chores/%20bad").status_code == 204
     finally:
         asyncio.run(core.close())
 
@@ -312,10 +312,10 @@ def test_chore_patch_reports_reconciled_runtime_state(tmp_path, changes):
     app.state.chore_driver = SimpleNamespace(refresh=refresh_driver)
     try:
         with TestClient(app) as client:
-            response = client.patch("/api/v1/chores/good", json=changes)
+            response = client.patch("/api/v0/chores/good", json=changes)
             assert response.status_code == 200
             assert response.json()["runtime"]["synced"] is True
-            assert response.json() == client.get("/api/v1/chores/good").json()
+            assert response.json() == client.get("/api/v0/chores/good").json()
     finally:
         checkpoints.close()
         asyncio.run(core.close())
@@ -340,18 +340,18 @@ def test_invalid_agent_syntax_does_not_block_home_chore_api_authoring(tmp_path):
     )
     try:
         with TestClient(app) as client:
-            assert client.get("/api/v1/chores").status_code == 200
+            assert client.get("/api/v0/chores").status_code == 200
             created = client.post(
-                "/api/v1/chores", json={"name": "new", "body": "New body."}
+                "/api/v0/chores", json={"name": "new", "body": "New body."}
             )
             assert created.status_code == 201
             updated = client.patch(
-                "/api/v1/chores/good", json={"body": "Updated body."}
+                "/api/v0/chores/good", json={"body": "Updated body."}
             )
             assert updated.status_code == 200
-            assert updated.json() == client.get("/api/v1/chores/good").json()
-            assert client.delete("/api/v1/chores/good").status_code == 204
-            assert client.get("/api/v1/chores/good").status_code == 404
+            assert updated.json() == client.get("/api/v0/chores/good").json()
+            assert client.delete("/api/v0/chores/good").status_code == 204
+            assert client.get("/api/v0/chores/good").status_code == 404
             assert layout.program.read_text() == "flow ("
     finally:
         asyncio.run(core.close())

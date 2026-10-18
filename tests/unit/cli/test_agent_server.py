@@ -14,7 +14,7 @@ from toolang.cli.common import agent_server
 from toolang.common.layout import AgentLayout
 from toolang.up.logging import LoggingPlan
 from toolang.up.process import AgentStatus
-from toolang.up.records import SandboxState
+from toolang.up.instance import SandboxState
 from toolang.up.types import AgentServerRef
 from toolang.base.types.sandbox import SandboxRef
 from toolang.base.types.model import ModelOverride
@@ -218,7 +218,7 @@ def test_automatic_server_exiting_during_acquisition(
             else {
                 "launch_id": request.url.host,
                 "lifetime": "automatic",
-                "lifecycle_protocol": 1,
+                "api_version": 0,
             },
         )
 
@@ -312,10 +312,10 @@ def test_managed_attachment_checks_its_profile_instead_of_waiting_for_health(
     monkeypatch.setattr(agent_server.agents, "AgentProcess", Process)
     monkeypatch.setattr(
         agent_server,
-        "read_record",
+        "read_instance",
         lambda *_args: {
             "launch_id": "launch",
-            "workload": {"lifetime": "automatic", "lifecycle_protocol": 1},
+            "workload": {"lifetime": "automatic", "api_version": 0},
         },
     )
     retained = []
@@ -327,6 +327,23 @@ def test_managed_attachment_checks_its_profile_instead_of_waiting_for_health(
     monkeypatch.setattr(agent_server, "_retain_server", retain)
     with agent_server.acquire_agent_server(layout, sandbox=None, show_progress=False):
         assert retained == ["launch"]
+
+
+@pytest.mark.parametrize("version", [1, False, 0.0, None])
+def test_attachment_rejects_an_incompatible_api_without_dropping_ownership(
+    tmp_path, monkeypatch, version
+):
+    layout = AgentLayout.resident(tmp_path, "alice")
+    monkeypatch.setattr(
+        agent_server,
+        "read_instance",
+        lambda *_args: {
+            "launch_id": "launch",
+            "workload": {"lifetime": "automatic", "api_version": version},
+        },
+    )
+    with pytest.raises(agent_server.AgentServerAcquisitionError, match="API version"):
+        agent_server._server_reference(layout, "host", "http://server")
 
 
 @pytest.mark.parametrize("dev", [Path("."), Path("dist")])

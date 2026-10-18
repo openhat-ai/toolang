@@ -108,8 +108,8 @@ def test_banner_removes_terminal_controls_and_keeps_literal_text_and_styles():
 @pytest.mark.parametrize(
     "payload",
     [
-        {"version": "0.4.0-hub", "future": True},
-        {"version": "unknown"},
+        {"version": "0.4.0-hub", "api_version": 0, "future": True},
+        {"version": "unknown", "api_version": 0},
         {},
         {"version": ""},
         {"version": None},

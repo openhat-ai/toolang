@@ -98,7 +98,7 @@ text. Rerun creates a new Run entry. Each persisted
 value retains its self-describing codec, without a Local/name/dim wrapper.
 References address `payload/input/_` or `payload/input/argumentName`.
 
-RunStore reads and writes only schema 60. Older stores, including those with
+RunStore reads and writes only schema 61. Older stores, including those with
 retired Activity indexes or retry records, are rejected without mutation. No
 upgrade, Activity cleanup, backfill or compatibility read is performed. Preserve
 required old runtime data separately and use fresh storage for new execution.
@@ -237,7 +237,7 @@ messages, and toolsets are content-addressed; provider request bodies and
 credentials are not stored. Model `report` records `usage: TokenUsage`, `cost: ModelCost`, `invoked`, and
 continuation (`cont`). Tool `report` contains `summary` and `invoked`. All durable
 statistics live inside Report; no snapshot nodes or parallel statistics indexes
-are persisted. Schema 60 requires fresh storage without old-record decoding.
+are persisted. Schema 61 requires fresh storage without old-record decoding.
 
 For a Repeat Step, `spec.until_index` counts preceding body statements; null or
 an absent historical field means a trailing condition. Body statements are

@@ -2,14 +2,7 @@
 
 from __future__ import annotations
 
-import json
-from pathlib import Path
-from typing import Any, Literal
-
-from pydantic import BaseModel, ConfigDict, Field
-
-from toolang.common.files import atomic_write_text
-from .schemas import HubConnection
+from typing import Any
 
 from toolang.execution.errors import SnapshotLimitError
 from toolang.execution.events import (
@@ -25,40 +18,10 @@ from toolang.execution.stream import CanonicalEvent
 from toolang.execution.types import StepRef
 from .errors import EventProtocolError, EventRecoveryRequired
 from .events import PARTS, encode
+from .schemas import HUB_API_VERSION
 
 
 MANIFEST = '["manifest"]'
-
-
-class HubRecord(BaseModel):
-    """Private discovery and process identity for a root's local Hub."""
-
-    model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
-    pid: int = Field(gt=0)
-    created: float = Field(gt=0)
-    port: int = Field(ge=1, le=65535)
-    human: str
-    identity: str
-    status: Literal["starting", "running"] = "running"
-
-    @property
-    def connection(self) -> HubConnection:
-        return HubConnection(f"http://127.0.0.1:{self.port}", self.human, self.identity)
-
-    def save(self, path: Path) -> None:
-        if path.exists():
-            path.chmod(0o600)
-        atomic_write_text(path, self.model_dump_json() + "\n")
-
-    @classmethod
-    def load(cls, path: Path) -> HubRecord | None:
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-            return cls.model_validate(data)
-        except FileNotFoundError:
-            return None
-        except (OSError, ValueError) as exc:
-            raise ValueError(f"Invalid Hub record: {path}") from exc
 
 
 MAX_ENTITIES = 10000
@@ -101,7 +64,7 @@ class EventProjection:
             value = dict(
                 previous
                 or {
-                    "v": 2,
+                    "v": HUB_API_VERSION,
                     "root": frame.root_run_id,
                     "thread": frame.thread_id,
                     "run": event.run
@@ -122,7 +85,7 @@ class EventProjection:
             self.entities[key] = value
         else:
             self.entities[field("control", str(event.control))] = {
-                "v": 2,
+                "v": HUB_API_VERSION,
                 "thread": frame.thread_id,
                 "root": None,
                 "event": event_to_data(event),
@@ -131,7 +94,7 @@ class EventProjection:
             }
         if frame.root_run_id is not None:
             self.entities[field("root", frame.root_run_id)] = {
-                "v": 2,
+                "v": HUB_API_VERSION,
                 "root": frame.root_run_id,
                 "thread": frame.thread_id,
                 "source": cursor,

@@ -21,7 +21,7 @@ from toolang.teaming.config import TeamingRootConfig
 from toolang.teaming.errors import TeamingError
 from toolang.teaming.messaging import MessagingClient
 from toolang.teaming.schemas import HubConnection, HubInfo
-from .records import HubRecord
+from toolang.teaming.discovery import HubDiscovery
 from .discovery import agent_roster
 from toolang.teaming.roster import Roster
 
@@ -33,7 +33,7 @@ class HubProcess:
         self.log = root / "hub" / "hub.log"
 
     @staticmethod
-    def process(record: HubRecord) -> psutil.Process | None:
+    def process(record: HubDiscovery) -> psutil.Process | None:
         try:
             process = psutil.Process(record.pid)
             if (
@@ -46,8 +46,8 @@ class HubProcess:
             pass
         return None
 
-    def current(self) -> HubRecord | None:
-        record = HubRecord.load(self.path)
+    def current(self) -> HubDiscovery | None:
+        record = HubDiscovery.load(self.path)
         return (
             record if record is not None and self.process(record) is not None else None
         )
@@ -61,7 +61,7 @@ class HubProcess:
         return record.connection
 
     @staticmethod
-    def ready(record: HubRecord) -> bool:
+    def ready(record: HubDiscovery) -> bool:
         if record.status == "starting":
             return False
         try:
@@ -75,7 +75,7 @@ class HubProcess:
             return False
 
     @staticmethod
-    def version(record: HubRecord) -> str:
+    def version(record: HubDiscovery) -> str:
         """Read the recorded Hub's source version without requiring readiness."""
         if record.status == "starting":
             return "unknown"
@@ -93,7 +93,7 @@ class HubProcess:
         except (httpx.HTTPError, ValueError):
             return "unknown"
 
-    def start(self, command: Sequence[str], *, timeout: float = 20) -> HubRecord:
+    def start(self, command: Sequence[str], *, timeout: float = 20) -> HubDiscovery:
         if self.current() is not None:
             raise TeamingError("Hub is already running; stop it before restarting")
         self.log.parent.mkdir(parents=True, exist_ok=True)
@@ -168,7 +168,7 @@ def serve(root: Path, config: TeamingRootConfig, *, port: int) -> int:
                 listener.listen()
             except OSError as exc:
                 raise TeamingError(f"Cannot bind Hub port {port}: {exc}") from exc
-            record = HubRecord(
+            record = HubDiscovery(
                 pid=os.getpid(),
                 created=psutil.Process().create_time(),
                 port=port,
@@ -212,5 +212,5 @@ def serve(root: Path, config: TeamingRootConfig, *, port: int) -> int:
                     return int(exc.code) if isinstance(exc.code, int) else 1
                 return 0 if server.started else 3
             finally:
-                if HubRecord.load(hub.path) == record:
+                if HubDiscovery.load(hub.path) == record:
                     hub.path.unlink(missing_ok=True)

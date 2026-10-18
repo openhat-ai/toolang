@@ -38,6 +38,7 @@ from .keys import (
 )
 from ...ids import dm_id, gc_id
 from ...schemas import (
+    HUB_API_VERSION,
     Conversation,
     ConversationRules,
     TeamMember,
@@ -168,7 +169,7 @@ class ValkeyBackend:
                     {
                         "epoch": epoch,
                         "initial_event": TeamEvent(
-                            v=1,
+                            v=HUB_API_VERSION,
                             epoch=epoch,
                             type="stream.initialized",
                             conversation=None,

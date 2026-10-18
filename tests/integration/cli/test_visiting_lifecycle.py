@@ -4,15 +4,18 @@ from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 import os
+import socket
 import subprocess
 import sys
 import threading
 import time
+from urllib.parse import urlsplit
 
 import httpx
 import pytest
 
 from tests.support.chat_tui_pty import ChatTuiPtySession
+from toolang.up.instance import update_instance
 from toolang.up.process import AgentProcess
 from toolang.up.source import visiting_layout
 
@@ -46,8 +49,20 @@ def _visiting_chat(tmp_path: Path):
     root = tmp_path / "root"
     root.mkdir()
     (root / "config.toml").write_text("[teaming]\nenabled = false\n")
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        agent_port = listener.getsockname()[1]
     url = f"http://127.0.0.1:{source.server_port}/dev.too"
     layout = visiting_layout(url, toolang_root=root)
+    update_instance(
+        layout.runtime_status,
+        lambda entry: entry["control"].update(
+            last_successful={
+                "endpoint": f"http://localhost:{agent_port}",
+                "sandbox": "host",
+            }
+        ),
+    )
     base = [sys.executable, "-m", "toolang.cli.toolang", "--root", str(root)]
     clients = []
     outputs = []
@@ -62,7 +77,10 @@ def _visiting_chat(tmp_path: Path):
             stdout=output,
             stderr=subprocess.STDOUT,
             text=True,
-            env={**os.environ, "TOOLANG_ROOT": str(root)},
+            env={
+                **os.environ,
+                "TOOLANG_ROOT": str(root),
+            },
         )
         clients.append(process)
 
@@ -73,6 +91,11 @@ def _visiting_chat(tmp_path: Path):
 
         if wait:
             _wait(ready)
+            state = AgentProcess(layout).state()
+            assert state is not None
+            endpoint = state["endpoint"]
+            assert isinstance(endpoint, str)
+            assert urlsplit(endpoint).port == agent_port
         return process
 
     def command(*args, success=True):

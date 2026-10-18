@@ -21,7 +21,7 @@ Verified sources: [acquisition](../../src/toolang/cli/common/agent_server.py),
 [runtime commands](../../src/toolang/cli/toolang/commands/runtime.py),
 [defaults](../../src/toolang/up/config.py),
 [source identity](../../src/toolang/up/source.py),
-[launch records](../../src/toolang/up/records.py), and
+[launch records](../../src/toolang/up/instance.py), and
 [spawn ownership](../../src/toolang/execution/executor/spawn.py).
 This definition supersedes only the in-scope startup/lifetime rules in
 [execution drivers](serve-execution-drivers.md) and

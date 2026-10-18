@@ -81,11 +81,11 @@ def test_resident_default_port_reuses_free_record_or_selects_available(
 def test_automatic_port_selection_ignores_invalid_legacy_peers(
     tmp_path, monkeypatch, preferred
 ):
-    from toolang.up.records import update_record
+    from toolang.up.instance import update_instance
 
     layout = AgentLayout.resident(tmp_path, "alice")
     if preferred is not None:
-        update_record(
+        update_instance(
             layout.runtime_status,
             lambda entry: entry["control"].update(
                 last_successful={"endpoint": f"http://localhost:{preferred}"}
@@ -98,7 +98,7 @@ def test_automatic_port_selection_ignores_invalid_legacy_peers(
         ("Gus", 7123),
         ("a" * 65, 7123),
     ):
-        update_record(
+        update_instance(
             tmp_path / "agents" / name / ".runtime" / "status.json",
             lambda entry, port=port: entry["control"].update(
                 last_successful={"endpoint": f"http://localhost:{port}"}
@@ -257,11 +257,13 @@ def test_workload_startup_failure_records_error_and_retains_control_reference(
 ):
     from unittest.mock import AsyncMock
     from toolang.base.types.sandbox import SandboxRef
-    from toolang.up.records import SandboxState, read_record, update_record
+    from toolang.up.instance import SandboxState, read_instance, update_instance
 
     layout = AgentLayout.resident(tmp_path, "alice")
     spec = resolve_serve(layout=layout, port=8123, launch_id="launch")
-    update_record(layout.runtime_status, lambda entry: entry.update(launch_id="launch"))
+    update_instance(
+        layout.runtime_status, lambda entry: entry.update(launch_id="launch")
+    )
     reference = SandboxState(
         "host" if location == "host" else "docker:image",
         SandboxRef("resource", spec.endpoint, runtime_kind="container"),
@@ -294,7 +296,7 @@ def test_workload_startup_failure_records_error_and_retains_control_reference(
             launch_id="launch",
             location=location,
         )
-    entry = read_record(layout.runtime_status)
+    entry = read_instance(layout.runtime_status)
     assert entry is not None
     assert entry["workload"]["status"] == "failed"
     assert entry["workload"]["pid"] is None
@@ -311,7 +313,7 @@ def test_cleanup_failure_retains_reference_and_reports_error(
 ):
     from unittest.mock import AsyncMock
     from toolang.plugin.sandboxes.host import process_ref
-    from toolang.up.records import SandboxState, read_record
+    from toolang.up.instance import SandboxState, read_instance
 
     layout = AgentLayout.resident(tmp_path, "alice")
     reference = SandboxState(
@@ -338,7 +340,7 @@ def test_cleanup_failure_retains_reference_and_reports_error(
             sandbox="host",
             launch_id=None if owns_control else "launch",
         )
-    entry = read_record(layout.runtime_status)
+    entry = read_instance(layout.runtime_status)
     assert entry is not None and entry["workload"]["status"] == "failed"
     assert "cleanup failed" in entry["workload"]["message"]
     assert SandboxState.load(layout.runtime_status) == reference
@@ -347,7 +349,7 @@ def test_cleanup_failure_retains_reference_and_reports_error(
 def test_guest_without_explicit_launch_identity_does_not_adopt_status(
     tmp_path, monkeypatch
 ):
-    from toolang.up.records import SandboxState
+    from toolang.up.instance import SandboxState
     from toolang.plugin.sandboxes.host import process_ref
 
     layout = AgentLayout.resident(tmp_path, "alice")
@@ -403,7 +405,7 @@ def test_server_owns_statistics_and_joins_worker_before_closing_source(
     monkeypatch.setattr(server, "configure_logging", lambda **kwargs: None)
     monkeypatch.setattr(server, "_restore_termination_signal_defaults", lambda: None)
     monkeypatch.setattr(
-        "toolang.up.records.patch_workload", lambda *args, **kwargs: True
+        "toolang.up.instance.patch_workload", lambda *args, **kwargs: True
     )
     monkeypatch.setattr(
         server.agents, "write_runtime_state", lambda *args, **kwargs: None
@@ -419,8 +421,8 @@ def test_server_owns_statistics_and_joins_worker_before_closing_source(
             assert service.config.archive_after_seconds == 3600
             assert service.records.path == layout.stats_store
             assert service._thread is None
-            assert client.get("/api/v1/stats/models?window=1h").json()["data"] == []
-            client.get("/api/v1/stats/summary")
+            assert client.get("/api/v0/stats/models?window=1h").json()["data"] == []
+            client.get("/api/v0/stats/summary")
 
     monkeypatch.setattr(server, "_run_uvicorn_app", run)
     spec = resolve_serve(

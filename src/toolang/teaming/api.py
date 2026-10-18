@@ -29,7 +29,7 @@ from .errors import (
     ScopeUnavailable,
 )
 from .messaging import MessagingClient
-from .schemas import HubInfo, target
+from .schemas import HUB_API_VERSION, HubInfo, target
 from .messaging_api import messaging_router
 from .lifecycle import HubLifecycle
 from .team_api import team_router
@@ -46,7 +46,7 @@ def create_app(
 ) -> FastAPI:
     """Bind requests to one configured human; own the service for this lifespan."""
     target(client.actor, kind="human")
-    info = HubInfo(version=version)
+    info = HubInfo(version=version, api_version=HUB_API_VERSION)
 
     async def prepare_request(
         backend: Annotated[str | None, Header(alias="X-Toolang-Backend")] = None,

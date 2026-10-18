@@ -981,7 +981,7 @@ def test_info_shows_starting_identity_without_stale_report(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from toolang.plugin.sandboxes.host import process_ref
-    from toolang.up.records import SandboxState
+    from toolang.up.instance import SandboxState
     from toolang.up.process import write_runtime_state
 
     root = tmp_path / "toolang"

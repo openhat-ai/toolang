@@ -5,6 +5,7 @@ from pathlib import Path
 
 import httpx
 
+from toolang.api.version import AGENT_API_VERSION
 from toolang.execution.schemas import RunRequest
 from toolang.common.errors import ToolangError
 from toolang.lang.includes import resolve_file_include
@@ -19,7 +20,7 @@ async def capture_attachments(
     ):
         return replace(request, attachments={})
     response = await http.post(
-        f"{endpoint.rstrip('/')}/api/v1/runs/input-references",
+        f"{endpoint.rstrip('/')}/api/v{AGENT_API_VERSION}/runs/input-references",
         json={
             "runnable": request.runnable.ref,
             "input": dict(request.runnable.input),

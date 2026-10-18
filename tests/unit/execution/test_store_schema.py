@@ -6,6 +6,7 @@ import sqlite3
 import pytest
 
 from toolang.execution.errors import RunStoreSchemaError
+from toolang.driver.chore.store import ChoreStore
 from toolang.execution.store import RunStore
 from toolang.execution.types import ContentRef
 
@@ -14,15 +15,17 @@ from toolang.execution.types import ContentRef
     "schema_version",
     [
         pytest.param(28, id="historical"),
-        *[pytest.param(version, id=f"old-{version}") for version in range(51, 60)],
-        pytest.param(61, id="future"),
+        *[pytest.param(version, id=f"old-{version}") for version in range(51, 61)],
+        pytest.param(62, id="future"),
     ],
 )
 @pytest.mark.parametrize("read_only", (False, True))
+@pytest.mark.parametrize("store_type", (RunStore, ChoreStore))
 def test_run_store_rejects_any_other_schema_without_modifying_it(
     tmp_path: Path,
     schema_version: int,
     read_only: bool,
+    store_type: type[RunStore] | type[ChoreStore],
 ) -> None:
     path = tmp_path / "runs.db"
     connection = sqlite3.connect(path)
@@ -34,10 +37,10 @@ def test_run_store_rejects_any_other_schema_without_modifying_it(
     before = path.read_bytes()
 
     with pytest.raises(RunStoreSchemaError) as raised:
-        RunStore(path, read_only=read_only)
+        store_type(path, read_only=read_only)
 
     assert raised.value.version == schema_version
-    assert raised.value.current == 60
+    assert raised.value.current == 61
     assert raised.value.read_only is read_only
     assert path.read_bytes() == before
     connection = sqlite3.connect(path)
@@ -92,7 +95,7 @@ def test_run_store_opens_the_current_schema(tmp_path: Path) -> None:
 
     connection = sqlite3.connect(path)
     try:
-        assert int(connection.execute("PRAGMA user_version").fetchone()[0]) == 60
+        assert int(connection.execute("PRAGMA user_version").fetchone()[0]) == 61
         columns = {
             table: {
                 str(row[1]) for row in connection.execute(f"PRAGMA table_info({table})")
