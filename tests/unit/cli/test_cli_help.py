@@ -294,7 +294,7 @@ def test_lazy_command_exposes_short_help_without_loading():
     ("command", "description"),
     [
         ("workspace", "Configure agent workspaces"),
-        ("hub", "Show or control the teaming service"),
+        ("hub", "Manage the hub service"),
         ("talk", "Have conversations with agents"),
         ("chat", "Chat directly with an agent"),
         ("chore", "Manage one-off and scheduled tasks"),
