@@ -7,6 +7,35 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking:** execution records, HTTP payloads, and stream events use `spec`
+  and `report` instead of `given` and `noted`, with `StepSpec`, `StepReport`,
+  `ModelStepSpec`, `ModelStepReport`, `ToolStepSpec`, `ToolStepReport`,
+  `CollectionStepReport`, and `LoopStepReport` types, together with `RunReport`,
+  `ExecStepReport`, and stored `Spec` type families, and controls expose
+  `request_id` instead of `request`. Step records drop `created_at`, which HTTP
+  detail derives from `started_at`, and an exec Step's report stores only its
+  Control reference, so read the target from `payload/runnable`. Update Pointer
+  paths to `STEP/spec`, `RUN/report`, `STEP/report`, and `CONTROL/request_id`;
+  schema 60 rejects older execution stores without mutation, so keep required
+  old data separately and start with fresh storage.
+
+- **Breaking:** chore scheduler checkpoint records and `chores` columns rename
+  `chore_id` and `active_run_id` to `id` and `active_run`; code reading a
+  `ChoreRecord` must use `id` and `active_run`, while chore lookup parameters
+  and the HTTP `active_run_id` projection are unchanged. Checkpoints share the
+  schema-60 execution store, so the fresh-storage requirement above applies.
+
+- **Breaking:** execution-event publication, recovery datasets, projection
+  entities, and history cursors use version `2` with no version-1 fallback.
+  Stop publishers and Hub readers before upgrading, then upgrade and reconnect
+  subscribers together.
+
+- `AGENT_HOME/.runtime/stats.db` uses schema `2` with `roots`, `buckets`, and
+  `state` tables; discard an older cache while the server is stopped and let it
+  rebuild from compatible execution records.
+
 ## [0.4.0a9] - 2026-10-18
 
 ### Added
