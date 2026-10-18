@@ -240,6 +240,15 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Fixed
 
+- `too top` rejects a live sample captured under a previous source binding,
+  so a rediscovered or departed instance cannot restore obsolete live rows,
+  and completed counts and usage become unknown (`-`) when a current
+  instance has no readable source instead of under-reporting.
+
+- `too top` and `too hub` omit visiting or roaming instances that are no
+  longer running, so a departed temporary instance is not reported as
+  current.
+
 - `too top` counts active roots only from current inventory and keeps retained
   departed instances to completions and usage, so they add no live rows or
   live-coverage warnings and cannot make active counts unknown. USD spend uses
