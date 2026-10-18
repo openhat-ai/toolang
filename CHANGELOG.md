@@ -7,6 +7,8 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ## [Unreleased]
 
+## [0.4.0a9] - 2026-10-18
+
 ### Added
 
 - `too top` sorts interactively: F6 opens a picker for Default, MODEL, TOOL,
@@ -101,6 +103,13 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Changed
 
+- `too hub` simplifies its snapshot: a `hub <version>` or `hub not running`
+  line sits above a headerless three-column tree of agent name, status, and
+  Talk; a nonempty list ends with instance, running, and talk-enabled counts,
+  an empty list prints `no agents` instead, and negative states are dim.
+  Incomplete inspection marks only a nonempty summary `partial` and prints
+  diagnostics after the list. ([#835](https://github.com/openhat-ai/toolang/pull/835))
+
 - **Breaking:** terminal execution statistics are recorded directly in Noted: a
   model Step stores `usage` (input, output, cache-read, and reasoning tokens),
   `cost`, `invoked`, and `cont` without an `accounting` envelope, a tool Step
@@ -129,10 +138,9 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 - **Breaking:** thread peer metadata is removed from execution records, events,
   and HTTP schemas. Thread creation no longer accepts a peer, and integrations
   must stop sending or reading peer fields. Empty thread titles now use the
-  thread origin. Writable execution-store schema 58 upgrades schema 57 by
-  transactionally deleting only `threads.peer`, preserving execution facts,
-  contents, IDs, and cursors; stop old writers before upgrading. Read-only
-  versions 52–57 remain readable without mutation.
+  thread origin. Peer fields are gone from storage with no upgrade path or
+  compatibility decoder; follow the schema-59 fresh-storage requirement in the
+  execution statistics entry above.
 
 - **Breaking:** the public `ToolRuntime` tool protocol adds
   `steer(target, input, expected_control)` and
@@ -2136,7 +2144,8 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 - The formatter normalizes `exec` statements consistently with other flow
   statements. (#676)
 
-[Unreleased]: https://github.com/openhat-ai/toolang/compare/v0.4.0a8...HEAD
+[Unreleased]: https://github.com/openhat-ai/toolang/compare/v0.4.0a9...HEAD
+[0.4.0a9]: https://github.com/openhat-ai/toolang/compare/v0.4.0a8...v0.4.0a9
 [0.4.0a8]: https://github.com/openhat-ai/toolang/compare/v0.4.0a7...v0.4.0a8
 [0.4.0a7]: https://github.com/openhat-ai/toolang/compare/v0.4.0a6...v0.4.0a7
 [0.4.0a6]: https://github.com/openhat-ai/toolang/compare/v0.4.0a5...v0.4.0a6
