@@ -135,9 +135,10 @@ class StatsService:
         next_start = 0.0
         while True:
             self._wake.wait()
-            self._wake.clear()
             if self._stop.wait(max(0.0, next_start - time.monotonic())):
                 return
+            # Requests received while throttled belong to this pending pass.
+            self._wake.clear()
             next_start = time.monotonic() + 5.0
             with self._lock:
                 self._refreshing = True

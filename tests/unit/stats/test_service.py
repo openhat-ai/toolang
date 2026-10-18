@@ -1,5 +1,6 @@
 from pathlib import Path
 from threading import Event
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
@@ -7,6 +8,7 @@ import pytest
 from toolang.common.config_sources import ConfigSource
 from toolang.stats.config import StatsConfig, stats_config
 from toolang.stats.errors import StatsUnavailable
+from toolang.stats import service as stats_service
 from toolang.stats.service import StatsService
 
 from .conftest import DAY, NOW
@@ -97,6 +99,57 @@ def test_statistics_failure_does_not_prevent_source_execution(fixture, tmp_path)
     fixture.finish(root, NOW - 7)
     assert fixture.source.get_run(run_id=root).status == "succeeded"
     service.close()
+
+
+def test_worker_coalesces_requests_arriving_during_throttle(
+    fixture, monkeypatch, tmp_path
+):
+    service = StatsService(
+        fixture.source.db_path,
+        tmp_path / "throttle.db",
+        config=StatsConfig(),
+        clock=lambda: NOW,
+    )
+    first_pass, throttled, release, idle = Event(), Event(), Event(), Event()
+    idle_wakes = []
+    original_wake_wait = service._wake.wait
+    waits = 0
+
+    def wake_wait():
+        nonlocal waits
+        waits += 1
+        if waits == 3:
+            idle_wakes.append(service._wake.is_set())
+            idle.set()
+        return original_wake_wait()
+
+    def stop_wait(delay):
+        if delay:
+            assert delay == 5
+            throttled.set()
+            assert release.wait(timeout=10)
+        return service._stop.is_set()
+
+    refresh = Mock(side_effect=lambda **_: first_pass.set())
+    monkeypatch.setattr(service.records, "refresh", refresh)
+    monkeypatch.setattr(service._wake, "wait", wake_wait)
+    monkeypatch.setattr(service._stop, "wait", stop_wait)
+    monkeypatch.setattr(stats_service, "time", SimpleNamespace(monotonic=lambda: 1.0))
+    try:
+        service.start()
+        service.request_refresh()
+        assert first_pass.wait(timeout=10)
+        service.request_refresh()
+        assert throttled.wait(timeout=10)
+        for _ in range(10):
+            service.request_refresh()
+        release.set()
+        assert idle.wait(timeout=10)
+        assert idle_wakes == [False]
+        assert refresh.call_count == 2
+    finally:
+        release.set()
+        service.close()
 
 
 @pytest.mark.parametrize("value", [True, 1, 59, 1.5, "86400", None])

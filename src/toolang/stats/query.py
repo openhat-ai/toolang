@@ -125,13 +125,19 @@ class StatsReader:
         ):
             yield from project_root(dict(row))
 
-    def raw_data(self, scope: Scope) -> Iterator[Contribution]:
+    def raw_data(
+        self, scope: Scope, lo: int | None = None, hi: int | None = None
+    ) -> Iterator[Contribution]:
         if scope.kind == "root_run":
             if scope.id not in self.archived([scope.id]):
-                yield from self.records.source_root(self.connection, scope.id)
+                yield from self.records.source_root(
+                    self.connection, scope.id, lo=lo, hi=hi
+                )
         else:
             for row in self.connection.execute(sql.UNARCHIVED_ROOTS):
-                yield from self.records.source_root(self.connection, row["id"])
+                yield from self.records.source_root(
+                    self.connection, row["id"], lo=lo, hi=hi
+                )
 
     def query(
         self,
@@ -180,19 +186,20 @@ class StatsReader:
                         totals[index][ref] = totals[index].get(
                             ref, Metrics()
                         ) + metrics_from_row(row)
-        if recent:
+        if all(lo is not None and hi is not None for lo, hi in intervals):
             bounds = [
                 (lo, hi)
                 for lo, hi in intervals
                 if lo is not None and hi is not None and lo < hi
             ]
-            events = (
-                self.time_data(
-                    min(lo for lo, _ in bounds), max(hi for _, hi in bounds), False
+            events = iter(())
+            if bounds:
+                lo, hi = min(lo for lo, _ in bounds), max(hi for _, hi in bounds)
+                events = (
+                    self.time_data(lo, hi, False)
+                    if recent
+                    else self.raw_data(scope, lo, hi)
                 )
-                if bounds
-                else iter(())
-            )
         else:
             events = self.raw_data(scope)
         for event in events:

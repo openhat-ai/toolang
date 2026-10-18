@@ -1,5 +1,6 @@
 from datetime import date
 import sqlite3
+from unittest.mock import Mock
 
 import pytest
 
@@ -76,6 +77,31 @@ def test_archived_partial_minute_edges_deduplicate_steps_and_split_event_times(f
     result = groups["test/model"]
     assert result.model_calls == 1 and result.input_tokens == 200
     assert result.spend_micros == 300000
+
+
+@pytest.mark.parametrize("scope_kind", ["agent", "thread", "root_run"])
+def test_finite_history_does_not_project_steps_outside_its_time_range(
+    fixture, monkeypatch, scope_kind
+):
+    root = fixture.root("long_active", NOW - 60 * DAY)
+    fixture.call(root, NOW - 40 * DAY, NOW - 40 * DAY + 1)
+    # Include both kinds of boundary crossing: count only, and usage only.
+    fixture.call(root, NOW - 31 * DAY, NOW - 29 * DAY, tokens=200)
+    fixture.call(root, NOW - DAY, NOW + 1, tokens=300)
+    fixture.call(root, NOW - 10, NOW - 1, tokens=400)
+    project = Mock(wraps=records.project_step)
+    monkeypatch.setattr(records, "project_step", project)
+    scope = Scope(
+        scope_kind, {"agent": "", "thread": "chat_stats", "root_run": root}[scope_kind]
+    )
+
+    result = fixture.stats.models("1mo", scope).data
+
+    assert result is not None and len(result) == 1
+    assert result[0].model_calls == 2 and result[0].in_ == 600
+    assert result[0].spend == 0.2
+    assert project.call_count == 3
+    assert fixture.stats.models("all", scope).data[0].in_ == 1000
 
 
 def test_publication_between_snapshot_pins_does_not_lose_or_duplicate_root(

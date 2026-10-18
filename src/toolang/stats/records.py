@@ -88,7 +88,13 @@ class StatsRecords:
         return connection.execute(sql.OWNED_RUNS, {"root_id": root}).fetchall()
 
     def step_page(
-        self, connection: sqlite3.Connection, run: str, after: str
+        self,
+        connection: sqlite3.Connection,
+        run: str,
+        after: str,
+        *,
+        lo: int | None = None,
+        hi: int | None = None,
     ) -> list[sqlite3.Row]:
         return connection.execute(
             sql.SOURCE_STEP_PAGE,
@@ -96,19 +102,24 @@ class StatsRecords:
                 "run_id": run,
                 "after_id": after,
                 "page_size": PAGE_SIZE,
-                "lo_text": None,
-                "hi_text": None,
+                "lo_text": timestamp(lo) if lo is not None else None,
+                "hi_text": timestamp(hi) if hi is not None else None,
             },
         ).fetchall()
 
     def source_root(
-        self, connection: sqlite3.Connection, root: str
+        self,
+        connection: sqlite3.Connection,
+        root: str,
+        *,
+        lo: int | None = None,
+        hi: int | None = None,
     ) -> Iterator[Contribution]:
         for run in self.root_runs(connection, root):
             if run["id"] == root:
                 yield from project_root(dict(run))
             after = ""
-            while page := self.step_page(connection, run["id"], after):
+            while page := self.step_page(connection, run["id"], after, lo=lo, hi=hi):
                 for row in page:
                     yield from project_step(dict(row), root, run["thread"])
                 after = page[-1]["id"]
