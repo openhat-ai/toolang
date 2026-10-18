@@ -1,4 +1,4 @@
-"""Shared pytest defaults, fixtures, and command-line options."""
+"""Shared pytest command-line options."""
 
 from __future__ import annotations
 
@@ -8,11 +8,8 @@ import pytest
 
 
 def pytest_configure(config: pytest.Config) -> None:
-    """Set deterministic terminal defaults and disable external tmux pane marks."""
+    """Keep the default suite offline: chat must not publish tmux pane marks."""
 
-    # Configure before collection, including consoles created at import time.
-    # Tests for terminal fallbacks can still override TERM with monkeypatch.
-    os.environ["TERM"] = "xterm-256color"
     os.environ["TOOLANG_TMUX"] = "0"
 
 
