@@ -1,104 +1,74 @@
-# Plan
+# Contract Version Boundaries
 
-Consolidate compatibility management into eight package-owned contracts: two file
-formats, three database schemas, and three API versions. Definition only; awaiting
-human review before implementation.
+Maintain eight independent contracts: two file formats, three database schemas
+and three API versions. This definition requires human approval before implementation.
 
-## Scope
+## Contracts
 
-- In: ownership, naming, format removal/merging, current-version validation and
-  coordinated consumer updates.
-- Out: historical compatibility, migration, service separation, new statistics
-  behavior, public CLI changes, CST JSON and build-info internal conventions.
+| Name | Constant | Boundary |
+| --- | --- | --- |
+| agent state format | `AGENT_STATE_FORMAT` | Root/home layers and agent composition, including source inventories and captured AST/cap/chore values. |
+| agent instance format | `AGENT_INSTANCE_FORMAT` | Agent status files and instance discovery references. |
+| run store schema | `RUN_STORE_SCHEMA` | All `runs.db` data, including chore checkpoints, model calls and compaction payloads. |
+| stats store schema | `STATS_STORE_SCHEMA` | `stats.db` buckets, archive receipts and initialization state. |
+| hub store schema | `HUB_STORE_SCHEMA` | Valkey team/conversation/message data and stored publication/recovery data. |
+| agent API version | `AGENT_API_VERSION` | Execution, capabilities, workspaces, lifecycle, activity/Top, pagination and direct execution streams. |
+| stats API version | `STATS_API_VERSION` | Read-only `summary`, `models`, `daily` and `recent` queries, quantities, snapshots and errors. |
+| hub API version | `HUB_API_VERSION` | Messaging, team/presence, subscriptions, publication, staging and recovery. |
 
-### Contract names and boundaries
+Keep each counter with its owning package. Reserve `Record`/`records.py` for
+database persistence types or rows; use format/discovery terminology for files.
+CST JSON and build info are internal conventions outside this inventory. Content
+revisions, digests, epochs and software versions retain their existing meanings.
 
-Each row owns one package-local constant. Nested types retain validation without
-independent counters; protocol types remain independent of stores/runtime services.
+## Removal and merging
 
-| Contract | Constant | Boundary | Existing lineage -> consolidated version |
-| --- | --- | --- | --- |
-| agent state format | `AGENT_STATE_FORMAT_VERSION` | Root/home `layer.json` and agent `layers.json`, including source inventories and captured AST/cap/chore values. | Layer 22 + composition 3 -> 23 |
-| agent instance format | `AGENT_INSTANCE_FORMAT_VERSION` | Agent `status.json` and host-owned instance discovery references. | Status 2 + reference 1 -> 3 |
-| run store schema | `RUN_STORE_SCHEMA_VERSION` | All `runs.db` data, including chore checkpoints, model calls and compaction payloads. | 59 -> 60 |
-| stats store schema | `STATS_STORE_SCHEMA_VERSION` | `stats.db`: buckets, archive receipts and initialization state. | 1 -> 1; no DDL change |
-| hub store schema | `HUB_STORE_SCHEMA_VERSION` | Valkey team/conversation/message data and stored execution publication/recovery data. | Conversation 3 + event storage 1 -> 4 |
-| agent API version | `AGENT_API_VERSION` | Execution, capabilities, workspaces, lifecycle, activity/Top, pagination and direct execution streams. | URL version 1 -> 2 |
-| stats API version | `STATS_API_VERSION` | Read-only `summary`, `models`, `daily` and `recent` requests and responses. | Newly independent -> 1 |
-| hub API version | `HUB_API_VERSION` | Messaging, team/presence, subscriptions, publication, staging and recovery requests and responses. | Newly explicit -> 1 |
+- Merge layer/composition versions into agent state format. Remove
+  `SOURCE_SCHEMA`, the manifest's version field and unused standalone manifest
+  serialization; retain source identity types, file layout and content addressing.
+- Merge status/reference versions into agent instance format; preserve separate
+  files and control/workload ownership.
+- Absorb durable model-call and compaction policy versions into run store schema;
+  absorb conversation/event-storage versions into hub store schema. Chores share
+  run store schema; stats store remains independent.
+- Absorb lifecycle and pagination/cursor versions into agent API, and team-event,
+  publication/staging and wire projection versions into hub API. Retain distinct
+  payload types, cursor kinds, bindings and validation. Stats API is independently
+  versioned even when hosted by the agent; preserve existing
+  [statistics semantics](../execution-statistics.md) and
+  [`recent` behavior](../top.md).
+- Delete the unused common cache envelope/version and Docker `start.json` writer;
+  retain used digest helpers. Update affected producers, consumers and tests together.
 
-If an affected lineage advances before implementation, advance from its newer
-value. Never reset existing lineages or couple counters to package releases.
+## Version and compatibility policy
 
-Use `format` for files, `schema` for databases, and `Record`/`records.py` for
-database persistence types/rows. Move file codecs/types to their format/discovery
-owner. Content revisions, digests, epochs, generations and grammar/source/package
-versions retain their meanings without becoming additional compatibility domains.
+Continue existing version lineages without resetting them for release. Increment
+affected contracts for incompatible changes; newly introduced domains start at 1.
+Merged domains continue from the highest existing counter. Do not preassign final
+version values before implementation.
 
-### Compatibility and API boundaries
+Support no historical formats: remove legacy decoders, retired-field aliases,
+migrations and compatibility fallbacks. Reject incompatible stored data without
+rewriting it; derived State may rebuild from authored inputs. Existing history
+and cursors may become unusable. Preserve data integrity and process ownership.
+API route layout, cursor encoding, deployment and unrelated behavior redesigns
+are outside this consolidation.
 
-Accept only current contracts: no legacy decoders, field aliases, migrations,
-dual readers/writers or fallbacks. Reject incompatible stores/instance files
-without mutation; rebuild derived State from authored inputs. Initialize empty
-stores only; incompatible datasets require explicit replacement. Stop previous
-workloads before replacing instance files; preserve ownership and fencing.
+## Touchpoints and acceptance
 
-Keep the existing `/api/vN` route convention: mount agent routes under
-`/api/v{AGENT_API_VERSION}`, stats routes independently under
-`/api/v{STATS_API_VERSION}/stats`, and Hub application routes under
-`/api/v{HUB_API_VERSION}` on the Hub endpoint. Keep readiness `/healthz`
-operational and unversioned. Update bundled clients together; serve no previous
-route aliases. Stats remains agent-hosted. Its version covers query validation,
-scopes, time ranges/timezones, quantities/units, null/zero semantics, snapshot
-state and errors. Preserve existing
-[statistics semantics](../execution-statistics.md) and
-[`recent` contract](../top.md). Statistics shared in agent Top responses belong
-to the agent API contract; Hub conversation/message counts belong to the hub API.
+Likely files: `state/{source,state,cache,prepare}.py`, `up/{records,observation}.py`,
+`execution/{store,records,legacy,compaction,schemas}.py`, `execution/inspection/`,
+`driver/chore/store.py`, `stats/{records,schemas}.py`, `api/{router,schemas}.py`,
+`api/routers/stats.py`, `teaming/` persistence/protocol code, CLI clients,
+`common/cache.py`, Docker staging, and their existing tests/documentation.
 
-## Action items
+- Exactly eight version owners use the names above; nested structures introduce
+  no independent counters, and stats API can advance independently of agent API.
+- Current data round-trips preserve State integrity, model-call replay,
+  compaction recovery, chore persistence, Hub publication and all four stats queries.
+- Non-current versions and retired payloads are rejected without data mutation;
+  State preparation can regenerate derived data. Existing ownership checks pass.
+- Implementation passes the repository's default verification. This documentation
+  change requires source/link validation and `git diff --check` only.
 
-- [ ] Unify State file markers as `format` under the agent state version; retain
-  root/home sharing, composition files, content addressing and integrity checks.
-  Remove `SOURCE_SCHEMA`, the manifest's version field and unused standalone
-  manifest serialization; keep source identity as an internal value type.
-- [ ] Unify status/reference markers as `format` under the agent instance version
-  without merging their files or control/workload ownership. Rename file-backed
-  `up/records.py` terminology and `teaming.records.HubRecord`; keep Hub process
-  discovery an unversioned internal convention.
-- [ ] Fold model-call and compaction policy versions into the run store schema;
-  remove the old compaction branch, legacy retry decoding and retired field
-  aliases. Keep chores in `runs.db`. Fold conversation and event-storage version
-  checks into one hub dataset gate; retain the Valkey key namespace as an address,
-  not another version counter. Retain independent stats persistence.
-- [ ] Route and validate the three APIs independently. Absorb `lifecycle_protocol`
-  and history/thread/tool cursor versions into the agent API; absorb team-event,
-  publication/staging and wire projection versions into the hub API. Keep cursor
-  kinds, scope/store bindings and epoch validation, replacing `h1`/`t1` with
-  versionless `h`/`t` kind tags. Storage encodings remain store-owned.
-- [ ] Delete the unused common cache envelope/version and Docker `start.json`
-  writer, preserving used digest helpers. CST JSON/build info remain internal
-  conventions outside this inventory; add no CST JSON readback path.
-- [ ] Cover current-format round trips, State integrity, host/guest fencing,
-  exact model-call replay and compaction recovery, shared chore persistence, Hub
-  publication/recovery, and all four stats endpoints. Non-current versions,
-  nonempty unversioned stores and malformed payloads must fail without mutation;
-  cache preparation may rebuild. Verify wrong-kind/store cursors fail and a stats
-  API version change leaves agent/hub routes unchanged.
-- [ ] Update owning documentation, bundled clients and existing offline tests;
-  generate implementation changelog entries through `too aid.too update_changelog`
-  for maintainer verification. Run the repository's default verification before
-  implementation commits; for this definition, validate links and run
-  `git diff --check`.
-
-Likely touchpoints: `state/{source,state,cache,prepare}.py`,
-`up/{records,observation,process,server,hub}.py`,
-`execution/{store,records,legacy,compaction,schemas,remote}.py`,
-`execution/inspection/`, `driver/chore/store.py`, `stats/{records,_sql,schemas}.py`,
-`api/{router,schemas,routers/stats}.py`, `teaming/` codecs/clients/Valkey backend,
-CLI clients, `common/cache.py`, Docker staging, and their existing tests and
-focused documentation.
-
-## Open questions
-
-None. Risks are unusable old history/cursors and accidental coupling of storage,
-transport or host/guest authority; the gates and acceptance checks cover them.
+Open questions: none within this scope.
