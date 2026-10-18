@@ -36,7 +36,7 @@ from toolang.execution.store import RunStore
 from toolang.execution.types import (
     RulesRecallTarget,
     ThreadPrefix,
-    ToolStepGiven,
+    ToolStepSpec,
     TypedRef,
     ControlRef,
 )
@@ -132,7 +132,7 @@ def _tool_steps(harness, run):
     return [
         s
         for s in harness.store.list_steps(run_id=run.id)
-        if isinstance(s.given, ToolStepGiven)
+        if isinstance(s.spec, ToolStepSpec)
     ]
 
 
@@ -194,7 +194,7 @@ def test_honor_precedes_blocked_batch_and_retry_executes_once(
                 RulesRecallTarget("repo", "/src"),
             ]
             steps = _tool_steps(harness, run)
-            assert [s.given.trigger for s in steps] == [
+            assert [s.spec.trigger for s in steps] == [
                 "runtime",
                 "runtime",
                 "model",
@@ -230,7 +230,7 @@ def test_honor_precedes_blocked_batch_and_retry_executes_once(
                 original = harness.store.resolve_value(TypedRef(step.input[0], "Part"))
                 assert isinstance(original, ToolCallPart)
                 assert original.tool_call_id == identity
-            assert {s.given.call.tool_call_id for s in steps}.isdisjoint(
+            assert {s.spec.call.tool_call_id for s in steps}.isdisjoint(
                 {"first", "duplicate"}
             )
             assert all(c.triggered_by == steps[0].ref for c in controls)
@@ -346,8 +346,8 @@ def test_failed_rule_reads_block_the_operation_without_retraction(tmp_path, fail
             (original,) = _results(harness.adapter.invocations[-1].call.messages)
             assert "operation not executed" in original.error
             assert "were just loaded" not in original.error
-            assert honor.given.summary == "Loading rules for repo://src/result"
-            assert honor.noted.summary == "Failed to load rules for repo://src/result"
+            assert honor.spec.summary == "Loading rules for repo://src/result"
+            assert honor.report.summary == "Failed to load rules for repo://src/result"
             assert not _recalls(harness, run)
             assert not (repo / "src/result").exists()
             assert all(
@@ -402,18 +402,20 @@ def test_interrupted_honor_closes_every_announced_tool_call(
                 "canceled" if interrupt == "cancel" else "succeeded"
             ), run.error
             steps = _tool_steps(harness, run)
-            assert [s.given.trigger for s in steps] == ["runtime", "model"]
+            assert [s.spec.trigger for s in steps] == ["runtime", "model"]
             assert steps[1].output.value.tool_call_id == "second"
             assert steps[0].status == (
                 "succeeded" if event_type is StepEnd else "canceled"
             )
             assert steps[1].status == "canceled"
-            assert steps[1].noted.summary == "Canceled: Writing file: repo://src/result"
+            assert (
+                steps[1].report.summary == "Canceled: Writing file: repo://src/result"
+            )
             if event_type is StepEnd:
-                assert "repo://src/result" in steps[0].noted.summary
+                assert "repo://src/result" in steps[0].report.summary
             else:
                 assert (
-                    steps[0].noted.summary
+                    steps[0].report.summary
                     == "Canceled: Loading rules for repo://src/result"
                 )
             messages = harness.store.recent_conversation_messages(
@@ -458,7 +460,7 @@ def test_model_cannot_call_honor_and_unscoped_fs_is_rejected(tmp_path):
             run = await harness.executor.run(_spec(harness, publication))
             assert run.status == "succeeded", run.error
             steps = _tool_steps(harness, run)
-            assert len(steps) == 2 and all(s.given.trigger == "model" for s in steps)
+            assert len(steps) == 2 and all(s.spec.trigger == "model" for s in steps)
             assert "unknown tool call" in steps[0].output.value.error
             assert "escapes workspace" in steps[1].output.value.error
             assert not (repo.parent / "notes").exists()
@@ -489,7 +491,7 @@ def test_mixed_batch_and_changed_retry_leave_the_original_operation_unexecuted(
             results = _results(harness.adapter.invocations[1].call.messages)
             assert [part.tool_call_id for part in results] == ["blocked"]
             assert results[0].error == RETRY_MESSAGE
-            assert [step.given.call.name for step in _tool_steps(harness, run)] == [
+            assert [step.spec.call.name for step in _tool_steps(harness, run)] == [
                 "runtime__honor",
                 "fs__write",
             ]
@@ -557,7 +559,7 @@ flow parent(_: Part[]) -> Part[][]:
             assert len(children) == 2
             for child in children:
                 (honor,) = _tool_steps(harness, child)
-                assert honor.given.trigger == "runtime"
+                assert honor.spec.trigger == "runtime"
                 assert honor.input[0].record.run_id == child.id
                 assert len(_recalls(harness, child)) == 2
                 models = [
@@ -752,7 +754,7 @@ def test_history_keeps_intercepted_calls_with_their_replies(
                     if any(p.tool_call_id == "blocked" for p in _results(unit.messages))
                 ]
                 honor = next(
-                    s for s in _tool_steps(harness, run) if s.given.trigger == "runtime"
+                    s for s in _tool_steps(harness, run) if s.spec.trigger == "runtime"
                 )
                 assert intercepted.step_id == honor.ref
                 (reply,) = _results(intercepted.messages)
@@ -881,7 +883,7 @@ def test_honor_and_invocation_agree_after_symlink_parent_traversal(tmp_path):
             assert (repo / "src/result").read_text() == "done"
             assert not (repo / "result").exists()
             honor, retried = _tool_steps(harness, run)
-            assert honor.given.call.input == {
+            assert honor.spec.call.input == {
                 "paths": [{"workspace": "repo", "path": "/src/result"}]
             }
             assert (
@@ -917,7 +919,7 @@ def test_honor_preserves_a_prepared_directory_name_with_trailing_space(tmp_path)
                 RulesRecallTarget("repo", "/link"),
             ]
             honor, retried = _tool_steps(harness, run)
-            assert honor.given.call.input == {
+            assert honor.spec.call.input == {
                 "paths": [{"workspace": "repo", "path": "/link"}]
             }
             assert (

@@ -81,8 +81,8 @@ def test_sort_and_selection_commit_typed_results_without_extra_model_calls(
                 ["run", "par", "value"] if selection else ["run", "par"]
             )
             sort = steps[1]
-            assert isinstance(sort.given, SortStmt)
-            assert sort.given.order == order
+            assert isinstance(sort.spec, SortStmt)
+            assert sort.spec.order == order
             assert sort.output is not None
             assert sort.output.type == "Text[]"
             assert isinstance(sort.output.value, Array)

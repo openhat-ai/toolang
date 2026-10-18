@@ -28,7 +28,7 @@ from toolang.base.types.run import (
     ToolCall,
 )
 from toolang.execution.executor.runs import agic
-from toolang.execution.types import ModelStepNoted, ThreadPrefix
+from toolang.execution.types import ModelStepReport, ThreadPrefix
 from toolang.lang.types import Array
 
 SOURCE = """
@@ -96,10 +96,10 @@ def test_recovery_retains_accounting_and_replay_without_executing_failed_batch(
                 "succeeded",
             ]
             failed = steps[2]
-            assert isinstance(failed.noted, ModelStepNoted)
-            assert failed.noted.usage is not None
-            assert failed.noted.usage.input_tokens == 10
-            assert failed.noted.usage.output_tokens == 20
+            assert isinstance(failed.report, ModelStepReport)
+            assert failed.report.usage is not None
+            assert failed.report.usage.input_tokens == 10
+            assert failed.report.usage.output_tokens == 20
             retry = harness.adapter.invocations[-1].call
             assert retry.continuation == {"opaque": "keep"}
             assert not any(
@@ -368,8 +368,8 @@ def test_failed_attempt_respects_token_accounting_limits(
             )
             (step,) = harness.store.list_steps(run_id=run.id)
             assert step.status == "failed"
-            assert isinstance(step.noted, ModelStepNoted)
-            assert (step.noted.usage is not None) == known_usage
+            assert isinstance(step.report, ModelStepReport)
+            assert (step.report.usage is not None) == known_usage
             assert_run_event_integrity(tracer.events)
 
     asyncio.run(scenario())

@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 from toolang.lang.ast import ExecStmt
 
 from ...records import ControlRecord, StepRef
-from ...types import LoopStepNoted, Occurrence
+from ...types import LoopStepReport, Occurrence
 from ..common import BoundRun, Local, _ExecuteCommitted, execute_step
 
 if TYPE_CHECKING:
@@ -35,7 +35,7 @@ async def execute(
         while parent is not None:
             progress = execution.repeat_progress[parent]
             loops.append(
-                (parent, LoopStepNoted(progress.iterations, "exec", progress.total))
+                (parent, LoopStepReport(progress.iterations, "exec", progress.total))
             )
             parent = parent.parent
         successor = execution.commit_execute(successor, triggered_by=path, loops=loops)
@@ -50,7 +50,7 @@ async def execute(
                     step=ref,
                     kind=record.kind,
                     status=record.status,
-                    noted=record.noted,
+                    report=record.report,
                     aborted_by=record.aborted_by,
                     finished_at=record.finished_at,
                 )

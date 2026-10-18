@@ -610,7 +610,7 @@ Generation = Annotated[str, Field(pattern=r"^[0-9a-f]{32}$")]
 
 
 class PublicationRequest(HubRequest):
-    v: Literal[1]
+    v: Literal[2]
     epoch: Generation
     generation: Generation
 
@@ -653,7 +653,7 @@ CommitRequest = Annotated[
 
 
 class StagingRequest(HubRequest):
-    v: Literal[1]
+    v: Literal[2]
     epoch: Generation
     recovery: Generation
     source: str

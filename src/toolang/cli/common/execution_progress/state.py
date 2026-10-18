@@ -231,7 +231,7 @@ class Metrics:
     def record_step(self, event: StepEnd) -> None:
         if event.kind == "model":
             self.model_calls += 1
-            usage = event.noted.usage if event.noted is not None else None
+            usage = event.report.usage if event.report is not None else None
             if usage is not None:
                 self.input_tokens += usage.input_tokens
                 self.output_tokens += usage.output_tokens
@@ -242,14 +242,14 @@ class Metrics:
                 if usage.reasoning_tokens is not None:
                     self.reasoning_tokens += usage.reasoning_tokens
                     self.reasoning_known_calls += 1
-                if event.noted is not None and event.noted.cost is not None:
-                    self.cost = add_cost(self.cost, event.noted.cost)
+                if event.report is not None and event.report.cost is not None:
+                    self.cost = add_cost(self.cost, event.report.cost)
                     self.cost_known = True
                 self.cost_approximate = (
                     self.cost_approximate
-                    or event.noted is None
-                    or event.noted.cost is None
-                    or event.noted.cost_approximate
+                    or event.report is None
+                    or event.report.cost is None
+                    or event.report.cost_approximate
                 )
             else:
                 self.cache_unknown_calls += 1

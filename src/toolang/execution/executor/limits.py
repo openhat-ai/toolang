@@ -10,7 +10,7 @@ from toolang.base.types.model import Model
 from toolang.base.types.policy import RunLimits
 from toolang.common.errors import ToolangError
 from toolang.execution.accounting import selected_usd_cost
-from toolang.execution.types import ModelStepNoted
+from toolang.execution.types import ModelStepReport
 
 
 class _RunLimitExceeded(ToolangError):
@@ -75,13 +75,13 @@ class _RunLimitState:
     def record_model(
         self,
         model: Model,
-        noted: ModelStepNoted,
+        report: ModelStepReport,
     ) -> None:
         """Record one completed model call and enforce root-tree totals."""
 
         if self.limits.tokens is None and self.limits.cost is None:
             return
-        usage = noted.usage
+        usage = report.usage
         if usage is None and self.limits.tokens is not None:
             raise ToolangError(
                 f"Model usage is required by run token or cost limits: {model.ref}"
@@ -96,7 +96,7 @@ class _RunLimitState:
             )
         if self.limits.cost is None:
             return
-        cost = selected_usd_cost(noted.cost)
+        cost = selected_usd_cost(report.cost)
         if cost is None:
             return
         self.cost = add_cost(self.cost, cost)

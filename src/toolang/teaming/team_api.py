@@ -20,7 +20,7 @@ def team_router(get_client: Callable) -> APIRouter:
     async def team(client: Client) -> list[TeamMember]:
         return await client.team()
 
-    def event_cursor(after: Annotated[str | None, Query()] = None) -> str | None:
+    def _event_cursor(after: Annotated[str | None, Query()] = None) -> str | None:
         # Dependencies execute before the streaming response sends its headers.
         if after is not None:
             TeamEvents.parse(after)
@@ -28,7 +28,7 @@ def team_router(get_client: Callable) -> APIRouter:
 
     @router.get("/events", response_class=EventSourceResponse)
     async def events(
-        client: Client, after: Annotated[str | None, Depends(event_cursor)]
+        client: Client, after: Annotated[str | None, Depends(_event_cursor)]
     ) -> AsyncIterator[ServerSentEvent]:
         feed = TeamEvents(client.backend)
         try:

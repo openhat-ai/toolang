@@ -31,8 +31,8 @@ from toolang.execution.inspection.history import RunHistory
 from toolang.execution.store import RunStore
 from toolang.execution.types import (
     ThreadPrefix,
-    ToolStepGiven,
-    ToolStepNoted,
+    ToolStepSpec,
+    ToolStepReport,
     CallCounters,
 )
 from toolang.state.prepare import prepare_agent_state
@@ -82,13 +82,13 @@ def test_tool_binding_precedes_paths_and_keeps_raw_records(tmp_path, value):
             )
             assert root.status == "succeeded", root.error
             step = harness.store.list_steps(run_id=root.id)[1]
-            assert isinstance(step.given, ToolStepGiven)
-            assert step.given.call == call
-            assert isinstance(step.noted, ToolStepNoted)
-            assert step.noted.invoked is (value == "7")
-            assert root.noted is not None
-            assert root.noted.calls == CallCounters(2, int(value == "7"))
-            assert step.given.summary == f"Raw count {value!r}"
+            assert isinstance(step.spec, ToolStepSpec)
+            assert step.spec.call == call
+            assert isinstance(step.report, ToolStepReport)
+            assert step.report.invoked is (value == "7")
+            assert root.report is not None
+            assert root.report.calls == CallCounters(2, int(value == "7"))
+            assert step.spec.summary == f"Raw count {value!r}"
             assert step.output is not None and isinstance(
                 step.output.value, ToolResultPart
             )
@@ -229,12 +229,11 @@ agic task() -> Text:
             steps = harness.store.list_steps(run_id=first.id)
             model, runtime = steps[1:3]
             assert (
-                isinstance(runtime.given, ToolStepGiven)
-                and runtime.given.trigger == "runtime"
+                isinstance(runtime.spec, ToolStepSpec)
+                and runtime.spec.trigger == "runtime"
             )
             assert (
-                isinstance(model.given, ToolStepGiven)
-                and model.given.trigger == "model"
+                isinstance(model.spec, ToolStepSpec) and model.spec.trigger == "model"
             )
             assert runtime.input == ()
             assert runtime.output is not None
@@ -262,8 +261,8 @@ agic task() -> Text:
     try:
         steps = RunHistory(reopened).run_view(run_id).steps()
         runtime = steps[2]
-        assert isinstance(runtime.given, ToolStepGiven)
-        assert runtime.given.trigger == "runtime"
+        assert isinstance(runtime.spec, ToolStepSpec)
+        assert runtime.spec.trigger == "runtime"
         assert runtime.output is not None
         assert isinstance(runtime.output.value, ToolResultPart)
         assert runtime.output.value.tool_call_id == "runtime"
@@ -359,9 +358,9 @@ flow blocked(_: Text) -> Text:
             )
             assert root.status == "succeeded", root.error
             results = {
-                step.given.call.tool_call_id: step.output.value
+                step.spec.call.tool_call_id: step.output.value
                 for step in harness.store.list_steps(run_id=root.id)
-                if isinstance(step.given, ToolStepGiven)
+                if isinstance(step.spec, ToolStepSpec)
                 and step.output is not None
                 and isinstance(step.output.value, ToolResultPart)
             }

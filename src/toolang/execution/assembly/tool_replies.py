@@ -20,7 +20,7 @@ from ..records import (
 from ..types import (
     ControlRef,
     RulesRecallTarget,
-    ToolStepGiven,
+    ToolStepSpec,
     TypedRef,
     ErrorMessage,
     ErrorRef,
@@ -72,11 +72,11 @@ def workspace_reply_from_step(
 ) -> ToolResultPart | None:
     """Recover an intercepted call's reply from honor's durable dependency/outcome."""
 
-    given = step.given
+    spec = step.spec
     if not (
-        isinstance(given, ToolStepGiven)
-        and given.trigger == "runtime"
-        and given.call.name == "runtime__honor"
+        isinstance(spec, ToolStepSpec)
+        and spec.trigger == "runtime"
+        and spec.call.name == "runtime__honor"
         and step.input
     ):
         return None

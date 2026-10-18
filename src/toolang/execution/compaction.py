@@ -39,7 +39,7 @@ from toolang.execution.inspection.history import RunHistory
 from toolang.execution.records import (
     RunControlPayload,
     RunRecord,
-    StoredModelStepGiven,
+    StoredModelStepSpec,
 )
 from toolang.execution.store import RunStore
 from toolang.execution.types import (
@@ -50,7 +50,7 @@ from toolang.execution.types import (
     RunRef,
     ThreadRef,
     StepRef,
-    ToolStepGiven,
+    ToolStepSpec,
     validate_compaction_coverage,
 )
 from toolang.execution.errors import HistoryChangedError
@@ -581,9 +581,9 @@ def read_checkpoint(store: RunStore, run: RunRecord) -> tuple[int, str]:
     owner = store.get_step(ref=run.parent)
     if (
         owner is None
-        or not isinstance(owner.given, ToolStepGiven)
-        or owner.given.trigger != "runtime"
-        or owner.given.call.name != "runtime__compact"
+        or not isinstance(owner.spec, ToolStepSpec)
+        or owner.spec.trigger != "runtime"
+        or owner.spec.call.name != "runtime__compact"
     ):
         raise ValueError("compact checkpoint requires its runtime Tool Step owner")
     request = entry.payload.input
@@ -619,16 +619,16 @@ def read_checkpoint(store: RunStore, run: RunRecord) -> tuple[int, str]:
         read = steps[index - 1]
         if (
             read.status != "succeeded"
-            or not isinstance(read.given, ToolStepGiven)
-            or read.given.trigger != "runtime"
-            or read.given.call.name != READ_TOOL
-            or not isinstance(step.given, StoredModelStepGiven)
-            or step.given.model != policy["model"]
-            or step.given.setup != policy["setup"]
-            or step.given.call.messages.head != step.ref
+            or not isinstance(read.spec, ToolStepSpec)
+            or read.spec.trigger != "runtime"
+            or read.spec.call.name != READ_TOOL
+            or not isinstance(step.spec, StoredModelStepSpec)
+            or step.spec.model != policy["model"]
+            or step.spec.setup != policy["setup"]
+            or step.spec.call.messages.head != step.ref
         ):
             raise ValueError("invalid compact checkpoint pair")
-        batch = read.given.call.input.get("units" if granular else "roots")
+        batch = read.spec.call.input.get("units" if granular else "roots")
         if (
             not isinstance(batch, list)
             or not batch
@@ -645,12 +645,12 @@ def read_checkpoint(store: RunStore, run: RunRecord) -> tuple[int, str]:
                 "roots": [str(history_root(str(ref))) for ref in batch],
                 **({"units": batch} if granular else {}),
                 "content": str(
-                    FieldRef.from_path(step.ref, "given", "call", "messages")
+                    FieldRef.from_path(step.ref, "spec", "call", "messages")
                 ),
             }
         ):
             raise ValueError("compact checkpoint has an invalid content reference")
-        if step.given.call.tools is not None or step.output is None:
+        if step.spec.call.tools is not None or step.output is None:
             raise ValueError("compact checkpoint requires a tool-free model output")
         output = store.resolve_output(step.output)
         if output.type != "Part[]":

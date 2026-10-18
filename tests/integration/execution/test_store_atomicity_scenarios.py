@@ -25,7 +25,7 @@ from toolang.execution.store import RunStore
 from toolang.execution.types import (
     ControlRef,
     FieldRef,
-    ModelStepGiven,
+    ModelStepSpec,
     Pointer,
     StepRef,
 )
@@ -90,7 +90,7 @@ def test_run_store_persists_dot_separated_step_paths(tmp_path: Path) -> None:
             assert connection.execute(
                 "SELECT parent FROM runs WHERE id = 'run_dot_child'"
             ).fetchone() == ("run_dot_path.2.3",)
-            assert int(connection.execute("PRAGMA user_version").fetchone()[0]) == 59
+            assert int(connection.execute("PRAGMA user_version").fetchone()[0]) == 60
         finally:
             connection.close()
     finally:
@@ -306,12 +306,12 @@ def test_list_controls_retains_rewound_runs_and_children(
         ("steps", "input", "{}", "stored step input must be an array"),
         ("steps", "output", "[]", "stored step output must be an object"),
         ("steps", "occur", "[]", "stored step occurrence must be an object"),
-        ("steps", "given", "[]", "stored step given must be an object"),
+        ("steps", "spec", "[]", "stored step spec must be an object"),
         (
             "steps",
-            "noted",
+            "report",
             "[]",
-            "collection noted requires exactly: output_items, total_items",
+            "collection report requires exactly: output_items, total_items",
         ),
     ),
 )
@@ -620,7 +620,7 @@ def test_step_and_control_projection_roll_back_as_one_write_unit(
                         ),
                     ),
                     occurrence=None,
-                    given=LetStmt(span=Span(line=1), value="test"),
+                    spec=LetStmt(span=Span(line=1), value="test"),
                     started_at="2026-01-01T00:00:02Z",
                 )
                 store.finish_run_controls(
@@ -673,7 +673,7 @@ def test_model_blobs_roll_back_when_the_model_step_cannot_be_inserted(
                 kind="model",
                 input=(),
                 occurrence=None,
-                given=ModelStepGiven(setup="test-setup", model="test/model", call=call),
+                spec=ModelStepSpec(setup="test-setup", model="test/model", call=call),
                 state=ControlRef.for_run("run_atomic_model", 0),
                 started_at="2026-01-01T00:00:00Z",
             )

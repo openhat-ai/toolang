@@ -36,7 +36,7 @@ from toolang.execution.assembly.utils import render_delta
 from toolang.execution.records import (
     ControlRecord,
     RunControlPayload,
-    StoredModelStepGiven,
+    StoredModelStepSpec,
 )
 from toolang.execution.types import (
     ContentRef,
@@ -219,11 +219,11 @@ def test_cross_run_baselines_do_not_duplicate_historical_contributions(
             ]
             steps = [harness.store.list_steps(run_id=run.id)[0] for run in runs]
             givens = [
-                step.given
+                step.spec
                 for step in steps
-                if isinstance(step.given, StoredModelStepGiven)
+                if isinstance(step.spec, StoredModelStepSpec)
             ]
-            assert [len(given.call.messages.delta) for given in givens] == [2, 5, 8]
+            assert [len(spec.call.messages.delta) for spec in givens] == [2, 5, 8]
             assert [
                 sum(m.source is None for m in g.call.messages.delta) for g in givens
             ] == [2, 2, 2]
@@ -549,10 +549,10 @@ def test_each_call_records_context_without_rerendering_history(
             models = [
                 step
                 for step in harness.store.list_steps(run_id=run.id)
-                if isinstance(step.given, StoredModelStepGiven)
+                if isinstance(step.spec, StoredModelStepSpec)
             ]
             for step, expected in zip(models, (1, 2, 1), strict=True):
-                if isinstance(step.given, StoredModelStepGiven):
+                if isinstance(step.spec, StoredModelStepSpec):
                     assert (
                         sum(
                             message_text(message.parts).count(
@@ -561,7 +561,7 @@ def test_each_call_records_context_without_rerendering_history(
                             for message in render_delta(
                                 tuple(
                                     m
-                                    for m in step.given.call.messages.delta
+                                    for m in step.spec.call.messages.delta
                                     if m.source is None
                                 ),
                                 harness.store.resolve_value,
@@ -764,9 +764,9 @@ def test_publication_preserves_recall_without_reading_state_during_replay(
             assert after[: len(before)] == before
             assert Message.assistant("first reply") in after
             givens = [
-                s.given
+                s.spec
                 for s in harness.store.list_steps(run_id=run.id)
-                if isinstance(s.given, StoredModelStepGiven)
+                if isinstance(s.spec, StoredModelStepSpec)
             ]
             assert len({g.call.messages.head for g in givens}) == 1
 
@@ -953,9 +953,9 @@ def test_initial_horizon_and_recall_selection(
                 Message.user("current"),
             ]
             (step,) = harness.store.list_steps(run_id=run.id)
-            assert isinstance(step.given, StoredModelStepGiven)
-            assert step.given.call.messages.head == step.ref
-            assert len(step.given.call.messages.delta) == len(
+            assert isinstance(step.spec, StoredModelStepSpec)
+            assert step.spec.call.messages.head == step.ref
+            assert len(step.spec.call.messages.delta) == len(
                 harness.adapter.invocations[-1].call.messages
             )
             entry = harness.store.get_run_control(run_id=run.id, index=0)
@@ -1023,19 +1023,19 @@ def test_compact_adoption_replaces_history_and_preserves_now(tmp_path: Path) -> 
             models = [
                 s
                 for s in harness.store.list_steps(run_id=run.id)
-                if isinstance(s.given, StoredModelStepGiven)
+                if isinstance(s.spec, StoredModelStepSpec)
             ]
             assert compact is not None
             assert models[-1].preceded_by == (compact.ref,)
             assert [
-                len(s.given.call.messages.delta)
+                len(s.spec.call.messages.delta)
                 for s in models
-                if isinstance(s.given, StoredModelStepGiven)
+                if isinstance(s.spec, StoredModelStepSpec)
             ] == [len(item.call.messages) for item in harness.adapter.invocations[-2:]]
             assert all(
-                s.given.call.messages.head == s.ref
+                s.spec.call.messages.head == s.ref
                 for s in models
-                if isinstance(s.given, StoredModelStepGiven)
+                if isinstance(s.spec, StoredModelStepSpec)
             )
             assert harness.store.run_horizon(run.id) == horizon
             rerun = await harness.executor.rerun(
@@ -1152,8 +1152,8 @@ def test_compaction_between_tools_resets_the_last_model_baseline(tmp_path):
             assert "old input" not in str(request.messages)
             assert len(tool.calls) == 2
             step = harness.store.list_steps(run_id=run.id)[-1]
-            assert isinstance(step.given, StoredModelStepGiven)
-            assert step.given.call.messages.head == step.ref
+            assert isinstance(step.spec, StoredModelStepSpec)
+            assert step.spec.call.messages.head == step.ref
             assert harness.store.rebuild_model_call(step) == request
 
     asyncio.run(scenario())

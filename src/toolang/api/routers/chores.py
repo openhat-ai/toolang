@@ -78,24 +78,24 @@ def cancel_chore(
                 (
                     item
                     for item in store.list()
-                    if chore_id in {item.chore_id, item.name, f"chore/{item.name}"}
+                    if chore_id in {item.id, item.name, f"chore/{item.name}"}
                 ),
                 None,
             )
             if (
                 record is not None
-                and record.active_run_id is None
+                and record.active_run is None
                 and record.pending_at is not None
             ):
-                record = store.cancel_pending_chore(chore_id=record.chore_id)
+                record = store.cancel_pending_chore(chore_id=record.id)
         finally:
             store.close()
     else:
         record = _scheduler_call(scheduler.cancel_chore_sync, chore_id)
     if record is None:
         raise HTTPException(status_code=404, detail=f"chore not found: {chore_id}")
-    if record.active_run_id is not None:
-        core.executor.cancel(run_id=record.active_run_id, reason="chore canceled")
+    if record.active_run is not None:
+        core.executor.cancel(run_id=record.active_run, reason="chore canceled")
 
 
 @router.patch("/chores/{chore_id}", summary="Update Chore", response_model=ChoreDetail)

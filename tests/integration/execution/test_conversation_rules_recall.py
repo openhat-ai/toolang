@@ -100,7 +100,7 @@ def test_interrupted_target_preflight_closes_the_original_tool_call(
                 if step.kind == "tool"
             ]
             assert len(tools) == 1 and tools[0].status == "canceled"
-            assert tools[0].given.call.name == "convo__write"
+            assert tools[0].spec.call.name == "convo__write"
             if control == "steer":
                 replies = [
                     part
@@ -187,15 +187,14 @@ def test_target_rules_load_before_effect_and_retry_is_explicit(
             steps = harness.store.list_steps(run_id=run.id)
             assert (
                 sum(
-                    step.kind == "tool" and step.given.call.name == "runtime__honor"
+                    step.kind == "tool" and step.spec.call.name == "runtime__honor"
                     for step in steps
                 )
                 == 1
             )
             assert (
                 sum(
-                    step.kind == "tool"
-                    and step.given.call.name == f"convo__{operation}"
+                    step.kind == "tool" and step.spec.call.name == f"convo__{operation}"
                     for step in steps
                 )
                 == 1
@@ -243,7 +242,7 @@ def test_get_rules_publishes_trusted_recall_without_requiring_prior_guidance(
                 for step in harness.store.list_steps(run_id=run.id)
                 if step.kind == "tool"
             ]
-            assert len(steps) == 1 and steps[0].given.call.name == "convo__get_rules"
+            assert len(steps) == 1 and steps[0].spec.call.name == "convo__get_rules"
             assert any(
                 message.tag == "convo-rules"
                 and "Current policy." in message_text(message.parts)

@@ -186,7 +186,7 @@ def test_control_during_async_registration_cancels_only_the_child(
 ):
     from toolang.execution.executor import awaitables
     from toolang.execution.events import RunEnd
-    from toolang.execution.types import CallCounters, RunNoted, ErrorMessage
+    from toolang.execution.types import CallCounters, RunReport, ErrorMessage
     from tests.support.execution_harness import RecordingRunTracer
     from tests.support.execution_assertions import assert_run_event_integrity
 
@@ -249,7 +249,7 @@ agic child() -> Text:
             )
             assert child.status == "canceled"
             assert child.error == ErrorMessage("cancel accepted child")
-            assert child.noted == RunNoted()
+            assert child.report == RunReport()
             caller = harness.store.get_run(run_id=parent.run_id)
             assert caller is not None and caller.status == "running"
             saved = harness.store.get_run_control(
@@ -259,7 +259,9 @@ agic child() -> Text:
             gate.release()
             result = await parent
             assert result.status == "succeeded"
-            assert result.noted is not None and result.noted.calls == CallCounters(1, 0)
+            assert result.report is not None and result.report.calls == CallCounters(
+                1, 0
+            )
             assert len(harness.adapter.invocations) == 1
             assert (
                 sum(isinstance(e, RunEnd) and e.run == child_id for e in tracer.events)

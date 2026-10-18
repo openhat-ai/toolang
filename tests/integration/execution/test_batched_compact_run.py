@@ -33,13 +33,13 @@ from toolang.execution.executor.executor import _Execution
 from toolang.execution.executor.runs import compact as compact_run
 from toolang.execution.executor.steps import model as model_step
 from toolang.execution.inspection.history import RunHistory
-from toolang.execution.records import CompactControlPayload, StoredModelStepGiven
+from toolang.execution.records import CompactControlPayload, StoredModelStepSpec
 from toolang.execution.store import RunStore
 from toolang.execution.types import (
-    ModelStepNoted,
+    ModelStepReport,
     RunRef,
     ThreadPrefix,
-    ToolStepGiven,
+    ToolStepSpec,
     StepRef,
 )
 
@@ -146,10 +146,10 @@ def test_batches_and_client_projection_share_the_normal_event_tree(
             (child,) = producers(h, thread)
             outer, following = h.store.list_steps(run_id=caller.id)
             assert child.parent == outer.ref and str(child.thread) == thread
-            assert caller.noted.calls.model_calls == 4
-            assert caller.noted.calls.tool_calls == 1
-            assert child.noted.calls.model_calls == 3
-            assert child.noted.calls.tool_calls == 0
+            assert caller.report.calls.model_calls == 4
+            assert caller.report.calls.tool_calls == 1
+            assert child.report.calls.model_calls == 3
+            assert child.report.calls.tool_calls == 0
             assert h.store.get_thread(thread_id=f"compact_{thread}") is None
             with closing(RunStore(h.store.db_path)) as store:
                 history = RunHistory(store)
@@ -160,10 +160,10 @@ def test_batches_and_client_projection_share_the_normal_event_tree(
                 steps = store.list_steps(run_id=child.id)
                 assert [s.kind for s in steps] == ["tool", "model"] * 3
                 for index, (read, model) in enumerate(zip(steps[::2], steps[1::2])):
-                    assert read.noted.invoked is False and model.noted.invoked is True
-                    assert read.given.call.input["roots"] == [str(roots[index])]
-                    assert isinstance(model.given, StoredModelStepGiven)
-                    assert model.given.call.messages.head == model.ref
+                    assert read.report.invoked is False and model.report.invoked is True
+                    assert read.spec.call.input["roots"] == [str(roots[index])]
+                    assert isinstance(model.spec, StoredModelStepSpec)
+                    assert model.spec.call.messages.head == model.ref
                     call = history.get_model_call(model.ref)
                     assert call == h.adapter.invocations[4 + index].call
                     assert not call.tools
@@ -172,8 +172,8 @@ def test_batches_and_client_projection_share_the_normal_event_tree(
                     if index:
                         assert f"internal summary {index - 1}" in str(call.messages)
                         assert f"input {index - 1}" not in str(call.messages)
-                    assert isinstance(model.noted, ModelStepNoted)
-                    assert model.noted.usage.input_tokens == 42
+                    assert isinstance(model.report, ModelStepReport)
+                    assert model.report.usage.input_tokens == 42
                 (control,) = [
                     c
                     for c in store.list_run_controls(run_id=caller.id)
@@ -537,10 +537,10 @@ def test_context_rejection_records_attempt_then_shrinks_only_whole_roots(
                 "succeeded",
                 "succeeded",
             ]
-            assert steps[0].given.call.input["roots"] == [str(r) for r in roots[:-1]]
-            assert steps[2].given.call.input["roots"] == [str(roots[0])]
-            assert steps[4].given.call.input["roots"] == [str(r) for r in roots[1:-1]]
-            assert steps[1].noted.usage.input_tokens == 100
+            assert steps[0].spec.call.input["roots"] == [str(r) for r in roots[:-1]]
+            assert steps[2].spec.call.input["roots"] == [str(roots[0])]
+            assert steps[4].spec.call.input["roots"] == [str(r) for r in roots[1:-1]]
+            assert steps[1].report.usage.input_tokens == 100
 
     asyncio.run(scenario())
 
@@ -730,12 +730,12 @@ def test_restart_inside_one_root_keeps_accepted_step_coverage(tmp_path, monkeypa
             cursor, _ = compaction.read_checkpoint(h.store, child)
             assert 0 < cursor < len(source_units) - 1
             owner = h.store.get_step(ref=child.parent)
-            assert owner is not None and isinstance(owner.given, ToolStepGiven)
+            assert owner is not None and isinstance(owner.spec, ToolStepSpec)
             retired_owner = replace(
                 owner,
-                given=replace(
-                    owner.given,
-                    call=replace(owner.given.call, name="_toolang__compact"),
+                spec=replace(
+                    owner.spec,
+                    call=replace(owner.spec.call, name="_toolang__compact"),
                 ),
             )
             with monkeypatch.context() as patch:
@@ -746,12 +746,12 @@ def test_restart_inside_one_root_keeps_accepted_step_coverage(tmp_path, monkeypa
             retired_reads = [
                 replace(
                     s,
-                    given=replace(
-                        s.given,
-                        call=replace(s.given.call, name="_toolang__compact_read"),
+                    spec=replace(
+                        s.spec,
+                        call=replace(s.spec.call, name="_toolang__compact_read"),
                     ),
                 )
-                if isinstance(s.given, ToolStepGiven)
+                if isinstance(s.spec, ToolStepSpec)
                 else s
                 for s in steps
             ]
@@ -783,9 +783,9 @@ def test_restart_inside_one_root_keeps_accepted_step_coverage(tmp_path, monkeypa
                 completed = store.get_run(run_id=child.id)
                 assert completed is not None and completed.status == "succeeded"
                 reads = [
-                    s.given.call.input["units"]
+                    s.spec.call.input["units"]
                     for s in store.list_steps(run_id=child.id)
-                    if isinstance(s.given, ToolStepGiven) and s.status == "succeeded"
+                    if isinstance(s.spec, ToolStepSpec) and s.status == "succeeded"
                 ]
                 assert [ref for batch in reads for ref in batch] == [
                     str(u.ref) for u in source_units[:-1]
@@ -837,17 +837,17 @@ def test_compact_model_begin_failure_preserves_original_outcome(
                 result = await current(h, thread)
             assert child_id is not None
             child = h.store.get_run(run_id=child_id)
-            assert child is not None and child.noted is not None
-            assert child.noted.calls.model_calls == 0
+            assert child is not None and child.report is not None
+            assert child.report.calls.model_calls == 0
             expected = "failed" if failure == "rejected_begin" else "canceled"
             assert child.status == result.status == expected, (
                 h.store.resolve_error(child.error) if child.error else None
             )
-            assert result.noted is not None and result.noted.calls.model_calls == 0
+            assert result.report is not None and result.report.calls.model_calls == 0
             steps = h.store.list_steps(run_id=child.id)
             assert all(s.status != "running" for s in steps)
             if failure == "canceled_begin":
-                assert steps[-1].noted == ModelStepNoted()
+                assert steps[-1].report == ModelStepReport()
             with h.executor.stream.boundary() as (_, _, frames):
                 assert (
                     sum(
@@ -904,11 +904,13 @@ def test_compact_result_usage_is_visible_before_part_delivery(
             assert result.status == "canceled"
             assert any(node.usage is not None for node in samples[0].nodes)
             child = h.store.get_run(run_id=tracer.child)
-            assert child is not None and child.noted is not None
+            assert child is not None and child.report is not None
             assert (
-                child.noted.usage is not None and child.noted.usage.input_tokens == 42
+                child.report.usage is not None and child.report.usage.input_tokens == 42
             )
-            assert result.noted is not None and result.noted.usage == child.noted.usage
-            assert child.noted.calls.model_calls == 1
+            assert (
+                result.report is not None and result.report.usage == child.report.usage
+            )
+            assert child.report.calls.model_calls == 1
 
     asyncio.run(scenario())

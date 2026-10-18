@@ -321,7 +321,7 @@ run. Adapters never observe that frame; their boundary remains one
 `ModelRoute`, one resolved `Model`, and one normalized `ModelCall` per model step.
 The frame retains accepted code in `run.state` and the captured dependency
 State in `state`. `Step.state` records the code-binding control; model
-`given.state` records that call's dependency revision. Reconstruction uses saved
+`spec.state` records that call's dependency revision. Reconstruction uses saved
 calls without consulting current State.
 Assembly helpers add no separate execution state or model-call lifecycle.
 There is no loop plugin, public run-context protocol, or separate
@@ -603,7 +603,7 @@ Persistence remains mandatory because later model calls depend on history.
 
 `RunEvent` is constructed only for subscribers, from current values and write
 results. It neither drives persistence nor supplies internal execution state.
-Terminal Noted values use these existing completion transactions; the Store
+Terminal Report values use these existing completion transactions; the Store
 encodes them without querying LiveTree or calculating statistics.
 
 
@@ -629,10 +629,10 @@ launch Steps remain while an async child needs them. Independent spawn has its o
 root/tree. Neither nodes nor intermediate totals are stored or restored on restart.
 
 Actual model/tool invocation entry increments `CallCounters` after preparation
-and validation. Available model results construct `ModelStepNoted` once; its
+and validation. Available model results construct `ModelStepReport` once; its
 `TokenUsage` and selected cost update the Step and ancestor Runs immediately.
 This side branch does not supply limits, control decisions, or Store aggregation.
-At existing terminal writes, Step Noted captures `invoked` and Run Noted captures
+At existing terminal writes, Step Report captures `invoked` and Run Report captures
 final calls/usage/USD cost. Failed writes leave resident facts unchanged.
 
 `live_trees()` samples resident state under the canonical publication gate and

@@ -236,7 +236,7 @@ class StepBegin:
     parent: str | None
     index: int
     kind: StepKind
-    given: StepInfo
+    spec: StepInfo
     preceded_by: tuple[ControlApplied, ...] = ()
     occurrence: Occurrence | None = None
     started_at: str = ""
@@ -245,14 +245,14 @@ class StepBegin:
     def __post_init__(self) -> None:
         validate_occurrence(self.occurrence)
         if not isinstance(self.step, str) or not isinstance(
-            self.given, FlowStepInfo | ModelStepInfo | ToolStepInfo
+            self.spec, FlowStepInfo | ModelStepInfo | ToolStepInfo
         ):
             raise TypeError("step event requires a scalar id and client Step info")
         if not all(isinstance(item, ControlApplied) for item in self.preceded_by):
             raise TypeError("step events require scalar control application facts")
-        if (self.kind == "model") != isinstance(self.given, ModelStepInfo) or (
+        if (self.kind == "model") != isinstance(self.spec, ModelStepInfo) or (
             self.kind == "tool"
-        ) != isinstance(self.given, ToolStepInfo):
+        ) != isinstance(self.spec, ToolStepInfo):
             raise TypeError("step event kind does not match client Step info")
 
 
@@ -290,7 +290,7 @@ class StepEnd:
     kind: StepKind
     status: StepStatus
     output: EventOutput | None = None
-    noted: StepSummary | None = None
+    report: StepSummary | None = None
     error: str | None = None
     error_source: str | None = None
     finished_at: str = ""
@@ -301,7 +301,7 @@ class StepEnd:
             raise TypeError("terminal event output requires EventOutput")
         if self.error is not None and not isinstance(self.error, str):
             raise TypeError("terminal event error requires direct text")
-        if self.noted is not None and not isinstance(self.noted, StepSummary):
+        if self.report is not None and not isinstance(self.report, StepSummary):
             raise TypeError("step event completion requires StepSummary")
 
 

@@ -31,7 +31,7 @@ from tests.support.execution_harness import (
 )
 from toolang.base.types.message import ToolResultPart, message_text
 from toolang.base.types.run import ToolCall
-from toolang.execution.records import RecallControlPayload, StoredModelStepGiven
+from toolang.execution.records import RecallControlPayload, StoredModelStepSpec
 from toolang.execution.types import (
     ThreadPrefix,
     TypedRef,
@@ -101,8 +101,8 @@ def test_first_call_has_all_workspaces_without_discovery_or_rule_reads(
             assert not _declarations(harness, runs[1], "workspace")
             for run in runs:
                 for step in harness.store.list_steps(run_id=run.id):
-                    assert isinstance(step.given, StoredModelStepGiven)
-                    for template in step.given.call.messages.delta:
+                    assert isinstance(step.spec, StoredModelStepSpec)
+                    for template in step.spec.call.messages.delta:
                         if template.recall is not None:
                             assert not any(
                                 isinstance(s, TypedRef) for s in template.content
@@ -320,10 +320,10 @@ def test_publication_cannot_expand_bound_route_authority_and_replays(tmp_path, c
             ]
             assert not controls
             for step in harness.store.list_steps(run_id=run.id):
-                if isinstance(step.given, StoredModelStepGiven):
+                if isinstance(step.spec, StoredModelStepSpec):
                     assert all(
                         m.recall is None or m.tag == "workspace"
-                        for m in step.given.call.messages.delta
+                        for m in step.spec.call.messages.delta
                     )
 
     asyncio.run(scenario())

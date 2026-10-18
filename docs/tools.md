@@ -326,7 +326,7 @@ controls; recalled content remains in controls, not the result summaries.
 Exec never resumes the caller after commitment, even if the target fails,
 and does not change the default runnable for future chat turns.
 
-`ToolStepGiven.trigger` records `model` or `runtime`. Both have durable results and
+`ToolStepSpec.trigger` records `model` or `runtime`. Both have durable results and
 progress events; only model-triggered calls contribute their own ToolResult messages.
 Failures use `ToolResultPart.error`, with additional diagnostics in the output.
 
@@ -344,7 +344,7 @@ call/result data with sensitive arguments masked. Missing, empty, or failed
 summaries fall back to generic wording. No result means running; `ToolResult.error`
 distinguishes failure from success. Cancellation uses executor wording.
 The running summary is stored in
-`ToolStepGiven.summary`; the terminal summary uses `ToolStepNoted.summary`.
+`ToolStepSpec.summary`; the terminal summary uses `ToolStepReport.summary`.
 
 The fallback retains the leaf and first supplied argument: `Executing list:
 projects`, `Executed list: projects`, `Failed list: projects`, or `Canceled list:

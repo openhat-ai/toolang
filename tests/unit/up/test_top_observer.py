@@ -14,7 +14,7 @@ from toolang.base.types.message import Message
 from toolang.common.layout import AgentLayout
 from toolang.execution.schemas import LiveSnapshot, LiveTreeSnapshot, RunNode, StepNode
 from toolang.execution.store import RunStore
-from toolang.execution.types import RunNoted
+from toolang.execution.types import RunReport
 from toolang.stats.errors import StatsUnavailable
 from toolang.stats.schemas import CompletedRoots, CompletionCounts, RecentUsage
 from toolang.stats.types import Metrics, timestamp
@@ -620,7 +620,7 @@ def test_offline_completion_outside_first_page_replaces_the_known_live_root(
             input=Message.user("fixture"),
             started_at=timestamp(NOW - 10),
         )
-        store.finish_run(run_id=name, finished_at=timestamp(NOW), noted=RunNoted())
+        store.finish_run(run_id=name, finished_at=timestamp(NOW), report=RunReport())
     root = RunNode(selected, None, "agic:work", "running", timestamp(NOW - 10))
     live = LiveSnapshot(
         "epoch", timestamp(NOW - 1), (LiveTreeSnapshot(selected, "chat_top", (root,)),)
@@ -687,7 +687,7 @@ def test_online_completion_lookup_keeps_the_first_page_cursor_and_checks_epoch(
             input=Message.user("fixture"),
             started_at=timestamp(NOW - 10),
         )
-        store.finish_run(run_id=name, finished_at=timestamp(NOW), noted=RunNoted())
+        store.finish_run(run_id=name, finished_at=timestamp(NOW), report=RunReport())
     root = RunNode(selected, None, "agic:work", "running", timestamp(NOW - 10))
     previous = LiveSnapshot(
         "epoch", timestamp(NOW - 1), (LiveTreeSnapshot(selected, "chat_top", (root,)),)

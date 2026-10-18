@@ -27,8 +27,7 @@ class ChoreStore:
     def __init__(self, db_path: Path, *, read_only: bool = False) -> None:
         self.db_path = db_path
         self.read_only = read_only
-        if not read_only:
-            RunStore(db_path).close()
+        RunStore(db_path, read_only=read_only).close()
         if read_only:
             target = f"{db_path.expanduser().resolve().as_uri()}?mode=ro"
             self._conn = sqlite3.connect(
@@ -68,7 +67,7 @@ class ChoreStore:
             for chore in indexed.values():
                 self._upsert_locked(chore, now=current)
             rows = self._conn.execute(
-                "SELECT * FROM chores ORDER BY name, chore_id"
+                "SELECT * FROM chores ORDER BY name, id"
             ).fetchall()
         return tuple(_record(row) for row in rows)
 
@@ -77,7 +76,7 @@ class ChoreStore:
             if not self._has_table():
                 return None
             row = self._conn.execute(
-                "SELECT * FROM chores WHERE chore_id = ?",
+                "SELECT * FROM chores WHERE id = ?",
                 (chore_id,),
             ).fetchone()
         if row is None:
@@ -90,7 +89,7 @@ class ChoreStore:
             if not self._has_table():
                 return None
             row = self._conn.execute(
-                "SELECT * FROM chores WHERE active_run_id = ?",
+                "SELECT * FROM chores WHERE active_run = ?",
                 (run_id,),
             ).fetchone()
         return _record(row) if row is not None else None
@@ -100,7 +99,7 @@ class ChoreStore:
             if not self._has_table():
                 return ()
             rows = self._conn.execute(
-                "SELECT * FROM chores ORDER BY name, chore_id"
+                "SELECT * FROM chores ORDER BY name, id"
             ).fetchall()
         return tuple(_record(row) for row in rows)
 
@@ -119,7 +118,7 @@ class ChoreStore:
             row = self._require_row_locked(chore.id)
             record = _record(row)
             _require_identity(record, chore)
-            if record.active_run_id is not None:
+            if record.active_run is not None:
                 raise ValueError(f"chore is already running: {chore.id}")
             active_due_at, pending_at, next_scheduled_at = _consume_activation(
                 record,
@@ -131,9 +130,9 @@ class ChoreStore:
                 """
                 UPDATE chores
                 SET body_hash = ?, status = 'running', pending_at = ?, pending_trigger = ?,
-                    active_run_id = ?, active_trigger = ?,
+                    active_run = ?, active_trigger = ?,
                     active_due_at = ?, next_scheduled_at = ?, error = NULL, updated_at = ?
-                WHERE chore_id = ? AND active_run_id IS NULL
+                WHERE id = ? AND active_run IS NULL
                 """,
                 (
                     chore.body_hash,
@@ -164,7 +163,7 @@ class ChoreStore:
         with self._write():
             record = _record(self._require_row_locked(chore.id))
             _require_identity(record, chore)
-            if record.active_run_id is not None:
+            if record.active_run is not None:
                 raise ValueError(f"chore is already running: {chore.id}")
             _active_at, pending_at, next_scheduled_at = _consume_activation(
                 record,
@@ -178,7 +177,7 @@ class ChoreStore:
                 UPDATE chores
                 SET body_hash = ?, status = ?, pending_at = ?, pending_trigger = ?, next_scheduled_at = ?,
                     error = ?, updated_at = ?
-                WHERE chore_id = ?
+                WHERE id = ?
                 """,
                 (
                     chore.body_hash,
@@ -206,7 +205,7 @@ class ChoreStore:
         current = _utc(now)
         with self._write():
             row = self._conn.execute(
-                "SELECT * FROM chores WHERE active_run_id = ?",
+                "SELECT * FROM chores WHERE active_run = ?",
                 (run_id,),
             ).fetchone()
             if row is None:
@@ -216,13 +215,13 @@ class ChoreStore:
             self._conn.execute(
                 """
                 UPDATE chores
-                SET status = ?, active_run_id = NULL,
+                SET status = ?, active_run = NULL,
                     active_trigger = NULL, active_due_at = NULL, error = ?, updated_at = ?
-                WHERE chore_id = ? AND active_run_id = ?
+                WHERE id = ? AND active_run = ?
                 """,
-                (status, error, _iso(current), record.chore_id, run_id),
+                (status, error, _iso(current), record.id, run_id),
             )
-            updated = self._require_row_locked(record.chore_id)
+            updated = self._require_row_locked(record.id)
         return _record(updated)
 
     def release_claim(
@@ -236,7 +235,7 @@ class ChoreStore:
         current = _utc(now)
         with self._write():
             row = self._conn.execute(
-                "SELECT * FROM chores WHERE active_run_id = ?",
+                "SELECT * FROM chores WHERE active_run = ?",
                 (run_id,),
             ).fetchone()
             if row is None:
@@ -264,9 +263,9 @@ class ChoreStore:
                 """
                 UPDATE chores
                 SET status = ?, pending_at = ?, pending_trigger = ?, next_scheduled_at = ?,
-                    active_run_id = NULL,
+                    active_run = NULL,
                     active_trigger = NULL, active_due_at = NULL, updated_at = ?
-                WHERE chore_id = ? AND active_run_id = ?
+                WHERE id = ? AND active_run = ?
                 """,
                 (
                     "pending" if pending_at or next_scheduled_at else "done",
@@ -274,11 +273,11 @@ class ChoreStore:
                     pending_trigger,
                     next_scheduled_at,
                     _iso(current),
-                    record.chore_id,
+                    record.id,
                     run_id,
                 ),
             )
-            updated = self._require_row_locked(record.chore_id)
+            updated = self._require_row_locked(record.id)
         return _record(updated)
 
     def mark_recovery_blocked(
@@ -296,14 +295,14 @@ class ChoreStore:
                 """
                 UPDATE chores
                 SET error = ?, updated_at = ?
-                WHERE active_run_id = ?
+                WHERE active_run = ?
                 """,
                 (error, _iso(current), run_id),
             )
             if cursor.rowcount != 1:
                 return None
             row = self._conn.execute(
-                "SELECT * FROM chores WHERE active_run_id = ?",
+                "SELECT * FROM chores WHERE active_run = ?",
                 (run_id,),
             ).fetchone()
         return _record(row) if row is not None else None
@@ -323,33 +322,33 @@ class ChoreStore:
         current = _utc(now)
         with self._write():
             row = self._conn.execute(
-                "SELECT * FROM chores WHERE active_run_id = ?",
+                "SELECT * FROM chores WHERE active_run = ?",
                 (run_id,),
             ).fetchone()
             if row is None:
                 return None
             record = _record(row)
-            chore = chores.get(record.chore_id)
+            chore = chores.get(record.id)
             if chore is not None:
                 _require_identity(record, chore)
             status = _finished_status(record, run_status)
             self._conn.execute(
                 """
                 UPDATE chores
-                SET body_hash = ?, status = ?, active_run_id = NULL,
+                SET body_hash = ?, status = ?, active_run = NULL,
                     active_trigger = NULL,
                     active_due_at = NULL, error = NULL, updated_at = ?
-                WHERE chore_id = ? AND active_run_id = ?
+                WHERE id = ? AND active_run = ?
                 """,
                 (
                     chore.body_hash if chore is not None else record.body_hash,
                     status,
                     _iso(current),
-                    record.chore_id,
+                    record.id,
                     run_id,
                 ),
             )
-            updated = self._require_row_locked(record.chore_id)
+            updated = self._require_row_locked(record.id)
         return _record(updated)
 
     def request_manual_chore(
@@ -364,12 +363,12 @@ class ChoreStore:
         with self._write():
             record = _record(self._require_row_locked(chore_id))
             pending_at = record.pending_at or _iso(current)
-            status = "running" if record.active_run_id is not None else "pending"
+            status = "running" if record.active_run is not None else "pending"
             self._conn.execute(
                 """
                 UPDATE chores
                 SET status = ?, pending_at = ?, pending_trigger = ?, error = NULL, updated_at = ?
-                WHERE chore_id = ?
+                WHERE id = ?
                 """,
                 (
                     status,
@@ -393,13 +392,13 @@ class ChoreStore:
         current = _utc(now)
         with self._write():
             record = _record(self._require_row_locked(chore_id))
-            if record.active_run_id is not None or record.status != "pending":
+            if record.active_run is not None or record.status != "pending":
                 raise ValueError(f"chore cannot cancel from status: {record.status}")
             self._conn.execute(
                 """
                 UPDATE chores
                 SET status = CASE WHEN next_scheduled_at IS NULL THEN 'canceled' ELSE 'pending' END, pending_at = NULL, pending_trigger = NULL, updated_at = ?
-                WHERE chore_id = ?
+                WHERE id = ?
                 """,
                 (_iso(current), chore_id),
             )
@@ -408,7 +407,7 @@ class ChoreStore:
 
     def _upsert_locked(self, chore: Chore, *, now: datetime) -> None:
         row = self._conn.execute(
-            "SELECT * FROM chores WHERE chore_id = ?",
+            "SELECT * FROM chores WHERE id = ?",
             (chore.id,),
         ).fetchone()
         current_schedule_hash = chore.schedule_hash
@@ -418,8 +417,8 @@ class ChoreStore:
             self._conn.execute(
                 """
                 INSERT INTO chores(
-                    chore_id, name, body_hash, status, pending_at, pending_trigger,
-                    active_run_id, active_trigger, active_due_at,
+                    id, name, body_hash, status, pending_at, pending_trigger,
+                    active_run, active_trigger, active_due_at,
                     schedule_hash, schedule_anchor_at, next_scheduled_at, error,
                     created_at, updated_at
                 ) VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, NULL,
@@ -458,12 +457,12 @@ class ChoreStore:
         if chore.schedule is None and chore.body_hash != record.body_hash:
             pending_trigger = pending_trigger or "source"
             pending_at = pending_at or _iso(now)
-            status = "running" if record.active_run_id is not None else "pending"
+            status = "running" if record.active_run is not None else "pending"
             error = None
         if current_schedule_hash != record.schedule_hash:
             anchor = _iso(now) if chore.schedule is not None else None
             next_scheduled_at = _initial_next_run(chore, anchor=now, now=now)
-            if record.active_run_id is None:
+            if record.active_run is None:
                 if pending_at or next_scheduled_at:
                     status = "pending"
                 elif status == "pending":
@@ -476,7 +475,7 @@ class ChoreStore:
             UPDATE chores
             SET body_hash = ?, status = ?, pending_at = ?, pending_trigger = ?, schedule_hash = ?,
                 schedule_anchor_at = ?, next_scheduled_at = ?, error = ?, updated_at = ?
-            WHERE chore_id = ?
+            WHERE id = ?
             """,
             (
                 chore.body_hash,
@@ -494,7 +493,7 @@ class ChoreStore:
 
     def _require_row_locked(self, chore_id: str) -> sqlite3.Row:
         row = self._conn.execute(
-            "SELECT * FROM chores WHERE chore_id = ?",
+            "SELECT * FROM chores WHERE id = ?",
             (chore_id,),
         ).fetchone()
         if row is None:
@@ -510,13 +509,13 @@ class ChoreStore:
             with self._write():
                 self._conn.execute("""
                     CREATE TABLE IF NOT EXISTS chores (
-                        chore_id TEXT PRIMARY KEY,
+                        id TEXT PRIMARY KEY,
                         name TEXT NOT NULL,
                         body_hash TEXT NOT NULL,
                         status TEXT NOT NULL,
                         pending_at TEXT,
                         pending_trigger TEXT,
-                        active_run_id TEXT,
+                        active_run TEXT,
                         active_trigger TEXT,
                         active_due_at TEXT,
                         schedule_hash TEXT,
@@ -529,7 +528,7 @@ class ChoreStore:
                 """)
                 self._conn.execute("""
                     CREATE UNIQUE INDEX IF NOT EXISTS idx_chores_active_run
-                    ON chores(active_run_id) WHERE active_run_id IS NOT NULL
+                    ON chores(active_run) WHERE active_run IS NOT NULL
                 """)
 
     def _has_table(self) -> bool:
@@ -562,7 +561,7 @@ def open_chore_store(layout: AgentLayout, *, read_only: bool = False) -> ChoreSt
 def next_activation(record: ChoreRecord) -> tuple[datetime, ChoreTrigger] | None:
     """Return one record's next in-memory heap activation."""
 
-    if record.active_run_id is not None:
+    if record.active_run is not None:
         return None
     candidates: list[tuple[datetime, ChoreTrigger]] = []
     if record.pending_at is not None:
@@ -658,13 +657,13 @@ def _index_chores(chores: Mapping[str, Chore] | Iterable[Chore]) -> dict[str, Ch
 
 def _record(row: sqlite3.Row) -> ChoreRecord:
     return ChoreRecord(
-        chore_id=str(row["chore_id"]),
+        id=str(row["id"]),
         name=str(row["name"]),
         body_hash=str(row["body_hash"]),
         status=cast(ChoreStatus, str(row["status"])),
         pending_at=_optional(row["pending_at"]),
         pending_trigger=cast(ChoreTrigger | None, _optional(row["pending_trigger"])),
-        active_run_id=_optional(row["active_run_id"]),
+        active_run=_optional(row["active_run"]),
         active_trigger=cast(ChoreTrigger | None, _optional(row["active_trigger"])),
         active_due_at=_optional(row["active_due_at"]),
         schedule_hash=_optional(row["schedule_hash"]),

@@ -23,8 +23,8 @@ from toolang.cli.toolang.commands.chat import blocks, rendering
 from toolang.execution.types import (
     ControlRef,
     StepRef,
-    ToolStepGiven,
-    ToolStepNoted,
+    ToolStepSpec,
+    ToolStepReport,
     Occurrence,
     OccurrencePosition,
     Output,
@@ -47,7 +47,7 @@ def begin(
     return step_begin(
         step=StepRef.parse(step),
         kind="tool",
-        given=ToolStepGiven(
+        spec=ToolStepSpec(
             plugin, ToolCall("call", "provider", name, {}), summary=summary
         ),
     )
@@ -67,7 +67,7 @@ def test_alias_identity_and_saved_wording_reach_chat_tty_and_plain(status, width
                 step=event.step,
                 kind="tool",
                 status=status,
-                noted=ToolStepNoted("Saved vendor wording"),
+                report=ToolStepReport("Saved vendor wording"),
             ),
             error="detail",
         )
@@ -100,7 +100,7 @@ def test_runtime_rows_keep_saved_summaries(name):
             step=event.step,
             kind="tool",
             status="succeeded",
-            noted=ToolStepNoted("Original saved outcome"),
+            report=ToolStepReport("Original saved outcome"),
         ),
         error="",
     )
@@ -138,7 +138,7 @@ def test_parallel_activity_and_failed_terminal_keep_identity_and_status():
         step_begin(
             step=par,
             kind="par",
-            given=MapStmt(span=Span(line=1), runnable="worker", lanes=1),
+            spec=MapStmt(span=Span(line=1), runnable="worker", lanes=1),
         )
     )
     projector.handle(
@@ -161,7 +161,7 @@ def test_parallel_activity_and_failed_terminal_keep_identity_and_status():
             step=event.step,
             kind="tool",
             status="failed",
-            noted=ToolStepNoted("Failed list: toolang"),
+            report=ToolStepReport("Failed list: toolang"),
         )
     )
     terminal = end.live[0].rows[-1]
@@ -214,7 +214,7 @@ def test_dynamic_run_footer_renders_saved_outcome(status, width):
             step=event.step,
             kind="tool",
             status=status,
-            noted=ToolStepNoted("Saved outcome: child"),
+            report=ToolStepReport("Saved outcome: child"),
         )
     )
     for text in rendered_surfaces(terminal.committed[0], width):
@@ -238,8 +238,8 @@ def test_committed_exec_boundary_keeps_saved_outcome(target_starts):
     projector.handle(event)
     result = ToolResultPart(
         tool_call_id="call",
-        tool_name=event.given.name,
-        tool_family=event.given.name,
+        tool_name=event.spec.name,
+        tool_family=event.spec.name,
         output={"controls": ["run_root@1"]},
     )
     terminal = projector.handle(
@@ -248,7 +248,7 @@ def test_committed_exec_boundary_keeps_saved_outcome(target_starts):
             kind="tool",
             status="succeeded",
             output=Output(value_for_type("ToolResultPart", result)),
-            noted=ToolStepNoted("Saved switch: child"),
+            report=ToolStepReport("Saved switch: child"),
         )
     )
     assert terminal.committed == ()

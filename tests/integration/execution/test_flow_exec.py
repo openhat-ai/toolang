@@ -16,7 +16,12 @@ from toolang.base.types.message import Message, message_text
 from toolang.base.types.run import ModelCallResult, ToolCall
 from toolang.execution.events import StepEnd, run_event_from_data, run_event_to_data
 from toolang.execution.records import ExecControlPayload, RunControlPayload
-from toolang.execution.types import ExecStepNoted, LoopStepNoted, ThreadPrefix, TypedRef
+from toolang.execution.types import (
+    ExecStepReport,
+    LoopStepReport,
+    ThreadPrefix,
+    TypedRef,
+)
 from toolang.state.prepare import prepare_agent_state
 
 
@@ -222,11 +227,11 @@ agic finish() -> Text:
             assert [s.kind for s in steps] == ["loop", "loop", "exec", "run"]
             (control,) = harness.store.list_run_controls(run_id=grow.id, kind="exec")
             assert control.triggered_by == steps[2].ref
-            assert steps[2].noted == ExecStepNoted(control.ref, "flow:successor")
+            assert steps[2].report == ExecStepReport(control.ref)
             assert steps[2].output is None
             for step, total in zip(steps[:2], [3, 2]):
                 assert step.status == "succeeded"
-                assert step.noted == LoopStepNoted(0, "exec", total)
+                assert step.report == LoopStepReport(0, "exec", total)
                 assert step.aborted_by == control.ref
             assert steps[3].ref.indices == (1,)
             ends = [
@@ -240,7 +245,7 @@ agic finish() -> Text:
                 for event in tracer.events
             )
             parent_loop = harness.store.list_steps(run_id=root.id)[0]
-            assert parent_loop.noted == LoopStepNoted(1, "exhausted", 1)
+            assert parent_loop.report == LoopStepReport(1, "exhausted", 1)
             assert parent_loop.aborted_by is None
             assert len(harness.adapter.invocations) == 2
 
@@ -793,7 +798,7 @@ agic successor() -> Text:
             assert not harness.store.list_run_controls(run_id=root.id, kind="exec")
             step = harness.store.list_steps(run_id=root.id)[-1]
             assert step.kind == "exec" and step.status == "failed"
-            assert step.state == root.state and step.noted is None
+            assert step.state == root.state and step.report is None
             assert len(harness.adapter.invocations) == 1
 
     asyncio.run(scenario())

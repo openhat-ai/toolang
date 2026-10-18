@@ -166,7 +166,7 @@ def adapter_step_boundaries(monkeypatch):
     async def finish(state, **facts):
         if state.execution is not None:
             return await end(state, **facts)
-        facts.pop("canceled_noted", None)
+        facts.pop("canceled_report", None)
         facts.pop("error_text", None)
         await state.emit(step_end(**facts))
 

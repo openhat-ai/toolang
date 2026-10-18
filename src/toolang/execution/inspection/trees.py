@@ -22,7 +22,7 @@ from ..types import (
     ErrorMessage,
     ErrorRef,
     FieldRef,
-    ModelStepNoted,
+    ModelStepReport,
     ControlRef,
     Occurrence,
     Pointer,
@@ -429,13 +429,13 @@ def _loop_child_order(
     iteration = occur.iteration
     phase = 0 if iteration.phase == "body" else 1
     if isinstance(record, StepRecord):
-        statement = parent.given
+        statement = parent.spec
         if isinstance(statement, RepeatStmt) and statement.until_index is not None:
             # Prior complete passes each consumed the whole body. Child Step
             # indices keep increasing; recover this pass's authored position.
             position = record.ref.index - iteration.index * len(statement.stmts)
             phase = 0 if position < statement.until_index else 2
-        return (iteration.index, phase, 0, record.ref.indices, record.created_at)
+        return (iteration.index, phase, 0, record.ref.indices, record.started_at)
     item = occur.item.index if occur.item is not None else 0
     return (iteration.index, phase, 1, (item,), record.created_at, record.id)
 
@@ -450,20 +450,20 @@ def _record_metrics(record: RunRecord | StepRecord) -> _MetricAccumulator:
     if record.kind != "model":
         return accumulator
     accumulator.model_calls = 1
-    noted = record.noted if isinstance(record.noted, ModelStepNoted) else None
-    if noted is None:
+    report = record.report if isinstance(record.report, ModelStepReport) else None
+    if report is None:
         return accumulator
-    if noted.usage is not None:
+    if report.usage is not None:
         accumulator.token_known = 1
-        accumulator.input_tokens = noted.usage.input_tokens
-        accumulator.output_tokens = noted.usage.output_tokens
-        reasoning = noted.usage.reasoning_tokens
+        accumulator.input_tokens = report.usage.input_tokens
+        accumulator.output_tokens = report.usage.output_tokens
+        reasoning = report.usage.reasoning_tokens
         if reasoning is not None:
             accumulator.reasoning_known = 1
             accumulator.reasoning_tokens = reasoning
-    cost = selected_usd_cost(noted.cost)
-    complete = noted.cost.complete if noted.cost is not None else False
-    approximate = selected_cost_is_approximate(noted.cost)
+    cost = selected_usd_cost(report.cost)
+    complete = report.cost.complete if report.cost is not None else False
+    approximate = selected_cost_is_approximate(report.cost)
     if cost is not None:
         try:
             accumulator.cost_usd = normalize_cost(float(cost))

@@ -15,7 +15,7 @@ from ..records import (
     ControlRecord,
     RunRecord,
     StepRecord,
-    StoredModelStepGiven,
+    StoredModelStepSpec,
     ThreadRecord,
 )
 from ..schemas import (
@@ -277,7 +277,7 @@ class RunHistory:
             record = self._store.get_step(ref=ref)
             if record is None:
                 raise KeyError(str(ref))
-            if not isinstance(record.given, StoredModelStepGiven):
+            if not isinstance(record.spec, StoredModelStepSpec):
                 raise ValueError(f"not a model step: {ref}")
             return self._store.rebuild_model_calls((record,))[ref]
 
@@ -587,7 +587,7 @@ class RunHistory:
 
 
 def _model_steps(steps: Sequence[StepRecord]) -> tuple[StepRecord, ...]:
-    return tuple(step for step in steps if isinstance(step.given, StoredModelStepGiven))
+    return tuple(step for step in steps if isinstance(step.spec, StoredModelStepSpec))
 
 
 def _validate_limit(limit: int | None) -> None:

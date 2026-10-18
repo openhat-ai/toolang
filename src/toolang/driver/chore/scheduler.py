@@ -290,9 +290,9 @@ class ChoreDriver:
             reference = str(command.value)
             chore_id = next(
                 (
-                    item.chore_id
+                    item.id
                     for item in self._records.values()
-                    if reference in (item.chore_id, item.name, f"chore/{item.name}")
+                    if reference in (item.id, item.name, f"chore/{item.name}")
                 ),
                 reference,
             )
@@ -306,7 +306,7 @@ class ChoreDriver:
                     raise FileNotFoundError(f"chore not found: {chore_id}")
                 record = (
                     current
-                    if current.active_run_id is not None
+                    if current.active_run is not None
                     else self._store.cancel_pending_chore(chore_id=chore_id)
                 )
             self._replace_record(record)
@@ -315,9 +315,9 @@ class ChoreDriver:
             reference = str(command.value)
             chore_id = next(
                 (
-                    item.chore_id
+                    item.id
                     for item in self._records.values()
-                    if reference in (item.chore_id, item.name, f"chore/{item.name}")
+                    if reference in (item.id, item.name, f"chore/{item.name}")
                 ),
                 reference,
             )
@@ -342,7 +342,7 @@ class ChoreDriver:
 
     def _set_records(self, records: tuple[ChoreRecord, ...]) -> None:
         previous_ids = set(self._records)
-        self._records = {record.chore_id: record for record in records}
+        self._records = {record.id: record for record in records}
         for chore_id in previous_ids | set(self._records):
             self._invalidate(chore_id)
         for chore_id in self._records:
@@ -351,7 +351,7 @@ class ChoreDriver:
     async def _recover_active(self) -> None:
         assert self._store is not None
         for record in tuple(self._records.values()):
-            run_id = record.active_run_id
+            run_id = record.active_run
             if run_id is None:
                 continue
             run = await self._get_run(run_id)
@@ -373,7 +373,7 @@ class ChoreDriver:
                 chores=self._chores, run_id=run_id, run_status=run.status
             )
             if repaired is None:
-                self._drop_record(record.chore_id)
+                self._drop_record(record.id)
             else:
                 self._replace_record(repaired)
         self._set_records(self._store.reconcile(chores=self._chores))
@@ -512,22 +512,18 @@ class ChoreDriver:
             self._active.pop(run_id, None)
         if record is None:
             previous = next(
-                (
-                    item
-                    for item in self._records.values()
-                    if item.active_run_id == run_id
-                ),
+                (item for item in self._records.values() if item.active_run == run_id),
                 None,
             )
             if previous is not None:
-                self._drop_record(previous.chore_id)
+                self._drop_record(previous.id)
         else:
             self._replace_record(record)
 
     def _replace_record(self, record: ChoreRecord) -> None:
-        self._records[record.chore_id] = record
-        self._invalidate(record.chore_id)
-        self._push(record.chore_id)
+        self._records[record.id] = record
+        self._invalidate(record.id)
+        self._push(record.id)
 
     def _drop_record(self, chore_id: str) -> None:
         self._records.pop(chore_id, None)

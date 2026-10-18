@@ -27,7 +27,7 @@ from toolang.execution.types import (
     Output,
     ControlRef,
     FieldRef,
-    ModelStepGiven,
+    ModelStepSpec,
     RunRef,
     StepKind,
     StepRef,
@@ -301,7 +301,7 @@ def test_step_range_excludes_unrelated_controls(store: RunStore) -> None:
         ref=StepRef.parse("run_a.2"),
         kind="model",
         input=(),
-        given=ModelStepGiven("test", ModelCall("", []), setup="test-setup"),
+        spec=ModelStepSpec("test", ModelCall("", []), setup="test-setup"),
         preceded_by=(late.ref,),
         started_at="2026-01-01T00:00:03Z",
     )
@@ -369,7 +369,7 @@ def test_run_page_rejects_completion_of_a_captured_running_step(
         ref=StepRef.parse("run_a.0"),
         kind="model",
         input=(),
-        given=ModelStepGiven("test", ModelCall("", []), setup="test-setup"),
+        spec=ModelStepSpec("test", ModelCall("", []), setup="test-setup"),
         started_at="2026-01-01T00:00:00Z",
     )
     history = RunHistory(store)
@@ -380,7 +380,7 @@ def test_run_page_rejects_completion_of_a_captured_running_step(
         kind="model",
         status="canceled",
         output=Output("partial", None),
-        noted=None,
+        report=None,
         error=None,
         finished_at="2026-01-01T00:00:01Z",
     )
@@ -403,7 +403,7 @@ def test_run_view_keeps_control_relationships_separate_from_input(
         ref=StepRef.parse("run_a.0"),
         kind="model",
         input=(control_input,),
-        given=ModelStepGiven("test", ModelCall("", []), setup="test-setup"),
+        spec=ModelStepSpec("test", ModelCall("", []), setup="test-setup"),
         preceded_by=(ControlRef.for_run("run_a", 0),),
         started_at="2026-01-01T00:00:01Z",
     )
@@ -412,7 +412,7 @@ def test_run_view_keeps_control_relationships_separate_from_input(
         kind="model",
         status="canceled",
         output=Output("partial", None),
-        noted=None,
+        report=None,
         error=None,
         aborted_by=steer.ref,
         finished_at="2026-01-01T00:00:02Z",
@@ -421,7 +421,7 @@ def test_run_view_keeps_control_relationships_separate_from_input(
         ref=StepRef.parse("run_a.1"),
         kind="model",
         input=(),
-        given=ModelStepGiven("test", ModelCall("", []), setup="test-setup"),
+        spec=ModelStepSpec("test", ModelCall("", []), setup="test-setup"),
         preceded_by=(steer.ref,),
         started_at="2026-01-01T00:00:03Z",
     )
@@ -522,7 +522,7 @@ def test_output_and_model_call_reads_are_independent(
         ref=StepRef.parse("run_a.0"),
         kind="model",
         input=(),
-        given=ModelStepGiven("test", call, setup="test-setup"),
+        spec=ModelStepSpec("test", call, setup="test-setup"),
         started_at="2026-01-01T00:00:00Z",
     )
     store.finish_step(
@@ -530,7 +530,7 @@ def test_output_and_model_call_reads_are_independent(
         kind="model",
         status="succeeded",
         output=Output("answer", None),
-        noted=None,
+        report=None,
         error=None,
         finished_at="2026-01-01T00:00:01Z",
     )

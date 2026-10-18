@@ -162,7 +162,7 @@ def test_child_step_counts_do_not_decode_unrelated_step_payloads(
         )
         with store.write_transaction():
             store._conn.execute(
-                "UPDATE steps SET given = ? WHERE run = ? AND path = ?",
+                "UPDATE steps SET spec = ? WHERE run = ? AND path = ?",
                 ("{", unrelated.run_id, unrelated.ref.local),
             )
 

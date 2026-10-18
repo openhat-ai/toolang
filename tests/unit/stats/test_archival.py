@@ -17,7 +17,7 @@ def dump(store):
     with store.writer() as connection:
         return tuple(
             connection.execute(f"SELECT * FROM {table} ORDER BY 1,2").fetchall()
-            for table in ("stats_roots", "stats_buckets")
+            for table in ("roots", "buckets")
         )
 
 
@@ -85,10 +85,10 @@ def test_publication_rolls_back_buckets_and_receipt_then_retries(
                 failed = (
                     failure == sql.INSERT_RECEIPT
                     and action == sqlite3.SQLITE_INSERT
-                    and table == "stats_roots"
+                    and table == "roots"
                     or failure == sql.TOUCH_STATE
                     and action == sqlite3.SQLITE_UPDATE
-                    and table == "stats_state"
+                    and table == "state"
                 )
                 return sqlite3.SQLITE_DENY if failed else sqlite3.SQLITE_OK
 
@@ -159,7 +159,7 @@ def test_source_codec_type_errors_are_isolated(fixture, operation):
     fixture.finish(valid, NOW - 2 * DAY)
     with sqlite3.connect(fixture.source.db_path) as connection:
         connection.execute(
-            "UPDATE steps SET given=json_set(given,'$.call.messages.head',123) WHERE id=?",
+            "UPDATE steps SET spec=json_set(spec,'$.call.messages.head',123) WHERE id=?",
             (str(ref),),
         )
 
@@ -176,7 +176,7 @@ def test_source_codec_type_errors_are_isolated(fixture, operation):
             sql.RECEIPT_EXISTS, {"root_id": invalid}
         ).fetchone()
         assert not connection.execute(
-            "SELECT 1 FROM stats_buckets WHERE scope_kind='root_run' AND scope_id=?",
+            "SELECT 1 FROM buckets WHERE scope_kind='root_run' AND scope_id=?",
             (invalid,),
         ).fetchone()
     assert fixture.stats.models("all", Scope("root_run", valid)).data[0].in_ == 100
@@ -233,7 +233,7 @@ def test_large_root_pages_are_complete_and_not_revisited_after_archival(
 def test_canceled_root_without_start_has_receipt_but_no_contribution(fixture):
     from tests.support.execution_fixtures import accept_run
     from toolang.base.types.message import Message
-    from toolang.execution.types import RunNoted
+    from toolang.execution.types import RunReport
     from toolang.stats.types import timestamp
 
     fixture.source.create_thread(thread_id="chat_pre_entry", origin="chat")
@@ -251,15 +251,48 @@ def test_canceled_root_without_start_has_receipt_but_no_contribution(fixture):
     fixture.source.finish_run(
         run_id=root,
         status="canceled",
-        noted=RunNoted(),
+        report=RunReport(),
         finished_at=timestamp(NOW - 2 * DAY),
     )
     assert fixture.refresh() is None
     with fixture.stats.records.snapshot() as connection:
         assert connection.execute(sql.RECEIPT_EXISTS, {"root_id": root}).fetchone()
         assert not connection.execute(
-            "SELECT 1 FROM stats_buckets WHERE scope_kind='root_run' AND scope_id=?",
+            "SELECT 1 FROM buckets WHERE scope_kind='root_run' AND scope_id=?",
             (root,),
         ).fetchone()
     result = fixture.stats.summary(Scope("root_run", root)).data[0]
     assert result.root_runs == 0 and result.model_calls == 0 and result.in_ == 0
+
+
+def test_discarded_cache_rebuilds_with_unprefixed_tables(fixture):
+    root = fixture.root("rebuild", NOW - 4 * DAY)
+    fixture.call(root, NOW - 3 * DAY, NOW - 3 * DAY + 1)
+    fixture.finish(root, NOW - 2 * DAY)
+    assert fixture.refresh() is None
+    expected = fixture.stats.summary().data
+    records = fixture.stats.records
+    with records.writer() as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )
+        } == {"roots", "buckets", "state"}
+    records.path.unlink()
+    records.initialize()
+    assert fixture.refresh() is None
+    assert fixture.stats.summary().data == expected
+
+
+def test_old_stats_schema_is_rejected_without_rewriting(fixture):
+    records = fixture.stats.records
+    with records.writer() as connection:
+        connection.execute("PRAGMA user_version=1")
+        before = connection.execute("SELECT * FROM state").fetchall()
+    with pytest.raises(ValueError, match="unsupported statistics schema: 1"):
+        records.initialize()
+    with records.writer() as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 1
+        assert connection.execute("SELECT * FROM state").fetchall() == before

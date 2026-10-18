@@ -42,17 +42,17 @@ import json
 from toolang.execution.types import (
     TypedRef,
     TokenUsage,
-    ModelStepNoted,
+    ModelStepReport,
     StepRef,
     ControlRef,
     ControlStatus,
     FieldRef,
-    LoopStepNoted,
-    ModelStepGiven,
+    LoopStepReport,
+    ModelStepSpec,
     RunStatus,
     RunRef,
     StepStatus,
-    ToolStepGiven,
+    ToolStepSpec,
 )
 
 
@@ -61,7 +61,7 @@ def test_step_schema_preserves_the_flow_statement_discriminator() -> None:
         path=StepRef.parse("run_root.1"),
         kind="run",
         input=[],
-        given=RunStmt(span=Span(line=4), runnable="agic:child"),
+        spec=RunStmt(span=Span(line=4), runnable="agic:child"),
         state=RunControlRefData(run="run_root", index=0),
         output=None,
     )
@@ -70,26 +70,26 @@ def test_step_schema_preserves_the_flow_statement_discriminator() -> None:
 
     assert payload["path"] == "run_root.1"
     assert payload["state"] == {"run": "run_root", "index": 0}
-    assert payload["given"]["kind"] == "run"
+    assert payload["spec"]["kind"] == "run"
     assert TypeAdapter(StepData).validate_python(payload) == step
 
 
-def test_loop_step_noted_round_trips_through_the_step_schema() -> None:
+def test_loop_step_report_round_trips_through_the_step_schema() -> None:
     step = StepData(
         path=StepRef.parse("run_root.1"),
         kind="loop",
         input=[],
-        given=RepeatStmt(span=Span(line=4), count=3),
+        spec=RepeatStmt(span=Span(line=4), count=3),
         state=RunControlRefData(run="run_root", index=0),
         output=None,
-        noted=LoopStepNoted(iterations=3, termination="exhausted"),
+        report=LoopStepReport(iterations=3, termination="exhausted"),
         status="succeeded",
     )
 
     adapter = TypeAdapter(StepData)
     payload = adapter.dump_python(step, mode="json")
 
-    assert payload["noted"] == {
+    assert payload["report"] == {
         "iterations": 3,
         "termination": "exhausted",
         "total": None,
@@ -99,21 +99,21 @@ def test_loop_step_noted_round_trips_through_the_step_schema() -> None:
 
 def test_step_schema_and_record_reject_mismatched_typed_facts() -> None:
     statement = RunStmt(span=Span(line=4), runnable="agic:child")
-    with pytest.raises(TypeError, match="tool Step requires ToolStepGiven"):
+    with pytest.raises(TypeError, match="tool Step requires ToolStepSpec"):
         StepData(
             path=StepRef.parse("run_root.0"),
             kind="tool",
             input=[],
-            given=statement,
+            spec=statement,
             state=RunControlRefData(run="run_root", index=0),
             output=None,
         )
-    with pytest.raises(TypeError, match="tool Step requires ToolStepGiven"):
+    with pytest.raises(TypeError, match="tool Step requires ToolStepSpec"):
         StepRecord(
             id="run_root.0",
             kind="tool",
             input=(),
-            given=statement,
+            spec=statement,
             state=ControlRef.for_run("run_root", 0),
             output=None,
         )
@@ -122,13 +122,13 @@ def test_step_schema_and_record_reject_mismatched_typed_facts() -> None:
         path=StepRef.parse("run_root.1"),
         kind="run",
         input=[],
-        given=statement,
+        spec=statement,
         state=RunControlRefData(run="run_root", index=0),
         output=None,
     )
     payload = TypeAdapter(StepData).dump_python(canonical, mode="json")
     payload["kind"] = "tool"
-    with pytest.raises(TypeError, match="tool Step requires ToolStepGiven"):
+    with pytest.raises(TypeError, match="tool Step requires ToolStepSpec"):
         TypeAdapter(StepData).validate_python(payload)
 
 
@@ -193,7 +193,7 @@ def test_model_metadata_rejects_recording_details(field):
     data = run_event_to_data(
         step_begin("run_root.0", "model", ModelStepInfo("test/model"))
     )
-    data["given"][field] = "unexpected"
+    data["spec"][field] = "unexpected"
     with pytest.raises(ValueError, match="Unexpected keyword"):
         run_event_from_data(data)
 
@@ -203,7 +203,7 @@ def test_model_metadata_size_is_independent_of_call_context():
         return step_begin(
             "run_root.0",
             "model",
-            ModelStepGiven(
+            ModelStepSpec(
                 model="test/model",
                 setup="revision",
                 call=ModelCall("instructions" * size, [Message.user("history" * size)]),
@@ -211,7 +211,7 @@ def test_model_metadata_size_is_independent_of_call_context():
         )
 
     assert run_event_to_data(begin(1)) == run_event_to_data(begin(100000))
-    assert run_event_to_data(begin(1))["given"] == {
+    assert run_event_to_data(begin(1))["spec"] == {
         "type": "model",
         "model": "test/model",
     }
@@ -226,7 +226,7 @@ def test_flow_and_tool_metadata_select_only_presentation_facts():
         )
     )
     tool = step_info(
-        ToolStepGiven(
+        ToolStepSpec(
             "shell",
             ToolCall("id", "call", "shell__execute", {"command": "private" * 10000}),
             summary="Execute command",
@@ -294,7 +294,7 @@ def test_errors_and_control_application_have_scalar_identity():
 
 def test_model_summary_excludes_continuation_and_pricing_details():
     summary = step_summary(
-        ModelStepNoted(
+        ModelStepReport(
             usage=TokenUsage(input_tokens=10, output_tokens=4),
             continuation={"provider": "private" * 1000},
         )
@@ -302,7 +302,7 @@ def test_model_summary_excludes_continuation_and_pricing_details():
     assert summary is not None and summary.usage is not None
     assert summary.usage.input_tokens == 10
     data = run_event_to_data(
-        step_end("run_root.0", "model", "succeeded", noted=summary)
+        step_end("run_root.0", "model", "succeeded", report=summary)
     )
     assert "continuation" not in json.dumps(data) and "private" not in json.dumps(data)
 
@@ -398,8 +398,8 @@ def test_await_error_is_direct_even_when_target_was_not_observed(tool):
     from toolang.execution.types import ErrorRef
     from toolang.lang.ast import AwaitStmt
 
-    given = (
-        ToolStepGiven("runtime", ToolCall("call", "call", "runtime__await", {}))
+    spec = (
+        ToolStepSpec("runtime", ToolCall("call", "call", "runtime__await", {}))
         if tool
         else AwaitStmt(span=Span(line=1), handle="job")
     )
@@ -407,7 +407,7 @@ def test_await_error_is_direct_even_when_target_was_not_observed(tool):
         id="run_root.0",
         kind="tool" if tool else "value",
         input=(),
-        given=given,
+        spec=spec,
         state=ControlRef.for_run("run_root", 0),
         output=None,
         status="failed",
@@ -456,7 +456,7 @@ def test_event_decoder_reports_malformed_part_output_as_a_value_error(kind, valu
 @pytest.mark.parametrize("argument", ["target", "runnable"])
 def test_generic_tool_target_named_arguments_do_not_expand_metadata(argument):
     info = step_info(
-        ToolStepGiven(
+        ToolStepSpec(
             "shell",
             ToolCall(
                 "id",
@@ -594,12 +594,12 @@ def test_event_output_constructor_requires_final_protocol_data():
     ],
 )
 def test_event_metadata_does_not_interpret_retired_runtime_names(plugin, name):
-    given = ToolStepGiven(
+    spec = ToolStepSpec(
         plugin,
         ToolCall("call", "provider", name, {"runnable": "child", "async": True}),
         summary="Saved action",
     )
-    assert step_info(given) == ToolStepInfo(plugin, name, "Saved action")
+    assert step_info(spec) == ToolStepInfo(plugin, name, "Saved action")
 
 
 @pytest.mark.parametrize(
@@ -644,7 +644,7 @@ def test_retired_await_name_keeps_its_recorded_error_origin():
         id="run_root.0",
         kind="tool",
         input=(),
-        given=ToolStepGiven(
+        spec=ToolStepSpec(
             "_toolang", ToolCall("call", "provider", "_toolang__await", {})
         ),
         state=ControlRef.for_run("run_root", 0),
@@ -662,7 +662,7 @@ def test_retired_honor_name_does_not_synthesize_a_runtime_reply():
         id="run_root.0",
         kind="tool",
         input=(FieldRef.from_path(StepRef.parse("run_root.1"), "output", "value", 0),),
-        given=ToolStepGiven(
+        spec=ToolStepSpec(
             "_toolang",
             ToolCall("call", "provider", "_toolang__honor", {}),
             trigger="runtime",
@@ -675,3 +675,33 @@ def test_retired_honor_name_does_not_synthesize_a_runtime_reply():
         raise AssertionError("retired tool names must not reconstruct a runtime reply")
 
     assert workspace_reply_from_step(step, unexpected_read) is None
+
+
+@pytest.mark.parametrize("boundary", ["begin", "end"])
+def test_events_reject_retired_recording_field_names(boundary):
+    from toolang.execution.events import StepSummary
+
+    if boundary == "begin":
+        event = StepBegin(
+            "run_contract.0",
+            "run_contract",
+            None,
+            0,
+            "tool",
+            ToolStepInfo("test", "call"),
+        )
+        current, retired = "spec", "given"
+    else:
+        event = StepEnd(
+            "run_contract.0",
+            "run_contract",
+            "tool",
+            "succeeded",
+            report=StepSummary(summary="done"),
+        )
+        current, retired = "report", "noted"
+    payload = run_event_to_data(event)
+    assert run_event_from_data(payload) == event
+    payload[retired] = payload.pop(current)
+    with pytest.raises(ValueError):
+        run_event_from_data(payload)

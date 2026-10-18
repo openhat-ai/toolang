@@ -31,7 +31,7 @@ def test_chore_claim_persists_preallocated_run_id(tmp_path: Path) -> None:
 
         assert claimed is not None
         assert claimed.status == "running"
-        assert claimed.active_run_id == "run_executor"
+        assert claimed.active_run == "run_executor"
         assert (
             store.finish_run(
                 chores=chores,

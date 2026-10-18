@@ -471,7 +471,7 @@ def test_hub_filters_and_cursor_errors_have_flat_http_contract(tmp_path):
                 "HSET",
                 EVENT_AGENTS,
                 "agent:alice",
-                json.dumps({"v": 1, "status": "complete"}),
+                json.dumps({"v": 2, "status": "complete"}),
             )
             for scope in ("run", "thread"):
                 response = await http.get(
@@ -490,13 +490,13 @@ def test_hub_filters_and_cursor_errors_have_flat_http_contract(tmp_path):
                 "HSET",
                 EVENT_AGENTS,
                 "agent:alice",
-                json.dumps({"v": 1, "generation": "g"}),
+                json.dumps({"v": 2, "generation": "g"}),
             )
             await driver._call(
                 "HSET",
                 generation_key("agent:alice", "g"),
                 MANIFEST,
-                json.dumps({"v": 1, "count": 1, "baseline": "0-0"}),
+                json.dumps({"v": 2, "count": 1, "baseline": "0-0"}),
                 '["run","r"]',
                 "{",
             )
@@ -1332,8 +1332,8 @@ def test_invalid_recovery_metadata_is_a_backend_error(damage):
             ) as http,
         ):
             await driver.events.initialize()
-            origin = {"v": 1, "generation": "g"}
-            manifest = {"v": 1, "count": 0, "baseline": "0-0"}
+            origin = {"v": 2, "generation": "g"}
+            manifest = {"v": 2, "count": 0, "baseline": "0-0"}
             entities = {}
             if damage == "floor":
                 origin["floor"] = "bad"
@@ -1341,13 +1341,13 @@ def test_invalid_recovery_metadata_is_a_backend_error(damage):
                 del manifest["baseline"]
             elif damage == "root":
                 entities[field("root", "run_one")] = {
-                    "v": 1,
+                    "v": 2,
                     "root": "run_one",
                     "thread": "term_one",
                 }
             else:
                 entities[field("control", "term_one#0")] = {
-                    "v": 1,
+                    "v": 2,
                     "thread": "term_one",
                     "root": None,
                     "source": None,
@@ -1377,5 +1377,22 @@ def test_invalid_recovery_metadata_is_a_backend_error(damage):
             )
             assert response.status_code == 503
             assert response.json()["code"] == "protocol_error"
+
+    asyncio.run(scenario())
+
+
+def test_old_event_dataset_is_rejected_without_mutation():
+    async def scenario():
+        driver = backend(FakeServer(server_type="valkey"))
+        try:
+            meta = await driver.events.initialize()
+            assert meta["v"] == "2"
+            await driver._client.hset(EVENT_META, "v", "1")
+            before = await driver._client.hgetall(EVENT_META)
+            with pytest.raises(EventProtocolError):
+                await driver.events.initialize()
+            assert await driver._client.hgetall(EVENT_META) == before
+        finally:
+            await driver.close()
 
     asyncio.run(scenario())

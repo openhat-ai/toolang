@@ -45,7 +45,7 @@ from toolang.execution.runnables import (
     resolve_state_runnable,
 )
 from toolang.execution.store import RunStore
-from toolang.execution.types import ModelStepGiven, StepGiven, StepRef
+from toolang.execution.types import ModelStepSpec, StepSpec, StepRef
 from toolang.execution.threads import ThreadManager
 from toolang.lang import Program
 from toolang.lang.input import resolve_runnable_input
@@ -423,10 +423,10 @@ class ExecutionHarness:
 
         begin_step = store.begin_step
 
-        def capture_begin(*, ref: StepRef, given: StepGiven, **kwargs: Any):
-            if isinstance(given, ModelStepGiven):
-                harness.model_calls[ref] = given.call
-            return begin_step(ref=ref, given=given, **kwargs)
+        def capture_begin(*, ref: StepRef, spec: StepSpec, **kwargs: Any):
+            if isinstance(spec, ModelStepSpec):
+                harness.model_calls[ref] = spec.call
+            return begin_step(ref=ref, spec=spec, **kwargs)
 
         # Capture the complete execution input before compact persistence and
         # observer projection, including canceled calls and custom adapters.

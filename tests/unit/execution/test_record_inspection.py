@@ -242,12 +242,11 @@ def test_record_registry_serializes_exact_record_shapes(tmp_path: Path) -> None:
             "updated_at",
         }
         assert set(control_data) == {
-            "event_cursor",
             "id",
             "kind",
             "payload",
             "triggered_by",
-            "request",
+            "request_id",
             "client_id",
             "status",
             "timing",
@@ -256,9 +255,7 @@ def test_record_registry_serializes_exact_record_shapes(tmp_path: Path) -> None:
             "finished_at",
         }
         assert set(run_data) == {
-            "noted",
-            "begin_cursor",
-            "end_cursor",
+            "report",
             "id",
             "parent",
             "thread",
@@ -273,21 +270,18 @@ def test_record_registry_serializes_exact_record_shapes(tmp_path: Path) -> None:
             "finished_at",
         }
         assert set(step_data) == {
-            "begin_cursor",
-            "end_cursor",
             "preceded_by",
             "aborted_by",
             "id",
             "kind",
             "input",
-            "given",
+            "spec",
             "state",
             "output",
             "occur",
-            "noted",
+            "report",
             "status",
             "error",
-            "created_at",
             "started_at",
             "finished_at",
         }
@@ -350,13 +344,13 @@ def test_flat_input_references_survive_reordering_and_reopening(tmp_path: Path) 
             store.select_pointer(Pointer.parse("run_flat@0/payload/input/0/value"))
 
 
-def test_model_step_record_serializes_compact_noted_cont_key(tmp_path: Path) -> None:
+def test_model_step_record_serializes_compact_report_cont_key(tmp_path: Path) -> None:
     store = RunStore(tmp_path / "runs.db")
     try:
         run = project_run_start(
             store,
-            run_id="run_model_noted",
-            thread_id="term_model_noted",
+            run_id="run_model_report",
+            thread_id="term_model_report",
             origin="test",
             input=Message.user("hello"),
         )
@@ -373,9 +367,9 @@ def test_model_step_record_serializes_compact_noted_cont_key(tmp_path: Path) -> 
             finished_at="2026-01-01T00:00:02Z",
         )
 
-        noted = record_to_data(step)["noted"]
+        report = record_to_data(step)["report"]
 
-        assert noted == {
+        assert report == {
             "usage": None,
             "cost": None,
             "invoked": False,
@@ -417,10 +411,10 @@ def test_record_selection_matches_rfc6901_traversal(
             pytest.fail("selection serialized an unrelated Step field")
 
         monkeypatch.setattr(
-            "toolang.execution.schemas.stored_step_given_to_data", unused_field
+            "toolang.execution.schemas.stored_step_spec_to_data", unused_field
         )
         monkeypatch.setattr(
-            "toolang.execution.schemas.step_noted_to_data", unused_field
+            "toolang.execution.schemas.step_report_to_data", unused_field
         )
         output = store.select_pointer(
             Pointer(FieldRef.from_path(step.ref, "output", "value", 1))
@@ -692,12 +686,11 @@ def test_every_control_payload_variant_has_one_canonical_record_shape() -> None:
         data = record_to_data(record)
 
         assert set(data) == {
-            "event_cursor",
             "id",
             "kind",
             "payload",
             "triggered_by",
-            "request",
+            "request_id",
             "client_id",
             "status",
             "timing",
@@ -710,3 +703,134 @@ def test_every_control_payload_variant_has_one_canonical_record_shape() -> None:
         protocol = adapter.dump_python(record, mode="json")
         assert set(protocol["payload"]) == payload_fields
         assert adapter.validate_python(protocol) == record
+
+
+@pytest.mark.parametrize("status", ["succeeded", "failed", "canceled"])
+def test_step_timing_and_private_cursors_survive_reopening(tmp_path, status):
+    from toolang.execution.schemas import StepData
+    from toolang.execution.types import EventCursor, ToolStepReport
+
+    path = tmp_path / "runs.db"
+    started = "2026-10-18T01:00:00Z"
+    with closing(RunStore(path)) as store:
+        run = project_run_start(
+            store,
+            run_id="run_contract",
+            thread_id="term_contract",
+            origin="test",
+            input=Message.user("contract"),
+            request_id="contract-request",
+            created_at="2026-10-18T00:59:59Z",
+        )
+        step = project_step(
+            store,
+            run_id=run.id,
+            step_index=0,
+            kind="tool",
+            status="running",
+            input=(),
+            output=None,
+            started_at=started,
+            finished_at="2026-10-18T01:00:01Z",
+        )
+        step = store.finish_step(
+            ref=step.ref,
+            kind="tool",
+            status=status,
+            output=None,
+            report=ToolStepReport("completed"),
+            error=None,
+            finished_at="2026-10-18T01:00:01Z",
+        )
+        cursor = str(EventCursor("a" * 32, 1))
+        for ref, boundary in ((RunRef(run.id), "begin"), (step.ref, "end")):
+            store.record_event_cursor(ref, cursor, boundary=boundary)
+        store.record_event_cursor(run.control, cursor)
+        manifest = store.history_versions((run.id, step.id, str(run.control)))
+
+    with closing(RunStore(path)) as store:
+        step = store.get_step(ref=step.ref)
+        assert step is not None
+        assert step.started_at == started
+        assert step._end_cursor == cursor
+        assert StepData.from_record(step).created_at == started
+        assert not hasattr(step, "created_at")
+        assert store.history_versions((run.id, step.id, str(run.control))) == manifest
+        control = store.get_control(target=run.id, index=0)
+        assert control is not None and control.request_id == "contract-request"
+        assert (
+            store.select_pointer(Pointer.parse(f"{run.id}@0/request_id")).value
+            == "contract-request"
+        )
+        assert (
+            store.select_pointer(Pointer.parse(f"{step.id}/report/summary")).value
+            == "completed"
+        )
+        for ref, fields in (
+            (step.id, ("given", "noted", "created_at", "end_cursor", "_end_cursor")),
+            (run.id, ("noted", "begin_cursor", "_begin_cursor")),
+            (str(run.control), ("request", "event_cursor", "_event_cursor")),
+        ):
+            for name in fields:
+                with pytest.raises(ValueError, match="field does not exist"):
+                    store.select_pointer(Pointer.parse(f"{ref}/{name}"))
+
+
+def test_exec_reports_resolve_their_own_controls_after_reopening(tmp_path):
+    from toolang.execution.event_projection import step_end_event
+    from toolang.execution.records import step_report_from_data
+    from toolang.execution.subscriptions import RecordSnapshot
+    from toolang.execution.events import StepEnd
+    from toolang.execution.types import ExecStepReport
+    from toolang.lang.ast import ExecStmt, Span
+
+    path = tmp_path / "runs.db"
+    with closing(RunStore(path)) as store:
+        run = project_run_start(
+            store,
+            run_id="run_exec_reports",
+            thread_id="term_exec_reports",
+            origin="test",
+            input=Message.user("handoff"),
+        )
+        for index, target in enumerate(("flow:middle", "flow:final")):
+            ref = StepRef.from_local(run.id, (index,))
+            store.begin_step(
+                ref=ref,
+                kind="exec",
+                input=(),
+                spec=ExecStmt(span=Span(line=index + 1), runnable=target),
+                started_at=f"2026-10-18T01:00:0{index}Z",
+            )
+            store.accept_exec_control(
+                run_id=run.id,
+                state="0" * 64,
+                runnable=target,
+                triggered_by=ref,
+                input=CallInput(),
+                created_at=f"2026-10-18T01:00:0{index + 1}Z",
+                tool_report=None,
+            )
+        store.finish_run(run_id=run.id)
+
+    with closing(RunStore(path)) as store:
+        run = store.get_run(run_id=run.id)
+        assert run is not None
+        steps = store.list_steps(run_id=run.id)
+        snapshot = RecordSnapshot(store, [run], steps)
+        for step, target in zip(steps, ("flow:middle", "flow:final"), strict=True):
+            assert isinstance(step.report, ExecStepReport)
+            assert record_to_data(step)["report"] == {
+                "control": str(step.report.control)
+            }
+            event = snapshot.ends[step.ref][0]
+            assert isinstance(event, StepEnd) and event.report is not None
+            assert event.report.runnable == target
+            live = step_end_event(step, None, None, exec_runnable=target)
+            assert live.report is not None and live.report.runnable == target
+            with pytest.raises(ValueError, match="committed runnable"):
+                step_end_event(step, None, None)
+            with pytest.raises(ValueError):
+                step_report_from_data(
+                    "exec", {"control": str(step.report.control), "runnable": target}
+                )

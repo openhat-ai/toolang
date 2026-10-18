@@ -40,7 +40,7 @@ from toolang.execution.records import (
     ControlRecord,
     RunRecord,
     StepRecord,
-    StoredModelStepGiven,
+    StoredModelStepSpec,
     ThreadRecord,
     model_call_to_data,
 )
@@ -52,20 +52,20 @@ from toolang.execution.schemas import (
 )
 from toolang.execution.store import RunStore
 from toolang.execution.types import (
-    CollectionStepNoted,
-    LoopStepNoted,
+    CollectionStepReport,
+    LoopStepReport,
     ContentRef,
     ControlRef,
     ErrorMessage,
     ErrorRef,
     FieldRef,
-    ModelStepNoted,
+    ModelStepReport,
     Occurrence,
     Pointer,
     RunRef,
     StepRef,
     ThreadRef,
-    ToolStepGiven,
+    ToolStepSpec,
     TypedRef,
     value_to_protocol_data,
     type_assignable,
@@ -259,9 +259,9 @@ def _project_model_call(store: RunStore, source: _InspectSubject) -> object:
 
 def _project_tool_call(_store: RunStore, source: _InspectSubject) -> object:
     step = _selected_step(source)
-    if not isinstance(step.given, ToolStepGiven):
+    if not isinstance(step.spec, ToolStepSpec):
         raise ValueError(f"step is not a tool call: {step.ref}")
-    call = step.given.call
+    call = step.spec.call
     data = {
         "tool_call_id": call.tool_call_id,
         "call_id": call.call_id,
@@ -345,14 +345,14 @@ def _render_tool_call(
     value: object,
 ) -> None:
     step = _selected_step(subject)
-    if not isinstance(step.given, ToolStepGiven) or not isinstance(value, Mapping):
+    if not isinstance(step.spec, ToolStepSpec) or not isinstance(value, Mapping):
         raise TypeError("tool call projector returned an invalid value")
     data = cast(Mapping[str, object], value)
     lines = list(_call_summary_renderables(step, title="Tool Call"))
     _append_model_call_section(lines, "Invocation", width=80)
     tool_call_id = str(data.get("tool_call_id") or "")
     call_id = str(data.get("call_id") or "")
-    lines.append(Text(f"Plugin       {step.given.plugin}"))
+    lines.append(Text(f"Plugin       {step.spec.plugin}"))
     lines.append(Text(f"Tool-call ID {tool_call_id}"))
     if call_id and call_id != tool_call_id:
         lines.append(Text(f"Call ID      {call_id}"))
@@ -422,8 +422,8 @@ def _render_execution_tree(
             if ordinal is not None:
                 activity = f"[{ordinal}] {activity}"
             if (
-                isinstance(step.noted, LoopStepNoted)
-                and step.noted.termination == "exec"
+                isinstance(step.report, LoopStepReport)
+                and step.report.termination == "exec"
             ):
                 activity += " · handed off"
             occur = _step_occurrence_label(
@@ -600,14 +600,14 @@ def _step_occurrence_label(
     facts = [_occurrence_index_label(step.occur)]
     items = fallback.items
     lanes = fallback.lanes
-    if isinstance(step.noted, CollectionStepNoted):
-        items = step.noted.total_items
+    if isinstance(step.report, CollectionStepReport):
+        items = step.report.total_items
     elif step.kind in {"run", "par"}:
-        count = getattr(step.given, "count", None)
+        count = getattr(step.spec, "count", None)
         if isinstance(count, int) and not isinstance(count, bool):
             items = count
     if step.kind == "par":
-        configured_lanes = getattr(step.given, "lanes", None)
+        configured_lanes = getattr(step.spec, "lanes", None)
         if isinstance(configured_lanes, int) and not isinstance(configured_lanes, bool):
             lanes = configured_lanes
     if items is not None:
@@ -1137,7 +1137,7 @@ def _render_collection(
                     ),
                     str(item.child_run_count),
                     str(item.child_step_count),
-                    item.record.created_at,
+                    item.record.started_at,
                     _step_occurrence_label(
                         item.record,
                         fallback=item.child_occurrence_totals,
@@ -1167,7 +1167,7 @@ def _render_collection(
                 str(item.child_run_count),
                 str(item.child_step_count),
                 str(item.record.parent) if item.record.parent is not None else "-",
-                item.record.created_at,
+                item.record.started_at,
                 _step_occurrence_label(
                     item.record,
                     fallback=item.child_occurrence_totals,
@@ -1344,25 +1344,25 @@ def _call_summary_renderables(
     lines: list[Text] = []
     _append_model_call_section(lines, title, width=80)
     lines.append(Text(f"Step         {step.ref}"))
-    if isinstance(step.given, StoredModelStepGiven):
-        lines.append(Text(f"Model        {step.given.model}"))
-    elif isinstance(step.given, ToolStepGiven):
-        lines.append(Text(f"Tool         {_display_tool_name(step.given.call.name)}"))
+    if isinstance(step.spec, StoredModelStepSpec):
+        lines.append(Text(f"Model        {step.spec.model}"))
+    elif isinstance(step.spec, ToolStepSpec):
+        lines.append(Text(f"Tool         {_display_tool_name(step.spec.call.name)}"))
     status = Text("Status       ")
     status.append_text(_status_activity(step.status, step.status))
     lines.append(status)
     elapsed = _format_elapsed(step.started_at, step.finished_at or "")
     if elapsed:
         lines.append(Text(f"Elapsed      {elapsed}"))
-    if isinstance(step.noted, ModelStepNoted):
-        usage = _model_usage_fact(step.noted)
+    if isinstance(step.report, ModelStepReport):
+        usage = _model_usage_fact(step.report)
         if usage:
             lines.append(Text(f"Usage        {usage}"))
     return tuple(lines)
 
 
-def _model_usage_fact(noted: ModelStepNoted) -> str:
-    usage = noted.usage
+def _model_usage_fact(report: ModelStepReport) -> str:
+    usage = report.usage
     if usage is not None:
         return _token_fact(
             usage.input_tokens,

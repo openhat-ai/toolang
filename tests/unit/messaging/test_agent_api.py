@@ -348,7 +348,7 @@ def test_event_publication_retries_exact_http_operation_and_recovers(tmp_path):
                         "updates": {
                             '["root","other"]': json.dumps(
                                 {
-                                    "v": 1,
+                                    "v": 2,
                                     "thread": "t",
                                     "root": "other",
                                     "terminal": "wrong",
@@ -396,7 +396,7 @@ def test_agent_api_rejects_bad_identity_lease_and_publications(tmp_path):
             publisher = AgentEventClient(alice)
             meta = await publisher.initialize()
             base = dict(
-                v=1,
+                v=2,
                 epoch=meta["epoch"],
                 generation=uuid4().hex,
                 recovery=uuid4().hex,

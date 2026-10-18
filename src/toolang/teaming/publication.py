@@ -51,7 +51,7 @@ def _entities(values: dict[str, str]) -> dict[str, Any]:
     for key, raw in values.items():
         kind, identity = _key(key)
         value = json.loads(raw)
-        if not isinstance(value, dict) or value.get("v") != 1:
+        if not isinstance(value, dict) or value.get("v") != 2:
             raise ValueError("Invalid entity version")
         if not isinstance(value.get("thread"), str):
             raise ValueError("Invalid entity thread")
@@ -155,7 +155,7 @@ def validate_publication(body: CommitRequest | StagingRequest, *, agent: str) ->
                 data = json.loads(body.data)
                 if (
                     set(data) != {"v", "source_cursor", "thread", "root", "event"}
-                    or data["v"] != 1
+                    or data["v"] != 2
                     or data["source_cursor"] != body.source
                 ):
                     raise ValueError("Invalid canonical envelope")

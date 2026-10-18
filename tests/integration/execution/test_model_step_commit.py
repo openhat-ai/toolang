@@ -28,7 +28,7 @@ from toolang.execution.executor.executor import _Execution
 from toolang.execution.records import (
     ControlRecord,
     RecallControlPayload,
-    StoredModelStepGiven,
+    StoredModelStepSpec,
 )
 from toolang.execution.types import (
     ControlRef,
@@ -103,8 +103,8 @@ agic chat(_: Part[]) -> Part[]:
             (step,) = harness.store.list_steps(run_id=run.id)
             assert step.index == 0
             assert step.preceded_by == (ControlRef.for_run(run.id, 0),)
-            assert isinstance(step.given, StoredModelStepGiven)
-            assert len(step.given.call.messages.delta) == 2
+            assert isinstance(step.spec, StoredModelStepSpec)
+            assert len(step.spec.call.messages.delta) == 2
             assert len(harness.adapter.invocations) == 1
             assert without_runtime_snapshots(
                 harness.adapter.invocations[0].call.messages
@@ -330,9 +330,9 @@ def test_reprepared_tool_loop_preserves_messages_and_input_dependencies(
             assert run.status == "succeeded", run.error
             steps = harness.store.list_steps(run_id=run.id)
             assert [
-                len(step.given.call.messages.delta)
+                len(step.spec.call.messages.delta)
                 for step in steps
-                if isinstance(step.given, StoredModelStepGiven)
+                if isinstance(step.spec, StoredModelStepSpec)
             ] == [2, 4 if skip_tools else 3]
             first, second = harness.adapter.invocations
             assert (

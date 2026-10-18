@@ -66,8 +66,8 @@ from .records import (
     ControlRecord,
     RunRecord,
     StepRecord,
-    StoredModelStepGiven,
-    StoredStepGiven,
+    StoredModelStepSpec,
+    StoredStepSpec,
     ThreadRecord,
     execution_error_from_data,
     execution_error_to_data,
@@ -78,12 +78,12 @@ from .records import (
     occurrence_to_data,
     field_refs_from_data,
     field_refs_to_data,
-    run_noted_from_data,
-    run_noted_to_data,
-    step_noted_from_data,
-    step_noted_to_data,
-    stored_step_given_from_data,
-    stored_step_given_to_data,
+    run_report_from_data,
+    run_report_to_data,
+    step_report_from_data,
+    step_report_to_data,
+    stored_step_spec_from_data,
+    stored_step_spec_to_data,
 )
 from .types import (
     ControlKind,
@@ -100,11 +100,11 @@ from .types import (
     ControlTiming,
     RunStatus,
     StepKind,
-    StepGiven,
-    StepNoted,
-    RunNoted,
-    ExecStepNoted,
-    LoopStepNoted,
+    StepSpec,
+    StepReport,
+    RunReport,
+    ExecStepReport,
+    LoopStepReport,
     StepStatus,
     RunRef,
     AwaitableHandle,
@@ -112,14 +112,14 @@ from .types import (
     StepRef,
     ThreadRef,
     Output,
-    ModelStepGiven,
+    ModelStepSpec,
     MessageTemplate,
     ModelMessages,
     Occurrence,
     Pointer,
     TypedRef,
-    ToolStepGiven,
-    ToolStepNoted,
+    ToolStepSpec,
+    ToolStepReport,
     RunCommand,
     validate_runtime_value,
     ConversationScope,
@@ -131,7 +131,7 @@ from .values import parts_from_value
 from . import talk
 from .errors import ThreadBusy
 
-_SCHEMA_VERSION = 59
+_SCHEMA_VERSION = 60
 _SUPPORTED_SCHEMA_VERSIONS = (_SCHEMA_VERSION,)
 _WRITABLE_SCHEMA_VERSIONS = (_SCHEMA_VERSION,)
 
@@ -279,14 +279,14 @@ class RunStore:
             """
             r.status IN ('pending', 'running')
             OR (:after IS NOT NULL AND (
-                (r.begin_cursor > :after AND r.begin_cursor <= :ceiling)
-                OR (r.end_cursor > :after AND r.end_cursor <= :ceiling)
+                (r._begin_cursor > :after AND r._begin_cursor <= :ceiling)
+                OR (r._end_cursor > :after AND r._end_cursor <= :ceiling)
                 OR EXISTS (SELECT 1 FROM steps s WHERE s.run = r.id AND (
-                    (s.begin_cursor > :after AND s.begin_cursor <= :ceiling)
-                    OR (s.end_cursor > :after AND s.end_cursor <= :ceiling)))
+                    (s._begin_cursor > :after AND s._begin_cursor <= :ceiling)
+                    OR (s._end_cursor > :after AND s._end_cursor <= :ceiling)))
                 OR EXISTS (SELECT 1 FROM controls c WHERE c.scope = 'run'
-                    AND c.target = r.id AND c.event_cursor > :after
-                    AND c.event_cursor <= :ceiling)))
+                    AND c.target = r.id AND c._event_cursor > :after
+                    AND c._event_cursor <= :ceiling)))
         """
             if self.stream_has_cursors
             else "r.status IN ('pending', 'running')"
@@ -349,7 +349,7 @@ class RunStore:
         cursor_filter = (
             ""
             if after is None or not self.stream_has_cursors
-            else (" AND event_cursor > :after AND event_cursor <= :ceiling")
+            else (" AND _event_cursor > :after AND _event_cursor <= :ceiling")
         )
         with self._lock:
             rows = self._conn.execute(
@@ -417,10 +417,10 @@ class RunStore:
         """Stamp the first publication inside the owning mutation transaction."""
         EventCursor.parse(cursor)
         if isinstance(ref, ControlRef):
-            table, column = "controls", "event_cursor"
+            table, column = "controls", "_event_cursor"
         elif boundary in {"begin", "end"}:
             table = "runs" if isinstance(ref, RunRef) else "steps"
-            column = f"{boundary}_cursor"
+            column = f"_{boundary}_cursor"
         else:
             raise ValueError("run and step cursors require a boundary")
         with self.write_transaction():
@@ -548,7 +548,7 @@ class RunStore:
         kind: ControlKind,
         timing: ControlTiming,
         payload: ControlPayloadUnion,
-        request: str | None,
+        request_id: str | None,
         client_id: str | None = None,
         status: ControlStatus,
         error: str | None,
@@ -565,7 +565,7 @@ class RunStore:
         self._conn.execute(
             """
             INSERT INTO controls(
-                id, scope, target, "index", kind, request, status, error, timing,
+                id, scope, target, "index", kind, request_id, status, error, timing,
                 payload, created_at, finished_at, _claimed, _revision, triggered_by, client_id
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
@@ -575,7 +575,7 @@ class RunStore:
                 str(ref.target),
                 ref.index,
                 kind,
-                request,
+                request_id,
                 status,
                 error,
                 timing,
@@ -662,7 +662,7 @@ class RunStore:
                     raise ValueError(f"run already exists: {run_id}")
                 if request_id is not None and (
                     self._conn.execute(
-                        "SELECT 1 FROM controls WHERE request = ?",
+                        "SELECT 1 FROM controls WHERE request_id = ?",
                         (request_id,),
                     ).fetchone()
                     is not None
@@ -751,7 +751,7 @@ class RunStore:
                     kind="run",
                     timing="immediate",
                     payload=payload,
-                    request=request_id,
+                    request_id=request_id,
                     client_id=client_id,
                     status="applied",
                     error=None,
@@ -795,7 +795,7 @@ class RunStore:
         cwd: str,
         created_at: str,
         context: LaunchContext,
-        tool_noted: ToolStepNoted | None,
+        tool_report: ToolStepReport | None,
         requested_thread: str | None = None,
         horizon: RunRef | StepRef | None = None,
     ) -> tuple[AwaitableHandle, bool]:
@@ -808,11 +808,11 @@ class RunStore:
             if step is None:
                 raise ValueError(f"spawn source step not found: {source}")
             if not (
-                isinstance(step.given, SpawnStmt)
+                isinstance(step.spec, SpawnStmt)
                 or (
-                    isinstance(step.given, ToolStepGiven)
-                    and step.given.trigger == "model"
-                    and step.given.call.name == "runtime__spawn"
+                    isinstance(step.spec, ToolStepSpec)
+                    and step.spec.trigger == "model"
+                    and step.spec.call.name == "runtime__spawn"
                 )
             ):
                 raise ValueError("spawn requires a flow spawn or model Tool Step")
@@ -897,11 +897,11 @@ class RunStore:
                 spawn_thread=requested_thread,
                 horizon=horizon,
             )
-            if isinstance(step.given, SpawnStmt):
-                output = Output(handle, step.given.binding)
-                noted = None
+            if isinstance(step.spec, SpawnStmt):
+                output = Output(handle, step.spec.binding)
+                report = None
             else:
-                call = step.given.call
+                call = step.spec.call
                 output = Output(
                     ToolResultPart(
                         tool_call_id=call.tool_call_id,
@@ -915,15 +915,15 @@ class RunStore:
                         },
                     )
                 )
-                if tool_noted is None:
+                if tool_report is None:
                     raise ValueError("tool spawn requires an admission summary")
-                noted = tool_noted
+                report = tool_report
             self.finish_step(
                 ref=source,
                 kind=step.kind,
                 status="succeeded",
                 output=output,
-                noted=noted,
+                report=report,
                 error=None,
                 finished_at=created_at,
             )
@@ -938,8 +938,8 @@ class RunStore:
         triggered_by: StepRef,
         input: CallInput[Value | TypedRef],
         created_at: str,
-        tool_noted: ToolStepNoted | None,
-        loops: Sequence[tuple[StepRef, LoopStepNoted]] = (),
+        tool_report: ToolStepReport | None,
+        loops: Sequence[tuple[StepRef, LoopStepReport]] = (),
     ) -> ControlRecord:
         """Atomically record one applied same-Run runnable replacement."""
 
@@ -982,7 +982,7 @@ class RunStore:
                 kind="exec",
                 timing="immediate",
                 payload=payload,
-                request=None,
+                request_id=None,
                 status="applied",
                 error=None,
                 created_at=created_at,
@@ -996,13 +996,13 @@ class RunStore:
                     kind="exec",
                     status="succeeded",
                     output=None,
-                    noted=ExecStepNoted(control_ref, runnable),
+                    report=ExecStepReport(control_ref),
                     error=None,
                     finished_at=created_at,
                 )
                 parent = triggered_by.parent
-                for ref, noted in loops:
-                    if ref != parent or noted.termination != "exec":
+                for ref, report in loops:
+                    if ref != parent or report.termination != "exec":
                         raise ValueError(
                             "exec must close repeat ancestors from inner to outer"
                         )
@@ -1014,7 +1014,7 @@ class RunStore:
                         kind="loop",
                         status="succeeded",
                         output=None,
-                        noted=noted,
+                        report=report,
                         error=None,
                         finished_at=created_at,
                         aborted_by=control_ref,
@@ -1025,13 +1025,13 @@ class RunStore:
             elif loops:
                 raise ValueError("tool exec cannot close Flow repeats")
             else:
-                given = _step_from_row(step).given
-                if not isinstance(given, ToolStepGiven) or (
-                    given.trigger != "model" or given.call.name != "runtime__exec"
+                spec = _step_from_row(step).spec
+                if not isinstance(spec, ToolStepSpec) or (
+                    spec.trigger != "model" or spec.call.name != "runtime__exec"
                 ):
                     raise ValueError("tool exec requires a model exec Tool Step")
-                call = given.call
-                if tool_noted is None:
+                call = spec.call
+                if tool_report is None:
                     raise ValueError("tool exec requires an admission summary")
                 self.finish_step(
                     ref=triggered_by,
@@ -1046,7 +1046,7 @@ class RunStore:
                             output={"controls": [str(control_ref)]},
                         )
                     ),
-                    noted=tool_noted,
+                    report=tool_report,
                     error=None,
                     finished_at=created_at,
                 )
@@ -1158,7 +1158,7 @@ class RunStore:
                 timing="immediate",
                 payload=payload,
                 triggered_by=triggered_by,
-                request=None,
+                request_id=None,
                 status="applied",
                 error=None,
                 created_at=created_at,
@@ -1217,7 +1217,7 @@ class RunStore:
             try:
                 if request_id is not None and (
                     self._conn.execute(
-                        "SELECT 1 FROM controls WHERE request = ?",
+                        "SELECT 1 FROM controls WHERE request_id = ?",
                         (request_id,),
                     ).fetchone()
                     is not None
@@ -1274,7 +1274,7 @@ class RunStore:
                     kind=kind,
                     timing=timing,
                     payload=payload,
-                    request=request_id,
+                    request_id=request_id,
                     client_id=client_id,
                     status="pending",
                     error=None,
@@ -1538,7 +1538,7 @@ class RunStore:
             try:
                 if request_id is not None and (
                     self._conn.execute(
-                        "SELECT 1 FROM controls WHERE request = ?",
+                        "SELECT 1 FROM controls WHERE request_id = ?",
                         (request_id,),
                     ).fetchone()
                     is not None
@@ -1557,7 +1557,7 @@ class RunStore:
                     kind="create",
                     timing="immediate",
                     payload=CreateControlPayload(),
-                    request=request_id,
+                    request_id=request_id,
                     client_id=client_id,
                     status="applied",
                     error=None,
@@ -1618,7 +1618,7 @@ class RunStore:
             try:
                 if request_id is not None and (
                     self._conn.execute(
-                        "SELECT 1 FROM controls WHERE request = ?",
+                        "SELECT 1 FROM controls WHERE request_id = ?",
                         (request_id,),
                     ).fetchone()
                     is not None
@@ -1665,7 +1665,7 @@ class RunStore:
                     kind="fork",
                     timing="immediate",
                     payload=payload,
-                    request=request_id,
+                    request_id=request_id,
                     client_id=client_id,
                     status="applied",
                     error=None,
@@ -1724,7 +1724,7 @@ class RunStore:
             try:
                 if request_id is not None and (
                     self._conn.execute(
-                        "SELECT 1 FROM controls WHERE request = ?",
+                        "SELECT 1 FROM controls WHERE request_id = ?",
                         (request_id,),
                     ).fetchone()
                     is not None
@@ -1767,7 +1767,7 @@ class RunStore:
                         rewind_through=RunRef(history[-1].id),
                         rewind_if=expected_head,
                     ),
-                    request=request_id,
+                    request_id=request_id,
                     client_id=client_id,
                     status="applied",
                     error=None,
@@ -1883,14 +1883,14 @@ class RunStore:
         error: ErrorMessage | ErrorRef | None = None,
         finished_at: str | None = None,
         output: Output | None = None,
-        noted: RunNoted | None = None,
+        report: RunReport | None = None,
     ) -> RunRecord:
         now = finished_at or utc_now()
         with self.write_transaction():
             self._conn.execute(
                 """
                 UPDATE runs
-                SET status = ?, error = ?, output = ?, finished_at = ?, noted = ?
+                SET status = ?, error = ?, output = ?, finished_at = ?, report = ?
                 WHERE id = ? AND status IN ('pending', 'running')
                 """,
                 (
@@ -1898,7 +1898,7 @@ class RunStore:
                     _dump_execution_error(error),
                     _dump_json(output_to_data(output)) if output is not None else None,
                     now,
-                    _dump_json(run_noted_to_data(noted)),
+                    _dump_json(run_report_to_data(report)),
                     run_id,
                 ),
             )
@@ -1914,7 +1914,7 @@ class RunStore:
             or run.error != error
             or run.output != output
             or run.finished_at != now
-            or run.noted != noted
+            or run.report != report
         ):
             raise ValueError(f"conflicting run_end event: {run_id}")
         return run
@@ -2599,7 +2599,7 @@ class RunStore:
 
         Steps have immutable begin/end records; retries change the owning Run's
         control even when Step IDs are reused. Controls already have revisions.
-        No output, given, noted, or payload bodies are loaded for this manifest.
+        No output, spec, report, or payload bodies are loaded for this manifest.
         """
 
         grouped: dict[str, list[str]] = {"runs": [], "steps": [], "controls": []}
@@ -2608,7 +2608,7 @@ class RunStore:
             grouped[table].append(ref)
         markers = {
             "runs": "json_array(control, state, status, created_at, started_at, finished_at)",
-            "steps": "json_array(status, created_at, started_at, finished_at)",
+            "steps": "json_array(status, started_at, finished_at)",
             "controls": "json_array(_revision)",
         }
         versions: dict[str, str] = {}
@@ -2689,7 +2689,7 @@ class RunStore:
         input: Sequence[FieldRef],
         preceded_by: tuple[ControlRef, ...] = (),
         occurrence: Occurrence | None = None,
-        given: StepGiven,
+        spec: StepSpec,
         state: ControlRef | None = None,
         started_at: str,
     ) -> StepRecord:
@@ -2704,26 +2704,26 @@ class RunStore:
                 if run_row is None:
                     raise ValueError(f"run not found: {ref.run}")
                 state = ControlRef.parse(str(run_row["state"]))
-            stored_given: StoredStepGiven = (
+            stored_spec: StoredStepSpec = (
                 self.capture_model_call(
                     step=ref,
-                    model=given.model,
-                    setup=given.setup,
-                    call=given.call,
-                    messages=given.messages,
-                    state=given.state,
+                    model=spec.model,
+                    setup=spec.setup,
+                    call=spec.call,
+                    messages=spec.messages,
+                    state=spec.state,
                 )
-                if isinstance(given, ModelStepGiven)
-                else cast(StoredStepGiven, given)
+                if isinstance(spec, ModelStepSpec)
+                else cast(StoredStepSpec, spec)
             )
-            given_data = stored_step_given_to_data(kind, stored_given)
+            spec_data = stored_step_spec_to_data(kind, stored_spec)
             self._conn.execute(
                 """
                 INSERT INTO steps(
                     id, run, path, kind, input, state,
-                    output, occur, given, noted,
-                    status, error, created_at, started_at, finished_at, preceded_by
-                ) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, 'null', 'running', NULL, ?, ?, NULL, ?)
+                    output, occur, spec, report,
+                    status, error, started_at, finished_at, preceded_by
+                ) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, 'null', 'running', NULL, ?, NULL, ?)
                 ON CONFLICT(id) DO NOTHING
                 """,
                 (
@@ -2736,8 +2736,7 @@ class RunStore:
                     _dump_json(occurrence_to_data(occurrence))
                     if occurrence is not None
                     else None,
-                    _dump_json(given_data),
-                    started_at,
+                    _dump_json(spec_data),
                     started_at,
                     _dump_json([str(item) for item in preceded_by]),
                 ),
@@ -2755,7 +2754,7 @@ class RunStore:
                 or step.input != tuple(input)
                 or step.state != state
                 or step.occur != occurrence
-                or step.given != stored_given
+                or step.spec != stored_spec
                 or step.started_at != started_at
             ):
                 raise ValueError(f"conflicting step_begin event: {ref}")
@@ -2781,7 +2780,7 @@ class RunStore:
         kind: StepKind,
         status: StepStatus,
         output: Output | None,
-        noted: StepNoted,
+        report: StepReport,
         error: ErrorMessage | ErrorRef | None,
         finished_at: str,
         aborted_by: ControlRef | None = None,
@@ -2802,20 +2801,20 @@ class RunStore:
             # Later delivery (including interruption) cannot alter that fact.
             if existing_step.status == "succeeded" and (
                 kind == "spawn"
-                or isinstance(existing_step.given, RunStmt)
-                and existing_step.given.asynchronous
+                or isinstance(existing_step.spec, RunStmt)
+                and existing_step.spec.asynchronous
                 or (
-                    isinstance(existing_step.given, ToolStepGiven)
-                    and existing_step.given.call.name
+                    isinstance(existing_step.spec, ToolStepSpec)
+                    and existing_step.spec.call.name
                     in {
                         "runtime__spawn",
                         "runtime__exec",
                         "runtime__steer",
                         "runtime__cancel",
                     }
-                    or isinstance(existing_step.given, ToolStepGiven)
-                    and existing_step.given.call.name == "runtime__run"
-                    and existing_step.given.call.input.get("async") is True
+                    or isinstance(existing_step.spec, ToolStepSpec)
+                    and existing_step.spec.call.name == "runtime__run"
+                    and existing_step.spec.call.input.get("async") is True
                 )
             ):
                 if status == "succeeded" and output != existing_step.output:
@@ -2825,14 +2824,14 @@ class RunStore:
                 self._conn.execute(
                     """
                     UPDATE steps
-                    SET output = ?, noted = ?, status = ?, error = ?, finished_at = ?, aborted_by = ?
+                    SET output = ?, report = ?, status = ?, error = ?, finished_at = ?, aborted_by = ?
                     WHERE id = ?
                     """,
                     (
                         _dump_json(output_to_data(output))
                         if output is not None
                         else None,
-                        _dump_json(step_noted_to_data(kind, noted)),
+                        _dump_json(step_report_to_data(kind, report)),
                         status,
                         _dump_execution_error(error),
                         finished_at,
@@ -2843,8 +2842,8 @@ class RunStore:
                 if (
                     kind == "tool"
                     and status == "succeeded"
-                    and isinstance(existing_step.given, ToolStepGiven)
-                    and existing_step.given.call.name == "runtime__chdir"
+                    and isinstance(existing_step.spec, ToolStepSpec)
+                    and existing_step.spec.call.name == "runtime__chdir"
                     and output is not None
                     and isinstance(output.value, ToolResultPart)
                 ):
@@ -2863,7 +2862,7 @@ class RunStore:
                         payload=ChdirControlPayload(
                             cwd=cwd, cause="chdir", state=existing_step.state
                         ),
-                        request=None,
+                        request_id=None,
                         status="applied",
                         error=None,
                         created_at=finished_at,
@@ -2882,7 +2881,7 @@ class RunStore:
             step.status != status
             or step.aborted_by != aborted_by
             or step.output != output
-            or step.noted != noted
+            or step.report != report
             or step.error != error
             or step.finished_at != finished_at
         ):
@@ -2947,7 +2946,7 @@ class RunStore:
         call: ModelCall,
         messages: ModelMessages | None = None,
         state: str | None = None,
-    ) -> StoredModelStepGiven:
+    ) -> StoredModelStepSpec:
         """Persist call settings and the new message templates for this boundary."""
 
         messages = messages or ModelMessages(step, literal_delta(call.messages))
@@ -2970,7 +2969,7 @@ class RunStore:
             if messages.head != step:
                 # Read only sequence identities, never old message bodies.
                 rows = self._conn.execute(
-                    "SELECT id, json_extract(given, '$.call.messages.head') AS head "
+                    "SELECT id, json_extract(spec, '$.call.messages.head') AS head "
                     "FROM steps WHERE run = ? AND kind = 'model'",
                     (step.run_id,),
                 )
@@ -3022,7 +3021,7 @@ class RunStore:
             )
         from .records import ModelCallRefs
 
-        return StoredModelStepGiven(
+        return StoredModelStepSpec(
             state=state,
             model=model,
             setup=setup,
@@ -3123,7 +3122,7 @@ class RunStore:
 
         requested = {step.ref for step in steps}
         for step in steps:
-            if not isinstance(step.given, StoredModelStepGiven):
+            if not isinstance(step.spec, StoredModelStepSpec):
                 raise ValueError(f"step is not a model call: {step.ref}")
         run_ids = tuple(dict.fromkeys(step.run_id for step in steps))
         if not run_ids:
@@ -3134,22 +3133,22 @@ class RunStore:
         }
         ends: dict[StepRef, tuple[int, ...]] = {}
         for step in steps:
-            assert isinstance(step.given, StoredModelStepGiven)
-            head = step.given.call.messages.head
+            assert isinstance(step.spec, StoredModelStepSpec)
+            head = step.spec.call.messages.head
             baseline = by_ref.get(head)
             if (
                 head.run != step.ref.run
                 or head.indices > step.ref.indices
                 or baseline is None
-                or not isinstance(baseline.given, StoredModelStepGiven)
-                or baseline.given.call.messages.head != head
+                or not isinstance(baseline.spec, StoredModelStepSpec)
+                or baseline.spec.call.messages.head != head
             ):
                 raise ValueError(f"invalid model message head: {head}")
             ends[head] = max(ends.get(head, ()), step.ref.indices)
         settings = [
-            step.given.call
+            step.spec.call
             for step in steps
-            if isinstance(step.given, StoredModelStepGiven)
+            if isinstance(step.spec, StoredModelStepSpec)
         ]
         texts = self._get_model_texts({call.instructions for call in settings})
         toolsets = self._get_toolsets(
@@ -3165,10 +3164,9 @@ class RunStore:
         calls: dict[StepRef, ModelCall] = {}
         for run_id, run_steps in grouped.items():
             first = min(
-                step.given.call.messages.head.indices
+                step.spec.call.messages.head.indices
                 for step in steps
-                if step.run_id == run_id
-                and isinstance(step.given, StoredModelStepGiven)
+                if step.run_id == run_id and isinstance(step.spec, StoredModelStepSpec)
             )
             last = max(
                 (i for i, step in enumerate(run_steps) if step.ref in requested),
@@ -3178,10 +3176,10 @@ class RunStore:
             head: StepRef | None = None
             for step in run_steps[: last + 1]:
                 if step.ref.indices < first or not isinstance(
-                    step.given, StoredModelStepGiven
+                    step.spec, StoredModelStepSpec
                 ):
                     continue
-                call = step.given.call
+                call = step.spec.call
                 if call.messages.head == step.ref:
                     head = step.ref
                     messages.clear()
@@ -3653,9 +3651,9 @@ class RunStore:
                     created_at TEXT NOT NULL,
                     started_at TEXT,
                     finished_at TEXT,
-                    noted TEXT,
-                    begin_cursor TEXT,
-                    end_cursor TEXT
+                    report TEXT,
+                    _begin_cursor TEXT,
+                    _end_cursor TEXT
                 )
                 """
             )
@@ -3667,7 +3665,7 @@ class RunStore:
                     target TEXT NOT NULL,
                     "index" INTEGER NOT NULL,
                     kind TEXT NOT NULL,
-                    request TEXT,
+                    request_id TEXT,
                     status TEXT NOT NULL,
                     error TEXT,
                     timing TEXT NOT NULL,
@@ -3677,7 +3675,7 @@ class RunStore:
                     finished_at TEXT,
                     _claimed INTEGER NOT NULL DEFAULT 0,
                     _revision INTEGER NOT NULL,
-                    event_cursor TEXT,
+                    _event_cursor TEXT,
                     client_id TEXT,
                     UNIQUE(target, "index")
                 )
@@ -3685,9 +3683,9 @@ class RunStore:
             )
             self._conn.execute(
                 """
-                CREATE UNIQUE INDEX IF NOT EXISTS idx_controls_request
-                ON controls(request)
-                WHERE request IS NOT NULL
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_controls_request_id
+                ON controls(request_id)
+                WHERE request_id IS NOT NULL
                 """
             )
             self._conn.execute(
@@ -3732,9 +3730,9 @@ class RunStore:
             ):
                 self._conn.execute(statement)
             for table, names in (
-                ("runs", ("begin_cursor", "end_cursor")),
-                ("steps", ("begin_cursor", "end_cursor")),
-                ("controls", ("event_cursor", "client_id")),
+                ("runs", ("_begin_cursor", "_end_cursor")),
+                ("steps", ("_begin_cursor", "_end_cursor")),
+                ("controls", ("_event_cursor", "client_id")),
             ):
                 for name in names:
                     self._conn.execute(
@@ -3759,15 +3757,14 @@ def _create_steps_table(connection: sqlite3.Connection) -> None:
             state TEXT NOT NULL,
             output TEXT,
             occur TEXT,
-            given TEXT NOT NULL,
-            noted TEXT NOT NULL,
+            spec TEXT NOT NULL,
+            report TEXT NOT NULL,
             status TEXT NOT NULL,
             error TEXT,
-            created_at TEXT NOT NULL,
             started_at TEXT NOT NULL,
             finished_at TEXT,
-            begin_cursor TEXT,
-            end_cursor TEXT,
+            _begin_cursor TEXT,
+            _end_cursor TEXT,
             UNIQUE(run, path)
         )
         """
@@ -3932,10 +3929,10 @@ def _run_from_row(row: sqlite3.Row) -> RunRecord:
         label="run occurrence",
     )
     return RunRecord(
-        begin_cursor=cast(str | None, dict(row).get("begin_cursor")),
-        end_cursor=cast(str | None, dict(row).get("end_cursor")),
-        noted=run_noted_from_data(_load_json(str(row["noted"])))
-        if row["noted"] is not None
+        _begin_cursor=cast(str | None, dict(row).get("_begin_cursor")),
+        _end_cursor=cast(str | None, dict(row).get("_end_cursor")),
+        report=run_report_from_data(_load_json(str(row["report"])))
+        if row["report"] is not None
         else None,
         id=str(row["id"]),
         parent=(
@@ -3979,13 +3976,13 @@ def _step_from_row(row: sqlite3.Row) -> StepRecord:
         raw["occur"],
         label="step occurrence",
     )
-    given_data = _load_stored_object(raw["given"], label="step given")
-    if raw["noted"] is None:
-        raise ValueError("stored step noted must be JSON null or an object")
-    noted_data = _load_json(str(raw["noted"]))
+    spec_data = _load_stored_object(raw["spec"], label="step spec")
+    if raw["report"] is None:
+        raise ValueError("stored step report must be JSON null or an object")
+    report_data = _load_json(str(raw["report"]))
     return StepRecord(
-        begin_cursor=cast(str | None, raw.get("begin_cursor")),
-        end_cursor=cast(str | None, raw.get("end_cursor")),
+        _begin_cursor=cast(str | None, raw.get("_begin_cursor")),
+        _end_cursor=cast(str | None, raw.get("_end_cursor")),
         id=str(raw["id"]),
         kind=kind,
         input=field_refs_from_data(input_data),
@@ -3998,11 +3995,10 @@ def _step_from_row(row: sqlite3.Row) -> StepRecord:
         state=ControlRef.parse(str(raw["state"])),
         output=(output_from_data(output_data) if output_data is not None else None),
         occur=occurrence_from_data(occurrence_data),
-        given=stored_step_given_from_data(kind, given_data),
-        noted=step_noted_from_data(kind, noted_data),
+        spec=stored_step_spec_from_data(kind, spec_data),
+        report=step_report_from_data(kind, report_data),
         status=cast(StepStatus, raw["status"]),
         error=_load_execution_error(raw["error"]),
-        created_at=str(raw["created_at"]),
         started_at=str(raw["started_at"]),
         finished_at=str(raw["finished_at"]) if raw["finished_at"] is not None else None,
     )
@@ -4029,7 +4025,7 @@ def _control_from_row(row: sqlite3.Row) -> ControlRecord:
     kind = cast(ControlKind, row["kind"])
     payload = control_payload_from_data(kind, _load_json(str(row["payload"])))
     return ControlRecord(
-        event_cursor=cast(str | None, dict(row).get("event_cursor")),
+        _event_cursor=cast(str | None, dict(row).get("_event_cursor")),
         id=str(row["id"]),
         kind=kind,
         payload=payload,
@@ -4037,7 +4033,7 @@ def _control_from_row(row: sqlite3.Row) -> ControlRecord:
         triggered_by=StepRef.parse(row["triggered_by"])
         if row["triggered_by"] is not None
         else None,
-        request=str(row["request"]) if row["request"] is not None else None,
+        request_id=str(row["request_id"]) if row["request_id"] is not None else None,
         client_id=str(row["client_id"])
         if "client_id" in row.keys() and row["client_id"] is not None
         else None,
@@ -4049,7 +4045,7 @@ def _control_from_row(row: sqlite3.Row) -> ControlRecord:
 
 
 def _replay_messages_from_step(step: StepRecord) -> list[Message]:
-    if isinstance(step.given, ToolStepGiven) and step.given.trigger == "runtime":
+    if isinstance(step.spec, ToolStepSpec) and step.spec.trigger == "runtime":
         return []
     role = step_message_role(step.kind)
     if role is None or not step.output:

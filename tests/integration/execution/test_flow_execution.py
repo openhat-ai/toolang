@@ -956,7 +956,7 @@ def test_flow_step_events_record_only_values_read_by_the_statement(
         if step.parent is None
     ]
     assert [step.input for step in steps] == [(), ()]
-    assert [step.given for step in steps] == list(parent.stmts)
+    assert [step.spec for step in steps] == list(parent.stmts)
     asyncio.run(executor.stop())
 
 
@@ -1372,7 +1372,7 @@ def test_implicit_thread_anchor_ignores_child_runs(tmp_path: Path) -> None:
         store.begin_step(
             ref=StepRef.parse("run_root.0"),
             kind="run",
-            given=RunStmt(span=Span(line=1), runnable="flow:test"),
+            spec=RunStmt(span=Span(line=1), runnable="flow:test"),
             input=(
                 FieldRef.from_path(
                     ControlRef.for_run("run_root", 0),
@@ -1408,7 +1408,7 @@ def test_implicit_thread_anchor_ignores_child_runs(tmp_path: Path) -> None:
         status="succeeded",
         finished_at="2026-01-01T00:00:06Z",
         output=None,
-        noted=None,
+        report=None,
         error=None,
     )
     store.finish_run(
@@ -1746,7 +1746,7 @@ def test_private_event_projector_persists_run_and_step_records(
     store.begin_step(
         ref=StepRef.parse("run_test.0"),
         kind="value",
-        given=LetStmt(span=Span(line=1), value="done"),
+        spec=LetStmt(span=Span(line=1), value="done"),
         input=(
             FieldRef.from_path(
                 ControlRef.for_run("run_test", 0), "payload", "input", "_"
@@ -1760,7 +1760,7 @@ def test_private_event_projector_persists_run_and_step_records(
         status="succeeded",
         output=Output(value_for_type("Part[]", (TextPart(text="done"),)), "_"),
         finished_at="2026-01-01T00:00:03Z",
-        noted=None,
+        report=None,
         error=None,
     )
     store.finish_run(
@@ -1805,7 +1805,7 @@ def test_step_queries_use_exact_canonical_run_ids(tmp_path: Path) -> None:
         store.begin_step(
             ref=StepRef.parse(f"{run_id}.0"),
             kind="value",
-            given=LetStmt(span=Span(line=1), value=text),
+            spec=LetStmt(span=Span(line=1), value=text),
             started_at="2026-01-01T00:00:02Z",
             input=(),
         )
@@ -1815,7 +1815,7 @@ def test_step_queries_use_exact_canonical_run_ids(tmp_path: Path) -> None:
             status="succeeded",
             output=Output(value_for_type("Part[]", (TextPart(text=text),)), "_"),
             finished_at="2026-01-01T00:00:03Z",
-            noted=None,
+            report=None,
             error=None,
         )
         store.finish_run(

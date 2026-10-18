@@ -137,11 +137,11 @@ def test_two_clients_share_chat_thread_and_controls_keep_both_identities(tmp_pat
                     run_id=result.headers["X-Toolang-Run-ID"], index=0
                 )
                 assert record is not None
-                assert (record.client_id, record.request) == (client_id, request_id)
+                assert (record.client_id, record.request_id) == (client_id, request_id)
             assert len(core.store.list_threads()) == 1
             control = core.store.get_thread_control(thread_id=thread, index=0)
             assert control is not None
-            assert (control.client_id, control.request) == ("web-1", "create-1")
+            assert (control.client_id, control.request_id) == ("web-1", "create-1")
     finally:
         asyncio.run(core.close())
 

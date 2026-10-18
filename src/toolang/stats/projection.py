@@ -7,11 +7,11 @@ from typing import Any
 from toolang.base.money import cost_units
 from toolang.execution.accounting import selected_cost_is_approximate, selected_usd_cost
 from toolang.execution.records import (
-    StoredModelStepGiven,
-    step_noted_from_data,
-    stored_step_given_from_data,
+    StoredModelStepSpec,
+    step_report_from_data,
+    stored_step_spec_from_data,
 )
-from toolang.execution.types import ModelStepNoted, ToolStepNoted
+from toolang.execution.types import ModelStepReport, ToolStepReport
 
 from .types import Contribution, Metrics, seconds
 
@@ -34,37 +34,37 @@ def project_step(row: Mapping[str, Any], root: str, thread: str) -> list[Contrib
     kind = row["kind"]
     if kind not in ("model", "tool") or row["finished_at"] is None:
         return []
-    noted = step_noted_from_data(kind, json.loads(row["noted"]))
-    if not isinstance(noted, (ModelStepNoted, ToolStepNoted)) or not noted.invoked:
+    report = step_report_from_data(kind, json.loads(row["report"]))
+    if not isinstance(report, (ModelStepReport, ToolStepReport)) or not report.invoked:
         return []
-    if isinstance(noted, ToolStepNoted):
+    if isinstance(report, ToolStepReport):
         return [
             Contribution(
                 seconds(row["started_at"]), root, thread, "", Metrics(tool_calls=1)
             )
         ]
-    given = stored_step_given_from_data("model", json.loads(row["given"]))
-    assert isinstance(given, StoredModelStepGiven)
-    usage, cost = noted.usage, selected_usd_cost(noted.cost)
+    spec = stored_step_spec_from_data("model", json.loads(row["spec"]))
+    assert isinstance(spec, StoredModelStepSpec)
+    usage, cost = report.usage, selected_usd_cost(report.cost)
     return [
         Contribution(
             seconds(row["started_at"]),
             root,
             thread,
-            given.model,
+            spec.model,
             Metrics(model_calls=1),
         ),
         Contribution(
             seconds(row["finished_at"]),
             root,
             thread,
-            given.model,
+            spec.model,
             Metrics(
                 usage.input_tokens if usage else None,
                 usage.output_tokens if usage else None,
                 usage.cache_read_tokens if usage else None,
                 cost_units(cost) if cost is not None else None,
-                spend_approximate=selected_cost_is_approximate(noted.cost),
+                spend_approximate=selected_cost_is_approximate(report.cost),
             ),
         ),
     ]

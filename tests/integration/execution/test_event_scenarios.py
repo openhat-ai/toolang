@@ -35,8 +35,8 @@ from toolang.execution.events import (
 from toolang.execution.subscriptions import RecordSnapshot
 from toolang.execution.types import (
     ThreadPrefix,
-    ToolStepGiven,
-    ToolStepNoted,
+    ToolStepSpec,
+    ToolStepReport,
     StepRef,
 )
 from toolang.lang.input import resolve_input_parts
@@ -115,19 +115,19 @@ agic calculate(_: Text) -> Text:
                 for event in tracer.events
                 if isinstance(event, StepEnd) and event.kind == "tool"
             )
-            assert isinstance(tool_begin.given, ToolStepInfo)
-            assert tool_begin.given.summary == "Executing double: 3"
-            assert isinstance(tool_end.noted, StepSummary)
-            assert tool_end.noted.summary == "Executed double: 3"
+            assert isinstance(tool_begin.spec, ToolStepInfo)
+            assert tool_begin.spec.summary == "Executing double: 3"
+            assert isinstance(tool_end.report, StepSummary)
+            assert tool_end.report.summary == "Executed double: 3"
 
             stored_tool = next(
                 step
                 for step in harness.store.list_steps(run_id=run.id)
                 if str(step.ref) == tool_begin.step
             )
-            assert isinstance(stored_tool.given, ToolStepGiven)
-            assert stored_tool.given.summary == "Executing double: 3"
-            assert stored_tool.noted == ToolStepNoted(
+            assert isinstance(stored_tool.spec, ToolStepSpec)
+            assert stored_tool.spec.summary == "Executing double: 3"
+            assert stored_tool.report == ToolStepReport(
                 summary="Executed double: 3", invoked=True
             )
 
@@ -306,8 +306,8 @@ flow parallel(_: Text) -> Text[]:
             )
             parent_event = tracer.events[parent_begin]
             assert isinstance(parent_event, StepBegin)
-            assert isinstance(parent_event.given, FlowStepInfo)
-            assert parent_event.given.doc == "Run workers in parallel."
+            assert isinstance(parent_event.spec, FlowStepInfo)
+            assert parent_event.spec.doc == "Run workers in parallel."
             for child in children:
                 begin_event = next(
                     event

@@ -126,7 +126,7 @@ def test_create_and_fork_controls_preserve_identity_and_anchor(
         create_control = reopened.list_thread_controls(thread_id=source)
         assert len(create_control) == 1
         assert create_control[0].kind == "create"
-        assert create_control[0].request == "thread-create-1"
+        assert create_control[0].request_id == "thread-create-1"
         assert create_control[0].payload == CreateControlPayload()
         assert create_control[0].status == "applied"
         assert create_control[0].finished_at == create_control[0].created_at
@@ -142,7 +142,7 @@ def test_create_and_fork_controls_preserve_identity_and_anchor(
             fork_head=ControlRef.for_thread(source, 0),
             fork_at=RunRef(first_run),
         )
-        assert fork_control[0].request == "thread-fork-1"
+        assert fork_control[0].request_id == "thread-fork-1"
         assert fork_control[0].status == "applied"
         assert [
             run.id
@@ -230,7 +230,7 @@ def test_rewind_controls_form_a_monotonic_head_chain(
                     rewind_if=ControlRef.for_thread(thread, 1),
                 ),
             ]
-            assert [control.request for control in controls] == [
+            assert [control.request_id for control in controls] == [
                 None,
                 "thread-rewind-1",
                 "thread-rewind-2",
@@ -648,12 +648,12 @@ def test_fork_listener_notifications_follow_commit_order(tmp_path):
                 thread_id=str(event.control.target), index=event.control.index
             )
             assert control is not None
-            if control.request == "first-fork":
+            if control.request_id == "first-fork":
                 first_notifying.set()
                 assert release_first.wait(timeout=10)
             else:
                 second_notified.set()
-            notifications.append(control.request)
+            notifications.append(control.request_id)
 
     async def scenario():
         async with harness:

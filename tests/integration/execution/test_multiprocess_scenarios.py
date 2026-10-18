@@ -456,7 +456,7 @@ def test_duplicate_run_control_request_has_one_process_winner(
             control
             for run_id in ("run_request_a", "run_request_b")
             for control in reopened.list_run_controls(run_id=run_id)
-            if control.request == "shared-control-request"
+            if control.request_id == "shared-control-request"
         ]
         assert len(controls) == 1
         assert controls[0].index == 1

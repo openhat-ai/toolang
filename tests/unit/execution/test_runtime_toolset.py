@@ -11,8 +11,8 @@ import pytest
 
 from toolang.base.errors import ToolangError
 from toolang.base.types.run import ToolCall
-from toolang.execution.records import step_given_from_data, step_given_to_data
-from toolang.execution.types import ToolStepGiven
+from toolang.execution.records import step_spec_from_data, step_spec_to_data
+from toolang.execution.types import ToolStepSpec
 from toolang.plugin.toolsets.collections import ToolCollection
 from toolang.plugin.toolsets.loading import load_tools
 from toolang.base.types.tool import RuntimeToolContext, ToolResult
@@ -219,17 +219,17 @@ def test_runtime_arguments_cannot_supply_authority(
 
 @pytest.mark.parametrize("trigger", ["model", "runtime"])
 def test_tool_trigger_roundtrips_in_the_record_codec(trigger) -> None:
-    given = ToolStepGiven(
+    spec = ToolStepSpec(
         "test", ToolCall("call", "provider", "test__run", {}), trigger=trigger
     )
-    data = step_given_to_data("tool", given)
+    data = step_spec_to_data("tool", spec)
     assert data["trigger"] == trigger
-    assert step_given_from_data("tool", data) == given
+    assert step_spec_from_data("tool", data) == spec
     with pytest.raises(ValueError, match="trigger"):
-        step_given_from_data("tool", {**data, "trigger": "argument"})
+        step_spec_from_data("tool", {**data, "trigger": "argument"})
     del data["trigger"]
     with pytest.raises(ValueError, match="trigger"):
-        step_given_from_data("tool", data)
+        step_spec_from_data("tool", data)
 
 
 def test_execute_name_is_no_longer_callable() -> None:

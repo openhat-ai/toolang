@@ -140,7 +140,7 @@ def test_tool_reply_origin_and_backend_cursor_restart(tmp_path, custom):
         [
             reply,
             ModelCallResult(message=ModelMessage.assistant("Handled.")),
-            ModelCallResult(message=ModelMessage.assistant("Noted.")),
+            ModelCallResult(message=ModelMessage.assistant("Report.")),
         ],
         source=source,
         state=state,

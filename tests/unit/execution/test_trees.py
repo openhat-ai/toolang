@@ -25,7 +25,7 @@ from toolang.execution.types import (
     StepRef,
     ModelCost,
     TokenUsage,
-    ModelStepNoted,
+    ModelStepReport,
 )
 from toolang.lang.ast import (
     LetStmt,
@@ -172,19 +172,19 @@ def test_tree_merges_loop_steps_and_runs_at_authored_position(
     finally:
         store.close()
 
-    assert isinstance(body.given, LetStmt)
+    assert isinstance(body.spec, LetStmt)
     statement = RepeatStmt(
         span=Span(line=1),
         count=1,
         runnable="ready",
-        stmts=(body.given,),
+        stmts=(body.spec,),
         until_index=until_index,
     )
     encoded = cast(dict[str, object], to_data(statement))
     if until_index is None:
         # Historical records have no positional field and retain trailing order.
         encoded.pop("until_index")
-    loop = replace(loop, given=flow_stmt_from_data(encoded))
+    loop = replace(loop, spec=flow_stmt_from_data(encoded))
     snapshot = replace(snapshot, steps=(loop, body))
     tree = build_execution_tree(snapshot)
     children = (
@@ -245,7 +245,7 @@ def test_tree_rejects_missing_parallel_coordinates_and_multiple_run_children(
     run_step = replace(
         parallel,
         kind="run",
-        given=RunStmt(span=Span(line=1), runnable="agic:test"),
+        spec=RunStmt(span=Span(line=1), runnable="agic:test"),
     )
     child = next(run for run in snapshot.runs if run.id == "run_corrupt_parallel")
     duplicate = replace(
@@ -307,7 +307,7 @@ def test_tree_aggregates_partial_accounting_without_inventing_values(
     finally:
         store.close()
 
-    accounting = ModelStepNoted(
+    accounting = ModelStepReport(
         usage=TokenUsage(input_tokens=10, output_tokens=4, reasoning_tokens=3),
         cost=ModelCost(
             amount=0.025,
@@ -321,7 +321,7 @@ def test_tree_aggregates_partial_accounting_without_inventing_values(
     )
     known = replace(
         first,
-        noted=accounting or ModelStepNoted(),
+        report=accounting or ModelStepReport(),
     )
     snapshot = replace(
         snapshot,
@@ -392,14 +392,14 @@ def test_tree_aggregates_exact_reasoning_through_nested_runs(tmp_path: Path) -> 
     finally:
         store.close()
 
-    accounting = ModelStepNoted(
+    accounting = ModelStepReport(
         usage=TokenUsage(input_tokens=10, output_tokens=4, reasoning_tokens=3),
         cost=ModelCost(meters=(ModelUsageMeter("output.reasoning", 3.0, "token"),)),
     )
     snapshot = replace(
         snapshot,
         steps=tuple(
-            replace(step, noted=accounting or ModelStepNoted())
+            replace(step, report=accounting or ModelStepReport())
             if step.ref == model.ref
             else step
             for step in snapshot.steps

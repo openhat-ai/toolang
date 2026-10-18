@@ -36,12 +36,12 @@ from toolang.base.types.policy import AgentCeiling
 from toolang.base.types.run import ModelCallResult, ToolCall
 from toolang.common.layout import AgentLayout
 from toolang.execution.events import PartBegin, StepBegin, StepEnd
-from toolang.execution.records import RecallControlPayload, StoredModelStepGiven
+from toolang.execution.records import RecallControlPayload, StoredModelStepSpec
 from toolang.execution.types import (
     SkillRecallTarget,
     ServiceRecallTarget,
     ThreadPrefix,
-    ToolStepGiven,
+    ToolStepSpec,
 )
 from toolang.state.prepare import prepare_agent_state
 from toolang.state.state import StateCap
@@ -129,9 +129,9 @@ def _recalls(harness, run):
 
 def _results(harness, run):
     return {
-        s.given.call.tool_call_id: s.output.value
+        s.spec.call.tool_call_id: s.output.value
         for s in harness.store.list_steps(run_id=run.id)
-        if isinstance(s.given, ToolStepGiven)
+        if isinstance(s.spec, ToolStepSpec)
         and s.output is not None
         and isinstance(s.output.value, ToolResultPart)
     }
@@ -519,7 +519,7 @@ def test_pick_reuses_pending_then_visible_guidance(
             assert control.triggered_by == steps[1].ref
             adopted = [s for s in steps if control.ref in s.preceded_by]
             assert len(adopted) == 1 and isinstance(
-                adopted[0].given, StoredModelStepGiven
+                adopted[0].spec, StoredModelStepSpec
             )
             first = harness.adapter.invocations[0].call
             assert "runtime__pick" in first.instructions
@@ -932,10 +932,10 @@ def test_pick_sees_controls_added_at_the_tool_boundary(tmp_path: Path):
             await super().on_event(event)
             if (
                 isinstance(event, StepBegin)
-                and isinstance(event.given, ToolStepInfo)
+                and isinstance(event.spec, ToolStepInfo)
                 and harness.store.get_step(
                     ref=StepRef.parse(event.step)
-                ).given.call.tool_call_id
+                ).spec.call.tool_call_id
                 == "first"
             ):
                 harness.store.accept_recall_control(

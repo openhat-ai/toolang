@@ -28,20 +28,20 @@ from .events import (
     StepEnd,
 )
 from .types import (
-    StepGiven,
-    StepNoted,
+    StepSpec,
+    StepReport,
     Output,
     TypedRef,
     ErrorRef,
-    ModelStepGiven,
-    ToolStepGiven,
-    ModelStepNoted,
-    ToolStepNoted,
-    ExecStepNoted,
-    CollectionStepNoted,
+    ModelStepSpec,
+    ToolStepSpec,
+    ModelStepReport,
+    ToolStepReport,
+    ExecStepReport,
+    CollectionStepReport,
     AwaitableHandle,
 )
-from .records import StoredStepGiven, StoredModelStepGiven, StepRecord
+from .records import StoredStepSpec, StoredModelStepSpec, StepRecord
 from .accounting import (
     selected_usd_cost,
     selected_cost_is_approximate,
@@ -96,13 +96,13 @@ def event_output(type_name: str, value: object) -> EventOutput:
     return EventOutput(type_name, _direct_value(value))
 
 
-def step_info(given: StepGiven | StoredStepGiven) -> StepInfo:
+def step_info(spec: StepSpec | StoredStepSpec) -> StepInfo:
     """Select presentation facts without assembling a model call or traversing AST bodies."""
-    if isinstance(given, ModelStepGiven | StoredModelStepGiven):
-        return ModelStepInfo(given.model)
-    if isinstance(given, ToolStepGiven):
-        name = given.call.name
-        runtime = given.plugin == "runtime"
+    if isinstance(spec, ModelStepSpec | StoredModelStepSpec):
+        return ModelStepInfo(spec.model)
+    if isinstance(spec, ToolStepSpec):
+        name = spec.call.name
+        runtime = spec.plugin == "runtime"
         awaiting = runtime and name == "runtime__await"
         launching = runtime and name in {
             "runtime__run",
@@ -110,55 +110,57 @@ def step_info(given: StepGiven | StoredStepGiven) -> StepInfo:
             "runtime__spawn",
         }
         target = (
-            given.call.input.get("target" if awaiting else "runnable", "")
+            spec.call.input.get("target" if awaiting else "runnable", "")
             if awaiting or launching
             else ""
         )
         return ToolStepInfo(
-            given.plugin,
-            given.call.name,
-            given.summary,
+            spec.plugin,
+            spec.call.name,
+            spec.summary,
             target if isinstance(target, str) else "",
-            runtime
-            and name == "runtime__run"
-            and given.call.input.get("async") is True,
+            runtime and name == "runtime__run" and spec.call.input.get("async") is True,
         )
     return FlowStepInfo(
-        kind=cast(FlowOperation, given.kind),
-        runnable=getattr(given, "runnable", None),
-        handle=getattr(given, "handle", ""),
-        name=getattr(given, "name", "") or "",
-        binding=given.binding,
-        doc=given.doc,
-        asynchronous=getattr(given, "asynchronous", False),
-        count=getattr(given, "count", None),
-        lanes=getattr(given, "lanes", None),
-        position=getattr(given, "position", None),
-        order=getattr(given, "order", "ascending"),
+        kind=cast(FlowOperation, spec.kind),
+        runnable=getattr(spec, "runnable", None),
+        handle=getattr(spec, "handle", ""),
+        name=getattr(spec, "name", "") or "",
+        binding=spec.binding,
+        doc=spec.doc,
+        asynchronous=getattr(spec, "asynchronous", False),
+        count=getattr(spec, "count", None),
+        lanes=getattr(spec, "lanes", None),
+        position=getattr(spec, "position", None),
+        order=getattr(spec, "order", "ascending"),
     )
 
 
-def step_summary(noted: StepNoted) -> StepSummary | None:
-    if noted is None:
+def step_summary(
+    report: StepReport, *, exec_runnable: str | None = None
+) -> StepSummary | None:
+    if report is None:
         return None
-    if isinstance(noted, ModelStepNoted):
-        if noted.usage is None and noted.cost is None:
+    if isinstance(report, ModelStepReport):
+        if report.usage is None and report.cost is None:
             return None
         return StepSummary(
-            usage=noted.usage,
-            cost=selected_usd_cost(noted.cost),
-            cost_approximate=selected_cost_is_approximate(noted.cost),
+            usage=report.usage,
+            cost=selected_usd_cost(report.cost),
+            cost_approximate=selected_cost_is_approximate(report.cost),
         )
-    if isinstance(noted, ToolStepNoted):
-        return StepSummary(summary=noted.summary)
-    if isinstance(noted, ExecStepNoted):
-        return StepSummary(runnable=noted.runnable)
-    if isinstance(noted, CollectionStepNoted):
+    if isinstance(report, ToolStepReport):
+        return StepSummary(summary=report.summary)
+    if isinstance(report, ExecStepReport):
+        if exec_runnable is None:
+            raise ValueError("exec completion requires its committed runnable")
+        return StepSummary(runnable=exec_runnable)
+    if isinstance(report, CollectionStepReport):
         return StepSummary(
-            total_items=noted.total_items, output_items=noted.output_items
+            total_items=report.total_items, output_items=report.output_items
         )
     return StepSummary(
-        iterations=noted.iterations, termination=noted.termination, total=noted.total
+        iterations=report.iterations, termination=report.termination, total=report.total
     )
 
 
@@ -178,7 +180,7 @@ def step_begin_event(step: StepRecord) -> StepBegin:
         parent=str(step.parent) if step.parent else None,
         index=step.index,
         kind=step.kind,
-        given=step_info(step.given),
+        spec=step_info(step.spec),
         preceded_by=tuple(
             ControlApplied(str(ref.target), ref.index) for ref in step.preceded_by
         ),
@@ -188,7 +190,11 @@ def step_begin_event(step: StepRecord) -> StepBegin:
 
 
 def step_end_event(
-    step: StepRecord, output: EventOutput | None, error: str | None
+    step: StepRecord,
+    output: EventOutput | None,
+    error: str | None,
+    *,
+    exec_runnable: str | None = None,
 ) -> StepEnd:
     return StepEnd(
         step=step.id,
@@ -196,14 +202,14 @@ def step_end_event(
         kind=step.kind,
         status=step.status,
         output=output,
-        noted=step_summary(step.noted),
+        report=step_summary(step.report, exec_runnable=exec_runnable),
         error_source=str(step.error.ref.record)
         if isinstance(step.error, ErrorRef)
         and not (
-            isinstance(step.given, AwaitStmt)
-            or isinstance(step.given, ToolStepGiven)
-            and step.given.plugin == "runtime"
-            and step.given.call.name == "runtime__await"
+            isinstance(step.spec, AwaitStmt)
+            or isinstance(step.spec, ToolStepSpec)
+            and step.spec.plugin == "runtime"
+            and step.spec.call.name == "runtime__await"
         )
         else None,
         error=error,

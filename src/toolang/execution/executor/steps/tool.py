@@ -47,8 +47,8 @@ from ...types import (
     Output,
     RunRef,
     StepRef,
-    ToolStepGiven,
-    ToolStepNoted,
+    ToolStepSpec,
+    ToolStepReport,
     StepStatus,
 )
 from ..common import _StepFailed, StepPreparation, StepWriter
@@ -386,7 +386,7 @@ async def _execute(
             kind="tool",
             state=state_ref,
             input=resolved_input,
-            given=ToolStepGiven(
+            spec=ToolStepSpec(
                 plugin=plugin_name,
                 call=call,
                 summary=_tool_summary(summary_context, "running"),
@@ -447,14 +447,14 @@ async def _execute(
             step=StepRef.from_local(run.run_id, (step_index,)),
             kind="tool",
             status="failed",
-            noted=ToolStepNoted(
+            report=ToolStepReport(
                 summary=_tool_summary(
                     summary_context, "failed", ToolResult(error=error)
                 )
             ),
             error=ErrorMessage(error),
             finished_at=utc_now(),
-            canceled_noted=ToolStepNoted(
+            canceled_report=ToolStepReport(
                 summary=_tool_summary(summary_context, "canceled")
             ),
         )
@@ -562,7 +562,7 @@ async def _finish(
     end = PartEnd(step=str(step), part=0, data=part_data(part))
     ended = False
     status: StepStatus = "failed" if part.error is not None else "succeeded"
-    noted = ToolStepNoted(summary=summary if summary is not None else part.tool_name)
+    report = ToolStepReport(summary=summary if summary is not None else part.tool_name)
     error = error or (ErrorMessage(part.error) if part.error is not None else None)
     try:
         await state.emit(PartBegin(step=str(step), part=0, part_type=part.type))
@@ -570,7 +570,7 @@ async def _finish(
         await state.emit(end)
     except asyncio.CancelledError:
         status = "canceled"
-        noted = ToolStepNoted(summary=canceled_summary)
+        report = ToolStepReport(summary=canceled_summary)
         error = None
         if not ended:
             await state.emit(end)
@@ -581,11 +581,11 @@ async def _finish(
             kind="tool",
             status=status,
             output=Output(output),
-            noted=noted,
+            report=report,
             error=error,
             error_text=part.error,
             finished_at=utc_now(),
-            canceled_noted=ToolStepNoted(summary=canceled_summary),
+            canceled_report=ToolStepReport(summary=canceled_summary),
         )
 
 
@@ -630,7 +630,7 @@ async def _cancel(
         kind="tool",
         status="canceled",
         output=Output(value_for_type("ToolResultPart", part)),
-        noted=ToolStepNoted(summary=summary),
+        report=ToolStepReport(summary=summary),
         aborted_by=aborted_by,
         finished_at=utc_now(),
     )
@@ -695,7 +695,7 @@ async def skip(
                             source[1],
                         ),
                     ),
-                    given=ToolStepGiven(
+                    spec=ToolStepSpec(
                         plugin=_plugin_name(tool),
                         call=call,
                         summary=_tool_summary(summary, "running"),

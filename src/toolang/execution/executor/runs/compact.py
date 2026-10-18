@@ -31,14 +31,14 @@ from ...types import (
     history_ref,
     history_root,
     history_position,
-    ModelStepGiven,
-    ModelStepNoted,
-    ToolStepNoted,
+    ModelStepSpec,
+    ModelStepReport,
+    ToolStepReport,
     Output,
     RunRef,
     StepRef,
     ThreadRef,
-    ToolStepGiven,
+    ToolStepSpec,
 )
 from ..common import BoundRun, Local
 
@@ -61,9 +61,9 @@ async def invoke(state: _AgicState, step: StepRef) -> dict[str, Any]:
     owner = store.get_step(ref=step)
     if (
         owner is None
-        or not isinstance(owner.given, ToolStepGiven)
-        or owner.given.trigger != "runtime"
-        or owner.given.call.name != "runtime__compact"
+        or not isinstance(owner.spec, ToolStepSpec)
+        or owner.spec.trigger != "runtime"
+        or owner.spec.call.name != "runtime__compact"
     ):
         raise ToolangError("compact can only be initiated by model preflight")
     history = execution.message_history()
@@ -218,9 +218,9 @@ async def execute(
                 step=step.ref,
                 kind=step.kind,
                 status="canceled",
-                noted=ModelStepNoted()
+                report=ModelStepReport()
                 if step.kind == "model"
-                else ToolStepNoted("Canceled compact history read"),
+                else ToolStepReport("Canceled compact history read"),
                 finished_at=utc_now(),
             )
     cached_root: RunRef | None = None
@@ -275,7 +275,7 @@ async def execute(
             output={
                 "roots": roots,
                 "units": refs,
-                "content": str(FieldRef.from_path(model, "given", "call", "messages")),
+                "content": str(FieldRef.from_path(model, "spec", "call", "messages")),
             },
         )
         try:
@@ -283,7 +283,7 @@ async def execute(
                 lambda _state, state_ref, commit: commit(
                     step=read,
                     kind="tool",
-                    given=ToolStepGiven("runtime", tool, trigger="runtime"),
+                    spec=ToolStepSpec("runtime", tool, trigger="runtime"),
                     started_at=utc_now(),
                 ),
                 run_id=read.run_id,
@@ -308,13 +308,13 @@ async def execute(
             output=Output(value_for_type("Part", result), "_"),
             finished_at=utc_now(),
         )
-        noted: ModelStepNoted | None = None
+        report: ModelStepReport | None = None
         try:
             await execution.begin_step(
                 lambda _state, state_ref, commit: commit(
                     step=model,
                     kind="model",
-                    given=ModelStepGiven(
+                    spec=ModelStepSpec(
                         spec.model.ref,
                         call,
                         setup=spec.setup,
@@ -327,7 +327,7 @@ async def execute(
             execution.require_model_pricing(spec.model)
             execution.begin_call(model, "model")
             response = await spec.adapter.invoke(spec.model, call, environ=spec.environ)
-            noted = execution.model_noted(model, spec.model, response.usage)
+            report = execution.model_report(model, spec.model, response.usage)
             reducer.validate_summary(response)
             assert response.message is not None
             for index, part in enumerate(response.message.parts):
@@ -336,21 +336,21 @@ async def execute(
             record = store.get_step(ref=model)
             if record is None or record.status != "running":
                 raise
-            if noted is None:
+            if report is None:
                 usage = exc.usage if isinstance(exc, ModelResponseError) else None
-                noted = execution.model_noted(model, spec.model, usage)
+                report = execution.model_report(model, spec.model, usage)
             await execution.finish_step(
                 step=model,
                 kind="model",
                 status="canceled"
                 if isinstance(exc, asyncio.CancelledError)
                 else "failed",
-                noted=noted,
+                report=report,
                 error=ErrorMessage(str(exc)) if str(exc) else None,
                 finished_at=utc_now(),
             )
-            if noted.usage is not None:
-                execution.record_model_usage(spec.model, noted)
+            if report.usage is not None:
+                execution.record_model_usage(spec.model, report)
             if isinstance(exc, ModelResponseError):
                 reducer.reject(exc)
                 continue
@@ -358,7 +358,7 @@ async def execute(
                 reducer.retry_summary(exc)
                 continue
             raise
-        assert response.message is not None and noted is not None
+        assert response.message is not None and report is not None
         try:
             await execution.finish_step(
                 step=model,
@@ -367,11 +367,11 @@ async def execute(
                 output=Output(
                     value_for_type("Part[]", tuple(response.message.parts)), "_"
                 ),
-                noted=noted,
+                report=report,
                 finished_at=utc_now(),
             )
         finally:
-            execution.record_model_usage(spec.model, noted)
+            execution.record_model_usage(spec.model, report)
         reducer.accept(response)
     return Local(reducer.summary, type_name="Text")
 

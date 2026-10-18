@@ -62,7 +62,7 @@ schemas; they are not duplicated in the canonical Thread record.
 id
 kind
 payload
-request
+request_id
 status
 timing
 error
@@ -98,7 +98,7 @@ text. Rerun creates a new Run entry. Each persisted
 value retains its self-describing codec, without a Local/name/dim wrapper.
 References address `payload/input/_` or `payload/input/argumentName`.
 
-RunStore reads and writes only schema 59. Older stores, including those with
+RunStore reads and writes only schema 60. Older stores, including those with
 retired Activity indexes or retry records, are rejected without mutation. No
 upgrade, Activity cleanup, backfill or compatibility read is performed. Preserve
 required old runtime data separately and use fresh storage for new execution.
@@ -191,7 +191,7 @@ control
 state
 output
 occur
-noted
+report
 status
 error
 created_at
@@ -206,7 +206,7 @@ roots have no parent; their entry control's `triggered_by` records the source.
 Output whose `value` may be concrete or a `TypedRef` to an explicit
 `/output/value` field.
 
-`noted` is null until terminal completion, then contains `RunNoted` with final
+`report` is null until terminal completion, then contains `RunReport` with final
 subtree call counts, token usage and USD cost captured from resident execution.
 See [terminal usage and cost records](execution.md#terminal-usage-and-cost-records).
 
@@ -216,38 +216,47 @@ See [terminal usage and cost records](execution.md#terminal-usage-and-cost-recor
 id
 kind
 input
-given
+spec
 state
 output
 occur
-noted
+report
 status
 error
-created_at
 started_at
 finished_at
 ```
 
 `id` is the complete `StepRef`. `input` is an ordered tuple of `FieldRef`s.
-`state` identifies the immutable State Control used for the Step. `given`
-contains facts known at `StepBegin`; `noted` contains kind-specific facts
+`state` identifies the immutable State Control used for the Step. `spec`
+contains facts known at `StepBegin`; `report` contains kind-specific facts
 committed at `StepEnd`. Neither repeats input, output, status, or error.
 
-Model `given` data contains normalized-call references. Large instructions,
+Model `spec` data contains normalized-call references. Large instructions,
 messages, and toolsets are content-addressed; provider request bodies and
-credentials are not stored. Model `noted` records `usage: TokenUsage`, `cost: ModelCost`, `invoked`, and
-continuation (`cont`). Tool `noted` contains `summary` and `invoked`. All durable
-statistics live inside Noted; no snapshot nodes or parallel statistics indexes
-are persisted. Schema 59 requires fresh storage without old-record decoding.
+credentials are not stored. Model `report` records `usage: TokenUsage`, `cost: ModelCost`, `invoked`, and
+continuation (`cont`). Tool `report` contains `summary` and `invoked`. All durable
+statistics live inside Report; no snapshot nodes or parallel statistics indexes
+are persisted. Schema 60 requires fresh storage without old-record decoding.
 
-For a Repeat Step, `given.until_index` counts preceding body statements; null or
+For a Repeat Step, `spec.until_index` counts preceding body statements; null or
 an absent historical field means a trailing condition. Body statements are
 same-Run child Steps with monotonic indexes. An evaluated condition is a child
 Run with an unbound result. Both carry zero-based `occur.iteration.index` and
 `body`/`until` phase labels; those labels do not determine execution order.
-Skipped conditions and suffixes create no records. Loop `noted` records completed
+Skipped conditions and suffixes create no records. Loop `report` records completed
 passes and the termination cause; a satisfied loop may retain prefix effects
 with zero completed passes. The optional AST field needs no SQL schema change.
+
+Step creation and start share one timestamp, stored only as `started_at`.
+The HTTP Step detail derives its `created_at` from that field. An exec Step's
+`report` stores only its `control`; resolve the target from that Control's
+`payload/runnable`. The Run's definition remains in its entry Control payload.
+
+Internal `_begin_cursor`, `_end_cursor`, and `_event_cursor` columns support
+stream attachment/replay and stay outside canonical JSON and Pointer inspection.
+Canonical control requests use `request_id`; retired `request`, `given`, `noted`,
+Step `created_at`, and exec report `runnable` paths have no aliases.
 
 ## Content And Errors
 

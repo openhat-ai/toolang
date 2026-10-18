@@ -45,7 +45,7 @@ def test_recovery_does_not_restore_a_replaced_schedule(
         )
         assert recovered is not None
         assert recovered.next_scheduled_at == updated.next_scheduled_at
-        assert recovered.active_run_id is None
+        assert recovered.active_run is None
         if schedule is None:
             assert recovered.status == "done"
             assert next_activation(recovered) is None
@@ -165,7 +165,7 @@ def test_active_chore_survives_definition_removal_until_run_finishes(tmp_path) -
 
         retained = store.reconcile(chores={}, now=NOW + timedelta(seconds=1))
         assert len(retained) == 1
-        assert retained[0].active_run_id == "run_one"
+        assert retained[0].active_run == "run_one"
 
         assert (
             store.finish_run(
@@ -238,7 +238,7 @@ def test_missing_run_releases_the_original_activation(tmp_path) -> None:
 
         assert released is not None
         assert released.status == "pending"
-        assert released.active_run_id is None
+        assert released.active_run is None
         assert released.pending_at == claimed.active_due_at
         assert next_activation(released) == (NOW, "source")
     finally:
@@ -488,3 +488,41 @@ def test_manual_claim_recovery_keeps_pending_and_schedule_independent(tmp_path):
         assert next_activation(canceled) == (NOW + timedelta(minutes=1), "schedule")
     finally:
         store.close()
+
+
+def test_checkpoint_identity_and_active_run_round_trip_with_new_columns(tmp_path):
+    from contextlib import closing
+    import sqlite3
+
+    path = tmp_path / "runs.db"
+    chore = _once()
+    with closing(ChoreStore(path)) as store:
+        store.reconcile(chores=[chore], now=NOW)
+        store.claim(chore=chore, trigger="source", run_id="run_checkpoint", now=NOW)
+    with closing(ChoreStore(path)) as store:
+        checkpoint = store.get(chore_id=chore.id)
+        assert checkpoint is not None and checkpoint.id == chore.id
+        assert checkpoint.active_run == "run_checkpoint"
+        assert store.get_by_run(run_id="run_checkpoint") == checkpoint
+    with closing(sqlite3.connect(path)) as connection:
+        columns = {row[1] for row in connection.execute("PRAGMA table_info(chores)")}
+        assert {"id", "active_run"} <= columns
+        assert columns.isdisjoint({"chore_id", "active_run_id"})
+
+
+@pytest.mark.parametrize("read_only", [False, True])
+def test_checkpoint_store_rejects_old_run_schema_without_mutation(tmp_path, read_only):
+    from contextlib import closing
+    import sqlite3
+
+    from toolang.execution.errors import RunStoreSchemaError
+
+    path = tmp_path / "runs.db"
+    with closing(ChoreStore(path)):
+        pass
+    with closing(sqlite3.connect(path)) as connection:
+        connection.execute("PRAGMA user_version=59")
+    before = path.read_bytes()
+    with pytest.raises(RunStoreSchemaError):
+        ChoreStore(path, read_only=read_only)
+    assert path.read_bytes() == before

@@ -22,11 +22,11 @@ from toolang.execution.events import RunEnd
 from toolang.execution.schemas import RunNode, StepNode
 from toolang.execution.types import (
     CallCounters,
-    ModelStepNoted,
-    RunNoted,
+    ModelStepReport,
+    RunReport,
     ThreadPrefix,
     TokenUsage,
-    ToolStepNoted,
+    ToolStepReport,
 )
 
 
@@ -69,7 +69,7 @@ def test_model_is_live_before_result_and_snapshot_is_resident(tmp_path, monkeypa
             assert len(pending.trees) == 1
             assert pending.trees[0].nodes[0].status == "pending"
             record = harness.store.get_run(run_id=handle.run_id)
-            assert record is not None and record.noted is None
+            assert record is not None and record.report is None
             await asyncio.wait_for(gate.wait_until_entered(), 3)
 
             def forbidden(*args, **kwargs):
@@ -103,14 +103,14 @@ def test_model_is_live_before_result_and_snapshot_is_resident(tmp_path, monkeypa
             gate.release()
             result = await handle
             assert result.status == "succeeded"
-            assert result.noted is not None
-            assert result.noted == RunNoted(
+            assert result.report is not None
+            assert result.report == RunReport(
                 CallCounters(1, 0), TokenUsage(12, 5, 3, 2), 0.25
             )
             model = harness.store.list_steps(run_id=result.id)[0]
-            assert isinstance(model.noted, ModelStepNoted) and model.noted.invoked
-            assert model.noted.usage == result.noted.usage
-            assert model.noted.cost is not None and model.noted.cost.amount == 0.25
+            assert isinstance(model.report, ModelStepReport) and model.report.invoked
+            assert model.report.usage == result.report.usage
+            assert model.report.cost is not None and model.report.cost.amount == 0.25
             assert root.calls == CallCounters(1, 0) and root.status == "running"
             assert (await client.live_trees()).trees == ()
             await harness.executor.stop()
@@ -158,8 +158,8 @@ def test_tool_entry_counts_once_including_failure_and_cancellation(tmp_path, out
                 gate.release()
             result = await handle
             assert result.status == ("canceled" if outcome == "cancel" else "succeeded")
-            assert result.noted is not None
-            assert result.noted.calls == CallCounters(
+            assert result.report is not None
+            assert result.report.calls == CallCounters(
                 1 if outcome == "cancel" else 2, 1
             )
             saved = next(
@@ -167,7 +167,7 @@ def test_tool_entry_counts_once_including_failure_and_cancellation(tmp_path, out
                 for s in harness.store.list_steps(run_id=result.id)
                 if s.kind == "tool"
             )
-            assert isinstance(saved.noted, ToolStepNoted) and saved.noted.invoked
+            assert isinstance(saved.report, ToolStepReport) and saved.report.invoked
             assert len(tool.calls) == 1
             assert not harness.executor.live_trees().trees
 
@@ -226,14 +226,14 @@ agic child(_: Text) -> Text:
             gate.release()
             result = await handle
             assert result.status == "succeeded"
-            assert result.noted is not None
-            assert result.noted.calls == parent.calls
-            assert result.noted.usage == (
+            assert result.report is not None
+            assert result.report.calls == parent.calls
+            assert result.report.usage == (
                 None if launch == "spawn" else TokenUsage(8, 2)
             )
             child_record = harness.store.get_run(run_id=child.id)
             assert child_record is not None
-            assert child_record.noted == RunNoted(
+            assert child_record.report == RunReport(
                 CallCounters(1, 0), TokenUsage(8, 2), 0
             )
             assert not harness.executor.live_trees().trees
@@ -259,7 +259,7 @@ def test_pre_entry_cancellation_finishes_once_with_zero_work(tmp_path):
             result = await handle
             assert result.status == "canceled"
             saved = harness.store.get_run(run_id=handle.run_id)
-            assert saved is not None and saved.noted == RunNoted()
+            assert saved is not None and saved.report == RunReport()
             assert not harness.executor.has_owned_work()
             assert not harness.executor.live_trees().trees
             with harness.executor.stream.boundary() as (_, _, frames):
@@ -308,7 +308,7 @@ def test_end_rollback_retains_live_facts_and_receipts_do_not_recount(
         # Repeat the same final persisted facts; no second contribution/publication.
         record = harness.store.get_step(ref=facts["step"])
         assert record is not None
-        facts["noted"] = record.noted
+        facts["report"] = record.report
         await finish(execution, **facts)
 
     monkeypatch.setattr(_Execution, "finish_step", finish_with_rollback)
@@ -322,9 +322,9 @@ def test_end_rollback_retains_live_facts_and_receipts_do_not_recount(
                 )
             )
             assert result.status == "succeeded" and failed
-            assert result.noted is not None
-            assert result.noted.calls == CallCounters(1, 0)
-            assert result.noted.usage == TokenUsage(3, 2)
+            assert result.report is not None
+            assert result.report.calls == CallCounters(1, 0)
+            assert result.report.usage == TokenUsage(3, 2)
             with harness.executor.stream.boundary() as (_, _, frames):
                 assert sum(f.event.type == "step_end" for f in frames) == 1
 
@@ -361,9 +361,9 @@ def test_invoked_model_failure_or_cancel_keeps_one_call(tmp_path, failure):
                 harness.executor.cancel(run_id=handle.run_id)
             result = await handle
             assert result.status == ("failed" if failure else "canceled")
-            assert result.noted == RunNoted(CallCounters(1, 0))
+            assert result.report == RunReport(CallCounters(1, 0))
             step = harness.store.list_steps(run_id=result.id)[0]
-            assert isinstance(step.noted, ModelStepNoted) and step.noted.invoked
+            assert isinstance(step.report, ModelStepReport) and step.report.invoked
 
     asyncio.run(scenario())
 
@@ -407,11 +407,13 @@ def test_model_result_usage_survives_cancel_during_part_delivery(tmp_path, bound
             assert result.status == "canceled"
             root = samples[0].nodes[0]
             assert isinstance(root, RunNode) and root.usage == TokenUsage(9, 4)
-            assert result.noted == RunNoted(CallCounters(1, 0), TokenUsage(9, 4), 0.125)
+            assert result.report == RunReport(
+                CallCounters(1, 0), TokenUsage(9, 4), 0.125
+            )
             saved = harness.store.list_steps(run_id=result.id)[0]
-            assert isinstance(saved.noted, ModelStepNoted)
-            assert saved.noted.invoked and saved.noted.usage == TokenUsage(9, 4)
-            assert saved.noted.cost is not None and saved.noted.cost.amount == 0.125
+            assert isinstance(saved.report, ModelStepReport)
+            assert saved.report.invoked and saved.report.usage == TokenUsage(9, 4)
+            assert saved.report.cost is not None and saved.report.cost.amount == 0.125
 
     asyncio.run(scenario())
 
@@ -452,10 +454,12 @@ def test_returned_usage_survives_final_stream_validation_failure(tmp_path):
             assert "does not match authoritative" in harness.store.resolve_error(
                 result.error
             )
-            assert result.noted == RunNoted(CallCounters(1, 0), TokenUsage(9, 4), 0.125)
+            assert result.report == RunReport(
+                CallCounters(1, 0), TokenUsage(9, 4), 0.125
+            )
             saved = harness.store.list_steps(run_id=result.id)[0]
-            assert isinstance(saved.noted, ModelStepNoted)
-            assert saved.noted.usage == TokenUsage(9, 4) and saved.noted.invoked
+            assert isinstance(saved.report, ModelStepReport)
+            assert saved.report.usage == TokenUsage(9, 4) and saved.report.invoked
 
     asyncio.run(scenario())
 
@@ -538,7 +542,7 @@ def test_terminal_statistics_do_not_deadlock_with_cross_thread_control(
                     assert not worker.is_alive()
             assert not errors
             assert result.status == "succeeded", result.error
-            assert result.noted == RunNoted(CallCounters(1, 0))
+            assert result.report == RunReport(CallCounters(1, 0))
             assert control is not None
             saved = harness.store.get_run_control(run_id=result.id, index=control.index)
             assert saved is not None and saved.status == "wontapply"

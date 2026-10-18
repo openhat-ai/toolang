@@ -29,7 +29,7 @@ from ..records import (
     RunControlPayload,
     RunRecord,
     StepRecord,
-    StoredModelStepGiven,
+    StoredModelStepSpec,
 )
 from ..types import (
     ThreadRef,
@@ -43,7 +43,7 @@ from ..types import (
     RecallTarget,
     RunRef,
     ControlRef,
-    ToolStepGiven,
+    ToolStepSpec,
     TypedRef,
     AwaitableHandle,
 )
@@ -268,9 +268,7 @@ def tail_delta(
     """Record the still-unrecorded terminal exchange, not a second transcript."""
 
     models = [
-        i
-        for i, step in enumerate(steps)
-        if isinstance(step.given, StoredModelStepGiven)
+        i for i, step in enumerate(steps) if isinstance(step.spec, StoredModelStepSpec)
     ]
     tail = steps[models[-1] :] if models else ()
     messages: list[MessageTemplate] = []
@@ -306,8 +304,8 @@ def tail_delta(
         for step in tail
         if step.output is not None
         and isinstance(step.output.value, ToolResultPart)
-        and isinstance(step.given, ToolStepGiven)
-        and step.given.trigger == "model"
+        and isinstance(step.spec, ToolStepSpec)
+        and step.spec.trigger == "model"
     }
     calls: set[str] = set()
     for step in tail:
@@ -334,8 +332,8 @@ def tail_delta(
         elif (
             step.output is not None
             and isinstance(step.output.value, ToolResultPart)
-            and isinstance(step.given, ToolStepGiven)
-            and step.given.trigger == "model"
+            and isinstance(step.spec, ToolStepSpec)
+            and step.spec.trigger == "model"
         ):
             if step.output.value.tool_call_id in calls:
                 messages.append(
@@ -442,7 +440,7 @@ def _run_usage(steps: Sequence[object]) -> tuple[int, int, int, int]:
         kind = getattr(step, "kind", None)
         if kind == "model":
             model_calls += 1
-            usage = getattr(getattr(step, "noted", None), "usage", None)
+            usage = getattr(getattr(step, "report", None), "usage", None)
             if usage is not None:
                 input_tokens += int(getattr(usage, "input_tokens", 0))
                 output_tokens += int(getattr(usage, "output_tokens", 0))
@@ -463,15 +461,15 @@ def history_units(
     """Attribute unique deltas to their producing Steps before rendering loses refs."""
     related = {c.ref: c for c in controls}
     active = active_steps(steps, related)
-    models = [s for s in active if isinstance(s.given, StoredModelStepGiven)]
+    models = [s for s in active if isinstance(s.spec, StoredModelStepSpec)]
     head = (
-        cast(StoredModelStepGiven, models[-1].given).call.messages.head
+        cast(StoredModelStepSpec, models[-1].spec).call.messages.head
         if models
         else None
     )
     entries: list[tuple[StepRef | None, MessageTemplate]] = []
     for step in models:
-        assert isinstance(step.given, StoredModelStepGiven)
+        assert isinstance(step.spec, StoredModelStepSpec)
         if head is not None and step.ref.indices >= head.indices:
             entries.extend(
                 (
@@ -487,15 +485,15 @@ def history_units(
                     else step.ref,
                     m,
                 )
-                for m in step.given.call.messages.delta
+                for m in step.spec.call.messages.delta
                 if m.source is None
             )
     fallback = active[-1].ref if active else None
     entries.extend((fallback, m) for m in tail_delta(run, active, related, resolve))
     tool_steps = {
-        s.given.call.tool_call_id: s.ref
+        s.spec.call.tool_call_id: s.ref
         for s in active
-        if isinstance(s.given, ToolStepGiven)
+        if isinstance(s.spec, ToolStepSpec)
     }
     # Honor records its own runtime call, but replies to the intercepted model call.
     # Keep that original call and its reply in the same compaction unit.

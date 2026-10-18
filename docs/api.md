@@ -533,7 +533,7 @@ toolang alice inspect run_ab12.0 call
 toolang alice inspect run_ab12.0 call --json
 ```
 
-This is distinct from `run_ab12.0/given/call`, which exposes compact persisted
+This is distinct from `run_ab12.0/spec/call`, which exposes compact persisted
 references. Projection is local and read-only: it does not prepare a call,
 select a model, construct a provider-native request, or send provider traffic.
 
@@ -1609,17 +1609,20 @@ Canonical run progress event names are:
 - `run_end`
 
 Run/Step IDs are scalar strings. `StepBegin` includes owning `run`, parent Step ID
-and `index`; its `given.type` selects compact `model`, `tool` or `flow` information.
+and `index`; its `spec.type` selects compact `model`, `tool` or `flow` information.
 Model metadata contains only the model identity. Calls, Flow ASTs, State/input
 references and accounting internals stay in records and explicit inspection APIs.
 Completion events carry direct `{type, value}` outputs, error text and necessary
 completion/usage summaries. `preceded_by` application facts and terminal `control`
 identify controls by `{run, index}`; `RunBegin.control` is its own Run binding control index.
-External subscribers must upgrade and reconnect for this schema. Model completion
-summaries expose four token fields under `noted.usage`; USD `noted.cost` and
-`noted.cost_approximate` are siblings. They contain no full cost evidence.
-Stored model Noted now uses `usage`, `cost`, `invoked`, `cont`, with no
-`accounting` envelope; Run records add terminal `noted`. Schema 59 requires fresh
+External subscribers must upgrade and reconnect for this schema.
+Step Begin/End fields use `spec`/`report`. History cursors use version `2`;
+Hub execution publication envelopes and persisted event projections use version
+`2`, with no version-1 fallback. Upgrade publishers and subscribers together. Model completion
+summaries expose four token fields under `report.usage`; USD `report.cost` and
+`report.cost_approximate` are siblings. They contain no full cost evidence.
+Stored model Report now uses `usage`, `cost`, `invoked`, `cont`, with no
+`accounting` envelope; Run records add terminal `report`. Schema 60 requires fresh
 storage without compatibility reads. See [terminal records](execution.md#terminal-usage-and-cost-records)
 and [Run Events](execution.md#run-events).
 

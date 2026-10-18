@@ -44,7 +44,7 @@ from .legacy import LegacyRetryPayloadField
 
 from .types import (
     AgentResources,
-    CollectionStepNoted,
+    CollectionStepReport,
     ContentRef,
     ControlKind,
     ControlRef,
@@ -55,15 +55,15 @@ from .types import (
     FieldRef,
     history_ref,
     IterationOccurrence,
-    LoopStepNoted,
-    ExecStepNoted,
+    LoopStepReport,
+    ExecStepReport,
     MessageTemplate,
     TokenUsage,
-    RunNoted,
+    RunReport,
     ModelCost,
     ModelMessages,
-    ModelStepGiven,
-    ModelStepNoted,
+    ModelStepSpec,
+    ModelStepReport,
     Occurrence,
     OccurrencePosition,
     Output,
@@ -74,21 +74,21 @@ from .types import (
     AwaitableHandle,
     RunnableSettings,
     RunStatus,
-    StepGiven,
+    StepSpec,
     StepKind,
-    StepNoted,
+    StepReport,
     StepRef,
     StepStatus,
     ThreadRef,
-    ToolStepGiven,
-    ToolStepNoted,
+    ToolStepSpec,
+    ToolStepReport,
     TypedRef,
     valid_run_id,
     valid_thread_id,
     validate_occurrence,
     validate_runtime_value,
-    validate_step_given,
-    validate_step_noted,
+    validate_step_spec,
+    validate_step_report,
     value_for_type,
 )
 
@@ -227,9 +227,9 @@ class RunRecord:
     created_at: str = ""
     started_at: str = ""
     finished_at: str | None = None
-    begin_cursor: str | None = None
-    end_cursor: str | None = None
-    noted: RunNoted | None = None
+    _begin_cursor: str | None = None
+    _end_cursor: str | None = None
+    report: RunReport | None = None
 
     def __post_init__(self) -> None:
         if not valid_run_id(self.id):
@@ -248,8 +248,8 @@ class RunRecord:
             raise TypeError("run state must be Run-scoped")
         if self.output is not None and not isinstance(self.output, Output):
             raise TypeError("run output requires an Output or None")
-        if self.noted is not None and not isinstance(self.noted, RunNoted):
-            raise TypeError("run noted requires RunNoted or None")
+        if self.report is not None and not isinstance(self.report, RunReport):
+            raise TypeError("run report requires RunReport or None")
         _validate_record_error(self.error, label="run")
         validate_occurrence(self.occur)
 
@@ -591,7 +591,7 @@ class ModelCallRefs:
 
 
 @dataclass(frozen=True, slots=True)
-class StoredModelStepGiven:
+class StoredModelStepSpec:
     """Compact durable model Step-begin facts."""
 
     model: str
@@ -601,16 +601,16 @@ class StoredModelStepGiven:
 
     def __post_init__(self) -> None:
         if not isinstance(self.model, str) or not self.model:
-            raise ValueError("stored model given requires a model identity")
+            raise ValueError("stored model spec requires a model identity")
         if not isinstance(self.setup, str) or not self.setup:
             raise TypeError("stored model setup requires a revision string")
         if self.state is not None:
             _validate_state_revision(self.state, label="model-call State")
         if not isinstance(self.call, ModelCallRefs):
-            raise TypeError("stored model given requires ModelCallRefs")
+            raise TypeError("stored model spec requires ModelCallRefs")
 
 
-StoredStepGiven: TypeAlias = FlowStmt | StoredModelStepGiven | ToolStepGiven
+StoredStepSpec: TypeAlias = FlowStmt | StoredModelStepSpec | ToolStepSpec
 
 
 @dataclass(frozen=True)
@@ -620,20 +620,19 @@ class StepRecord:
     id: str
     kind: StepKind
     input: tuple[FieldRef, ...]
-    given: StoredStepGiven
+    spec: StoredStepSpec
     state: ControlRef
     output: Output | None
     preceded_by: tuple[ControlRef, ...] = ()
     aborted_by: ControlRef | None = None
     occur: Occurrence | None = None
-    noted: StepNoted = None
+    report: StepReport = None
     status: StepStatus = "running"
     error: ErrorMessage | ErrorRef | None = None
-    created_at: str = ""
     started_at: str = ""
     finished_at: str | None = None
-    begin_cursor: str | None = None
-    end_cursor: str | None = None
+    _begin_cursor: str | None = None
+    _end_cursor: str | None = None
 
     def __post_init__(self) -> None:
         self.ref
@@ -649,14 +648,14 @@ class StepRecord:
             raise TypeError("step output requires an Output or None")
         _validate_record_error(self.error, label="step")
         validate_occurrence(self.occur)
-        if isinstance(self.given, StoredModelStepGiven):
+        if isinstance(self.spec, StoredModelStepSpec):
             if self.kind != "model":
-                raise TypeError(f"{self.kind} Step cannot store model given facts")
+                raise TypeError(f"{self.kind} Step cannot store model spec facts")
         elif self.kind == "model":
-            raise TypeError("model Step record requires StoredModelStepGiven")
+            raise TypeError("model Step record requires StoredModelStepSpec")
         else:
-            validate_step_given(self.kind, self.given)
-        validate_step_noted(self.kind, self.noted, self.status)
+            validate_step_spec(self.kind, self.spec)
+        validate_step_report(self.kind, self.report, self.status)
 
     @property
     def run_id(self) -> str:
@@ -683,14 +682,14 @@ class ControlRecord:
     kind: ControlKind
     payload: Annotated[ControlPayloadUnion, BeforeValidator(_control_payload_variant)]
     triggered_by: StepRef | None = None
-    request: str | None = None
+    request_id: str | None = None
     client_id: str | None = None
     status: ControlStatus = "pending"
     timing: ControlTiming = "immediate"
     error: str | None = None
     created_at: str = ""
     finished_at: str | None = None
-    event_cursor: str | None = None
+    _event_cursor: str | None = None
 
     def __post_init__(self) -> None:
         ref = self.ref
@@ -1195,7 +1194,7 @@ def _iteration_occurrence_from_data(data: object) -> IterationOccurrence | None:
     )
 
 
-def step_given_from_data(kind: StepKind, data: object) -> StepGiven:
+def step_spec_from_data(kind: StepKind, data: object) -> StepSpec:
     """Parse one typed Step-begin fact payload from durable data."""
 
     if kind == "model":
@@ -1203,12 +1202,12 @@ def step_given_from_data(kind: StepKind, data: object) -> StepGiven:
             data,
             fields={"model", "setup", "call"}
             | ({"state"} if isinstance(data, Mapping) and "state" in data else set()),
-            label="model given",
+            label="model spec",
         )
         model = payload["model"]
         if not isinstance(model, str):
-            raise ValueError("model given identity must be text")
-        return ModelStepGiven(
+            raise ValueError("model spec identity must be text")
+        return ModelStepSpec(
             model=model,
             setup=_required_text(payload["setup"], label="setup revision"),
             state=_required_text(payload["state"], label="model-call State revision")
@@ -1222,68 +1221,68 @@ def step_given_from_data(kind: StepKind, data: object) -> StepGiven:
             frozenset({"plugin", "call", "trigger", "summary"}),
         }:
             raise ValueError(
-                "tool given requires: plugin, call, trigger, and optional summary"
+                "tool spec requires: plugin, call, trigger, and optional summary"
             )
         payload = cast(Mapping[str, object], data)
         plugin = payload["plugin"]
         if not isinstance(plugin, str):
-            raise ValueError("tool given plugin must be text")
+            raise ValueError("tool spec plugin must be text")
         raw_summary = payload.get("summary", "")
         if not isinstance(raw_summary, str):
-            raise ValueError("tool given summary must be text")
-        return ToolStepGiven(
+            raise ValueError("tool spec summary must be text")
+        return ToolStepSpec(
             plugin=plugin,
             call=_TOOL_CALL_ADAPTER.validate_python(payload["call"]),
             summary=raw_summary,
             trigger=cast(Literal["model", "runtime"], payload["trigger"]),
         )
     statement = flow_stmt_from_data(data)
-    from .types import validate_step_given
+    from .types import validate_step_spec
 
-    return validate_step_given(kind, statement)
+    return validate_step_spec(kind, statement)
 
 
-def step_given_to_data(kind: StepKind, given: StepGiven) -> dict[str, object]:
+def step_spec_to_data(kind: StepKind, spec: StepSpec) -> dict[str, object]:
     """Serialize one typed Step-begin fact payload."""
 
-    from .types import validate_step_given
+    from .types import validate_step_spec
 
-    validate_step_given(kind, given)
-    if isinstance(given, ModelStepGiven):
+    validate_step_spec(kind, spec)
+    if isinstance(spec, ModelStepSpec):
         return {
-            **({"state": given.state} if given.state is not None else {}),
-            "model": given.model,
-            "setup": given.setup,
-            "call": model_call_to_data(given.call),
+            **({"state": spec.state} if spec.state is not None else {}),
+            "model": spec.model,
+            "setup": spec.setup,
+            "call": model_call_to_data(spec.call),
         }
-    if isinstance(given, ToolStepGiven):
+    if isinstance(spec, ToolStepSpec):
         data: dict[str, object] = {
-            "plugin": given.plugin,
-            "trigger": given.trigger,
+            "plugin": spec.plugin,
+            "trigger": spec.trigger,
             "call": cast(
                 dict[str, object],
-                _TOOL_CALL_ADAPTER.dump_python(given.call, mode="json"),
+                _TOOL_CALL_ADAPTER.dump_python(spec.call, mode="json"),
             ),
         }
-        if given.summary:
-            data["summary"] = given.summary
+        if spec.summary:
+            data["summary"] = spec.summary
         return data
     return cast(
         dict[str, object],
-        ast_to_data(given),
+        ast_to_data(spec),
     )
 
 
-def stored_step_given_from_data(kind: StepKind, data: object) -> StoredStepGiven:
+def stored_step_spec_from_data(kind: StepKind, data: object) -> StoredStepSpec:
     """Parse the private compact Step-begin representation."""
 
     if kind != "model":
-        return cast(StoredStepGiven, step_given_from_data(kind, data))
+        return cast(StoredStepSpec, step_spec_from_data(kind, data))
     payload = _canonical_object(
         data,
         fields={"model", "setup", "call"}
         | ({"state"} if isinstance(data, Mapping) and "state" in data else set()),
-        label="model given",
+        label="model spec",
     )
     model = payload["model"]
     if not isinstance(model, str) or not model:
@@ -1320,7 +1319,7 @@ def stored_step_given_from_data(kind: StepKind, data: object) -> StoredStepGiven
         raise ValueError("stored model output schema must be an object or null")
     if raw_cont is not None and not isinstance(raw_cont, Mapping):
         raise ValueError("stored model cont must be an object or null")
-    return StoredModelStepGiven(
+    return StoredModelStepSpec(
         model=model,
         setup=_required_text(payload["setup"], label="setup revision"),
         state=_required_text(payload["state"], label="model-call State revision")
@@ -1352,68 +1351,64 @@ def stored_step_given_from_data(kind: StepKind, data: object) -> StoredStepGiven
     )
 
 
-def stored_step_given_to_data(
+def stored_step_spec_to_data(
     kind: StepKind,
-    given: StoredStepGiven,
+    spec: StoredStepSpec,
 ) -> dict[str, object]:
     """Serialize the private compact Step-begin representation."""
 
-    if isinstance(given, StoredModelStepGiven):
+    if isinstance(spec, StoredModelStepSpec):
         if kind != "model":
-            raise TypeError(f"{kind} Step cannot store model given facts")
+            raise TypeError(f"{kind} Step cannot store model spec facts")
         return {
-            **({"state": given.state} if given.state is not None else {}),
-            "model": given.model,
-            "setup": given.setup,
+            **({"state": spec.state} if spec.state is not None else {}),
+            "model": spec.model,
+            "setup": spec.setup,
             "call": {
-                "version": given.call.version,
-                "instructions": given.call.instructions,
+                "version": spec.call.version,
+                "instructions": spec.call.instructions,
                 "messages": {
-                    "head": str(given.call.messages.head),
-                    "delta": delta_to_data(given.call.messages.delta),
+                    "head": str(spec.call.messages.head),
+                    "delta": delta_to_data(spec.call.messages.delta),
                 },
-                "tools": given.call.tools,
-                "max_output_tokens": given.call.max_output_tokens,
-                "reasoning": given.call.reasoning.to_data()
-                if given.call.reasoning is not None
+                "tools": spec.call.tools,
+                "max_output_tokens": spec.call.max_output_tokens,
+                "reasoning": spec.call.reasoning.to_data()
+                if spec.call.reasoning is not None
                 else None,
                 "output_schema": (
-                    dict(given.call.output_schema)
-                    if given.call.output_schema is not None
+                    dict(spec.call.output_schema)
+                    if spec.call.output_schema is not None
                     else None
                 ),
                 "cont": (
-                    dict(given.call.continuation)
-                    if given.call.continuation is not None
+                    dict(spec.call.continuation)
+                    if spec.call.continuation is not None
                     else None
                 ),
             },
         }
-    return step_given_to_data(kind, cast(StepGiven, given))
+    return step_spec_to_data(kind, cast(StepSpec, spec))
 
 
-def step_noted_from_data(kind: StepKind, data: object) -> StepNoted:
+def step_report_from_data(kind: StepKind, data: object) -> StepReport:
     """Parse one typed Step-end fact payload from durable data."""
 
     if data is None:
         return None
     if kind == "exec":
-        payload = _canonical_object(
-            data, fields={"control", "runnable"}, label="exec noted"
-        )
-        if not isinstance(payload["control"], str) or not isinstance(
-            payload["runnable"], str
-        ):
-            raise ValueError("exec noted requires text control and runnable refs")
-        return ExecStepNoted(ControlRef.parse(payload["control"]), payload["runnable"])
+        payload = _canonical_object(data, fields={"control"}, label="exec report")
+        if not isinstance(payload["control"], str):
+            raise ValueError("exec report requires a text control ref")
+        return ExecStepReport(ControlRef.parse(payload["control"]))
     if kind == "tool":
         payload = _canonical_object(
-            data, fields={"summary", "invoked"}, label="tool noted"
+            data, fields={"summary", "invoked"}, label="tool report"
         )
         summary = payload["summary"]
         if not isinstance(summary, str):
-            raise ValueError("tool noted summary must be text")
-        return ToolStepNoted(
+            raise ValueError("tool report summary must be text")
+        return ToolStepReport(
             summary=summary,
             invoked=_required_bool(payload["invoked"], label="tool invoked"),
         )
@@ -1421,9 +1416,9 @@ def step_noted_from_data(kind: StepKind, data: object) -> StepNoted:
         payload = _canonical_object(
             data,
             fields={"total_items", "output_items"},
-            label="collection noted",
+            label="collection report",
         )
-        return CollectionStepNoted(
+        return CollectionStepReport(
             total_items=_required_int(
                 payload["total_items"],
                 label="collection total items",
@@ -1439,13 +1434,13 @@ def step_noted_from_data(kind: StepKind, data: object) -> StepNoted:
             frozenset({"iterations", "termination", "total"}),
         }:
             raise ValueError(
-                "loop noted requires exactly: iterations, termination, total"
+                "loop report requires exactly: iterations, termination, total"
             )
         payload = cast(Mapping[str, object], data)
         termination = payload["termination"]
         if termination not in {"exhausted", "satisfied", "exec", "failed", "canceled"}:
-            raise ValueError("loop noted termination is invalid")
-        return LoopStepNoted(
+            raise ValueError("loop report termination is invalid")
+        return LoopStepReport(
             iterations=_required_int(payload["iterations"], label="loop iterations"),
             termination=cast(
                 Literal["exhausted", "satisfied", "exec", "failed", "canceled"],
@@ -1454,14 +1449,14 @@ def step_noted_from_data(kind: StepKind, data: object) -> StepNoted:
             total=_optional_int(payload.get("total"), label="loop total"),
         )
     if kind != "model":
-        raise ValueError(f"{kind} Step noted must be null")
+        raise ValueError(f"{kind} Step report must be null")
     payload = _canonical_object(
-        data, fields={"usage", "cost", "cont", "invoked"}, label="model noted"
+        data, fields={"usage", "cost", "cont", "invoked"}, label="model report"
     )
     raw_cont = payload["cont"]
     if raw_cont is not None and not isinstance(raw_cont, Mapping):
-        raise ValueError("model noted cont must be an object or null")
-    return ModelStepNoted(
+        raise ValueError("model report cont must be an object or null")
+    return ModelStepReport(
         usage=_token_usage_from_data(payload["usage"]),
         cost=_model_cost_from_data(payload["cost"]),
         invoked=_required_bool(payload["invoked"], label="model invoked"),
@@ -1471,40 +1466,42 @@ def step_noted_from_data(kind: StepKind, data: object) -> StepNoted:
     )
 
 
-def step_noted_to_data(kind: StepKind, noted: StepNoted) -> dict[str, object] | None:
+def step_report_to_data(kind: StepKind, report: StepReport) -> dict[str, object] | None:
     """Serialize one typed Step-end fact payload."""
 
-    from .types import validate_step_noted
+    from .types import validate_step_report
 
-    validate_step_noted(kind, noted)
-    if noted is None:
+    validate_step_report(kind, report)
+    if report is None:
         return None
-    if isinstance(noted, ExecStepNoted):
-        return {"control": str(noted.control), "runnable": noted.runnable}
-    if isinstance(noted, ToolStepNoted):
-        return {"summary": noted.summary, "invoked": noted.invoked}
-    if isinstance(noted, CollectionStepNoted):
+    if isinstance(report, ExecStepReport):
+        return {"control": str(report.control)}
+    if isinstance(report, ToolStepReport):
+        return {"summary": report.summary, "invoked": report.invoked}
+    if isinstance(report, CollectionStepReport):
         return {
-            "total_items": noted.total_items,
-            "output_items": noted.output_items,
+            "total_items": report.total_items,
+            "output_items": report.output_items,
         }
-    if isinstance(noted, LoopStepNoted):
+    if isinstance(report, LoopStepReport):
         return {
-            "iterations": noted.iterations,
-            "termination": noted.termination,
-            "total": noted.total,
+            "iterations": report.iterations,
+            "termination": report.termination,
+            "total": report.total,
         }
     return {
-        "usage": _TOKEN_USAGE_ADAPTER.dump_python(noted.usage, mode="json"),
-        "cost": _MODEL_COST_ADAPTER.dump_python(noted.cost, mode="json"),
-        "invoked": noted.invoked,
-        "cont": (dict(noted.continuation) if noted.continuation is not None else None),
+        "usage": _TOKEN_USAGE_ADAPTER.dump_python(report.usage, mode="json"),
+        "cost": _MODEL_COST_ADAPTER.dump_python(report.cost, mode="json"),
+        "invoked": report.invoked,
+        "cont": (
+            dict(report.continuation) if report.continuation is not None else None
+        ),
     }
 
 
 _TOKEN_USAGE_ADAPTER = TypeAdapter(TokenUsage | None)
 _MODEL_COST_ADAPTER = TypeAdapter(ModelCost | None)
-_RUN_NOTED_ADAPTER = TypeAdapter(RunNoted | None)
+_RUN_REPORT_ADAPTER = TypeAdapter(RunReport | None)
 
 
 def _token_usage_from_data(value: object) -> TokenUsage | None:
@@ -1540,18 +1537,18 @@ def _model_cost_from_data(value: object) -> ModelCost | None:
     return _MODEL_COST_ADAPTER.validate_python(value)
 
 
-def run_noted_from_data(value: object) -> RunNoted | None:
+def run_report_from_data(value: object) -> RunReport | None:
     if value is not None:
         _canonical_object(
             value,
             fields={"calls", "usage", "cost", "cost_approximate"},
-            label="run noted",
+            label="run report",
         )
-    return _RUN_NOTED_ADAPTER.validate_python(value)
+    return _RUN_REPORT_ADAPTER.validate_python(value)
 
 
-def run_noted_to_data(value: RunNoted | None) -> object:
-    return _RUN_NOTED_ADAPTER.dump_python(value, mode="json")
+def run_report_to_data(value: RunReport | None) -> object:
+    return _RUN_REPORT_ADAPTER.dump_python(value, mode="json")
 
 
 def _required_bool(value: object, *, label: str) -> bool:

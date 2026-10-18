@@ -8,7 +8,7 @@ import pytest
 from tests.support.execution_harness import ExecutionHarness
 from toolang.base.types.message import Message, TextPart
 from toolang.base.types.run import ModelCallResult, ToolCall
-from toolang.execution.types import ThreadPrefix, ToolStepGiven
+from toolang.execution.types import ThreadPrefix, ToolStepSpec
 from toolang.plugin.toolsets.loading import load_tools
 
 
@@ -902,9 +902,9 @@ def test_chdir_loads_rules_only_when_a_path_operation_follows(tmp_path):
             assert (repo / "src/result").read_text() == "done"
             assert harness.store.current_cwd(run.id) == "repo://src"
             tool_names = [
-                step.given.call.name
+                step.spec.call.name
                 for step in harness.store.list_steps(run_id=run.id)
-                if isinstance(step.given, ToolStepGiven)
+                if isinstance(step.spec, ToolStepSpec)
             ]
             assert tool_names == ["runtime__chdir", "runtime__honor", "fs__write"]
             results = [

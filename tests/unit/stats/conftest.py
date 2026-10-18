@@ -10,13 +10,13 @@ from toolang.base.types.run import ModelCall, ToolCall
 from toolang.execution.store import RunStore
 from toolang.execution.types import (
     ModelCost,
-    ModelStepGiven,
-    ModelStepNoted,
-    RunNoted,
+    ModelStepSpec,
+    ModelStepReport,
+    RunReport,
     StepRef,
     StepStatus,
-    ToolStepGiven,
-    ToolStepNoted,
+    ToolStepSpec,
+    ToolStepReport,
     TokenUsage,
 )
 from toolang.stats.config import StatsConfig
@@ -56,7 +56,9 @@ class Fixture:
         return run
 
     def finish(self, run: str, at: int) -> None:
-        self.source.finish_run(run_id=run, finished_at=timestamp(at), noted=RunNoted())
+        self.source.finish_run(
+            run_id=run, finished_at=timestamp(at), report=RunReport()
+        )
 
     def call(
         self,
@@ -78,22 +80,22 @@ class Fixture:
         self.indices[run] = index + 1
         ref = StepRef.from_local(run, (index,))
         kind = "tool" if tool else "model"
-        given = (
-            ToolStepGiven(plugin="test", call=ToolCall("call", "call", "test", {}))
+        spec = (
+            ToolStepSpec(plugin="test", call=ToolCall("call", "call", "test", {}))
             if tool
-            else ModelStepGiven(
+            else ModelStepSpec(
                 setup="fixture",
                 model=model,
                 call=ModelCall(instructions="", messages=[]),
             )
         )
         self.source.begin_step(
-            ref=ref, kind=kind, input=(), given=given, started_at=timestamp(start)
+            ref=ref, kind=kind, input=(), spec=spec, started_at=timestamp(start)
         )
-        noted = (
-            ToolStepNoted(summary="fixture", invoked=invoked)
+        report = (
+            ToolStepReport(summary="fixture", invoked=invoked)
             if tool
-            else ModelStepNoted(
+            else ModelStepReport(
                 invoked=invoked,
                 usage=None if unknown else TokenUsage(tokens, tokens // 10, cached),
                 cost=ModelCost(
@@ -108,7 +110,7 @@ class Fixture:
             kind=kind,
             status=status,
             output=None,
-            noted=noted,
+            report=report,
             error=None,
             finished_at=timestamp(end),
         )

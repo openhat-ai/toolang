@@ -29,7 +29,7 @@ from toolang.execution.types import (
     AwaitableHandle,
     ThreadPrefix,
     Output,
-    ToolStepNoted,
+    ToolStepReport,
     StepRef,
 )
 
@@ -39,7 +39,7 @@ def test_wait_for_pre_entry_canceled_spawn_uses_its_own_root(
     tmp_path, monkeypatch, reason
 ):
     from toolang.execution.events import RunEnd
-    from toolang.execution.types import RunNoted
+    from toolang.execution.types import RunReport
 
     harness = ExecutionHarness.create(
         tmp_path,
@@ -89,8 +89,8 @@ flow child() -> Text:
                 )
                 child = harness.store.get_run(run_id=children[0])
                 assert child is not None and child.status == "canceled"
-                assert child.noted == RunNoted()
-                assert child.begin_cursor is None and child.end_cursor is not None
+                assert child.report == RunReport()
+                assert child._begin_cursor is None and child._end_cursor is not None
                 assert child.error is not None
                 assert harness.store.resolve_error(child.error) == (
                     reason or "canceled"
@@ -551,9 +551,9 @@ flow child(_: Text):
                     "thread": str(root.thread),
                     "status": "pending",
                 }
-                assert isinstance(step.noted, ToolStepNoted)
-                assert step.noted.summary == "Spawned new run: flow:child"
-                assert end.noted == step_summary(step.noted)
+                assert isinstance(step.report, ToolStepReport)
+                assert step.report.summary == "Spawned new run: flow:child"
+                assert end.report == step_summary(step.report)
             if failure == "dispatch":
                 assert root.status == "failed"
                 assert root.error is not None
@@ -795,7 +795,7 @@ def test_agic_spawn_obeys_hands_and_keeps_its_recorded_reply(
     tmp_path: Path, hands, allowed
 ):
     from toolang.base.types.message import ToolResultPart
-    from toolang.execution.types import ToolStepGiven
+    from toolang.execution.types import ToolStepSpec
 
     harness = ExecutionHarness.create(
         tmp_path,
@@ -833,8 +833,8 @@ flow child(_: Text) -> Text:
             origin = next(
                 s
                 for s in steps
-                if isinstance(s.given, ToolStepGiven)
-                and s.given.call.name == "runtime__spawn"
+                if isinstance(s.spec, ToolStepSpec)
+                and s.spec.call.name == "runtime__spawn"
             )
             reply = last_tool_result(harness.adapter.invocations[-1].call)
             assert origin.output is not None and isinstance(

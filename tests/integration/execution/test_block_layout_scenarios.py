@@ -9,7 +9,7 @@ from tests.support.execution_assertions import without_runtime_snapshots
 from tests.support.execution_harness import ExecutionHarness
 from toolang.base.types.message import Message, message_text
 from toolang.base.types.run import ModelCallResult
-from toolang.execution.types import LoopStepNoted, ThreadPrefix
+from toolang.execution.types import LoopStepReport, ThreadPrefix
 from toolang.lang.input import resolve_input_parts
 
 
@@ -77,14 +77,14 @@ def test_block_ownership_preserves_iteration_counts_and_prompt_boundaries(
                 ).split("</toolang:context>\n\n", 1)[-1]
                 for invocation in harness.adapter.invocations
             ] == prompts
-            loops = [step.noted for step in steps if step.kind == "loop"]
+            loops = [step.report for step in steps if step.kind == "loop"]
             assert loops == (
                 [
-                    LoopStepNoted(iterations=1, termination="satisfied", total=None),
-                    LoopStepNoted(iterations=2, termination="exhausted", total=2),
+                    LoopStepReport(iterations=1, termination="satisfied", total=None),
+                    LoopStepReport(iterations=2, termination="exhausted", total=2),
                 ]
                 if conditional
-                else [LoopStepNoted(iterations=2, termination="exhausted", total=2)]
+                else [LoopStepReport(iterations=2, termination="exhausted", total=2)]
             )
             assert harness.adapter.pending_responses == 0
 
@@ -127,7 +127,7 @@ def test_until_receives_locals_defined_in_its_body(
             )
             assert "Reviewed evidence." in prompt
             loop = harness.store.list_steps(run_id=root.id)[0]
-            assert loop.noted == LoopStepNoted(
+            assert loop.report == LoopStepReport(
                 iterations=1, termination="satisfied", total=2
             )
 

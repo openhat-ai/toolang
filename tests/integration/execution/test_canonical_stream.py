@@ -84,11 +84,11 @@ flow child(_: Text) -> Text:
                     record = None
                 if record is not None:
                     field = (
-                        "begin_cursor"
+                        "_begin_cursor"
                         if isinstance(event, RunBegin | StepBegin)
-                        else "end_cursor"
+                        else "_end_cursor"
                         if isinstance(event, RunEnd | StepEnd)
-                        else "event_cursor"
+                        else "_event_cursor"
                     )
                     assert getattr(record, field) == str(frame.cursor)
                 notified.append(frame)

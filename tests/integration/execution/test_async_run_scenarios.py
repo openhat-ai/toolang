@@ -310,7 +310,7 @@ agic child() -> Text:
 
 def test_agic_async_run_and_await_share_results(tmp_path, monkeypatch):
     from toolang.base.types.run import ToolCall
-    from toolang.execution.types import ToolStepNoted
+    from toolang.execution.types import ToolStepReport
     from tests.support.execution_assertions import last_tool_result
 
     harness = ExecutionHarness.create(
@@ -376,15 +376,15 @@ flow child(_: Text) -> Text:
                 for step in harness.store.list_steps(run_id=parent.id)
                 if step.kind == "tool"
             )
-            assert launch.noted == ToolStepNoted(
+            assert launch.report == ToolStepReport(
                 "Started child run: child", invoked=True
             )
             assert next(
-                event.noted
+                event.report
                 for event in tracer.events
                 if isinstance(event, StepEnd)
                 and StepRef.parse(event.step) == launch.ref
-            ) == step_summary(launch.noted)
+            ) == step_summary(launch.report)
             projector = ProgressProjector()
             for event in tracer.events:
                 update = projector.handle(event)
@@ -598,7 +598,7 @@ flow child() -> Text:
                 harness.store.resolve_error(child.error)
                 == "child initialization failed"
             )
-            assert child.noted is not None and child.noted.calls.model_calls == 0
+            assert child.report is not None and child.report.calls.model_calls == 0
             assert parent.status == "failed" and parent.error is not None
             assert "child initialization failed" in harness.store.resolve_error(
                 parent.error
