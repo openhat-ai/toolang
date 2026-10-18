@@ -76,9 +76,13 @@ class TopSnapshot(BaseModel):
             )
         )
         completed = None
-        if not unknown and all(
-            source.completed is not None and source.activity_error is None
-            for source in self.sources
+        if (
+            not unknown
+            and not self._missing_sources()
+            and all(
+                source.completed is not None and source.activity_error is None
+                for source in self.sources
+            )
         ):
             completed = CompletionCounts(
                 **{
@@ -100,7 +104,7 @@ class TopSnapshot(BaseModel):
         )
 
     def usage_total(self) -> Metrics | None:
-        if self.inventory_updating or self.inventory.partial:
+        if self.inventory_updating or self.inventory.partial or self._missing_sources():
             return None
         result = Metrics()
         for source in self.sources:
@@ -108,3 +112,7 @@ class TopSnapshot(BaseModel):
                 return None
             result += source.usage.metrics
         return result
+
+    def _missing_sources(self) -> bool:
+        available = {source.identity for source in self.sources}
+        return any(item.identity not in available for item in self.inventory.instances)

@@ -10,7 +10,8 @@ Details content remains deferred; only its open/close placeholder is required.
 Make `too top` a dashboard of current and recent execution: a switchable rolling
 usage summary and one table of live trees and recently completed root Runs.
 Success means useful observation without `stats.db`, active-root contributions,
-accurate current activity, and recovery of recent completions after reopening.
+accurate current activity, and recent completions from discoverable or
+session-observed sources.
 Historical exploration has a separate Stats plan and approval.
 
 This definition replaces the older [Top activity](top-activity.md) and
@@ -36,13 +37,8 @@ historical Stats has a separate definition and implementation scope.
   example, `aid@r70200d1f`). Preserve full source identities internally. Never
   scan arbitrary source directories, start agents or retain server leases.
 - Query discovered readable source stores even when execution is offline. Retain
-  known source locations for the current observation's windows after a runtime
-  disappears; expose unavailable coverage if its store can no longer be read.
-  Once an instance leaves inventory, its retained source contributes completions
-  and usage only, not active roots, frozen live paths or live-coverage warnings.
-  Current inventory members still expose unavailable/stale live coverage normally.
-  Reopening recovers recent completions from discoverable stores. Do not promise
-  discovery of arbitrary detached temporary histories.
+  sources only in the current Top session, following the lifecycle below. Do not
+  add persistent source catalogs or registration/shutdown hooks for Top.
 - Options: `--period 1h|4h|8h` (default `1h`),
   `--recent 1m|5m|15m` (default `5m`), `--refresh SECONDS` (finite, positive,
   default `1`), `--once`, `--json`. Non-TTY and JSON output are single snapshots.
@@ -67,6 +63,31 @@ PR #843's retention contract. CLI/TUI code owns no SQL, accounting or duplicate
 statistics implementation. Execution never imports Stats. Hosting composes the
 readers, with concrete paths/time resolved at call sites. Implementation builds
 on PR #844; this definition can be merged independently.
+
+## Source lifecycle
+
+Keep two sets with distinct responsibilities: the latest validated inventory
+defines current membership; an in-memory map contains sources observed during
+this Top session. Key both by the existing full instance identity. Reuse
+`up.observation.runtime_inventory` for resident discovery, registration validation
+and liveness; Top does not implement another discovery or process-liveness rule.
+
+| Source state | Observation behavior |
+| --- | --- |
+| Current | Follow the inventory's latest binding. Read live activity when available and query completion/usage windows through `toolang.stats`. Only current members contribute instance counts, active roots and live coverage. |
+| Departed during this session | Retain its source in memory for at most eight hours after its last discovery, matching the largest supported window. Query only persisted completions and usage; stop polling its old live endpoint. Do not infer a terminal Run status from instance departure. |
+| Forgotten or Top reopened | Discard session memory. Discover only residents and currently registered instances under the selected root. Do not recover previously deregistered visiting/roaming instances or scan their old directories. |
+
+Rediscovery updates the same map entry rather than adding its statistics twice.
+`too alice top` applies its resident-only scope before adding sources. Window
+changes query the same observed sources; they neither discover old sources nor
+freeze an aggregate that would stop aging correctly. Read errors retain their
+unavailable/stale meaning and never become zero or proof of completion.
+
+`TopObserver` owns discovery, source lifetime and asynchronous query state;
+`toolang.stats` owns persisted selection/accounting; the summary and presenter
+consume the resulting snapshot. Runtime start, stop and registration cleanup
+remain independent of Top.
 
 ## Windows and accounting
 
@@ -381,7 +402,9 @@ factory/routing and a focused presenter.
 | Missing/corrupt/initializing `stats.db` | Top works from available sources without opening/creating that database or starting archival; persisted aggregates come through `toolang.stats`. |
 | Every Period, boundary timestamps, long-running roots and archived facts | Totals match a direct-source oracle, including settled active-root contributions and nullable/approximate quantities; unfinished consumption is not invented or counted twice. |
 | Inventory changes, idle instances and parallel children | Placement counts follow inventory; active counts follow physical-root lifecycle and remain independent of folds/windows. |
+| Reopen and source rediscovery | Fresh Top discovers only residents/current registrations; departed temporary histories from another Top session stay absent; rediscovery updates one source without duplicate totals. |
 | Roaming departure with retained history | Retained completion/usage facts remain visible; departed instances add no live rows or live-coverage warnings and cannot make healthy current active counts unknown. |
+| Departure during an in-flight query | Queued old-endpoint polls are canceled and subsequent polls read only source statistics; durable terminal facts remain eligible, an old live result cannot restore active rows, and window changes/expiry still apply. |
 | Native/runtime run, async run, spawn, await and exec | Equivalent labels preserve source kind, invocation state, ownership and tool counts; lookalikes/runtime-only tools keep tool identities. |
 | Expanded/folded serial paths, one/many parallel lanes and retained async ancestors | No repeated visible child activity or representative lane; row identity/metrics and restored folds are stable; occurrence never claims completion progress. |
 | Root/child/Step rows and Details | Full owning root ID stays in RUN; child IDs are Details-only; typed/unnamed runnable, provider/model and toolset.tool formatting is correct; finished Runs show terminal state only. |

@@ -3,10 +3,17 @@
 `too top` observes the selected root's validated local resident, visiting and
 roaming inventory. `too alice top` selects one resident agent. Observation neither
 starts agents nor acquires server leases. Discovery refreshes every five seconds;
-known source paths remain available for eight hours after inventory removal.
+known source paths remain in memory for eight hours after their last discovery.
+Each new Top session starts from the resident list and current validated instance
+registrations. It does not recover previously deregistered visiting/roaming
+instances from an earlier session or persist an additional source registry.
 These retained sources contribute historical completions and usage only; their
-departure does not make current active-root coverage unavailable. Sources still
-in inventory retain the normal unavailable/stale live diagnostics.
+departure stops polling the old live endpoint and does not make current
+active-root coverage unavailable. Queued live requests are canceled; running
+requests may supply durable completions but cannot restore an obsolete live
+sample. Rediscovery updates the existing source binding without counting its
+history twice. Sources still in inventory retain the normal unavailable/stale
+live diagnostics. Instance departure never implies a Run's terminal status.
 
 ```sh
 too top

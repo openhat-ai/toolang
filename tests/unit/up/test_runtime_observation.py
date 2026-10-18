@@ -710,3 +710,32 @@ def test_runtime_snapshot_keeps_failed_residents_and_excludes_finished_visitors(
     assert snapshot.instances[0].name == "alice"
     assert snapshot.instances[0].state == "not running"
     assert snapshot.instances[0].drivers is None
+
+
+@pytest.mark.parametrize("placement", ["visiting", "roaming"])
+def test_first_liveness_probe_excludes_a_departed_temporary_instance(
+    tmp_path, monkeypatch, placement
+):
+    from toolang.up.process import AgentProcess, AgentStatus
+
+    resident = AgentLayout.resident(tmp_path, "alice")
+    resident.home.mkdir(parents=True)
+    temporary = (
+        AgentLayout.visiting(
+            "https://example.com/worker.too", "worker", toolang_root=tmp_path
+        )
+        if placement == "visiting"
+        else replace(AgentLayout.roaming(tmp_path / "worker.too"), instance="one")
+    )
+    monkeypatch.setattr(
+        AgentProcess,
+        "status",
+        lambda self, **kwargs: AgentStatus(
+            self.layout.name, "stopped", None, None, None, None
+        ),
+    )
+    with RuntimeRegistration(temporary, toolang_root=tmp_path, drivers=frozenset()):
+        snapshot = runtime_snapshot(tmp_path)
+        assert len(snapshot.instances) == 1
+        assert snapshot.instances[0].placement == "resident"
+        assert snapshot.instances[0].state == "not running"

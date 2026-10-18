@@ -119,6 +119,7 @@ class _Source:
     page_epoch: str | None = None
     page_cursor: tuple[int, tuple[str, str]] | None = None
     activity_recent: int = 0
+    activity_obsolete: bool = False
     usage_period: int = 0
     next_activity: float = 0
     next_usage: float = 0
@@ -126,6 +127,16 @@ class _Source:
     cursor_at: int | None = None
     request_page: bool = False
     loaded: dict[str, RunNode] = field(default_factory=dict)
+
+    def rebind(self, binding: RuntimeSource) -> None:
+        self.binding = binding
+        # A running request may still supply durable terminal facts, but its
+        # live sample belongs to the previous binding, even after rediscovery.
+        self.activity_obsolete = True
+        self.value.live_stale = True
+        self.next_activity = 0
+        if self.activity is not None and self.activity.cancel():
+            self.activity = None
 
 
 class TopObserver:
@@ -187,19 +198,22 @@ class TopObserver:
         if self.discovery_job is not None and self.discovery_job.done():
             try:
                 result = self.discovery_job.result()
+                previous_current = {item.identity for item in self.inventory.instances}
+                current = {
+                    item.identity: item
+                    for item in result.snapshot.instances
+                    if self.agent is None
+                    or (item.placement == "resident" and item.name == self.agent)
+                }
                 unique: dict[str, RuntimeSource] = {}
                 for item in result.sources:
-                    if self.agent is None or (
-                        item.instance.placement == "resident"
-                        and item.instance.name == self.agent
-                    ):
+                    if item.instance.identity in current:
                         unique.setdefault(item.instance.identity, item)
-                sources = tuple(unique.values())
                 self.inventory = RuntimeInstanceSnapshot(
-                    tuple(item.instance for item in sources),
+                    tuple(current.values()),
                     result.snapshot.diagnostics,
                 )
-                for binding in sources:
+                for binding in unique.values():
                     identity = binding.instance.identity
                     previous = self.sources.get(identity)
                     if previous is None:
@@ -213,10 +227,15 @@ class TopObserver:
                             ),
                         )
                     else:
-                        previous.binding, previous.seen = binding, now
-                for identity, source in list(self.sources.items()):
-                    if now - source.seen > 8 * 3600:
-                        del self.sources[identity]
+                        if (
+                            identity not in previous_current
+                            or previous.binding != binding
+                        ):
+                            previous.rebind(binding)
+                        previous.seen = now
+                for identity in previous_current - unique.keys():
+                    if source := self.sources.get(identity):
+                        source.rebind(replace(source.binding, endpoint=None))
                 self.discovered = True
             except (OSError, ValueError, RuntimeError) as exc:
                 self.inventory = RuntimeInstanceSnapshot(
@@ -226,6 +245,13 @@ class TopObserver:
             self.next_discovery = now + 5
         if self.discovery_job is None and now >= self.next_discovery:
             self.discovery_job = self.discovery.submit(runtime_inventory, self.root)
+        current = {item.identity for item in self.inventory.instances}
+        for identity, source in list(self.sources.items()):
+            if identity not in current and now - source.seen > 8 * 3600:
+                for job in (source.activity, source.usage, source.page):
+                    if job is not None:
+                        job.cancel()
+                del self.sources[identity]
 
     def _merge_roots(
         self, source: _Source, roots: tuple[RunNode, ...], now: float
@@ -262,7 +288,7 @@ class TopObserver:
                 result = source.activity.result()
                 # Live samples have no Recent filter. Never discard a fresh live
                 # baseline just because the completion window changed in flight.
-                if result.live is not None:
+                if result.live is not None and not source.activity_obsolete:
                     if (
                         source.value.live is not None
                         and source.value.live.epoch != result.live.epoch
@@ -272,7 +298,9 @@ class TopObserver:
                         source.request_page = False
                         source.value.page_error = None
                     source.value.live = result.live
-                source.value.live_stale = result.live is None
+                source.value.live_stale = (
+                    result.live is None or source.activity_obsolete
+                )
                 self._retire_live(source, (*result.completed.roots, *result.retired))
                 page = result.completed.roots
                 reset_cursor = bool(page) and page[-1].id not in source.loaded
@@ -291,7 +319,10 @@ class TopObserver:
                     source.value.activity_error = str(exc)
             source.activity = None
             source.next_activity = (
-                now + self.refresh if source.activity_recent == self.recent else 0
+                now + self.refresh
+                if source.activity_recent == self.recent
+                and not source.activity_obsolete
+                else 0
             )
         if source.page is not None and source.page.done():
             current_page = source.page_recent == self.recent and source.page_epoch == (
@@ -335,6 +366,7 @@ class TopObserver:
             self._collect(source, now)
             if source.activity is None and now >= source.next_activity:
                 source.activity_recent = self.recent
+                source.activity_obsolete = False
                 source.activity = self.live_pool.submit(
                     read_activity,
                     source.binding,
