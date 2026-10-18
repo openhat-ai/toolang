@@ -6,101 +6,105 @@
 
 A language and runtime for agents and humans.
 
-The language expresses agent loops with fine-grained control using a small subset of natural language — readable by humans and agents, precise enough for the runtime to execute.
+The language expresses agent loops with fine-grained control using a constrained form of natural language — readable by both humans and agents, yet precise enough for the runtime to execute.
 
-## Getting started
+## Install
 
-Toolang runs on **macOS** and **Linux** with **Python 3.11+**. **Windows** is not supported yet.
+Toolang runs on **macOS** and **Linux** with **Python 3.11+**. **Windows** has not been tested yet.
 
 Install Toolang with `uv` or `pip`; the main command is `toolang`, with `too` as a shorter alias:
 
 ```bash
-uv tool install toolang  # or: pip install toolang
-too --version            # same as: toolang --version
+uv tool install toolang     # Or: pip install toolang
+too --version               # Same as: toolang --version
+too --help                  # Show common commands
 ```
 
-### Models
+## Models
 
-Toolang bundles a catalog of recent models from [models.dev](https://models.dev/), filtered by both `knowledge > 2025-00` and `last_updated > 2026-00`. Set your provider's API key to get started; no additional model configuration is required. Local models are discovered from running **Ollama** and **llama.cpp** servers.
+Toolang works out of the box if you already have an API key for a supported model provider.
+
+To see which models are ready to use:
 
 ```bash
-too providers --all  # List all providers and their required environment variables
-too models           # List ready models
+too models                  # List models ready to use
 ```
 
-Download updated or full model catalogs from [openhat-ai/models](https://github.com/openhat-ai/models).
+To use another provider, set its API key in your shell:
+
+```bash
+too providers --all         # List all supported providers
+```
+
+Toolang maintains a model catalog based on [models.dev](https://models.dev/) and discovers local models served by **Ollama** and **llama.cpp**. Updated and full catalogs are available at [openhat-ai/models](https://github.com/openhat-ai/models).
 
 ## Shared agents
 
-Use a shared agent by its URL or GitHub shorthand, with no agent configuration required:
+Run an agent directly from a URL or GitHub shorthand:
 
 ```bash
-too https://toolang.ai/lex.too chat  # Practice English with Lex
-too gh:briceyan/dev chat                # Write and review code with Dev
+too https://toolang.ai/lex.too chat  # Run a .too file from a URL
+too gh:briceyan/gus chat             # github.com/briceyan/agents/blob/main/gus.too
 ```
 
-Toolang downloads the `.too` source and its declared dependencies and runs the agent locally. This lets you share an agent as a file, without separate installation or configuration instructions.
+Lex helps you practice English. Gus is a coding agent that also contributes to Toolang.
+
+Toolang downloads the `.too` source and its declared dependencies, then runs the agent locally.
 
 ## Local agents
 
-Create an agent from scratch, or clone a shared one as a starting point:
+Create an agent from scratch:
 
 ```bash
-too new NAME
-too clone https://toolang.ai/lex.too NAME
-too clone gh:briceyan/dev NAME
+too new alice
 ```
 
-Agent Names use 1–64 lowercase ASCII letters, digits, or underscores and start
-with a letter. See [source and naming rules](docs/concepts.md#agent-sources).
-
-Once created, the agent is ready for a conversation:
+Or clone a local or shared agent:
 
 ```bash
-too NAME chat
+too clone alice bob
+too clone https://toolang.ai/lex.too lex
+too clone gh:briceyan/gus gus
 ```
 
-Use the CLI help to configure the agent and add one-off or recurring chores:
+Chat with your agent:
 
 ```bash
-too --help
+too alice chat
 ```
 
 ## Scripts
 
-A `.too` file can also run as a script. Here is hello world in Toolang:
+Toolang supports standalone `.too` scripts. Here's a simple example that translates text into Chinese:
 
-```bash
-cat > hello-world.too <<'EOF'
-agic():
-  Say hello to the world.
-EOF
-
-too hello-world.too
+```too
+agic:
+  Translate the following text into Chinese:
+  {{_}}
 ```
 
-To start from a template, use `too init` to create `aid.too` and `toolang.toml` in a directory. Rename or edit it as needed, then call it from Makefiles, CI jobs, or other scripts:
+Save it as `a.too` and run it with some text:
 
 ```bash
-too init DIR
-too DIR/aid.too --help
+too a.too -- hello world
 ```
 
-The generated script provides six named runnables for issues, fixes, pull request reviews, project overviews, recent updates, and localization. Select one by name and pass its arguments on the command line:
+Use `too init` to create a starter script that you can rename and customize:
 
 ```bash
-too DIR/aid.too whats_for
-too DIR/aid.too whats_new                     # Updates from the past week
-too DIR/aid.too whats_new since=v0.2.0
-too DIR/aid.too review -- "https://github.com/OWNER/REPO/pull/123"
-too DIR/aid.too update_i18n locale=zh-CN
+too init <project-dir>
+too <project-dir>/aid.too --help
 ```
 
 ## Language
 
-The [tree-sitter-toolang](https://github.com/openhat-ai/tree-sitter-toolang) repository provides the grammar and parser packages for Python, JavaScript, and Rust. See the [syntax reference](https://toolang.ai/reference/toolang-grammar) for the full language syntax.
+Toolang models the agent loop as a fundamental construct called `agic`, analogous to a function in traditional programming languages. Agics can be called, reused, and composed to build complex behavior from smaller, modular units.
 
-See [examples](https://github.com/openhat-ai/toolang/tree/main/examples) for runnable Toolang programs:
+Toolang also introduces `flow` to organize agics and other operations into explicit execution steps, expressing plans and strategies for solving complex tasks as structured, reusable workflows.
+
+Agics, flows, and other language constructs are designed to be read and written by both humans and agents, establishing a common language for human–agent collaboration.
+
+The following [examples](https://github.com/openhat-ai/toolang/tree/main/examples) showcase Toolang’s key features:
 
 | Example | Description |
 | --- | --- |
@@ -108,52 +112,45 @@ See [examples](https://github.com/openhat-ai/toolang/tree/main/examples) for run
 | [`signatures.too`](https://github.com/openhat-ai/toolang/blob/main/examples/signatures.too) | Agic signature forms, from shorthand to fully typed. |
 | [`structured-output.too`](https://github.com/openhat-ai/toolang/blob/main/examples/structured-output.too) | Define a struct and use it for structured output. |
 | [`caps.too`](https://github.com/openhat-ai/toolang/blob/main/examples/caps.too) | Define and use caps in agics. |
-| [`hands.too`](https://github.com/openhat-ai/toolang/blob/main/examples/hands.too) | Delegate work to one of the runnables. |
-| [`handoffs.too`](https://github.com/openhat-ai/toolang/blob/main/examples/handoffs.too) | Transfer work to one of the runnables. |
+| [`hands.too`](https://github.com/openhat-ai/toolang/blob/main/examples/hands.too) | Delegate work to specialized runnables. |
+| [`handoffs.too`](https://github.com/openhat-ai/toolang/blob/main/examples/handoffs.too) | Hand off tasks between runnables. |
 | [`minimal.too`](https://github.com/openhat-ai/toolang/blob/main/examples/minimal.too) | An agent in 14 characters. |
 | [`developer.too`](https://github.com/openhat-ai/toolang/blob/main/examples/developer.too) | Define a complete coding agent with reusable caps. |
 
+For the full language syntax, see the [syntax reference](https://toolang.ai/reference/toolang-grammar).
+
+The Tree-sitter grammar and parser packages for Python, JavaScript, and Rust are available in [tree-sitter-toolang](https://github.com/openhat-ai/tree-sitter-toolang).
+
 ## Common commands
 
-Use these commands to run and manage agents. Add `--help` to any command for its usage and options.
-
-For resident and visiting agents, Chat, rerun, and fork/rewind start a shared
-server when needed, enabling only chat by default. Resident servers keep running;
-visiting servers exit after the last client leaves and all accepted work finishes.
-`start` keeps either placement running until `stop`; `serve` owns a foreground
-server. Start before Chat to enable background talk/chore drivers. Steer/cancel
-require a live owner. See [execution ownership](docs/execution.md) for details.
+Below are some common commands. Run `too --help` for usage details, or `too more` for additional commands.
 
 ```bash
-too new <agent>                       # Create a local agent
-too clone <ref> <agent>               # Clone an agent
-too <agent> chat                      # Chat with an agent
-too hub start                        # Start the messaging Hub; requires Redis/Valkey
-too talk <target> [message...]        # Open a conversation or send a message
-too talk all                         # Open the system group conversation
-too talk alice,bob                    # Observe an existing conversation between agents
-too talk                             # List conversations
-too convo create [name]               # Create a group containing the configured human
-too convo rules <id> -o MEMBERS.md    # Download shared conversation rules; revision on stderr
-too [agent] home                      # Open a shell in agent home
-too serve <ref>                       # Run an agent in the foreground
-too start <agent-or-ref>              # Start or retain a background agent
-too stop <agent-or-ref>               # Stop a running agent
+too new <agent>                # Create an agent
+too clone <ref> <agent>        # Clone an agent
+too <agent> info               # Show agent information
+too <agent> home               # Open a shell in the agent home
+too <agent> start              # Start an agent in the background
+too <agent> stop               # Stop an agent
+too <agent> chat               # Chat directly with an agent
 
-too init <dir>                        # Create aid.too and toolang.toml
-too [run] <file.too> [runnable]       # Execute a .too file; run is optional
+too init <dir>                 # Initialize Toolang in a directory
+too run <file.too> [runnable]  # Execute a .too file
 
-too caps                              # List available caps
-too tools                             # List available tools
-too [agent] top                       # Observe live trees and recent usage
-too models                            # List available models
-too providers                         # List available model providers
+too hub start                  # Start the hub in the background
+too talk                       # List conversations
+too talk <convo>               # Open a conversation by ID
+too talk <agent>               # Open a conversation with an agent
+too talk all                   # Open a conversation with the team
 
-too --help                            # Show common commands
-too more                              # Show additional commands
+too caps                       # List available caps
+too tools                      # List available tools
+too models                     # List available models
+too providers                  # List available model providers
+
+too <agent> inspect            # Inspect runs in detail
+too [agent] top                # Monitor active runs
 ```
-
-Teaming is enabled by default and uses Hub HTTP APIs; Hub requires an external Redis or Valkey server. Local execution works without Hub. See [messaging setup](docs/messaging.md) to configure or disable it.
 
 ## Links
 
