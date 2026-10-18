@@ -6,6 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Literal
 
+from toolang.common.layout import AgentPlacement
 from toolang.execution.types import DriverName
 
 ExecutionDrivers = frozenset[DriverName]
@@ -34,3 +35,46 @@ class AgentServerRef:
             raise ValueError("agent server requires an endpoint")
         if self.endpoint != self.endpoint.strip():
             raise ValueError("agent server requires a canonical endpoint")
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeInstance:
+    """One installed or registered runtime visible to the Hub snapshot."""
+
+    name: str
+    placement: AgentPlacement
+    runtime_instance: str | None
+    identity: str
+    state: str
+    drivers: tuple[str, ...] | None
+    observed_state: str | None = None
+    diagnostic: str | None = None
+
+    @property
+    def label(self) -> str:
+        """Return a stable display name that distinguishes placements and instances."""
+        if self.placement == "resident":
+            return (
+                self.name
+                if self.runtime_instance is None
+                else f"{self.name}#{self.runtime_instance}"
+            )
+        marker = "v" if self.placement == "visiting" else "r"
+        value = f"{self.name}@{marker}{self.identity[:8]}"
+        if self.runtime_instance is not None:
+            value += f"#{self.runtime_instance}"
+        return value
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeInstanceSnapshot:
+    """A point-in-time roster and discovery diagnostics for one Toolang root."""
+
+    instances: tuple[RuntimeInstance, ...]
+    diagnostics: tuple[str, ...] = ()
+
+    @property
+    def partial(self) -> bool:
+        return bool(self.diagnostics) or any(
+            item.diagnostic is not None for item in self.instances
+        )

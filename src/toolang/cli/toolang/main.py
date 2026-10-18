@@ -74,6 +74,7 @@ _CAPS_PANEL_COMMAND_ORDER = ("psyche", "skill", "service", "prompt")
 _RUN_PANEL_COMMAND_ORDER = ("steer", "cancel", "rerun")
 _THREAD_PANEL_COMMAND_ORDER = ("fork", "rewind")
 _INSPECTION_PANEL_COMMAND_ORDER = (
+    "top",
     "caps",
     "tools",
     "models",
@@ -163,6 +164,10 @@ class _HomeCommand(OptionalPrefixAgentCommand):
     argument_help = (
         "Agent name, .too path, GitHub ref, or URL; omit for the Toolang root"
     )
+
+
+class _TopCommand(OptionalPrefixAgentCommand):
+    argument_help = "Resident agent name; omit to observe all local instances"
 
 
 class _ThreadRunCommand(OptionalValueCommand, _TargetAgentCommand):
@@ -523,6 +528,13 @@ _registered_command(
     "toolang.cli.toolang.commands.model_catalog:models_command",
     help="List available models",
     cls=_TargetSetupCommand,
+    rich_help_panel=INSPECTION_COMMAND_PANEL,
+)
+_registered_command(
+    "top",
+    "toolang.cli.toolang.commands.top:top",
+    help="Show live trees and recent usage",
+    cls=_TopCommand,
     rich_help_panel=INSPECTION_COMMAND_PANEL,
 )
 _registered_command(

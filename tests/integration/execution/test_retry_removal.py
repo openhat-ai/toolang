@@ -132,7 +132,7 @@ def test_legacy_retry_history_is_inspectable_and_an_ordinary_rerun_source(
     asyncio.run(scenario())
 
 
-def test_retry_and_activity_routes_and_commands_are_unavailable(tmp_path):
+def test_retry_and_legacy_activity_routes_remain_unavailable(tmp_path):
     harness = ExecutionHarness.create(
         tmp_path, source="flow example:\n  let result = Done\n", responses=[]
     )
@@ -153,7 +153,7 @@ def test_retry_and_activity_routes_and_commands_are_unavailable(tmp_path):
         commands = typer.main.get_command(cli)
         assert isinstance(commands, TyperGroup)
         assert "retry" not in commands.commands
-        assert "top" not in commands.commands
+        assert "top" in commands.commands
         for owner in (
             core.executor,
             core.store,

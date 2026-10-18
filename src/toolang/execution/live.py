@@ -98,6 +98,7 @@ class LiveTree:
                 target=target[:240],
                 summary=info.summary[:240] if isinstance(info, ToolStepInfo) else "",
                 occurrence=record.occur,
+                asynchronous=getattr(info, "asynchronous", False),
             )
         )
 

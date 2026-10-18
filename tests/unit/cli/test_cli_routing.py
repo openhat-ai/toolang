@@ -351,6 +351,7 @@ def test_cli_visible_commands_follow_the_public_panel_order(arguments, capsys) -
         "Runtime commands": ("serve", "start", "stop", "hub"),
         "Work commands": ("chat", "talk", "chore", "convo"),
         "Inspection commands": (
+            "top",
             "caps",
             "tools",
             "models",
@@ -666,7 +667,7 @@ def test_cli_bare_resident_target_shows_its_command_help(
     assert "workspace" in sections["Agent commands"]
     for command in ("serve", "start", "stop"):
         assert command in sections["Runtime commands"]
-    assert "top" not in sections["Inspection commands"]
+    assert "top" in sections["Inspection commands"]
     assert "talk" not in stdout
     assert "hub" not in stdout
     assert tuple(stdout.index(panel) for panel in panels) == tuple(

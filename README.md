@@ -145,6 +145,7 @@ too [run] <file.too> [runnable]       # Execute a .too file; run is optional
 
 too caps                              # List available caps
 too tools                             # List available tools
+too [agent] top                       # Observe live trees and recent usage
 too models                            # List available models
 too providers                         # List available model providers
 

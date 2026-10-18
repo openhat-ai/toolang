@@ -18,6 +18,7 @@ from toolang.execution.types import (
     TokenUsage,
     ToolStepGiven,
 )
+from toolang.lang.ast import RunStmt, Span
 
 
 def _step(identity):
@@ -34,6 +35,39 @@ def _step(identity):
         ControlRef.for_run(ref.run_id, 0),
         None,
     )
+
+
+@pytest.mark.parametrize("native", [False, True])
+def test_live_step_carries_async_launch_without_changing_tool_accounting(native):
+    tree = LiveTree("run_root", "chat_test")
+    tree.accept_run(
+        "run_root", parent=None, runnable="flow:root", created_at="now", occurrence=None
+    )
+    record = _step("run_root.0")
+    record = (
+        replace(
+            record,
+            kind="run",
+            given=RunStmt(span=Span(1), runnable="agic:worker", asynchronous=True),
+        )
+        if native
+        else replace(
+            record,
+            given=ToolStepGiven(
+                "runtime",
+                ToolCall(
+                    "t", "t", "runtime__run", {"runnable": "agic:worker", "async": True}
+                ),
+            ),
+        )
+    )
+    tree.begin_step(record)
+    node = tree.snapshot().nodes[1]
+    assert isinstance(node, StepNode) and node.asynchronous
+    assert node.target == "agic:worker" and node.kind == ("run" if native else "tool")
+    if not native:
+        tree.invoke(record.ref, "tool")
+    assert tree.run_noted("run_root").calls == CallCounters(0, 0 if native else 1)
 
 
 def test_pruning_keeps_async_ancestors_and_never_recounts_children():

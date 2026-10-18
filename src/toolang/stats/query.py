@@ -39,9 +39,10 @@ class _Intervals:
                     yield index
 
 
-class StatsReader:
-    def __init__(self, records: StatsRecords, connection: sqlite3.Connection) -> None:
-        self.records = records
+class SourceReader:
+    """Resolve source ownership without a statistics store or archive receipts."""
+
+    def __init__(self, connection: sqlite3.Connection) -> None:
         self.connection = connection
         self.runs: dict[str, sqlite3.Row] = {}
         self.roots: dict[str, str] = {}
@@ -92,6 +93,12 @@ class StatsReader:
         for identity in path:
             self.roots[identity] = root
         return root, self.runs[run]["thread"]
+
+
+class StatsReader(SourceReader):
+    def __init__(self, records: StatsRecords, connection: sqlite3.Connection) -> None:
+        super().__init__(connection)
+        self.records = records
 
     def archived(self, roots: list[str]) -> set[str]:
         return {

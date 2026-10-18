@@ -45,6 +45,22 @@ PIN_SOURCE = """
 SELECT id FROM src.runs LIMIT 1;
 """
 
+RECENT_ROOT_COUNTS = """
+SELECT status,COUNT(*) AS count FROM src.runs
+WHERE parent IS NULL AND status IN ('succeeded','failed','canceled')
+  AND finished_at IS NOT NULL AND finished_at >= :lo_text AND finished_at <= :hi_text
+GROUP BY status;
+"""
+
+RECENT_ROOT_PAGE = """
+SELECT id,thread,status,created_at,started_at,finished_at,noted FROM src.runs
+WHERE parent IS NULL AND status IN ('succeeded','failed','canceled')
+  AND finished_at IS NOT NULL AND finished_at >= :lo_text AND finished_at <= :hi_text
+  AND (:before_time IS NULL OR finished_at < :before_time
+       OR (finished_at = :before_time AND id > :after_id))
+ORDER BY finished_at DESC,id LIMIT :limit;
+"""
+
 ARCHIVE_CANDIDATES = """
 -- cutoff_text = canonical UTC text for pass_time - archive_after_seconds.
 -- Exclude receipts before reading Steps; no started_at/lower finished_at cursor.
