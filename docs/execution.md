@@ -306,8 +306,8 @@ shapes and existing budgets; they never rebuild model calls. Complete calls rema
 available through `too AGENT inspect STEP call --json`.
 
 This event schema requires HTTP subscribers and runtimes to upgrade together and
-reconnect. Earlier complete-Spec event payloads are not accepted. Stored history
-and explicit inspection/query formats are unchanged.
+reconnect. Record and inspection/query consumers must also adopt the renamed
+[canonical fields and Pointer paths](run-step-records.md).
 
 
 ## Run Controls
