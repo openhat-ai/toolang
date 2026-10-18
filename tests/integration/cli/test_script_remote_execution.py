@@ -121,7 +121,8 @@ def test_remote_script_uses_a_script_thread_and_native_progress(
             assert control.payload.runnable.startswith("agent::flow:<entry:")
         output = capsys.readouterr()
         assert output.out == ""
-        assert output.err.startswith(f"‣ {runnable} ")
+        label = "agic:echo" if runnable == "agic:echo" else runnable.removesuffix("_")
+        assert output.err.startswith(f"‣ {label} ")
         effort = "4096" if override_model else "auto"
         assert output.err.splitlines()[0].endswith(f"test/scripted · {effort}")
         assert output.err.count("‣") == 1

@@ -896,6 +896,34 @@ def test_script_help_groups_signature_categories(
 
 
 @pytest.mark.parametrize("kind", ["agic", "flow"])
+@pytest.mark.parametrize("doc", ["", "## Documented entry.\n"])
+@pytest.mark.parametrize("explicit_help", [False, True])
+def test_unnamed_script_signature_help_uses_compact_entry_label(
+    tmp_path, monkeypatch, capsys, kind, doc, explicit_help
+):
+    body = "  {{topic}} {{_}}" if kind == "agic" else "  pass"
+    source = _write_source(tmp_path, f"{doc}{kind}(_: Text, topic: Text):\n{body}\n")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        script, "_run", lambda *_args, **_kwargs: pytest.fail("help must not run")
+    )
+    arguments = ["_", "--help"] if explicit_help else []
+    result = script.dispatch(
+        [], [source.name, *arguments], prog_name="too", stdin=StringIO()
+    )
+    output = strip_ansi(capsys.readouterr().out)
+
+    assert result == (0 if explicit_help else 2)
+    description = f"Run {kind}: - Documented entry." if doc else f"Run {kind}:."
+    assert description in output
+    assert f"{kind}:_" not in output
+    assert f"Run {kind} _" not in output
+    assert "Usage: too demo.too _ [OPTIONS] [ARGUMENTS]" in output
+    assert "topic=<TOPIC>" in output
+    assert "Primary input (Text)" in output
+
+
+@pytest.mark.parametrize("kind", ["agic", "flow"])
 @pytest.mark.parametrize(
     ("signature", "tokens", "expected"),
     [
@@ -1448,7 +1476,7 @@ flow pipeline:
     assert "visible -" not in descriptions
     assert "Use RUNNABLE --help" not in stdout
     assert "default" not in descriptions
-    assert "_ agic <entry:2>" in descriptions
+    assert "agic: <entry:2>" in descriptions
     assert "agic:<adhoc:" not in stdout
     assert "The flow proceeds as follows:" not in stdout
 
@@ -1477,7 +1505,7 @@ def test_script_help_orders_entry_then_agics_and_flows(
     assert script.dispatch([], [str(source), "--help"], prog_name="too") == 0
     panel = _help_panel(strip_ansi(capsys.readouterr().out), "Runnables")
     labels = [
-        *([f"_ {entry_kind}"] if entry_kind else []),
+        *([f"{entry_kind}:"] if entry_kind else []),
         "zebra_agic agic",
         "alpha_agic agic",
         "zebra_flow flow",
@@ -1488,7 +1516,7 @@ def test_script_help_orders_entry_then_agics_and_flows(
     if entry_kind:
         line = 6 if entry_doc else 5
         description = " Entry description." if entry_doc else ""
-        assert f"_ {entry_kind} <entry:{line}>{description}" in panel
+        assert f"{entry_kind}: <entry:{line}>{description}" in panel
         assert f"{entry_kind.capitalize()} <entry>" not in panel
 
 

@@ -164,12 +164,15 @@ class _ScriptHelpFormatter(UIHelpFormatter):
                 shown = display_runnable_ref(
                     f"{kind}:{label.plain}",
                     surface="help",
-                ).removeprefix(f"{kind}:")
+                )
+                unnamed = label.plain == "_"
+                if not unnamed:
+                    shown = shown.removeprefix(f"{kind}:")
                 yield (
                     "Runnables",
                     (
                         Text(shown, style="cli.command.name"),
-                        Text(kind, style="cli.meta"),
+                        Text("" if unnamed else kind, style="cli.meta"),
                         Text.from_markup(command.short_help or ""),
                     ),
                 )
@@ -504,15 +507,17 @@ def _runnable_command(
 
     kind = runnable.kind if runnable is not None else "runnable"
     doc = (runnable.doc or "").strip() if runnable is not None else ""
+    label = f"{kind} {name}"
     short_help = doc or f"{kind.capitalize()} {name}"
     if runnable is not None and runnable.name is None:
+        label = display_runnable_ref(f"{kind}:{identity}", surface="help")
         short_help = f"{identity} {doc}".rstrip()
     command = get_command_from_info(
         CommandInfo(
             name=name,
             cls=_RunnableCommand,
             callback=callback,
-            help=f"Run {kind} {name} - {doc}" if doc else f"Run {kind} {name}",
+            help=f"Run {label} - {doc}" if doc else f"Run {label}",
             short_help=short_help,
         ),
         pretty_exceptions_short=True,

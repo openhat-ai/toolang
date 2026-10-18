@@ -181,7 +181,7 @@ def test_local_script_saves_only_to_an_explicit_destination(
         assert "\x1b[" not in output.err
     if not quiet:
         header = next(line for line in output.err.splitlines() if line.startswith("‣"))
-        expected_runnable = "agic:echo" if entry == "echo" else "agic:_"
+        expected_runnable = "agic:echo" if entry == "echo" else "agic:"
         assert header.startswith(f"‣ {expected_runnable} ")
         assert output.err.index("Loading setup...") < output.err.index(
             "Loading models..."

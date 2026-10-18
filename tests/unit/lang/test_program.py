@@ -1047,7 +1047,7 @@ def test_inline_agic_stays_unnamed_and_uses_adhoc_ref() -> None:
 def test_display_runnable_ref_uses_surface_specific_unnamed_labels() -> None:
     from toolang.lang.types import display_runnable_ref
 
-    assert display_runnable_ref("agent::agic:<entry:3>", surface="help") == "agic:_"
+    assert display_runnable_ref("agent::agic:<entry:3>", surface="help") == "agic:"
     assert (
         display_runnable_ref("agent::agic:<adhoc:5>", surface="chat") == "agic:<adhoc>"
     )
@@ -1069,8 +1069,8 @@ def test_entry_display_does_not_change_reference_identity(
 
     reference = f"{module}{kind}:{name}"
 
-    assert display_runnable_ref(reference, surface="chat") == f"{kind}:_"
-    assert display_runnable_ref(reference, surface="help") == f"{kind}:_"
+    assert display_runnable_ref(reference, surface="chat") == f"{kind}:"
+    assert display_runnable_ref(reference, surface="help") == f"{kind}:"
     diagnostic = "<entry>" if name == "_" else name
     assert display_runnable_ref(reference, surface="progress") == f"{kind}:{diagnostic}"
     assert parse_runnable_ref_parts(reference).name == name
@@ -1082,8 +1082,8 @@ def test_entry_display_does_not_change_reference_identity(
 def test_chat_unqualified_entry_display_defaults_to_agic() -> None:
     from toolang.lang.types import display_runnable_ref
 
-    assert display_runnable_ref("<entry>", surface="chat") == "agic:_"
-    assert display_runnable_ref("agent::<entry:3>", surface="chat") == "agic:_"
+    assert display_runnable_ref("<entry>", surface="chat") == "agic:"
+    assert display_runnable_ref("agent::<entry:3>", surface="chat") == "agic:"
 
 
 def test_historical_nested_statements_with_missing_fields_are_rejected() -> None:
