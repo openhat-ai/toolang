@@ -532,10 +532,12 @@ class TopView:
         if unknown_inventory:
             agents += " · updating" if snapshot.inventory_updating else " · partial"
         if active_unknown or completed_unknown:
+            current = {item.identity for item in snapshot.inventory.instances}
             runs += (
                 " · partial"
                 if any(
-                    source.activity_error or source.live_stale
+                    source.activity_error
+                    or (source.identity in current and source.live_stale)
                     for source in snapshot.sources
                 )
                 else " · updating"

@@ -388,6 +388,27 @@ def test_retained_roaming_history_affects_live_coverage_only_while_in_inventory(
     }
 
 
+@pytest.mark.parametrize("error", [None, "source unavailable"])
+def test_loading_departed_history_does_not_report_partial_live_coverage(error):
+    snapshot = frame(())
+    retained = snapshot.sources[0].model_copy(
+        update={
+            "identity": "departed",
+            "label": "aid@r70200d1f#instance",
+            "placement": "roaming",
+            "live_stale": True,
+            "completed": None,
+            "activity_error": error,
+        }
+    )
+    snapshot.sources = (*snapshot.sources, retained)
+    assert snapshot.summary.active == 0 and snapshot.summary.completed is None
+    text = TopView().render(snapshot, width=140, height=25).plain
+    assert ("partial" in text) == (error is not None)
+    assert ("updating" in text) == (error is None)
+    assert "live stale" not in text and "live unavailable" not in text
+
+
 def test_summary_has_normal_intensity_including_numbers_and_right_titles():
     console = Console()
     header = TopView().header(
