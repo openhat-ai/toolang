@@ -21,6 +21,23 @@ from .schemas import CompletedRoots, CompletionCounts, RecentUsage
 from .types import Metrics, timestamp
 
 
+def _root_node(row: sqlite3.Row) -> RunNode:
+    noted = run_noted_from_data(json.loads(row["noted"]) if row["noted"] else None)
+    return RunNode(
+        row["id"],
+        None,
+        "",
+        row["status"],
+        row["created_at"],
+        started_at=row["started_at"],
+        finished_at=row["finished_at"],
+        calls=noted.calls if noted else CallCounters(),
+        usage=noted.usage if noted else None,
+        cost=noted.cost if noted else None,
+        cost_approximate=noted.cost_approximate if noted else False,
+    )
+
+
 class RecentReader(SourceReader):
     """Consume a pinned runs.db view; no archive ownership filtering applies."""
 
@@ -72,27 +89,30 @@ class RecentReader(SourceReader):
                 after_id=before[1] if before else "",
             ),
         ):
-            noted = run_noted_from_data(
-                json.loads(row["noted"]) if row["noted"] else None
-            )
-            roots.append(
-                RunNode(
-                    row["id"],
-                    None,
-                    "",
-                    row["status"],
-                    row["created_at"],
-                    started_at=row["started_at"],
-                    finished_at=row["finished_at"],
-                    calls=noted.calls if noted else CallCounters(),
-                    usage=noted.usage if noted else None,
-                    cost=noted.cost if noted else None,
-                    cost_approximate=noted.cost_approximate if noted else False,
-                )
-            )
+            roots.append(_root_node(row))
         return CompletedRoots(
             observed_at=end, start=start, end=end, counts=counts, roots=tuple(roots)
         )
+
+    def completed_roots(
+        self, *, now: int, recent: int, identities: tuple[str, ...]
+    ) -> tuple[RunNode, ...]:
+        """Resolve known live roots that retired outside the regular first page."""
+        if not 0 < recent <= 15 * 60:
+            raise ValueError("recent must be between 1 and 900 seconds")
+        identities = tuple(dict.fromkeys(identities))
+        result = []
+        for offset in range(0, len(identities), PAGE_SIZE):
+            rows = self.connection.execute(
+                sql.RECENT_ROOTS_BY_IDS,
+                {
+                    "ids_json": json.dumps(identities[offset : offset + PAGE_SIZE]),
+                    "lo_text": timestamp(now - recent),
+                    "hi_text": timestamp(now),
+                },
+            )
+            result.extend(_root_node(row) for row in rows)
+        return tuple(result)
 
 
 @contextmanager

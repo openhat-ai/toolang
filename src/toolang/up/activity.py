@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from collections.abc import Callable
 import time
 from typing import TYPE_CHECKING
 
@@ -22,8 +23,10 @@ def activity_snapshot(
     now: int | None = None,
     before: tuple[str, str] | None = None,
     completed_at: int | None = None,
+    known_roots: tuple[str, ...] = (),
+    cancelled: Callable[[], bool] | None = None,
 ) -> ActivitySnapshot:
-    with recent_source(source) as reader:
+    with recent_source(source, cancelled=cancelled) as reader:
         if core is None:
             reader.pin()
             captured = int(time.time()) if now is None else now
@@ -39,4 +42,14 @@ def activity_snapshot(
             recent=recent,
             before=before,
         )
-    return ActivitySnapshot(live=live, completed=completed)
+        present = {node.id for node in completed.roots}
+        if live is not None:
+            present.update(tree.root_run_id for tree in live.trees)
+        retired = reader.completed_roots(
+            now=captured if completed_at is None else completed_at,
+            recent=recent,
+            identities=tuple(
+                identity for identity in known_roots if identity not in present
+            ),
+        )
+    return ActivitySnapshot(live=live, completed=completed, retired=retired)

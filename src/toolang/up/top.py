@@ -11,10 +11,10 @@ from threading import Event
 
 import httpx
 
-from toolang.execution.schemas import RunNode
+from toolang.execution.schemas import LiveSnapshot, RunNode
 from toolang.stats.errors import StatsUnavailable
-from toolang.stats.recent import recent_usage
-from toolang.stats.schemas import RecentUsage
+from toolang.stats.recent import recent_source, recent_usage
+from toolang.stats.schemas import CompletedRoots, RecentUsage
 from toolang.stats.types import seconds, timestamp
 
 from .activity import activity_snapshot
@@ -30,30 +30,68 @@ from .schemas import ActivitySnapshot, SourceActivity, TopSnapshot
 def read_activity(
     source: RuntimeSource,
     recent: int,
-    before: tuple[str, str] | None = None,
-    completed_at: int | None = None,
+    *,
+    previous: LiveSnapshot | None = None,
+    cancelled: Callable[[], bool] | None = None,
 ) -> ActivitySnapshot:
     if source.endpoint:
         try:
-            params: dict[str, str | int] = {"recent": recent}
-            if before is not None:
-                params.update(before_time=before[0], after_id=before[1])
-            if completed_at is not None:
-                params["completed_at"] = completed_at
             response = httpx.get(
                 source.endpoint.rstrip("/") + "/api/v1/top/snapshot",
-                params=params,
+                params={"recent": recent},
                 timeout=3,
                 trust_env=False,
             )
             response.raise_for_status()
-            return ActivitySnapshot.model_validate(response.json())
+            result = ActivitySnapshot.model_validate(response.json())
+            if (
+                previous is not None
+                and result.live is not None
+                and previous.epoch == result.live.epoch
+            ):
+                present = {tree.root_run_id for tree in result.live.trees}
+                present.update(node.id for node in result.completed.roots)
+                missing = tuple(
+                    tree.root_run_id
+                    for tree in previous.trees
+                    if tree.root_run_id not in present
+                )
+                if missing:
+                    # Within one epoch, absence from live means the immutable
+                    # terminal record was committed before the pinned boundary.
+                    with recent_source(
+                        source.layout.run_store, cancelled=cancelled
+                    ) as reader:
+                        reader.pin()
+                        result.retired = reader.completed_roots(
+                            now=seconds(result.completed.end),
+                            recent=recent,
+                            identities=missing,
+                        )
+            return result
         except (httpx.HTTPError, ValueError):
             # Preserve durable completions when the control plane disconnects.
             pass
     return activity_snapshot(
-        source.layout.run_store, recent=recent, before=before, completed_at=completed_at
+        source.layout.run_store,
+        recent=recent,
+        known_roots=tuple(tree.root_run_id for tree in previous.trees)
+        if previous
+        else (),
+        cancelled=cancelled,
     )
+
+
+def read_page(
+    source: RuntimeSource,
+    recent: int,
+    before: tuple[str, str],
+    completed_at: int,
+    cancelled: Callable[[], bool] | None = None,
+) -> CompletedRoots:
+    with recent_source(source.layout.run_store, cancelled=cancelled) as reader:
+        reader.pin()
+        return reader.completed(now=completed_at, recent=recent, before=before)
 
 
 def read_usage(
@@ -76,6 +114,10 @@ class _Source:
     value: SourceActivity
     activity: Future[ActivitySnapshot] | None = None
     usage: Future[RecentUsage] | None = None
+    page: Future[CompletedRoots] | None = None
+    page_recent: int = 0
+    page_epoch: str | None = None
+    page_cursor: tuple[int, tuple[str, str]] | None = None
     activity_recent: int = 0
     usage_period: int = 0
     next_activity: float = 0
@@ -83,7 +125,6 @@ class _Source:
     cursor: tuple[str, str] | None = None
     cursor_at: int | None = None
     request_page: bool = False
-    page_in_flight: bool = False
     loaded: dict[str, RunNode] = field(default_factory=dict)
 
 
@@ -127,8 +168,9 @@ class TopObserver:
         self.recent = recent
         for source in self.sources.values():
             source.value.completed = None
+            source.value.page_error = None
             source.value.activity_error = None
-            source.loaded.clear()
+            self._merge_roots(source, (), time.time())
             source.cursor = None
             source.cursor_at = None
             source.request_page = False
@@ -185,62 +227,93 @@ class TopObserver:
         if self.discovery_job is None and now >= self.next_discovery:
             self.discovery_job = self.discovery.submit(runtime_inventory, self.root)
 
+    def _merge_roots(
+        self, source: _Source, roots: tuple[RunNode, ...], now: float
+    ) -> None:
+        self._retire_live(source, roots)
+        source.loaded.update((row.id, row) for row in roots)
+        cutoff = timestamp(int(now) - self.recent)
+        source.loaded = {
+            identity: row
+            for identity, row in source.loaded.items()
+            if row.finished_at is not None and row.finished_at >= cutoff
+        }
+        if source.value.completed is not None:
+            source.value.completed = source.value.completed.model_copy(
+                update={"roots": tuple(source.loaded.values())}
+            )
+
+    @staticmethod
+    def _retire_live(source: _Source, roots: tuple[RunNode, ...]) -> None:
+        if source.value.live is not None:
+            finished = {row.id for row in roots}
+            source.value.live = replace(
+                source.value.live,
+                trees=tuple(
+                    tree
+                    for tree in source.value.live.trees
+                    if tree.root_run_id not in finished
+                ),
+            )
+
     def _collect(self, source: _Source, now: float) -> None:
         if source.activity is not None and source.activity.done():
             try:
                 result = source.activity.result()
-                if source.activity_recent == self.recent:
-                    if not source.page_in_flight:
-                        if result.live is not None:
-                            if (
-                                source.value.live is not None
-                                and source.value.live.epoch != result.live.epoch
-                            ):
-                                source.loaded.clear()
-                            source.value.live = result.live
-                        source.value.live_stale = result.live is None
-                        source.value.activity_error = None
-                    if source.value.live is not None:
-                        finished = {row.id for row in result.completed.roots}
-                        source.value.live = replace(
-                            source.value.live,
-                            trees=tuple(
-                                tree
-                                for tree in source.value.live.trees
-                                if tree.root_run_id not in finished
-                            ),
-                        )
-                    page = result.completed.roots
-                    reset_cursor = bool(page) and page[-1].id not in source.loaded
-                    source.loaded.update(
-                        (row.id, row) for row in result.completed.roots
-                    )
-                    cutoff = timestamp(int(now) - self.recent)
-                    source.loaded = {
-                        key: row
-                        for key, row in source.loaded.items()
-                        if row.finished_at is not None and row.finished_at >= cutoff
-                    }
-                    # First-page refreshes update counts. Additional pages extend
-                    # the viewport without replacing a newer live baseline.
-                    if not source.page_in_flight or source.value.completed is None:
-                        source.value.completed = result.completed
-                    source.value.completed = source.value.completed.model_copy(
-                        update={"roots": tuple(source.loaded.values())}
-                    )
-                    if page and (
-                        source.page_in_flight or source.cursor is None or reset_cursor
+                # Live samples have no Recent filter. Never discard a fresh live
+                # baseline just because the completion window changed in flight.
+                if result.live is not None:
+                    if (
+                        source.value.live is not None
+                        and source.value.live.epoch != result.live.epoch
                     ):
-                        source.cursor = (page[-1].finished_at or "", page[-1].id)
-                        if not source.page_in_flight:
-                            source.cursor_at = seconds(result.completed.end)
-            except (StatsUnavailable, OSError, ValueError, RuntimeError) as exc:
+                        source.loaded.clear()
+                        source.cursor = source.cursor_at = None
+                        source.request_page = False
+                        source.value.page_error = None
+                    source.value.live = result.live
+                source.value.live_stale = result.live is None
+                self._retire_live(source, (*result.completed.roots, *result.retired))
+                page = result.completed.roots
+                reset_cursor = bool(page) and page[-1].id not in source.loaded
                 if source.activity_recent == self.recent:
-                    if not source.page_in_flight:
-                        source.value.live_stale = True
+                    source.value.activity_error = None
+                    source.value.completed = result.completed
+                    if page and (source.cursor is None or reset_cursor):
+                        source.cursor = (page[-1].finished_at or "", page[-1].id)
+                        source.cursor_at = seconds(result.completed.end)
+                # Terminal facts stay true when Recent changes; retain eligible
+                # rows while rejecting only the obsolete window's totals.
+                self._merge_roots(source, (*page, *result.retired), now)
+            except (StatsUnavailable, OSError, ValueError, RuntimeError) as exc:
+                source.value.live_stale = True
+                if source.activity_recent == self.recent:
                     source.value.activity_error = str(exc)
             source.activity = None
-            source.next_activity = now + self.refresh
+            source.next_activity = (
+                now + self.refresh if source.activity_recent == self.recent else 0
+            )
+        if source.page is not None and source.page.done():
+            current_page = source.page_recent == self.recent and source.page_epoch == (
+                source.value.live.epoch if source.value.live else None
+            )
+            try:
+                result = source.page.result()
+                if current_page:
+                    self._merge_roots(source, result.roots, now)
+                    # A newer first page may have reset the cursor after a burst
+                    # of completions. Old pages may fill rows, never skip that gap.
+                    if source.page_cursor == (source.cursor_at, source.cursor):
+                        if result.roots:
+                            last = result.roots[-1]
+                            source.cursor = (last.finished_at or "", last.id)
+                        else:
+                            source.cursor = None
+                    source.value.page_error = None
+            except (StatsUnavailable, OSError, ValueError, RuntimeError) as exc:
+                if current_page:
+                    source.value.page_error = str(exc)
+            source.page = None
         if source.usage is not None and source.usage.done():
             try:
                 result = source.usage.result()
@@ -251,7 +324,9 @@ class TopObserver:
                 if source.usage_period == self.period:
                     source.value.usage_error = str(exc)
             source.usage = None
-            source.next_usage = now + self.refresh
+            source.next_usage = (
+                now + self.refresh if source.usage_period == self.period else 0
+            )
 
     def tick(self) -> TopSnapshot:
         now = time.time()
@@ -260,16 +335,31 @@ class TopObserver:
             self._collect(source, now)
             if source.activity is None and now >= source.next_activity:
                 source.activity_recent = self.recent
-                source.page_in_flight = (
-                    source.request_page and source.cursor is not None
-                )
-                source.request_page = False
                 source.activity = self.live_pool.submit(
                     read_activity,
                     source.binding,
                     self.recent,
-                    source.cursor if source.page_in_flight else None,
-                    source.cursor_at if source.page_in_flight else None,
+                    previous=source.value.live,
+                    cancelled=self.stopped.is_set,
+                )
+            if (
+                source.request_page
+                and source.page is None
+                and source.cursor is not None
+            ):
+                source.request_page = False
+                source.page_recent = self.recent
+                source.page_epoch = (
+                    source.value.live.epoch if source.value.live else None
+                )
+                source.page_cursor = (source.cursor_at or int(now), source.cursor)
+                source.page = self.live_pool.submit(
+                    read_page,
+                    source.binding,
+                    self.recent,
+                    source.cursor,
+                    source.page_cursor[0],
+                    self.stopped.is_set,
                 )
             if source.usage is None and now >= source.next_usage:
                 source.usage_period = self.period

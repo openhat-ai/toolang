@@ -211,3 +211,34 @@ def test_missing_and_invalid_source_never_create_or_repair_files(tmp_path):
         recent_usage(path, now=NOW, period=3600)
     assert path.read_text() == "corrupt"
     assert not (tmp_path / "stats.db").exists()
+
+
+def test_known_completion_lookup_is_bounded_and_keeps_physical_root_window_rules(
+    source,
+):
+    active = source.root("lookup_active", NOW - 1000, thread="chat_lookup")
+    parent = source.call(active, NOW - 10, NOW - 9, tool=True)
+    child = source.root("lookup_child", NOW - 10, parent=parent, thread="chat_lookup")
+    source.finish(child, NOW)
+    edge = source.root("lookup_edge", NOW - 1000)
+    source.finish(edge, NOW - 300)
+    fresh = source.root("lookup_fresh", NOW - 1000)
+    source.finish(fresh, NOW)
+    old = source.root("lookup_old", NOW - 1000)
+    source.finish(old, NOW - 301)
+    future = source.root("lookup_future", NOW - 1000)
+    source.finish(future, NOW + 1)
+    identities = (
+        *tuple(f"run_missing{index}" for index in range(501)),
+        active,
+        child,
+        edge,
+        fresh,
+        old,
+        future,
+        fresh,
+    )
+    with recent_source(source.source.db_path) as reader:
+        reader.pin()
+        rows = reader.completed_roots(now=NOW, recent=300, identities=identities)
+    assert len(rows) == 2 and {row.id for row in rows} == {edge, fresh}

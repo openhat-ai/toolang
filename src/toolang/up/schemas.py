@@ -2,7 +2,7 @@
 
 from pydantic import BaseModel, computed_field
 
-from toolang.execution.schemas import LiveSnapshot
+from toolang.execution.schemas import LiveSnapshot, RunNode
 from toolang.stats.schemas import CompletedRoots, CompletionCounts
 from toolang.stats.schemas import RecentUsage
 from toolang.stats.types import Metrics
@@ -14,6 +14,7 @@ from .types import RuntimeInstanceSnapshot
 class ActivitySnapshot(BaseModel):
     live: LiveSnapshot | None
     completed: CompletedRoots
+    retired: tuple[RunNode, ...] = ()
 
 
 class SourceActivity(BaseModel):
@@ -26,6 +27,7 @@ class SourceActivity(BaseModel):
     usage: RecentUsage | None = None
     activity_error: str | None = None
     usage_error: str | None = None
+    page_error: str | None = None
 
 
 class TopSummary(BaseModel):

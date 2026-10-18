@@ -61,6 +61,13 @@ WHERE parent IS NULL AND status IN ('succeeded','failed','canceled')
 ORDER BY finished_at DESC,id LIMIT :limit;
 """
 
+RECENT_ROOTS_BY_IDS = """
+SELECT id,status,created_at,started_at,finished_at,noted FROM src.runs
+WHERE id IN (SELECT value FROM json_each(:ids_json)) AND parent IS NULL
+  AND status IN ('succeeded','failed','canceled') AND finished_at IS NOT NULL
+  AND finished_at >= :lo_text AND finished_at <= :hi_text;
+"""
+
 ARCHIVE_CANDIDATES = """
 -- cutoff_text = canonical UTC text for pass_time - archive_after_seconds.
 -- Exclude receipts before reading Steps; no started_at/lower finished_at cursor.

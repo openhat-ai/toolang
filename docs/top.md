@@ -22,8 +22,10 @@ The header counts inventory placements, current active roots and recent terminal
 statuses, then model/tool calls, input/cached/output tokens and USD spend.
 The table combines active trees and recently completed roots. Row consumption is
 lifetime consumption; a parent Run includes descendants, while a Step shows only
-its own invocation facts. Period and folds do not change these values. RUN always
-shows the full owning physical root ID. Terminal Runs show only their state.
+its own invocation facts. Large numeric values use compact units to keep columns
+aligned; JSON retains the source amounts. Period and folds do not change these
+values. RUN always shows the full owning physical root ID. Terminal Runs show
+only their state.
 
 Top reads persisted facts through `toolang.stats.recent` and current paths through
 LiveTree. The recent reader opens only `runs.db`, read-only, without historical
@@ -46,6 +48,13 @@ The read-only agent adapter exposes:
   historical Stats initialization. The local observer uses this same Stats reader
   directly. Usage workers are separate from inventory and live polling; obsolete
   window responses are discarded. Source read failures return HTTP 503.
+
+Completed-root paging runs separately from live polling and keeps its original
+completion bounds. Local observation resolves previously live root IDs through
+the source Stats reader when their completion falls outside the first page,
+without advancing the page cursor or loading results/errors. Window changes keep
+eligible terminal facts and selection while the new totals load; a late response
+from an older window cannot delay the selected window's next query.
 
 Up/Down selects; Left folds or selects the parent; Right expands or selects the
 first child. PgUp/PgDn pages the table and PgDn loads more completed roots.

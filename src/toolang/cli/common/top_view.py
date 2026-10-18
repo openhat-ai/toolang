@@ -87,12 +87,27 @@ def compact(value: int | None) -> str:
         return "-"
     for divisor, suffix in ((1_000_000_000, "b"), (1_000_000, "m"), (1000, "k")):
         if value >= divisor:
-            return f"{value / divisor:.1f}".rstrip("0").rstrip(".") + suffix
+            text = f"{value / divisor:.1f}".rstrip("0").rstrip(".") + suffix
+            if len(text) <= 5:
+                return text
+            rounded = f"{value / divisor:.0f}{suffix}"
+            return rounded if len(rounded) <= 5 else f"{value:.0e}".replace("e+", "e")
     return str(value)
 
 
-def spend(value: float | None, approximate: bool = False) -> str:
-    return "-" if value is None else f"{'~' if approximate else ''}${value:.2f}"
+def spend(
+    value: float | None, approximate: bool = False, *, abbreviate: bool = False
+) -> str:
+    if value is None:
+        return "-"
+    prefix = "~$" if approximate else "$"
+    if abbreviate and value >= 1000:
+        for scale, suffix in ((1e12, "t"), (1e9, "b"), (1e6, "m"), (1000, "k")):
+            if value >= scale:
+                number = f"{value / scale:.1f}".rstrip("0").rstrip(".")
+                text = f"{prefix}{number}{suffix}"
+                return text if len(text) <= 9 else f"{prefix}{value:.0e}"
+    return f"{prefix}{value:.2f}"
 
 
 def duration(node: LiveNode, observed_at: str) -> str:
@@ -278,20 +293,44 @@ class TopView:
             previous = next(
                 (row for row in self.rows if row.key == self.selected), None
             )
-            selected = self.selected
-            while selected is not None and selected not in visible:
-                selected = all_parents.get(selected)
-            if selected is None and previous is not None:
-                selected = next(
-                    (
-                        row.key
-                        for row in rows
-                        if row.source.identity == previous.source.identity
-                        and row.node.id == previous.root
-                    ),
-                    None,
+            waiting = next(
+                (
+                    source
+                    for source in snapshot.sources
+                    if self.selected is not None
+                    and source.identity == self.selected[0]
+                    and source.completed is None
+                    and source.activity_error is None
+                ),
+                None,
+            )
+            if (
+                waiting is not None
+                and self.selected is not None
+                and self.selected not in all_parents
+            ):
+                # Keep selection through a completion/window handoff; no row or
+                # total is fabricated while its new Recent query is loading.
+                self.selected = (
+                    waiting.identity,
+                    waiting.live.epoch if waiting.live else self.selected[1],
+                    previous.root if previous else self.selected[2],
                 )
-            self.selected = selected or (rows[0].key if rows else None)
+            else:
+                selected = self.selected
+                while selected is not None and selected not in visible:
+                    selected = all_parents.get(selected)
+                if selected is None and previous is not None:
+                    selected = next(
+                        (
+                            row.key
+                            for row in rows
+                            if row.source.identity == previous.source.identity
+                            and row.node.id == previous.root
+                        ),
+                        None,
+                    )
+                self.selected = selected or (rows[0].key if rows else None)
         self.rows = rows
         return rows
 
@@ -421,7 +460,7 @@ class TopView:
         lines = self.header(snapshot, width)
         agent_width = max([5, *(cell_len(row.source.label) for row in self.rows)])
         run_width = max([3, *(cell_len(row.root) for row in self.rows)])
-        widths = [agent_width, run_width, 5, 5, 6, 6, 6, 7, 7]
+        widths = [agent_width, run_width, 5, 5, 6, 6, 6, 9, 7]
         headings = (
             "AGENT",
             "RUN",
@@ -495,7 +534,7 @@ class TopView:
                 compact(usage.input_tokens if usage else None),
                 compact(usage.cache_read_tokens if usage else None),
                 compact(usage.output_tokens if usage else None),
-                spend(node.cost, node.cost_approximate),
+                spend(node.cost, node.cost_approximate, abbreviate=True),
                 duration(
                     node,
                     row.source.live.observed_at
@@ -533,6 +572,8 @@ class TopView:
                 issues.append("live stale" if source.live else "live unavailable")
             if source.activity_error or source.usage_error:
                 issues.append("source unavailable")
+            if source.page_error:
+                issues.append("completion page unavailable")
             if (
                 source.usage is not None
                 and seconds(snapshot.observed_at) - seconds(source.usage.observed_at)

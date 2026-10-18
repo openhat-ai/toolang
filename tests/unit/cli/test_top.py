@@ -356,6 +356,24 @@ def test_unicode_and_captured_line_breaks_stay_in_one_table_row():
     assert node.name.startswith("unrecognized\n")
 
 
+@pytest.mark.parametrize("amount", [999.99, 1234.56, 999999.99])
+def test_approximate_or_large_spend_keeps_numeric_and_status_columns_aligned(amount):
+    snapshot = frame((root(cost=amount, cost_approximate=True), step()))
+    lines = TopView().render(snapshot, width=140).plain.splitlines()
+    parent = next(line for line in lines if "flow:review" in line)
+    child = next(line for line in lines if "└─" in line)
+    assert parent.index("flow:review") == child.index("└─")
+    assert "~$" in parent
+
+
+def test_large_call_counts_keep_numeric_and_status_columns_aligned():
+    snapshot = frame((root(calls=CallCounters(123_400_000, 234_500_000)), step()))
+    lines = TopView().render(snapshot, width=140).plain.splitlines()
+    parent = next(line for line in lines if "flow:review" in line)
+    child = next(line for line in lines if "└─" in line)
+    assert parent.index("flow:review") == child.index("└─")
+
+
 def test_non_tty_json_empty_scope_and_refresh_validation(tmp_path):
     runner = CliRunner()
     result = runner.invoke(
