@@ -3,9 +3,11 @@
 from datetime import date
 from typing import Generic, TypeVar
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, computed_field, ConfigDict, Field
 
-from .types import Scope, Window
+from toolang.execution.schemas import RunNode
+
+from .types import Metrics, Scope, Window
 
 T = TypeVar("T")
 
@@ -59,3 +61,33 @@ class ModelsResponse(StatsResponse[list[ModelRow]]):
     window: Window
     start: str | None
     end: str | None
+
+
+class RecentUsage(BaseModel):
+    """Exact source-only usage in a bounded half-open interval."""
+
+    observed_at: str
+    start: str
+    end: str
+    metrics: Metrics
+
+
+class CompletionCounts(BaseModel):
+    succeeded: int = 0
+    failed: int = 0
+    canceled: int = 0
+
+    @computed_field
+    @property
+    def total(self) -> int:
+        return self.succeeded + self.failed + self.canceled
+
+
+class CompletedRoots(BaseModel):
+    """One bounded page, with counts over the entire completion interval."""
+
+    observed_at: str
+    start: str
+    end: str
+    counts: CompletionCounts
+    roots: tuple[RunNode, ...]

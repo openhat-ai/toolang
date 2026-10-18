@@ -15,7 +15,7 @@ from typing import Any, TypeGuard, cast
 import psutil
 
 from toolang.common.files import atomic_write_text, file_write_lock
-from toolang.common.layout import AgentLayout, AgentPlacement
+from toolang.common.layout import AgentLayout
 from toolang.up.discovery import agent_layouts
 from toolang.up.records import (
     read_document,
@@ -24,7 +24,12 @@ from toolang.up.records import (
     remove_finished_instance,
     control_owner,
 )
-from toolang.up.types import ALL_DRIVERS, ExecutionDrivers
+from toolang.up.types import (
+    ALL_DRIVERS,
+    ExecutionDrivers,
+    RuntimeInstance as RuntimeInstance,
+    RuntimeInstanceSnapshot as RuntimeInstanceSnapshot,
+)
 
 
 def _registered_layout(control: dict) -> AgentLayout:
@@ -262,46 +267,18 @@ def running_instances(root: Path) -> tuple[dict, ...]:
 
 
 @dataclass(frozen=True, slots=True)
-class RuntimeInstance:
-    """One installed or registered runtime visible to the Hub snapshot."""
+class RuntimeSource:
+    """Validated local source and optional running control endpoint."""
 
-    name: str
-    placement: AgentPlacement
-    runtime_instance: str | None
-    identity: str
-    state: str
-    drivers: tuple[str, ...] | None
-    observed_state: str | None = None
-    diagnostic: str | None = None
-
-    @property
-    def label(self) -> str:
-        """Return a stable display name that distinguishes placements and instances."""
-        if self.placement == "resident":
-            return (
-                self.name
-                if self.runtime_instance is None
-                else f"{self.name}#{self.runtime_instance}"
-            )
-        marker = "v" if self.placement == "visiting" else "r"
-        value = f"{self.name}@{marker}{self.identity[:8]}"
-        if self.runtime_instance is not None:
-            value += f"#{self.runtime_instance}"
-        return value
+    instance: RuntimeInstance
+    layout: AgentLayout
+    endpoint: str | None
 
 
 @dataclass(frozen=True, slots=True)
-class RuntimeInstanceSnapshot:
-    """A point-in-time roster and discovery diagnostics for one Toolang root."""
-
-    instances: tuple[RuntimeInstance, ...]
-    diagnostics: tuple[str, ...] = ()
-
-    @property
-    def partial(self) -> bool:
-        return bool(self.diagnostics) or any(
-            item.diagnostic is not None for item in self.instances
-        )
+class RuntimeInventory:
+    snapshot: RuntimeInstanceSnapshot
+    sources: tuple[RuntimeSource, ...]
 
 
 @dataclass(slots=True)
@@ -417,6 +394,11 @@ def _runtime_layout(
 
 
 def runtime_snapshot(root: Path) -> RuntimeInstanceSnapshot:
+    """Return the existing public roster without exposing local source bindings."""
+    return runtime_inventory(root).snapshot
+
+
+def runtime_inventory(root: Path) -> RuntimeInventory:
     """Discover installed residents and registered runtime instances safely.
 
     Status documents are cached by path and read once for discovery. Liveness is
@@ -891,4 +873,20 @@ def runtime_snapshot(root: Path) -> RuntimeInstanceSnapshot:
 
     result.sort(key=sort_key)
     diagnostics = sorted(set(diagnostics), key=str.casefold)
-    return RuntimeInstanceSnapshot(tuple(result), tuple(diagnostics))
+    layouts = {
+        instance_identity(candidate.layout): candidate.layout
+        for candidate in candidates_list
+        if candidate.layout is not None
+    }
+    endpoints = {
+        instance_identity(layout): status.endpoint
+        for _, layout, _, status, _ in inspected
+        if status is not None and status.status == "running"
+    }
+    return RuntimeInventory(
+        RuntimeInstanceSnapshot(tuple(result), tuple(diagnostics)),
+        tuple(
+            RuntimeSource(item, layouts[item.identity], endpoints.get(item.identity))
+            for item in result
+        ),
+    )

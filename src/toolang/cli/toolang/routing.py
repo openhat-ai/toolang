@@ -114,6 +114,7 @@ COMMAND_SPECS: Mapping[str, CommandSpec] = {
         _command("talk", "none"),
         _command("convo", "none"),
         _command("hub", "none"),
+        _command("top", "none", "before", placements=_RESIDENT, prepare="layout"),
         _command(
             "chat",
             "before",

@@ -2,21 +2,12 @@
 
 from toolang.execution.events import ToolStepInfo, ModelStepInfo
 from toolang.execution.events import StepBegin, StepEnd
+from toolang.execution.operations import (
+    runtime_operation_name as runtime_operation_name,
+)
 
 from .formatting import tool_result_data, runnable_label
 from .types import StepOperation
-
-
-_TOOL_OPERATIONS: dict[str, str] = {
-    f"runtime__{name}": name
-    for name in ("run", "spawn", "await", "exec", "chdir", "pick", "honor", "compact")
-}
-
-
-def runtime_operation_name(tool_name: str) -> str | None:
-    """Share wire-name recognition with UI consumers of result-only events."""
-
-    return _TOOL_OPERATIONS.get(tool_name)
 
 
 def normalize_operation(

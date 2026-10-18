@@ -1,7 +1,8 @@
 # Top recent activity
 
 Status: approved by the human on 2026-10-18. Definition only; implementation
-requires a separate change.
+requires a separate change. The implementation scope was amended by the human
+to defer Details content: only its open/close placeholder is required now.
 
 ## Goal and scope
 
@@ -264,7 +265,7 @@ to show `agic:review_file · item 4/8` with a separate `shell.exec` child row.
 A root completion replaces its tree with one terminal row, preserving root
 selection; a finished selected descendant maps to its root. Read recent roots
 from durable records on reopen. Keep no finished-tree archive in the executor,
-and load full results/errors only for selected Details.
+and keep no output/error queries in the initial Details placeholder.
 
 Up/Down selects. Left folds an expanded selected node; otherwise it selects the
 visible parent. Right expands a selected folded node; otherwise it selects its
@@ -273,12 +274,14 @@ F5 toggles Tree/List: List folds all roots for presentation;
 returning to Tree restores individual folds. Keep folds by exact node identity
 within the source epoch; move hidden selection to its visible ancestor.
 F7 cycles Recent `1m / 5m / 15m`; F8 cycles Period `1h / 4h / 8h`.
-F3 toggles Details (Enter is an alias), Esc closes it, PgUp/PgDn pages Details
-or the table, F1 opens Help, and F10 exits (q/Ctrl-C are aliases).
-Details shows full Run/Step IDs, captured runnable identity/name, Thread, status,
-timestamps/completion age, exact lifetime metrics, all current paths, projected
-activity, inspect command and optional output/error. Use the shared Markdown
-renderer; cap Details at half the content area. Clock/durations tick
+F3 toggles the Details placeholder (Enter is an alias), Esc closes it,
+PgUp/PgDn pages the table, F1 opens Help, and F10 exits (q/Ctrl-C are aliases).
+Details content, exact values, full references and output/error queries are
+reserved for a separately discussed definition. The initial pane only states
+that Details is not defined yet and how to close it; cap it at half the content
+area. References to Details elsewhere in this plan describe that future
+presentation, not acceptance requirements for this implementation.
+Clock/durations tick
 while fresh; disconnected live data is stale and frozen, not confirmed running.
 The footer lists function keys only; keep conventional aliases in Help. F7/F8
 labels show the next setting, not the current one: with Recent `5m` and Period
@@ -330,7 +333,7 @@ factory/routing and a focused presenter.
 | Window/Tree/List/Details controls | Footer shows only Fn keys and the next setting through wraparound; header shows current windows; F3/Enter share Details; Period/folds do not change lifetime values. |
 | Completion during refresh, current-second completion, reopen and idle expiry | Exactly one durable root row, stable selection and correct eligibility; Recent counts include unloaded rows and equal terminal-status subtotals. |
 | Many roots, busy eight-hour stores, slow/partial/offline sources and epoch/query changes | Bounded indexed paging, fresh live input/counters, explicit coverage and no obsolete or falsely fresh replacements. |
-| Single/all-agent snapshot/JSON, Unicode, paging and exit | Equivalent metrics, correct clipping/full Details values and restored terminal state. |
+| Single/all-agent snapshot/JSON, Unicode, paging and exit | Equivalent metrics, correct clipping, placeholder interaction and restored terminal state. |
 
 Implementation requires acceptance tests and default repository verification.
 For this definition, verify source contracts/links and run `git diff --check`.

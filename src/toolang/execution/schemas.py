@@ -118,6 +118,7 @@ class StepNode:
     usage: TokenUsage | None = None
     cost: float | None = None
     cost_approximate: bool = False
+    asynchronous: bool = False
     type: Literal["step"] = field(default="step", kw_only=True)
 
 

@@ -42,6 +42,7 @@ Top-level commands are:
 - `rewind`
 - `fork`
 - `inspect`
+- `top`
 - `caps`
 - `models`
 - `providers`
@@ -1543,7 +1544,7 @@ Each tree has `root_run_id`, `thread_id` and parent-first `nodes`. Run nodes hol
 identity, current runnable/status/timestamps/occurrence and subtree
 `calls`, `usage`, `cost` (USD), `cost_approximate`. Step nodes hold their actual
 parent, kind/operation, compact name/plugin/target/summary, status/timestamps,
-occurrence and direct invocation/usage/cost facts. They exclude call contexts,
+occurrence, asynchronous launch and direct invocation/usage/cost facts. They exclude call contexts,
 arguments, output bodies, provider metadata and references. Completed leaves are
 pruned; async launch ancestors remain until their child ends. No history or Store
 read is performed. Treat each response as a replacement sample; epoch changes

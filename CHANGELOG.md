@@ -9,6 +9,18 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Added
 
+- `too top` shows a live dashboard over the selected root's local resident,
+  visiting, and roaming instances, and `too AGENT top` observes one resident
+  agent: placement counts, one table of active LiveTrees and root Runs
+  completed within `--recent` (`1m`, `5m`, or `15m`; default `5m`), and
+  `--period` rolling usage (`1h`, `4h`, or `8h`; default `1h`) of model and
+  tool calls, input, cached, and output tokens, and USD spend. Readable
+  sources still contribute completions and usage while their instances are
+  offline, and source reads neither open nor initialize `stats.db`; unknown
+  values stay `-` and stale live data freezes. `--refresh` sets the
+  interactive interval in seconds (default `1`), while `--once`, `--json`,
+  and non-TTY output print one snapshot. The agent API serves the same data
+  at `GET /api/v1/top/snapshot` and `GET /api/v1/stats/recent`.
 - Agent servers expose read-only execution statistics at
   `GET /api/v1/stats/summary`, `/api/v1/stats/models`, and `/api/v1/stats/daily`,
   scoped to the agent or one `thread_id` or `root_run_id`. Summary reports
@@ -192,10 +204,11 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 ### Removed
 
 - **Breaking:** the execution Activity and statistics surfaces are removed:
-  `too top` and `too AGENT top` are gone, the Activity HTTP endpoints of the
-  agent API (`/api/v1/activity`) and the Hub are removed, the agent profile no
-  longer reports `metrics`, and the Hub neither collects nor publishes agent
-  Activity. Use `too inspect` and execution history instead. Opening a writable
+  the earlier Activity-based `too top` and `too AGENT top` views are gone, the
+  Activity HTTP endpoints of the agent API (`/api/v1/activity`) and the Hub are
+  removed, the agent profile no longer reports `metrics`, and the Hub neither
+  collects nor publishes agent Activity. Use `too inspect` and execution history
+  instead. Opening a writable
   execution store drops the derived Activity indexes and discards the
   historical derived totals, so stop old writers sharing that execution store
   before upgrading; unrelated read-only processes and other execution stores
