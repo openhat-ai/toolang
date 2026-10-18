@@ -39,9 +39,9 @@ def test_convo_help_uses_consistent_short_descriptions():
     assert output.startswith("Manage conversations and rules.\n")
     for command, description in (
         ("list", "List conversations"),
-        ("create", "Create a conversation"),
-        ("join", "Join a conversation"),
-        ("leave", "Leave a conversation"),
+        ("create", "Create a group conversation"),
+        ("join", "Join a group conversation"),
+        ("leave", "Leave a group conversation"),
         ("rules", "Retrieve or update rules"),
     ):
         assert f"  {command:<7} {description}\n" in output
