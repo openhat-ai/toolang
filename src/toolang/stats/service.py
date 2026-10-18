@@ -194,7 +194,7 @@ class StatsService:
                         totals = reader.query(
                             intervals, scope, model, recent=not historical
                         )
-                    except ValueError as exc:
+                    except (TypeError, ValueError) as exc:
                         raise StatsUnavailable(
                             f"invalid statistics source: {exc}"
                         ) from exc

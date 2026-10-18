@@ -26,6 +26,13 @@ class Scope:
     kind: Literal["agent", "thread", "root_run"] = "agent"
     id: str = ""
 
+    def matches(self, root: str, thread: str) -> bool:
+        if self.kind == "thread":
+            return self.id == thread
+        if self.kind == "root_run":
+            return self.id == root
+        return True
+
 
 @dataclass(frozen=True, slots=True)
 class Metrics:

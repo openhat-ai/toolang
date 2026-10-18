@@ -4,7 +4,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from toolang.stats import records
+from toolang.stats import query, records
 from toolang.stats.service import midnight
 from toolang.stats.types import Scope
 from zoneinfo import ZoneInfo
@@ -102,6 +102,39 @@ def test_finite_history_does_not_project_steps_outside_its_time_range(
     assert result[0].spend == 0.2
     assert project.call_count == 3
     assert fixture.stats.models("all", scope).data[0].in_ == 1000
+
+
+@pytest.mark.parametrize("scope_kind", ["thread", "root_run"])
+@pytest.mark.parametrize("mode", ["all", "recent", "archived_edge"])
+def test_scoped_queries_do_not_decode_unrelated_steps(
+    fixture, monkeypatch, scope_kind, mode
+):
+    at = NOW - 20 if mode == "recent" else NOW - 2 * DAY - 20
+    selected = fixture.root("selected", NOW - 5 * DAY)
+    unrelated = fixture.root("unrelated", NOW - 5 * DAY, thread="chat_unrelated")
+    for root in (selected, unrelated):
+        fixture.call(root, at, at + 10)
+        if mode == "archived_edge":
+            fixture.finish(root, NOW - 2 * DAY - 1)
+    if mode == "archived_edge":
+        assert fixture.refresh() is None
+    project = Mock(wraps=records.project_step)
+    monkeypatch.setattr(records, "project_step", project)
+    monkeypatch.setattr(query, "project_step", project)
+    interval = {
+        "all": (None, None),
+        "recent": (NOW - 1800, NOW),
+        "archived_edge": (NOW - 4 * DAY, NOW - 2 * DAY),
+    }[mode]
+    scope = Scope(scope_kind, "chat_stats" if scope_kind == "thread" else selected)
+
+    with fixture.stats.records.snapshot() as connection:
+        result = query.StatsReader(fixture.stats.records, connection).query(
+            [interval], scope, None, recent=mode == "recent"
+        )[0]["test/model"]
+
+    assert result.model_calls == 1 and result.input_tokens == 100
+    assert project.call_count == 1
 
 
 def test_publication_between_snapshot_pins_does_not_lose_or_duplicate_root(

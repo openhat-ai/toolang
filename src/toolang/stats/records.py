@@ -17,6 +17,7 @@ from .types import (
     METRIC_FIELDS,
     Metrics,
     PERIODS,
+    Scope,
     TERMINAL,
     seconds,
     timestamp,
@@ -112,10 +113,13 @@ class StatsRecords:
         connection: sqlite3.Connection,
         root: str,
         *,
+        scope: Scope = Scope(),
         lo: int | None = None,
         hi: int | None = None,
     ) -> Iterator[Contribution]:
         for run in self.root_runs(connection, root):
+            if not scope.matches(root, run["thread"]):
+                continue
             if run["id"] == root:
                 yield from project_root(dict(run))
             after = ""
@@ -152,7 +156,7 @@ class StatsRecords:
                         self.publish(root, seconds(finished), now, additions)
                 except InterruptedError:
                     return error
-                except (ValueError, sqlite3.Error) as exc:
+                except (TypeError, ValueError, sqlite3.Error) as exc:
                     error = f"{root}: {exc}"[:500]
             with self.writer() as writer:
                 writer.execute("BEGIN IMMEDIATE")

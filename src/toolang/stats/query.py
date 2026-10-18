@@ -101,7 +101,9 @@ class StatsReader:
             )
         }
 
-    def time_data(self, lo: int, hi: int, archived: bool) -> Iterator[Contribution]:
+    def time_data(
+        self, lo: int, hi: int, archived: bool, scope: Scope
+    ) -> Iterator[Contribution]:
         params = {"lo_text": timestamp(lo), "hi_text": timestamp(hi)}
         cursor = self.connection.execute(sql.TIME_STEP_IDS, params)
         while page := cursor.fetchmany(PAGE_SIZE):
@@ -112,6 +114,7 @@ class StatsReader:
                 row["id"]
                 for row in page
                 if (owners[row["run"]][0] in receipts) == archived
+                and scope.matches(*owners[row["run"]])
             ]
             for row in self.connection.execute(
                 sql.STEPS_BY_IDS, {"ids_json": json.dumps(ids)}
@@ -123,7 +126,8 @@ class StatsReader:
         for row in self.connection.execute(
             sql.ROOT_STARTS_BY_TIME, dict(params, archived=int(archived))
         ):
-            yield from project_root(dict(row))
+            if scope.matches(row["id"], row["thread"]):
+                yield from project_root(dict(row))
 
     def raw_data(
         self, scope: Scope, lo: int | None = None, hi: int | None = None
@@ -131,12 +135,12 @@ class StatsReader:
         if scope.kind == "root_run":
             if scope.id not in self.archived([scope.id]):
                 yield from self.records.source_root(
-                    self.connection, scope.id, lo=lo, hi=hi
+                    self.connection, scope.id, scope=scope, lo=lo, hi=hi
                 )
         else:
             for row in self.connection.execute(sql.UNARCHIVED_ROOTS):
                 yield from self.records.source_root(
-                    self.connection, row["id"], lo=lo, hi=hi
+                    self.connection, row["id"], scope=scope, lo=lo, hi=hi
                 )
 
     def query(
@@ -153,10 +157,6 @@ class StatsReader:
         def accumulate(event: Contribution, indices: Iterator[int]) -> None:
             if model is not None and event.model != model:
                 return
-            if scope.kind == "thread" and scope.id != event.thread:
-                return
-            if scope.kind == "root_run" and scope.id != event.root:
-                return
             for index in indices:
                 totals[index][event.model] = (
                     totals[index].get(event.model, Metrics()) + event.metrics
@@ -170,7 +170,7 @@ class StatsReader:
             )
             for period, start, end in parts:
                 if period == "edge":
-                    for event in self.time_data(start, end, True):
+                    for event in self.time_data(start, end, True, scope):
                         accumulate(event, iter((index,)))
                 else:
                     params = {
@@ -196,7 +196,7 @@ class StatsReader:
             if bounds:
                 lo, hi = min(lo for lo, _ in bounds), max(hi for _, hi in bounds)
                 events = (
-                    self.time_data(lo, hi, False)
+                    self.time_data(lo, hi, False, scope)
                     if recent
                     else self.raw_data(scope, lo, hi)
                 )

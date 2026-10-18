@@ -7,6 +7,7 @@ from unittest.mock import Mock
 import pytest
 
 from toolang.stats import _sql as sql, records
+from toolang.stats.errors import StatsUnavailable
 from toolang.stats.types import Scope
 
 from .conftest import DAY, NOW
@@ -146,6 +147,39 @@ def test_zero_call_roots_get_receipts_and_open_trees_stay_in_source(fixture):
             sql.RECEIPT_EXISTS, {"root_id": invalid}
         ).fetchone()
     assert fixture.stats.summary(Scope("root_run", empty)).data[0].root_runs == 1
+
+
+@pytest.mark.parametrize("operation", ["archive", "query"])
+def test_source_codec_type_errors_are_isolated(fixture, operation):
+    invalid = fixture.root("invalid_payload", NOW - 5 * DAY)
+    ref = fixture.call(invalid, NOW - 4 * DAY, NOW - 4 * DAY + 1)
+    fixture.finish(invalid, NOW - 3 * DAY)
+    valid = fixture.root("valid_payload", NOW - 4 * DAY)
+    fixture.call(valid, NOW - 3 * DAY, NOW - 3 * DAY + 1)
+    fixture.finish(valid, NOW - 2 * DAY)
+    with sqlite3.connect(fixture.source.db_path) as connection:
+        connection.execute(
+            "UPDATE steps SET given=json_set(given,'$.call.messages.head',123) WHERE id=?",
+            (str(ref),),
+        )
+
+    if operation == "query":
+        with pytest.raises(StatsUnavailable, match="invalid statistics source"):
+            fixture.stats.models("all", Scope("root_run", invalid))
+        return
+
+    error = fixture.refresh()
+    assert error is not None and invalid in error and "step ref must be text" in error
+    with fixture.stats.records.snapshot() as connection:
+        assert connection.execute(sql.RECEIPT_EXISTS, {"root_id": valid}).fetchone()
+        assert not connection.execute(
+            sql.RECEIPT_EXISTS, {"root_id": invalid}
+        ).fetchone()
+        assert not connection.execute(
+            "SELECT 1 FROM stats_buckets WHERE scope_kind='root_run' AND scope_id=?",
+            (invalid,),
+        ).fetchone()
+    assert fixture.stats.models("all", Scope("root_run", valid)).data[0].in_ == 100
 
 
 def test_concurrent_publishers_commit_a_root_once(fixture):
