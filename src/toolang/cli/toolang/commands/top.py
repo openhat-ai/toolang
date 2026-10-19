@@ -1,6 +1,5 @@
 """Observe current execution and recent source statistics."""
 
-from enum import StrEnum
 import math
 import sys
 from typing import Annotated
@@ -13,18 +12,7 @@ from toolang.cli.common.context import context_agent, context_layout, context_ro
 from toolang.cli.common.terminal_session import prepare_terminal
 from toolang.cli.common.top_view import TopView
 from toolang.up.top import TopObserver
-
-
-class Period(StrEnum):
-    hour = "1h"
-    four_hours = "4h"
-    eight_hours = "8h"
-
-
-class Recent(StrEnum):
-    minute = "1m"
-    five_minutes = "5m"
-    fifteen_minutes = "15m"
+from toolang.up.types import TopPeriod as Period, TopRecent as Recent
 
 
 def top(
@@ -47,8 +35,8 @@ def top(
     observer = TopObserver(
         root,
         agent=agent,
-        period=int(period.value[:-1]) * 3600,
-        recent=int(recent.value[:-1]) * 60,
+        period=period.seconds,
+        recent=recent.seconds,
         refresh=refresh,
     )
     view = TopView(scope=f"too {agent} top" if agent else "too top")

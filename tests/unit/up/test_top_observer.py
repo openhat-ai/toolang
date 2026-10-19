@@ -4,6 +4,7 @@ from concurrent.futures import Future
 from contextlib import closing
 from threading import Event
 from dataclasses import replace
+import json
 
 import httpx
 import pytest
@@ -299,7 +300,7 @@ def test_slow_usage_never_blocks_live_or_marks_new_window_with_old_metrics(
     monkeypatch.setattr(
         top,
         "runtime_inventory",
-        lambda _: RuntimeInventory(
+        lambda _, **kwargs: RuntimeInventory(
             RuntimeInstanceSnapshot((source.instance,)), (source,)
         ),
     )
@@ -456,23 +457,16 @@ def test_durable_completion_retires_stale_live_tree_after_recent_expiry(tmp_path
         observer.close()
 
 
-def test_inventory_removal_keeps_known_sources_for_windows_and_single_scope_filters(
-    tmp_path,
-):
+def test_inventory_removal_keeps_unique_known_sources_for_windows(tmp_path):
     source = binding(tmp_path)
     observer = top.TopObserver(
         tmp_path, agent="alice", period=3600, recent=300, refresh=1
     )
-    visitor = RuntimeSource(
-        RuntimeInstance("alice", "visiting", None, "visitor", "running", ()),
-        source.layout,
-        None,
-    )
     try:
         observer.discovery_job = resolved(
             RuntimeInventory(
-                RuntimeInstanceSnapshot((source.instance, visitor.instance)),
-                (source, source, visitor),
+                RuntimeInstanceSnapshot((source.instance,)),
+                (source, source),
             )
         )
         observer._inventory(NOW)
@@ -1048,7 +1042,7 @@ def test_published_endpoint_failure_is_distinct_from_an_embedded_runtime(
 def test_once_reports_initial_discovery_failure_without_fabricating_zero(
     tmp_path, monkeypatch
 ):
-    def denied(_):
+    def denied(_, **kwargs):
         raise PermissionError("permission denied")
 
     monkeypatch.setattr(top, "runtime_inventory", denied)
@@ -1090,11 +1084,15 @@ def test_live_error_recovers_and_obsolete_failure_cannot_restore_it(tmp_path):
         state.rebind(replace(source, endpoint=None))
         state.activity.set_result(
             ActivitySnapshot(
-                live=None, completed=completed(), live_error="obsolete failure"
+                live=None,
+                completed=completed(),
+                live_error="obsolete failure",
+                page_error="obsolete lookup failure",
             )
         )
         observer._collect(state, NOW)
         assert state.value.live_error is None
+        assert state.value.page_error is None
 
 
 def test_unreadable_store_metadata_cannot_be_treated_as_new_history(
@@ -1237,3 +1235,231 @@ def test_failed_docker_batch_keeps_membership_and_readable_history(
     assert snapshot.summary.usage == Metrics()
     assert not snapshot.inventory.diagnostics
     assert bool(snapshot.inventory.instances[0].diagnostic) == (not recovered)
+
+
+@pytest.mark.parametrize("agent", [None, "alice"])
+@pytest.mark.parametrize("fault", ["peer", "registry", "enumeration", "own_metadata"])
+def test_agent_scope_isolates_discovery_but_preserves_its_own_failures(
+    tmp_path, monkeypatch, agent, fault
+):
+    from contextlib import ExitStack
+
+    with ExitStack() as stack:
+        for name in ("alice", "bob"):
+            layout = AgentLayout.resident(tmp_path, name)
+            layout.home.mkdir(parents=True)
+            stack.enter_context(closing(RunStore(layout.run_store)))
+        alice = AgentLayout.resident(tmp_path, "alice")
+        temporary = replace(alice, instance="one")
+        stack.enter_context(closing(RunStore(temporary.run_store)))
+        stack.enter_context(
+            RuntimeRegistration(temporary, toolang_root=tmp_path, drivers=frozenset())
+        )
+        bob = AgentLayout.resident(tmp_path, "bob")
+        stack.enter_context(
+            RuntimeRegistration(bob, toolang_root=tmp_path, drivers=frozenset())
+        )
+        if fault == "peer":
+            document = json.loads(bob.runtime_status.read_text())
+            document["instances"]["bad"] = []
+            bob.runtime_status.write_text(json.dumps(document))
+        elif fault == "registry":
+            (tmp_path / ".runtime" / "instances" / "broken.json").write_text("invalid")
+        elif fault == "enumeration":
+            original_iterdir = type(tmp_path).iterdir
+
+            def denied_iterdir(path):
+                if path == tmp_path / "agents":
+                    raise PermissionError("cannot enumerate resident peers")
+                return original_iterdir(path)
+
+            monkeypatch.setattr(type(tmp_path), "iterdir", denied_iterdir)
+        else:
+            original_stat = type(tmp_path).stat
+
+            def denied_stat(path, *args, **kwargs):
+                if path == alice.home:
+                    raise PermissionError("selected home is unreadable")
+                return original_stat(path, *args, **kwargs)
+
+            monkeypatch.setattr(type(tmp_path), "stat", denied_stat)
+        with closing(
+            top.TopObserver(tmp_path, agent=agent, period=3600, recent=300, refresh=60)
+        ) as observer:
+            snapshot = observer.once()
+        if agent is None or fault == "own_metadata":
+            assert snapshot.summary.total is None and snapshot.inventory.diagnostics
+        else:
+            assert not snapshot.inventory.diagnostics
+            assert snapshot.summary.total == snapshot.summary.resident == 2
+            assert snapshot.summary.running == 1
+            assert snapshot.summary.completed == CompletionCounts()
+            assert snapshot.summary.usage == Metrics()
+            assert {source.label for source in snapshot.sources} == {
+                "alice",
+                "alice#one",
+            }
+
+
+@pytest.mark.parametrize("agent", [None, "alice"])
+@pytest.mark.parametrize("error", [StatsUnavailable, PermissionError])
+def test_failed_retired_lookup_preserves_http_snapshot_and_retries_as_paging(
+    tmp_path, monkeypatch, agent, error
+):
+    from toolang.cli.common.top_view import TopView
+
+    source = binding(tmp_path)
+    with closing(RunStore(source.layout.run_store)) as store:
+        for identity in [*(f"run_{index:03}" for index in range(100)), "run_zz"]:
+            project_run_start(
+                store,
+                run_id=identity,
+                thread_id="chat",
+                origin="chat",
+                input=Message.user("fixture"),
+                started_at=timestamp(NOW - 10),
+            )
+            store.finish_run(
+                run_id=identity, finished_at=timestamp(NOW), report=RunReport()
+            )
+        with top.recent_source(source.layout.run_store) as reader:
+            reader.pin()
+            first = reader.completed(now=NOW, recent=300)
+        root = RunNode("run_zz", None, "agic:work", "running", timestamp(NOW - 10))
+        previous = LiveSnapshot(
+            "epoch", timestamp(NOW - 1), (LiveTreeSnapshot(root.id, "chat", (root,)),)
+        )
+        fresh = LiveSnapshot("epoch", timestamp(NOW), ())
+        response = httpx.Response(
+            200,
+            json=ActivitySnapshot(live=fresh, completed=first).model_dump(mode="json"),
+            request=httpx.Request("GET", source.endpoint),
+        )
+        monkeypatch.setattr(top.httpx, "get", lambda *args, **kwargs: response)
+        monkeypatch.setattr(top.time, "time", lambda: NOW)
+        state = top._Source(
+            source,
+            NOW,
+            SourceActivity(
+                identity="source", label="alice", placement="resident", live=previous
+            ),
+        )
+        state.next_usage = NOW + 3600
+        state.activity_recent = 300
+        with closing(
+            top.TopObserver(tmp_path, agent=agent, period=3600, recent=300, refresh=60)
+        ) as observer:
+            observer.sources["source"] = state
+            observer.inventory = RuntimeInstanceSnapshot((source.instance,))
+            observer.discovered = True
+            observer.next_discovery = NOW + 3600
+            with monkeypatch.context() as denied:
+
+                def unavailable(*args, **kwargs):
+                    raise error("retired lookup unavailable")
+
+                denied.setattr(top, "recent_source", unavailable)
+                state.activity = resolved(
+                    state.read_activity(
+                        source, 300, previous=previous, cancelled=lambda: False
+                    )
+                )
+            snapshot = observer.tick()
+            assert snapshot.summary.active == 0
+            assert (
+                snapshot.summary.completed is not None
+                and snapshot.summary.completed.total == 101
+            )
+            assert (
+                snapshot.sources[0].live == fresh and not snapshot.sources[0].live_stale
+            )
+            assert snapshot.sources[0].activity_error is None
+            assert snapshot.sources[0].page_error == "retired lookup unavailable"
+            assert not TopView().notices(snapshot)
+            observer.more()
+            observer.tick()
+            assert state.page is not None
+            state.page.result(timeout=2)
+            recovered = observer.tick()
+            assert recovered.sources[0].completed is not None
+            assert {node.id for node in recovered.sources[0].completed.roots} == {
+                node.id for node in first.roots
+            } | {root.id}
+            assert recovered.sources[0].page_error is None
+
+
+@pytest.mark.parametrize("agent", [None, "alice"])
+@pytest.mark.parametrize("count", [1, 8])
+def test_slow_completion_pages_cannot_starve_live_polls(
+    tmp_path, monkeypatch, agent, count
+):
+    release, started = Event(), Event()
+    now = [NOW]
+
+    def page(*args):
+        started.set()
+        assert release.wait(5)
+        return completed()
+
+    def activity(*args, **kwargs):
+        return ActivitySnapshot(
+            live=LiveSnapshot("epoch", timestamp(now[0]), ()), completed=completed()
+        )
+
+    monkeypatch.setattr(top, "read_page", page)
+    monkeypatch.setattr(top, "read_activity", activity)
+    monkeypatch.setattr(top.time, "time", lambda: now[0])
+    with closing(
+        top.TopObserver(tmp_path, agent=agent, period=3600, recent=300, refresh=60)
+    ) as observer:
+        observer.next_discovery = NOW + 3600
+        for index in range(count):
+            source = binding(tmp_path)
+            source = replace(
+                source,
+                instance=replace(
+                    source.instance,
+                    identity=f"source{index}",
+                    runtime_instance=f"slot{index}",
+                ),
+                layout=replace(source.layout, instance=f"slot{index}"),
+            )
+            state = top._Source(
+                source,
+                NOW,
+                SourceActivity(
+                    identity=source.instance.identity,
+                    label=source.instance.label,
+                    placement="resident",
+                    live=LiveSnapshot("epoch", timestamp(NOW), ()),
+                ),
+            )
+            state.next_activity = state.next_usage = NOW + 3600
+            state.cursor, state.cursor_at = (timestamp(NOW), "run_099"), NOW
+            state.request_page = True
+            observer.sources[source.instance.identity] = state
+        try:
+            observer.tick()
+            assert started.wait(2)
+            now[0] += 1
+            for state in observer.sources.values():
+                state.next_activity = 0
+            observer.tick()
+            for state in observer.sources.values():
+                assert state.activity is not None
+                assert state.activity.result(timeout=2).live is not None
+            snapshot = observer.tick()
+            assert all(
+                source.live is not None and source.live.observed_at == timestamp(now[0])
+                for source in snapshot.sources
+            )
+            assert any(
+                state.page is not None and not state.page.done()
+                for state in observer.sources.values()
+            )
+        finally:
+            release.set()
+            for state in observer.sources.values():
+                for job in (state.page, state.activity):
+                    if job is not None:
+                        job.result(timeout=2)

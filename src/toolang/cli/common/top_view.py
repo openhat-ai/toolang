@@ -16,9 +16,10 @@ from toolang.execution.schemas import LiveNode, RunNode, StepNode
 from toolang.lang.types import parse_runnable_ref_parts
 from toolang.stats.types import seconds
 from toolang.up.schemas import SourceActivity, TopSnapshot
+from toolang.up.types import TopPeriod, TopRecent
 
-PERIODS = (3600, 14400, 28800)
-RECENTS = (60, 300, 900)
+PERIODS = tuple(value.seconds for value in TopPeriod)
+RECENTS = tuple(value.seconds for value in TopRecent)
 SORT_FIELDS = ("MODEL", "TOOL", "INPUT", "CACHED", "OUTPUT", "SPEND", "TIME+")
 Key = tuple[str, str, str]
 TERMINAL = frozenset(("succeeded", "failed", "canceled"))

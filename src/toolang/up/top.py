@@ -63,15 +63,19 @@ def read_activity(
                 if missing:
                     # Within one epoch, absence from live means the immutable
                     # terminal record was committed before the pinned boundary.
-                    with recent_source(
-                        source.layout.run_store, cancelled=cancelled
-                    ) as reader:
-                        reader.pin()
-                        result.retired = reader.completed_roots(
-                            now=seconds(result.completed.end),
-                            recent=recent,
-                            identities=missing,
-                        )
+                    try:
+                        with recent_source(
+                            source.layout.run_store, cancelled=cancelled
+                        ) as reader:
+                            reader.pin()
+                            result.retired = reader.completed_roots(
+                                now=seconds(result.completed.end),
+                                recent=recent,
+                                identities=missing,
+                            )
+                    except (StatsUnavailable, OSError, ValueError, RuntimeError) as exc:
+                        # Supplemental history must not invalidate a healthy sample.
+                        result.page_error = str(exc)
             return result
         except (httpx.HTTPError, ValueError) as exc:
             # Preserve durable completions when the control plane disconnects.
@@ -142,12 +146,9 @@ class _Source:
             try:
                 binding.layout.run_store.stat()
             except FileNotFoundError:
-                return not self.history_seen and (
-                    binding.instance.state == "not running"
-                    or (
-                        binding.instance.state == "unknown"
-                        and binding.instance.observed_state in ("preparing", "starting")
-                    )
+                return (
+                    not self.history_seen
+                    and not binding.instance.needs_live_observation
                 )
             self.history_seen = True
             return False
@@ -228,6 +229,9 @@ class TopObserver:
         self.usage_pool = ThreadPoolExecutor(
             max_workers=4, thread_name_prefix="top-usage"
         )
+        self.page_pool = ThreadPoolExecutor(
+            max_workers=2, thread_name_prefix="top-page"
+        )
         self.discovery_job: Future[RuntimeInventory] | None = None
         self.next_discovery = 0.0
         self.discovered = False
@@ -235,7 +239,7 @@ class TopObserver:
 
     def close(self) -> None:
         self.stopped.set()
-        for pool in (self.discovery, self.live_pool, self.usage_pool):
+        for pool in (self.discovery, self.live_pool, self.usage_pool, self.page_pool):
             pool.shutdown(wait=False, cancel_futures=True)
 
     def set_period(self, period: int) -> None:
@@ -269,12 +273,7 @@ class TopObserver:
             try:
                 result = self.discovery_job.result()
                 previous_current = {item.identity for item in self.inventory.instances}
-                current = {
-                    item.identity: item
-                    for item in result.snapshot.instances
-                    if self.agent is None
-                    or (item.placement == "resident" and item.name == self.agent)
-                }
+                current = {item.identity: item for item in result.snapshot.instances}
                 unique: dict[str, RuntimeSource] = {}
                 for item in result.sources:
                     if item.instance.identity in current:
@@ -314,7 +313,9 @@ class TopObserver:
             self.discovery_job = None
             self.next_discovery = now + 5
         if self.discovery_job is None and now >= self.next_discovery:
-            self.discovery_job = self.discovery.submit(runtime_inventory, self.root)
+            self.discovery_job = self.discovery.submit(
+                runtime_inventory, self.root, agent=self.agent
+            )
         current = {item.identity for item in self.inventory.instances}
         for identity, source in list(self.sources.items()):
             if identity not in current and now - source.seen > 8 * 3600:
@@ -353,6 +354,11 @@ class TopObserver:
             )
 
     def _collect(self, source: _Source, now: float) -> None:
+        self._collect_activity(source, now)
+        self._collect_page(source, now)
+        self._collect_usage(source, now)
+
+    def _collect_activity(self, source: _Source, now: float) -> None:
         if source.activity is not None and source.activity.done():
             try:
                 result = source.activity.result()
@@ -379,6 +385,8 @@ class TopObserver:
                 if source.activity_recent == self.recent:
                     source.value.activity_error = None
                     source.value.completed = result.completed
+                    if result.page_error and not source.activity_obsolete:
+                        source.value.page_error = result.page_error
                     if page and (source.cursor is None or reset_cursor):
                         source.cursor = (page[-1].finished_at or "", page[-1].id)
                         source.cursor_at = seconds(result.completed.end)
@@ -396,6 +404,8 @@ class TopObserver:
                 and not source.activity_obsolete
                 else 0
             )
+
+    def _collect_page(self, source: _Source, now: float) -> None:
         if source.page is not None and source.page.done():
             current_page = source.page_recent == self.recent and source.page_epoch == (
                 source.value.live.epoch if source.value.live else None
@@ -417,6 +427,8 @@ class TopObserver:
                 if current_page:
                     source.value.page_error = str(exc)
             source.page = None
+
+    def _collect_usage(self, source: _Source, now: float) -> None:
         if source.usage is not None and source.usage.done():
             try:
                 result = source.usage.result()
@@ -457,7 +469,7 @@ class TopObserver:
                     source.value.live.epoch if source.value.live else None
                 )
                 source.page_cursor = (source.cursor_at or int(now), source.cursor)
-                source.page = self.live_pool.submit(
+                source.page = self.page_pool.submit(
                     read_page,
                     source.binding,
                     self.recent,

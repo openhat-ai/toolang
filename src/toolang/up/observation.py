@@ -400,13 +400,15 @@ def runtime_snapshot(root: Path) -> RuntimeInstanceSnapshot:
     return runtime_inventory(root).snapshot
 
 
-def runtime_inventory(root: Path) -> RuntimeInventory:
+def runtime_inventory(root: Path, *, agent: str | None = None) -> RuntimeInventory:
     """Discover installed residents and registered runtime instances safely.
 
     Status documents are cached by path and read once for discovery. Liveness is
     inspected from those snapshots; Docker ownership is batched before at most
     eight independent agent probes run concurrently. Existing running_instances()
     semantics remain unchanged for activity and status callers.
+    A selected resident is discovered from its own status document, including
+    temporary instances, without enumerating peers or the temporary registry.
     """
     from toolang.up.process import AgentProcess, AgentStatus
 
@@ -468,7 +470,7 @@ def runtime_inventory(root: Path) -> RuntimeInventory:
         )
 
     try:
-        residents = agent_layouts(root)
+        residents = agent_layouts(root, agent=agent)
     except OSError as exc:
         residents = ()
         diagnostics.append(
@@ -521,23 +523,24 @@ def runtime_inventory(root: Path) -> RuntimeInventory:
             except (KeyError, OSError, RuntimeError, TypeError, ValueError) as exc:
                 diagnostics.append(f"{layout.name}: {str(exc)[:180]}")
 
-    instance_dir = root / ".runtime" / "instances"
-    try:
-        reference_paths = sorted(
-            (
-                path
-                for path in instance_dir.iterdir()
-                if path.is_file() and path.suffix == ".json"
-            ),
-            key=lambda path: path.name,
-        )
-    except FileNotFoundError:
-        reference_paths = []
-    except OSError as exc:
-        reference_paths = []
-        diagnostics.append(
-            f"runtime registry: {str(exc).strip() or type(exc).__name__}"
-        )
+    reference_paths = []
+    if agent is None:
+        instance_dir = root / ".runtime" / "instances"
+        try:
+            reference_paths = sorted(
+                (
+                    path
+                    for path in instance_dir.iterdir()
+                    if path.is_file() and path.suffix == ".json"
+                ),
+                key=lambda path: path.name,
+            )
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            diagnostics.append(
+                f"runtime registry: {str(exc).strip() or type(exc).__name__}"
+            )
 
     for reference_path in reference_paths:
         fallback: AgentLayout | None = None

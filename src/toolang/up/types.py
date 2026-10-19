@@ -1,9 +1,10 @@
-"""AgentServer vocabulary."""
+"""Agent hosting and observation vocabulary."""
 
 from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import Literal
 
 from toolang.common.layout import AgentPlacement
@@ -12,6 +13,26 @@ from toolang.execution.types import DriverName
 ExecutionDrivers = frozenset[DriverName]
 ALL_DRIVERS: ExecutionDrivers = frozenset(("chat", "talk", "chore"))
 ServerLifetime = Literal["persistent", "foreground", "automatic"]
+
+
+class TopPeriod(StrEnum):
+    hour = "1h"
+    four_hours = "4h"
+    eight_hours = "8h"
+
+    @property
+    def seconds(self) -> int:
+        return int(self.value[:-1]) * 3600
+
+
+class TopRecent(StrEnum):
+    minute = "1m"
+    five_minutes = "5m"
+    fifteen_minutes = "15m"
+
+    @property
+    def seconds(self) -> int:
+        return int(self.value[:-1]) * 60
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,6 +70,13 @@ class RuntimeInstance:
     drivers: tuple[str, ...] | None
     observed_state: str | None = None
     diagnostic: str | None = None
+
+    @property
+    def needs_live_observation(self) -> bool:
+        """Whether active roots cannot be ruled out from the observed state."""
+        return self.state != "not running" and not (
+            self.state == "unknown" and self.observed_state in ("preparing", "starting")
+        )
 
     @property
     def label(self) -> str:

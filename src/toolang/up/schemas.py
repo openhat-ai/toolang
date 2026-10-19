@@ -16,6 +16,7 @@ class ActivitySnapshot(BaseModel):
     completed: CompletedRoots
     retired: tuple[RunNode, ...] = ()
     live_error: str | None = None
+    page_error: str | None = None
 
 
 class SourceActivity(BaseModel):
@@ -62,11 +63,7 @@ class TopSnapshot(BaseModel):
         return {
             item.identity
             for item in self.inventory.instances
-            if item.state != "not running"
-            and not (
-                item.state == "unknown"
-                and item.observed_state in ("preparing", "starting")
-            )
+            if item.needs_live_observation
         }
 
     @computed_field

@@ -1,12 +1,15 @@
 # Current and recent activity
 
 `too top` observes the selected root's validated local resident, visiting and
-roaming inventory. `too alice top` selects one resident agent. Observation neither
-starts agents nor acquires server leases. Discovery refreshes every five seconds;
-known source paths remain in memory for eight hours after their last discovery.
-Each new Top session starts from the resident list and current validated instance
-registrations. It does not recover previously deregistered visiting/roaming
-instances from an earlier session or persist an additional source registry.
+roaming inventory. `too alice top` reads only that resident's status document,
+including its temporary instances, without discovering peers or consulting the
+global runtime registry. Unrelated discovery errors cannot invalidate its totals.
+Observation neither starts agents nor acquires server leases. Discovery refreshes
+every five seconds; known source paths remain in memory for eight hours after
+their last discovery.
+Each new team Top session starts from the resident list and current validated
+instance registrations. It does not recover previously deregistered
+visiting/roaming instances from an earlier session or persist an additional source registry.
 These retained sources contribute historical completions and usage only; their
 departure stops polling the old live endpoint and does not make current
 active-root coverage unavailable. Queued live requests are canceled; running
@@ -102,10 +105,13 @@ The read-only agent adapter exposes:
   directly. Usage workers are separate from inventory and live polling; obsolete
   window responses are discarded. Source read failures return HTTP 503.
 
-Completed-root paging runs separately from live polling and keeps its original
-completion bounds. Local observation resolves previously live root IDs through
-the source Stats reader when their completion falls outside the first page,
-without advancing the page cursor or loading results/errors. Window changes keep
+Completed-root paging uses separate workers so slow pages cannot occupy live
+polling capacity, and keeps its original completion bounds. Local observation
+resolves previously live root IDs through the source Stats reader when their
+completion falls outside the first page, without advancing the page cursor or
+loading results/errors. A failed supplemental
+lookup preserves the fresh HTTP snapshot and its totals, records `page_error`,
+and can be retried through normal PgDn paging. Window changes keep
 eligible terminal facts and selection while the new totals load; a late response
 from an older window cannot delay the selected window's next query.
 
