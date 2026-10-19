@@ -44,16 +44,20 @@ applies, raise the ambiguity and ask the human before proceeding.
 - `src/toolang/lang`: `.too` parsing and authored-language semantics.
 - `src/toolang/base` and `src/toolang/common`: plugin contracts and
   package-neutral helpers, respectively.
-- `src/toolang/catalog`, `src/toolang/setup`, `src/toolang/state`, and
-  `src/toolang/work`: authored data, installed setup, prepared state, and
-  scheduling, respectively.
+- `src/toolang/catalog`, `src/toolang/setup`, and
+  `src/toolang/state`: authored data, installed setup, and prepared state,
+  respectively.
+- `src/toolang/driver`, `src/toolang/teaming`, and `src/toolang/stats`: execution
+  triggers, Hub/conversation coordination, and derived usage statistics.
 - `src/toolang/execution`: runs, threads, persistence, inspection, and control.
 - `src/toolang/plugin`: reusable tool, model, and sandbox plugins.
 - `src/toolang/up`, `src/toolang/api`, and `src/toolang/cli`: hosting, HTTP, and
   process orchestration, respectively.
-- `docs/`: potentially stale design context. Treat the implementation as the
-  source of truth and verify docs against it. `docs/plans/` contains feature
-  definitions.
+- [CONTRIBUTING.md](CONTRIBUTING.md) covers workflow, testing, and review;
+  [docs/authoring.md](docs/authoring.md) covers Toolang source style.
+- `docs/design/`: current implementation design. Treat the implementation as the
+  source of truth and verify docs against it. `docs/plans/` contains discussion,
+  feature definitions, and implementation records that may become outdated.
 - `reference/`: generated code reference; `tests/`: automated tests.
 
 ## Conventions
@@ -118,6 +122,8 @@ applies, raise the ambiguity and ask the human before proceeding.
 - Use the GitHub CLI (`gh`) for GitHub operations; never use the GitHub App.
 - Always create or reuse a dedicated Git worktree for repository changes; never
   create a work branch directly in the primary or local checkout.
+- Use the agent or human branch prefixes defined in
+  [CONTRIBUTING.md](CONTRIBUTING.md#workflow).
 - Before final handoff, fetch and rebase PR branches onto the latest
   `origin/main`, rerun verification, and push rebased history with
   `--force-with-lease`.

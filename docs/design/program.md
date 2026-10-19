@@ -1,0 +1,652 @@
+# Program
+
+A Mod is a `.too` module; its parsed representation is `Program`. This document
+describes semantic representation, validation, and declarations. [Flow](flow.md)
+owns evaluation and [Content](content.md) owns content parsing. Follow the
+[authoring conventions](../authoring.md) for source style, type annotations,
+and documentation comments.
+
+
+Examples are declaration or body excerpts unless explicitly identified as
+complete. Named helpers, selected templates, and output structs must be declared
+in the containing module.
+
+## Parsing and validation
+
+```text
+UTF-8 source -> grammar CST -> semantic lowering -> static validation -> Program
+```
+
+The installed grammar owns concrete syntax. `Program.from_source()` lowers it
+into immutable semantic nodes retaining declarations, documentation, and source
+lines. Program is not a lossless formatting tree and contains no installed
+resources, mutable execution state, or runtime services. Formatting works from
+syntax-valid source rather than serializing Program.
+
+Static validation checks names, types, templates, and statically known call
+contracts without preparing resources or executing work. Dynamic values,
+actual inputs, resource readiness/authority, and compatibility with newly
+published targets remain runtime checks. Public cross-module signatures can
+inform validation without exposing private declarations.
+
+The semantic codec (`to_data()` / `program_from_data()`) restores typed nodes
+without reparsing source. [State](state.md) stores Programs in versioned layers;
+[Records](records.md) stores execution facts separately. Neither representation
+is the raw CST, a provider request, or an event payload.
+
+## Program Constructs
+
+```text
+with       external cap reference
+struct     named structured type
+context    reusable context template
+instruct   reusable instruction template
+psyche     inline psyche cap
+skill      inline skill cap
+service    inline service cap
+prompt     reusable Content template
+chore      named one-off or scheduled work
+agic       model/tool runnable
+flow       ordered statement runnable
+```
+
+Top-level agics and flows share one runnable namespace. Their authored names
+must be unique across both declaration kinds.
+
+
+## Program Modules
+
+Resident agents may contain complete program modules at either of these home
+paths:
+
+```text
+agent.too
+runnables/<name>.too
+```
+
+Every file has its own declarations and private type namespace. State composition
+also validates main-module calls to exported runnables. An extension cannot use
+structs, contexts, instructs, caps, agics, or flows declared in another file.
+
+The agent module publicly exports all of its agics and flows. Each runnable
+module exports exactly one agic or flow whose name is absent or exactly matches
+the filename stem. An unnamed entry and a filename-matching declaration are
+ambiguous, even across kinds. State uses the filename as the public name and
+binds unnamed declarations locally as `<entry:LINE>`. Renaming an unnamed
+entry's file renames its public runnable; a named entry must also be renamed.
+Other declarations remain private helpers for flow statements and model routing.
+For example, `runnables/talk.too` containing `agic(_: Json):` exports `agic:talk`.
+
+Public runnable names must be unique across the complete home. The filename
+`_.too` is rejected because `_` refers to the root's unnamed entry. Direct files
+under `runnables/` are discovered. Other HOME-level `.too` files, `flows/`,
+`agics/`, nested files, non-`.too` files, and Toolang-root modules are ignored.
+There is no compatibility discovery or automatic source migration.
+
+
+## Documentation Comments
+
+`#@` documents the complete module. Module documentation comments must be
+unindented, may appear anywhere between top-level declarations, and are joined
+in source order. The legacy `##!` spelling remains accepted. Both spellings
+populate that file's `Program.doc`, independently of runnable descriptions:
+
+```too
+#@ Research assistant.
+agic search:
+  Search for relevant sources.
+
+#@ Produces a source-backed report.
+flow research:
+  run search
+```
+
+`##` documents the immediately following semantic node at the same indentation
+level. Consecutive `##` lines form one newline-separated document:
+
+```too
+## Search the web.
+## Return source-backed evidence.
+agic search:
+  ## The model request body.
+  Find relevant sources.
+
+flow research:
+  ## Run two searches.
+  repeat 2 times:
+    ## Run one search.
+    run search
+```
+
+At the program level, `##` may document any declaration. Inside a struct it may
+document a field, inside an agic it may document a message, and inside a flow
+or nested flow block it may document a statement.
+
+A blank line, an ordinary `#` comment, a module comment, another syntax item,
+or the end of the current scope ends attachment. Documentation comments never skip an
+intervening directive or setting. Indented legacy `##!` comments do not document
+a parent node; structural `#@` comments must be at column zero.
+
+Use `## @param NAME DESCRIPTION` in an agic or flow's attached documentation
+block to describe an input parameter. Tags match exact signature names in any
+order, including explicit or implicit `_` input:
+
+```too
+## Summarize material when a short overview is needed.
+## @param _ Source material to summarize.
+## @param style Preferred summary style.
+agic summarize(_: Text, style?: Text):
+  Summarize {{_}}.
+```
+
+Each description must be nonempty and fit on the same physical line. Types and
+optionality come from the signature. Unknown or duplicate parameter names,
+and tags attached to anything other than an agic or flow, are validation
+errors. Detached tags are ignored. A malformed leading `@param` tag is a syntax
+error even when detached; other tags such as `@return`, longer words such as
+`@parameter`, and `@param` within prose remain ordinary documentation text.
+
+Ordinary item text populates the runnable description; tags populate
+`Parameter.doc` without appearing in that description. Script argument help
+uses the full parameter description. Runnable queries use the runnable
+description, and `hands` / `handoffs` calling hints and input contracts include
+both runnable and parameter documentation, capped at 512 code points per
+description. Documentation does not grant calling authority.
+
+`#` marks ordinary comments. `#!` is a shebang only at byte zero; later or
+indented occurrences are ordinary comments. Inline comment markers are always
+ordinary comments. Every marker remains literal inside an explicit text block,
+including on its first content line. Formatting preserves those text boundaries
+and each module comment's authored spelling.
+
+
+## External Caps
+
+`with KIND SOURCE-REF` adds external Cap content to the authored Mod. Kind is
+separate from the Source Ref; selection after merging uses a Cap Ref such as
+`skill/fund`. Sources support explicit `gh:`/`github:` refs and complete HTTP(S)
+URLs; bare remote refs and OpenHat prefixes are unsupported. See
+[Source Refs](caps.md#source-refs).
+
+For example:
+
+```too
+with skill https://github.com/coinbase/agentic-wallet-skills/tree/main/skills/fund
+```
+
+Prepare resolves the reference and materializes it into the owning program
+module's `here` cap set. The cap is then available to declarations in that
+module by its resolved name.
+
+```too
+agic pay:
+  skills += skill/fund
+
+  Help with the requested wallet funding task.
+```
+
+The old top-level `use` spelling is not part of this syntax. `use` is reserved
+for a future static tool-call statement.
+
+
+## Inline Caps
+
+Program-level `psyche`, `skill`, `service`, and `prompt` declarations are
+inline caps. Prepare materializes them under the owning module's `here` cap set
+while retaining the `.too` file as their authored source. They do not leak to
+another program module.
+
+Cap declarations use their own schemas. They are not runnable declarations
+and do not share the agic/flow namespace.
+
+```too
+psyche reviewer:
+  Prefer precise, evidence-backed reviews.
+
+skill review:
+  description = Review a code change.
+
+  Inspect the change and report actionable findings.
+
+service github:
+  description = Access GitHub.
+  transport = http
+  target = https://mcp.github.com/mcp
+
+prompt review:
+  Review {{path}} with focus on {{focus}}.
+```
+
+`psyche` and `prompt` accept no properties and require a body. `skill`
+requires the `description` property and a body. `service` requires
+`description`, `target`, and exactly one of `transport` or its `protocol`
+alias; its body is optional. Service transport is `http` or `stdio`. Optional
+`headers` is HTTP-only, while optional `env` is a comma-separated list of
+unique environment variable names. All properties are single-use and
+nonempty. Both transport spellings lower to `transport`; HTTP targets are URLs,
+while stdio targets remain opaque command text at the language boundary.
+Markdown cap files use the [catalog format](caps.md#local-cap-frontmatter).
+
+Inline skill bodies are literal guidance: they do not expand `{{parameters}}`
+or execute flow statements. Select them with their qualified capability ref:
+
+```too
+skill code_review:
+  description = Use when reviewing code changes.
+
+  Read the diff and report concrete bugs with file locations.
+
+agic review:
+  skills = skill/code_review
+
+  Use the code_review skill to review the current changes.
+```
+
+The model first receives the description. It loads the body on demand through
+`runtime__pick` with `kind="skill"` and `ref="skill/code_review"`; selecting a
+skill alone does not load its body. Resource ceilings still apply. Inline skills
+contain text only; use directory-backed skills for bundled scripts and assets.
+
+
+## Runnable Signatures
+
+Agics and flows use the same signature rules:
+
+```text
+agic [NAME] [(PARAMS)] [-> T]:
+flow [NAME] [(PARAMS)] [-> T]:
+```
+
+In the agent or Script module, an omitted agic or flow name is the module's
+unnamed entry:
+
+```too
+agic:
+  Reply directly.
+
+flow:
+  pass
+```
+
+The AST preserves omitted names as `None` and keeps the declaration's source
+line. State binds the unnamed entry under the lined lookup key `<entry:LINE>`
+without writing a name onto the AST. Two unnamed top-level declarations in one
+module collide. An explicit `main` is an ordinary named declaration and may
+coexist with the unnamed entry. In a home runnable module, State binds the
+unnamed runnable's public name from the filename as described above.
+
+State's entry bindings do not add source declarations. Flow statements must
+reference explicitly named runnables or use inline agics; the unnamed entry is
+not a static `run` target.
+
+
+### Primary Input
+
+`_` is the primary input parameter. It aligns the runnable signature with
+the primary runtime local used by flows. Primary input is shortened to
+**input**; values supplied for named parameters are **arguments**. See
+[input terminology and flat mappings](call-input.md#terminology).
+
+```too
+agic chat:                         # implicit _: Part[]
+  Reply to {{_}}.
+
+agic ping():                       # no primary input
+  Return "pong".
+
+agic review(_):                    # explicit _: Part[]
+  Review {{_}}.
+
+agic parse(_: Json, mode: Text):
+  Parse {{_}} using {{mode}} mode.
+```
+
+Rules:
+
+- Omitting the complete parameter list implies one required `_ : Part[]`.
+- Writing `()` declares no primary input and no named parameters.
+- Writing `_` explicitly declares the primary input with default type
+  `Part[]`.
+- `_` may declare another type explicitly.
+- `_` is never optional.
+
+The semantic AST represents `()` with no primary input and an empty named
+parameter tuple.
+
+
+### Named Parameters
+
+Named parameters follow `_` when it is present:
+
+```too
+agic rewrite(_, tone: Text, audience?: Text):
+  Rewrite {{_}} for {{audience}} in a {{tone}} tone.
+
+agic deploy(env: Text, version?: Text):
+  Deploy {{version}} to {{env}}.
+```
+
+Rules:
+
+- `name` is required.
+- `name?` is optional.
+- An omitted type defaults to `Text`.
+- Parameters are initialized as named runtime locals.
+- Parameter names must be unique. Regular parameter and local names must fully
+  match `[a-z][a-z0-9_]*` and must not be a grammar keyword, including reserved
+  legacy words. Comparison is exact and case-sensitive. `_` retains its special
+  primary-input role. This rule does not restrict data-field names. Rename
+  existing keyword-named variables together with their references.
+
+Script CLI arguments and options are derived from the selected runnable's
+signature. The primary input maps to positional/stdin content rather than a
+synthetic `--in` option.
+
+
+### Value Types
+
+Built-in value types include:
+
+```text
+Text
+Number
+Boolean
+Json
+Part
+Part[]
+```
+
+`T[]` denotes an array of any language type `T`. `S` denotes the name of any
+declared struct type; neither `T` nor `S` is a literal type name that can be
+written in source. `Pack` is not built in and may be declared as an ordinary
+user struct.
+
+`Part` is the canonical message-part union in `base.types.message`; `Part[]`
+is an array of those values. Role-specific validation constrains model messages.
+`Message` is a model-call value, not an authored Toolang type.
+
+Locals preserve their complete value type, with no shape/dim flag.
+Map/reduce/keep/drop/sort consume the outermost array: mapping `Text[][]` supplies
+`Text[]` items. Generate produces an array without requiring an array input.
+Arrays from parameters, ordinary calls, and helper Flows behave identically.
+See [Flow syntax](flow.md) for Flow statements, array operations, and
+migration guidance.
+
+
+### Output
+
+The optional `-> T` declaration is the runnable's output contract:
+
+```too
+agic summarize(_) -> Text:
+  Summarize {{_}}.
+
+flow research(_: Text) -> Report:
+  ...
+```
+
+An omitted output type defaults to `Text`. For an agic:
+
+- omitted `-> T` keeps normal unstructured assistant content and validates it
+  as `Text`
+- `Text`, `Part`, and `Part[]` use content output with type validation
+- `Number`, `Boolean`, `Json`, declared structs `S`, and ordinary `T[]` values
+  use structured model output
+
+A runnable applies output coercion to its final value. For an agic, this is the
+terminal assistant content; for a flow, it is the final primary local.
+
+After output coercion, script serializes the resulting value predictably:
+
+```text
+Text                 raw text
+Number               canonical decimal
+Boolean              true or false
+Json, S, T[]          compact JSON
+Part                  one JSON object
+Part[]                one JSON array
+```
+
+
+## Structured Types
+
+`struct` defines one named record type:
+
+```too
+struct ReviewFinding:
+  path: Text
+  line?: Number
+  severity: Text
+  message: Text
+
+struct ReviewResult:
+  summary: Text
+  findings: ReviewFinding[]
+  patch?: Json
+```
+
+`name: Type` is required and `name?: Type` is optional. Structs may be used by
+runnable parameters and outputs.
+
+Templates retain structured values until rendering. `{{result.passed}}` reads a
+field, `{{result.receipts.0.key}}` indexes an array, and `{{result.receipts}}`
+renders compact JSON. Sections can traverse arrays and test Boolean fields
+without turning `false` into a truthy string. Lookup reads data keys and array
+indexes, never Python attributes or methods. Selected `Part` and `Part[]` values
+retain their native message parts, including when nested in a struct. Rendering
+a whole struct or ordinary array as JSON represents contained Parts as data.
+Sections test native values before output formatting, including empty `Json`
+strings. Direct interpolation of a `Json` string retains JSON quoting. Literal
+Unicode text remains text even when it resembles an internal Part marker,
+including across interpolations and prompt expansion.
+
+
+## Agics
+
+An agic declares a model/tool runnable with authored messages. [Agic](agic.md)
+owns its execution cycle, message templates, and instruction layers.
+
+## Directives
+
+Agics and flows share these directives:
+
+| Type | Directives | Operators | Values |
+| --- | --- | --- | --- |
+| Q | models, tools, psyches, skills, services, prompts | `=`, `+=`, `-=` | Native TQ query; `none` or `*` |
+| L | hands, handoffs | `=` | CSV runnable references; standalone `none` or `*` |
+| L | recall | `=` | CSV `far`/`near`; standalone `none`, `default`, or `*` |
+| V | lanes | `=` | Positive integer or `default` (4) |
+| V | instruct, context | `=` | Declaration name, `none`, or `default` |
+
+Values cannot be empty. Directives precede messages or flow statements.
+Configuration directives occur at most once. Resource operations apply in source
+order: `=` retains matching selected items, `+=` includes matches from the fixed
+base, and `-=` excludes matches. `none` is the empty set, so `= none` clears the
+selection and `+= none` / `-= none` leave it unchanged.
+
+Before each model call, the active path's fixed resource selectors filter the
+latest State in their declaring modules. Rules exclude only resources visible
+in that scope; another module's private caps remain available to its own rules.
+Children inherit restrictions, not an earlier list of selected resources.
+`+=` restores only items allowed by ancestors and external authority ceilings.
+An exec removes the outgoing runnable's rules; waiting ancestors still apply.
+Setup and accepted workspace grants stay bound.
+
+Both agics and flows accept `recall`, `hands`, and `handoffs`. Omission inherits
+the immediate parent's value within the rule's scope. Root recall defaults to `far, near`; `default`
+selects that default and `*` selects all available sources. `none`, `far`, `near`,
+and either CSV source order select a view of the full root snapshot. `auto` is
+not supported; use `far, near` to explicitly select those two sources.
+The runtime exposes `_far` (summary text), `_near` (recent message data), and
+`_past` (summary followed by recent messages). Excluded sources are empty.
+Only root agics prepend historical messages automatically; child agics reference
+these variables explicitly. Compaction updates subsequent frames throughout
+the run tree.
+
+`hands` and `handoffs` select exact runnable references with `=`. The main module
+can select its own runnables and exported agics or flows; an extension can select
+only its own declarations, including private helpers. `none` disables routes; `*`
+selects all visible runnables. They do not accept queries. An explicit
+selection replaces inherited routes independently of resource restrictions:
+
+```too
+agic coordinate(_: Text) -> Report:
+  hands = agic:research, flow:verify
+  handoffs = flow:deliver
+
+  Coordinate the work.
+```
+
+Omitted settings without an inherited restriction and explicit `*` both allow
+all module-visible targets. Calls must serve an explicit user request or concrete
+work required by the current agic; availability or matching documentation alone
+does not request execution. Explicit lists and `none` are enforced by the runtime
+and cannot be bypassed by a user request. Inherited restrictions remain effective
+within their module until a child explicitly replaces them. Additional user
+restrictions further constrain model use.
+
+[Agic routing](agic.md#runnable-routing) owns model-facing run/exec selection
+and the effect of a hand or handoff.
+
+Each newly accepted named child Run selects the latest published State and checks
+its signature against the caller's bound definition or the invoking Model Call's
+captured State.
+Missing targets and changed signatures reject the call. Accepted Runs retain
+their code, types, and directives; inline Agics belong to that same plan.
+Collection items select independently when accepted. Main-module flows can call
+their own runnables and exported agic or flow modules; an extension can call only
+its own runnables. Same-Run handoffs follow the same resolution rules.
+
+Configuration changes affect newly accepted runnables without mutating active
+parents or siblings. Lane defaults are 4 per parallel operation; a statement
+`in N lanes` overrides only that operation.
+
+
+## Context And Instruct
+
+`context` defines data in the recurring runtime user message. `instruct` defines
+provider-neutral agent instructions. Model adapters map the assembled frame to
+provider-specific roles.
+
+Unnamed declarations define program defaults:
+
+```too
+context:
+  Current agent: {{agent.name}}
+
+instruct:
+  Use tools only when they materially help.
+```
+
+Named declarations are reusable:
+
+```too
+context report:
+  Include the report constraints.
+
+instruct strict:
+  Run the {{runnable.name}} runnable in strict mode.
+```
+
+The executor supplies `date` and `timezone` as flat runtime variables to both
+context and instruct templates:
+
+```too
+context:
+  Current date: {{date}}
+  Timezone: {{timezone}}
+```
+
+`date` is the UTC calendar date on which the root run was accepted, and
+`timezone` is `UTC`. Both remain fixed for the complete recursive run tree so
+child runs and later model calls observe the same temporal context.
+
+An agic or flow may select one of each:
+
+```too
+agic report(_):
+  context = report
+  instruct = strict
+  Write the report.
+```
+
+Selection values are:
+
+```text
+default  program default, then runtime built-in default
+none     disable this layer
+NAME     named declaration
+```
+
+Declare prompt content at module level; runnable-local inline definitions are
+not supported. An unnamed declaration overrides the module's default. `default`
+always exists: absent a module declaration, runtime uses the system fallback.
+Only an explicitly selected nonexistent name causes a reference error.
+
+Omission inherits the parent's resolved selection and declaring module; roots
+use their module/system default. Explicit `default` selects the current module,
+while `none` disables the layer. Inherited templates render using the child's
+bound parameters and runtime variables; missing dependencies fail rather than
+capturing parent locals. The runtime protocol remains independent of instruct.
+
+
+## Flows
+
+A flow is an ordered list of static statements:
+
+```too
+flow research(_: Text) -> Report:
+  run expand
+  keep if relevant in 4 lanes
+  sort descending by score in 3 lanes
+  keep first 3
+  run synthesize
+```
+
+Flows use the same declaration defaults, resource selectors, recall, and routing
+configuration as agics. Nested flows and public run/exec calls use the same
+scoped resource rules, external ceilings, and replacement semantics.
+
+Statement syntax, bindings, inline agics, and result shapes are defined in
+[Flow](flow.md).
+
+Inline runnable bodies lower to unnamed `AgicDecl` values that keep the
+statement's source line. They are addressed only through the adhoc sentinel
+`agic:<adhoc:LINE>` and never appear in a module's runnable index.
+
+
+## Prompts
+
+A prompt is a reusable `Content` template:
+
+```too
+prompt review:
+  Review {{path}} carefully.
+  Focus on {{focus}}.
+  {{_}}
+```
+
+Named parameters are inferred from the first appearance of Mustache root
+placeholders. Dotted references and section tags contribute their root name;
+closing tags, repeated roots, and the primary `{{_}}` placeholder do not.
+Every inferred parameter is required `Text`.
+
+It is invoked with dollar-prefixed content syntax:
+
+```text
+$review path=src/app.py focus="only errors"
+```
+
+Prompt Call Input, include references, and escaping are defined in
+[call-input.md](call-input.md) and [Content](content.md). A
+dollar prompt call invokes one reusable prompt template during content
+evaluation. Slash is reserved for terminal Chat commands and does not invoke
+prompts.
+
+## Invocation surfaces
+
+Driver-named and unnamed declarations participate in the handler resolution
+owned by [Drivers](drivers.md#handler-selection). Script selects authored entries;
+Chat can supply a session choice. The language signature remains the contract
+for every surface. [Call Input](call-input.md) owns capture and coercion, and
+[Workspaces](workspaces.md) owns execution path authority.
