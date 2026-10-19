@@ -482,9 +482,9 @@ directory size; ID and participant-pair lookup are constant in directory size.
 GC allocation supports 524,288 reservations per backend per hour; this is
 capacity, not a measured throughput claim.
 
-The [conversation contract](plans/conversation-ids.md) specifies record JSON,
-atomic writes, and event payloads. The [ID upgrade](plans/conversation-id-upgrade.md)
-defines the conversation ID codecs, capacity, and fresh-dataset rollout.
+## Implementation evidence
 
-The [Talk presentation plan](plans/talk-status-bar.md) records the original layout;
-the [conversation contract](plans/conversation-ids.md) supersedes its IDs and targets.
+- [Schemas](../src/toolang/teaming/schemas.py) own record JSON, validation, and API versions; [IDs](ids.md) owns identity rules and capacity.
+- [Backend keys](../src/toolang/teaming/backend/valkey/keys.py) and [atomic operations](../src/toolang/teaming/backend/valkey/scripts.py) own storage and mutations.
+- [Team events](../src/toolang/teaming/team_events.py) and [execution subscriptions](events.md#hub-subscriptions) own their separate cursor/recovery protocols.
+- [Protocol tests](../tests/unit/messaging/test_protocol.py), [record validation](../tests/unit/messaging/test_contract_records.py), and [conversation IDs](../tests/unit/messaging/test_conversation_ids.py) verify these contracts offline.

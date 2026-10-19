@@ -42,6 +42,8 @@ each action and outcome as an append-only plain-text line. The stable
 `Agent NAME running: ...` (guest foreground) and `Agent NAME started: ...`
 result lines are written only after readiness succeeds.
 
+## Startup policy
+
 Both commands accept repeatable `--allow RESOURCE=QUERY`,
 `--limit LIMIT=VALUE`, and `--default SETTING=VALUE` options. The CLI parses these
 with `TOOLANG_ALLOW_*`, `TOOLANG_DEFAULT_*`, and `TOOLANG_LIMIT_*` into frozen
@@ -91,6 +93,8 @@ runtime environment, CLI, then any request-level binding or limit fields.
 Config is re-read dynamically; environment and CLI mappings remain fixed for
 the process lifetime. Each `--default` or `--limit` field may occur once;
 repeated `--allow` values for the same domain accumulate within the CLI layer.
+
+## Sandbox selection and development wheels
 
 Sandbox selection uses CLI > current `[sandbox]` binding > last successful
 selector > `host`. An unavailable selected sandbox fails without falling back.
@@ -203,6 +207,8 @@ mount is read-only in the guest. Staged files are removed on release and after a
 failed Docker launch whose workload was removed successfully. If Docker cleanup
 fails, the staged files remain with the persisted recovery reference.
 
+## Runtime recovery and logs
+
 For every sandbox implementation, AgentServer is the environment's primary
 foreground workload. `serve` waits for that workload and releases it on exit,
 while `start` returns after the health endpoint is ready. `stop` reloads the
@@ -244,6 +250,8 @@ Likewise, per-launch staging without a matching control reference is preserved
 and blocks relaunch or removal until any associated workload is removed and the
 staging directory is cleaned manually.
 
+## Guest bootstrap
+
 Docker uses the engine's default missing-image pull behavior. Its guest script
 quietly bootstraps uv and installs the selected package with `uv tool install`.
 For a source-local roaming agent, Docker overlays linked `agent.too` and
@@ -267,6 +275,8 @@ bounded, regular, non-symlink file. The file is presentation-only: unknown,
 duplicate, out-of-order, or stale values cannot affect readiness, recovery, or
 cleanup. The referenced file is removed with the sandbox resources.
 
+## Runtime identity and ports
+
 An active `toolang info` uses the sandbox reference's structured workload
 identity. Host workloads show `PID`; Docker workloads show `Container` with the
 generated name and a 12-character hexadecimal ID, while recovery retains the
@@ -284,6 +294,7 @@ ephemeral port.
 An agent recorded on `7001` receives a new port on its next default start.
 Explicit CLI, environment, or home configuration port overrides still take
 precedence, including `7001`. Running processes are not relocated.
+
 ## Server lifetime and client leases
 
 Terminal Chat shares a compatible AgentServer for the same agent, Toolang root,

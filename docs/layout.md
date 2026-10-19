@@ -36,6 +36,8 @@ ${TOOLANG_ROOT}/
       aid@r<source-hash>.json         # Roaming server
       register.lock
   hub/
+  human/
+    talk-input/<conversation-id>.jsonl
   .sandbox/
     <agent>/launches/<launch-id>/  # Docker bootstrap materials only
   agents/
@@ -181,11 +183,12 @@ Key paths:
 
 | Path           | Purpose                                                      |
 | -------------- | ------------------------------------------------------------ |
-| `status.json` | Version 2 authoritative control and workload entries, keyed by execution instance |
+| `status.json` | Version 3 authoritative control and workload entries, keyed by execution instance |
 | `agent.log`    | Runtime log                                                  |
 | `logs/<agic>/<run_id>.log` | Per-run script logs when `PY_LOG` is set |
 | `runs.db` | Threads, controls, runs, steps, model inputs, chore checkpoints, and ID sequences |
-| `chat-history.jsonl` | Chat input recall history                               |
+| `chat-input.jsonl` | Chat input recall history |
+| `stats.db` | Derived usage statistics; see [Execution statistics](execution-statistics.md) |
 | `tools/`       | Per-toolset plugin working directories                       |
 
 `status.json` owns both lifecycle sections. `control` contains intent, recovery
@@ -199,24 +202,26 @@ Successful stop retains the persistent record, remembered endpoint/sandbox,
 and database/log history. Successfully finalized temporary entries are removed.
 Existing isolated script databases/logs remain under `.runtime/instances/<id>/`;
 all their lifecycle entries share the agent's `status.json`. Interrupted entries
-and unreleased resource references remain recoverable. See the
-[runtime plan](plans/unified-runtime-status.md) for restart and recovery rules.
+and unreleased resource references remain recoverable. [Hosting](hosting.md#runtime-recovery-and-logs)
+owns restart and cleanup behavior; [instance.py](../src/toolang/up/instance.py)
+owns the status format and generation guards.
 
 Docker mounts the target agent home read-write, necessary inputs/workspaces,
 and bootstrap materials read-only. Discovery references and entire roots are
 not mounted. Shared control/workload field ownership is a cooperative contract;
 it does not isolate control fields from arbitrary guest file writes.
 
-Human Talk stores input history and drafts under the root's
-`.runtime/talk-history/<conversation-id>.jsonl` and
-`.runtime/talk-history/<conversation-id>.draft.txt`. These files are shared by
-human viewers of the same conversation ID in one root. Chat history follows the
-selected agent runtime, including its instance directory. Neither file is the
-conversation message store or execution history.
+Human Talk stores accepted input history at
+`<root>/human/talk-input/<conversation-id>.jsonl`, shared by human viewers of the
+same conversation in one root. Chat uses the selected agent runtime's
+`chat-input.jsonl`, including its instance directory. These are input recall,
+separate from the conversation message store and execution history. Unsent
+drafts remain in memory and are not saved to draft files.
 
-On first use, absent destinations import the old `chat-input-history.jsonl` or
-the current viewer/dataset's `talk-v2/<identity>/<conversation-hash>/` files.
-Existing destinations win and legacy files remain untouched.
+Old `chat-input-history.jsonl`, `chat-history.jsonl`, `.runtime/talk-history/`,
+and `talk-v2/` data are neither read nor imported. Existing files remain
+untouched. See the [Chat path test](../tests/unit/cli/test_chat_command.py) and
+[Talk path tests](../tests/unit/cli/test_talk.py).
 
 ## File Locks
 

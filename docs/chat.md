@@ -100,8 +100,9 @@ copying physical Run/Step rows. Rewind hides the anchor and suffix, retaining
 records for explicit inspection. Only Chat threads can fork/rewind; those
 operations do not start follow-up execution.
 
-Input history and drafts belong to their runtime layout, separate from execution
-records and model context; [Layout](layout.md) owns paths and legacy imports.
+Input recall history belongs to the runtime layout, separate from execution
+records and model context; [Layout](layout.md#runtime-room) owns its paths.
+Unsent drafts remain in memory; no legacy history or drafts are imported.
 Terminal titles and pane metadata are specified in [CLI](cli.md#terminal-titles-and-pane-marks).
 They are display/navigation hints and do not establish liveness.
 

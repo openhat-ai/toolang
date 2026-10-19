@@ -149,8 +149,27 @@ Invalid filters/cursors return `400`, unknown or unretained scopes `404`, and
 backend/schema failures `503`, with `code`/`detail` JSON. Once streaming starts,
 `stream_error` reports `overflow`, `snapshot_limit`, `backend_unavailable`,
 `scope_unavailable`, or `protocol_error`, then closes. Backend outages never
-cancel local runs. Event retention and repair boundaries are specified in the
-[team observation contract](plans/team-observation.md).
+cancel local runs.
+
+### Hub retention and recovery
+
+The shared execution feed retains at most 10,000 entries and 64 MiB of accounted
+stream data. One delivered event has a 1 MiB budget, including its envelope.
+Each agent's structural projection has 10,000-entity and 16 MiB budgets and
+retains at most 100 completed root trees. Old completed roots and optional
+control history are evicted before active structure; an oversized active tree
+fails with a snapshot-limit error rather than appearing complete.
+
+A retained same-epoch cursor permits ordered replay. Trimmed history, an epoch
+change, or an origin's recovery boundary requires structural replacement from
+its retained projection. This restores structure, not expired Part deltas or
+arbitrary historical executions. A root outside retained coverage is unavailable;
+use that agent's durable inspection API for historical records.
+
+[events.py](../src/toolang/teaming/events.py) and
+[records.py](../src/toolang/teaming/records.py) own budgets and projection trimming;
+[subscriptions.py](../src/toolang/teaming/subscriptions.py) owns replay and
+replacement, verified by [observation tests](../tests/unit/messaging/test_event_observation.py).
 
 
 ## Implementation evidence

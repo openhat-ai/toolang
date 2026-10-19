@@ -20,17 +20,19 @@ uv run too --help
 | Root [TESTING.md](TESTING.md) | Test design, coverage review, isolation, and execution |
 | Root [AUDITING.md](AUDITING.md) | Package audit method and evidence requirements |
 | [docs/](docs/index.md) | Current architecture and implementation design, organized by owning concept |
-| [docs/plans/](docs/plans/) | Feature definitions and implementation plans; verify status against code before using them |
+| [docs/plans/](docs/plans/) | Discussion, feature-definition, and implementation records that may become outdated |
 | [reference/](reference/README.md) | Generated implementation reference |
 
 Keep contribution and authoring standards at the root. A product's implemented
 behavior, data formats, ownership, and protocol belong in its focused design
 guide under `docs/`, even when those contracts impose rules on consumers.
-Proposals belong under `docs/plans/`, not among current design guides. Remove
-superseded drafts and empty pointer documents after preserving any still-current
-content in its owner. Historical plans may describe retired interfaces; use Git
-history to recover their original linked context rather than treating them as
-current specifications.
+Discussion and implementation records belong under `docs/plans/`. They may
+become outdated as the product evolves and are not current specifications.
+Current `docs/*.md` guides must never reference individual documents under
+`docs/plans/`; link the current design owner, implementation, schema, or tests
+instead. Directory navigation may link to `docs/plans/` as historical context.
+Remove superseded drafts and empty pointer documents after preserving any
+still-current content in its owner. Use Git history to recover retired context.
 
 User tutorials and the published language reference live on the
 [documentation website](https://toolang.ai/docs). The installed

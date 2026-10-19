@@ -53,8 +53,8 @@ testing, audit, and authoring standards live at the root; start with
 
 ## Plans and reference
 
-[Plans](plans/) record proposed or approved changes and their acceptance criteria.
-Their existence does not establish that a feature is implemented. The current
-design guides describe the result of implemented changes; plans are maintained
-separately. [Generated reference](../reference/README.md) provides module-level
-details directly from source.
+[Plans](plans/) retain discussion, feature-definition, and implementation records.
+They may become outdated and do not define current behavior. Current design
+guides stand independently and link implementation evidence rather than
+individual plans. [Generated reference](../reference/README.md) provides
+module-level details directly from source.

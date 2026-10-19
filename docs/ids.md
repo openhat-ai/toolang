@@ -42,5 +42,5 @@ Generated suffixes use eight lowercase Base32 characters:
 
 Shared primitives live in `common/id_codec.py`; allocation in `common/ids.py`;
 chore rules in `catalog/chore_ids.py`; conversation rules in `teaming/ids.py`.
-See the [preparation plan](plans/conversation-id-upgrade.md) and
-[messaging contract](messaging.md).
+See [Messaging](messaging.md#storage-events-and-statistics) for backend identity
+and storage boundaries.

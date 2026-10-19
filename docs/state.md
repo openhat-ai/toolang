@@ -19,9 +19,10 @@ and agent home must already exist. A missing `agent.too` produces the empty
 default `agent` module term with an empty Program without creating the source
 file.
 
-The [State layer format](plans/state-layer-format.md) specifies direct parsed
+The [canonical documents](#canonical-documents-and-revisions) define parsed
 values, exact source/fetched file maps, pinned upstream versions, and revision
-creation times.
+creation times. [cache.py](../src/toolang/state/cache.py) owns their encoding and
+validation; [format.py](../src/toolang/state/format.py) owns the format version.
 
 ## Vocabulary
 
@@ -318,12 +319,15 @@ current-agent `state` tools.
 
 Every Run entry stores its accepted Agent State revision, including named and
 inline children. Run and Step records carry a `ControlRef` named `state` pointing
-to that entry or an explicit execute transfer.
+to that entry or an explicit `exec` transfer.
 
 The executor retains the immutable State supplied at acceptance for active
-bindings. Watcher publication affects future named acceptance and model catalogs,
-without changing accepted code or caps. Ordinary rerun uses current State;
-recorded references preserve the source revision for inspection.
+bindings. Watcher publication affects future named acceptance and resource
+resolution for later Model Calls. Installed model catalogs remain Setup-owned;
+accepted code, types, directives, and workspace authority stay bound.
+[State capture](execution.md#state-capture) owns live-State selection and those
+execution boundaries. Ordinary rerun uses current State; recorded references
+preserve the accepted source revision for inspection.
 
 Model/provider continuation is a different value and is named `cont` in model
 calls, model results, model step records, and runtime agic state. Execution-store

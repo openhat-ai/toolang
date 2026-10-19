@@ -105,7 +105,7 @@ with HTTP 409. Upgrade the CLI and agent servers together.
 Mutating requests may carry `X-Toolang-Launch-ID` to reject a replaced execution
 owner before writes. Resident/visiting CLI clients send it automatically. Lease
 renewal is independent of SSE; readers do not retain automatic servers. See
-[the lifetime contract](plans/resident-visiting-server-lifecycle.md) for timing,
+[Hosting](hosting.md#server-lifetime-and-client-leases) for timing,
 shutdown eligibility, and failure handling.
 
 `GET /api/v0/models` returns the server's current effective

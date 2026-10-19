@@ -184,8 +184,9 @@ or `too start alice --compact-model 'openai/gpt-5 effort=low'`. Model precedence
 CLI, environment, agent config, root config, then the thread model.
 `--compact-model` also applies to `serve` and `chat` when starting a runtime;
 it cannot reconfigure an already running agent. Accepted Runs retain their
-captured configuration. The [compaction design](plans/persist-batched-compaction-run.md)
-describes execution, batching, durable coverage, and history adoption.
+captured configuration. [Execution](execution.md#threads) owns horizon adoption;
+the recorded batching and coverage loop lives in
+[runs/compact.py](../src/toolang/execution/executor/runs/compact.py).
 
 ## Catalog Plugins
 
@@ -365,8 +366,27 @@ These are host policy values, never inferred service defaults or catalog fields.
 An independent input limit does not imply an output limit. With neither context
 nor input capacity known, local input admission is unavailable. Unknown limits
 can still lead to provider rejection; a larger allowance reduces truncation risk
-but cannot guarantee a complete response. See the
-[output budget policy](plans/model-output-budget.md) for the full missing-data matrix.
+but cannot guarantee a complete response.
+
+### Input admission
+
+Given the resolved inclusive output allowance `O`, known joint context `C`,
+and independent input limit `I`, the available input is:
+
+| Known capacity | Before estimation margin |
+| --- | --- |
+| Both `C` and `I` | `min(C - O, I)` |
+| Only `C` | `C - O` |
+| Only `I` | `I`; output does not consume this independent limit |
+| Neither | No local input-capacity check |
+
+Subtract `max(1024, ceil(K / 20))`, where `K` is the smaller known capacity
+or the sole known capacity. A nonpositive result fails before dispatch.
+For `C=32000`, `I=10000`, and `O=8000`, the margin is 1024 and the input budget
+is 8976 tokens. [budget.py](../src/toolang/plugin/models/budget.py) and its
+[tests](../tests/unit/execution/test_model_budget.py) own these rules.
+
+### Adapter controls and routing
 
 Adapters can implement `ModelOutputOptions.output_allowance(options)` to normalize
 authored output aliases before admission. They send the resolved allowance unchanged. Known context/input limits reserve output and an estimation
@@ -583,7 +603,8 @@ components are calculated. Accumulation and budget comparison use integer
 micro-USD units; amounts must be between zero and 999,999,999.999999 USD.
 Accounting uses numeric fields; rates and intermediate lines are not rounded
 before final settlement. The records change intentionally does not support old
-formats. See [the record contract](plans/model-records.md).
+formats. [Records](records.md) owns the persisted shapes, and
+[accounting.py](../src/toolang/execution/accounting.py) owns cost settlement.
 
 ## Model Response Recovery
 
