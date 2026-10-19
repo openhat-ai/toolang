@@ -14,16 +14,11 @@ chapters below express design responsibilities rather than Python packages.
 
 ## Programming model
 
-- [Program](program.md): modules, declarations, signatures, types, and shared directives.
+- [Program](program.md): semantic representation, validation, modules, declarations, signatures, types, and shared directives.
 - [Content](content.md): authored text, prompt/include expansion, templates, and message Parts.
 - [Call Input](call-input.md): invocation envelopes, capture boundaries, one-run overrides, and coercion.
 - [Flow](flow.md): statements, bindings, collections, async work, spawn, and exec.
 - [Agic](agic.md): the model/tool loop, instruction assembly, and guidance visibility.
-- [AST](ast.md): semantic representation, lowering, validation, and serialization.
-
-## Language commands
-
-- [Language commands](language-commands.md): offline `parse`, `fmt`, and `highlight`, their shared language pipeline and output/error boundaries.
 
 ## Preparation and resources
 

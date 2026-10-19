@@ -3,8 +3,13 @@
 The `too` and `toolang` entry points use the same command router. This guide
 explains routing, inspection, and client orchestration for maintainers.
 `too --help` shows common commands; `too more` shows the additional groups.
-Source command details belong to [Language commands](language-commands.md), script
-inputs/configuration to [Scripts](scripts.md), and HTTP to [API](api.md).
+Script inputs/configuration belong to [Scripts](scripts.md), and HTTP to [API](api.md).
+
+`parse`, `fmt`, and `highlight` run offline without agent or runtime acquisition.
+Parsing constructs a validated [Program](program.md#parsing-and-validation) or
+exposes raw CST; formatting requires valid syntax; highlighting tolerates
+incomplete source. [AUTHORING.md](../AUTHORING.md#automatic-formatting) owns
+formatting conventions. Command help describes their options and output modes.
 
 ## Routing
 

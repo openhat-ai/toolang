@@ -1,16 +1,38 @@
 # Program
 
 A Mod is a `.too` module; its parsed representation is `Program`. This document
-describes declaration semantics. [AST](ast.md) owns lowering and validation;
-Flow evaluation is specified in [Flow](flow.md), and content
-parsing is specified in [Content](content.md). Follow the
-[authoring conventions](../AUTHORING.md) for source style,
-type annotations, and documentation comments.
+describes semantic representation, validation, and declarations. [Flow](flow.md)
+owns evaluation and [Content](content.md) owns content parsing. Follow the
+[authoring conventions](../AUTHORING.md) for source style, type annotations,
+and documentation comments.
 
 
 Examples are declaration or body excerpts unless explicitly identified as
 complete. Named helpers, selected templates, and output structs must be declared
 in the containing module.
+
+## Parsing and validation
+
+```text
+UTF-8 source -> grammar CST -> semantic lowering -> static validation -> Program
+```
+
+The installed grammar owns concrete syntax. `Program.from_source()` lowers it
+into immutable semantic nodes retaining declarations, documentation, and source
+lines. Program is not a lossless formatting tree and contains no installed
+resources, mutable execution state, or runtime services. Formatting works from
+syntax-valid source rather than serializing Program.
+
+Static validation checks names, types, templates, and statically known call
+contracts without preparing resources or executing work. Dynamic values,
+actual inputs, resource readiness/authority, and compatibility with newly
+published targets remain runtime checks. Public cross-module signatures can
+inform validation without exposing private declarations.
+
+The semantic codec (`to_data()` / `program_from_data()`) restores typed nodes
+without reparsing source. [State](state.md) stores Programs in versioned layers;
+[Records](records.md) stores execution facts separately. Neither representation
+is the raw CST, a provider request, or an event payload.
 
 ## Program Constructs
 
