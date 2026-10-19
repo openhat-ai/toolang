@@ -25,7 +25,7 @@ A mismatch or disabled chat fails with restart guidance without changing the
 running agent. Runtime profile, status, and startup logs report enabled drivers.
 Lifetime is independent of drivers: resident implicit servers persist, visiting
 implicit servers automatically reclaim when clients and accepted work finish,
-and explicit start/serve retain availability. See [execution ownership](execution.md).
+and explicit start/serve retain availability. See [server lifetime](hosting.md#server-lifetime-and-client-leases).
 
 The management HTTP API, health, inspection, cancellation, and script execution
 remain available with chat disabled. Interactive clients create threads at
@@ -40,6 +40,36 @@ same thread. A non-null request ID is unique across Run and Thread controls in
 the agent's execution store; it is not a general submission-replay key. Reconnect
 accepted work with GET instead of repeating POST. Talk batches and runtime operations have separate
 durable admission receipts; see [Execution](execution.md#run-execution).
+
+## Handler selection
+
+Driver entries resolve in this order: invocation selection, user handler named
+after the driver, runtime handler named after the driver, then the user's unnamed
+entry. Missing all candidates fails before run acceptance. Only absence permits
+fallback; an invalid selection or a selected handler's failure is reported.
+
+```text
+script  explicit name, else unnamed entry, else file help
+chat    chat, else unnamed entry, else reported failure
+talk    user talk, else runtime talk
+chore   chore, else unnamed entry, else reported failure
+```
+
+The chosen user entry may be an agic or a flow. Runtime ships a packaged `talk`
+agic and no Chat or Chore handler. A file export such as `runnables/talk.too`
+acts as a named public handler even if its declaration is unnamed. Existing
+public-name conflicts with `agent.too` remain errors. Script exposes authored
+declarations only and keeps its existing selection rules.
+
+There is no global `[default].runnable`, `TOOLANG_DEFAULT_RUNNABLE`, or runtime
+startup runnable default. Use a driver-named handler. Chat may select its own
+session entry; that selection is passed as the invocation choice and affects
+only that session. An explicit `_` can select the unnamed entry ahead of any
+driver handler.
+
+All surfaces resolve a complete typed input before accepting a Run. Shared
+capture/coercion belongs to [Call Input](call-input.md); session choices belong
+to [Chat](chat.md). Script routing is separate and described by [CLI](cli.md).
 
 ## Chore scheduling
 
@@ -64,10 +94,8 @@ A dedicated scheduler thread owns the watcher, due heap, RRULE timers, and chore
 transitions. It submits to the executor's loop, where run lifecycle and controls
 remain owned. Chore and run writes use the same database but separate
 transactions; durable claims bridge acceptance and scheduler completion.
-Chore selects an explicit runnable call first, then a named `chore` handler,
-or the unnamed entry. Runtime provides no Chore handler. Missing all candidates
-rejects activation; invalid inputs and handler failures do not select a different
-runnable. The handler may be an agic or flow. No Task or Job entity is involved.
+Chore uses the shared [handler selection](#handler-selection). Input or handler
+failure rejects activation without choosing another runnable.
 
 ## Threads and observation
 

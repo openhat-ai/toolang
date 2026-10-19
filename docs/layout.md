@@ -131,11 +131,10 @@ directory. Existing legacy `.setup/models` data is ignored.
 
 ## Setup Data
 
-Setup configuration and catalog sources remain under the agent root and home,
-with placement deciding which sources participate. `SetupWatcher` captures
-source revisions and builds `AgentSetup` views in
-memory when their lazy accessors are first used. Model/catalog data is not stored
-or shared through a `.setup/` cache directory.
+Setup inputs remain under the placement's configuration locations; resource
+views and generations stay in memory. [Setup](setup.md) owns their capture,
+materialization, and lifetime. No `.setup/` model-cache directory is created or
+mounted; existing legacy `.setup/models` is ignored.
 
 
 ## Runtime Room
@@ -294,18 +293,10 @@ State directories:
 | Home layer | `<agent-root>/agents/<agent>/.state/home/` |
 | Agent composition | `<agent-root>/agents/<agent>/.state/agent/` |
 
-Each directory stores a current-revision pointer, a build or publish lock, and
-immutable revision directories. Each layer contains `layer.json`, original
-accepted bytes under `source/`, and fetched bytes under
-`materialized/<acquisition-key>/`, keyed by SHA-256 of the canonical resolved
-Source Ref. JSON stores parsed values, file sizes and
-digests, resolutions, and a creation time included in the revision hash. The same
-revisions can be loaded when root and home are mounted at different absolute
-paths. Stored workspace paths remain frozen; preparing relative workspace
-configuration at a new location produces a new revision. Sandbox preparation
-mounts symbolic-linked State source files read-only at their logical guest
-paths. See [State](state.md) for the canonical documents,
-revision calculation, validation, and publication rules.
+Each directory holds its current pointer, immutable revisions, and appropriate
+build/publication locks. [State](state.md#persistent-layout) owns revision
+contents, formats, integrity checks, and publication. [Workspaces](workspaces.md)
+owns path capture; [Hosting](hosting.md) owns guest mounts.
 
 
 ## Durable State

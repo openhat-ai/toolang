@@ -31,9 +31,9 @@ process lifecycle. Plugin entry points and factories are documented in
 
 ## Agent
 
-An agent has a source identity and concrete layout. Its Programs, caps, workspace
-grants, and chore definitions form [State](state.md). Installed tools, models,
-environment, and execution defaults form Setup. [Drivers](drivers.md) accept
+An agent has a source identity and concrete layout. Its Programs, caps,
+[workspace grants](workspaces.md), and chore definitions form [State](state.md). Installed tools, models,
+environment, and execution defaults form [Setup](setup.md). [Drivers](drivers.md) accept
 interactive, conversation, and scheduled triggers; their work uses the same
 executor. Source placement and sandbox hosting are independent choices.
 

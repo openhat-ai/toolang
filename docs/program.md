@@ -3,7 +3,7 @@
 A Mod is a `.too` module; its parsed representation is `Program`. This document
 describes declaration semantics. [AST](ast.md) owns lowering and validation;
 Flow evaluation is specified in [Flow](flow.md), and content
-parsing is specified in [input-syntax.md](input-syntax.md). Follow the
+parsing is specified in [Content](content.md). Follow the
 [authoring conventions](../AUTHORING.md) for source style,
 type annotations, and documentation comments.
 
@@ -481,22 +481,8 @@ and cannot be bypassed by a user request. Inherited restrictions remain effectiv
 within their module until a child explicitly replaces them. Additional user
 restrictions further constrain model use.
 
-For a named invocation with no requested follow-up, the model uses
-`runtime/exec`. When asked to summarize, compare, or otherwise process the
-result afterward, it uses `runtime/run`. Asking about parameters alone does not
-execute the target. When the user delegates test-input choice, the model chooses
-a reasonable value; it asks only for required values it cannot establish or choose.
-Scope conflicts are reported without silently changing the target or operation.
-
-A hand is a child Run: the runtime acknowledges scheduling, executes the child,
-then supplies its outcome as context before the Agic continues.
-A handoff replaces the current runnable in the same Run: the target continues
-at the next Step and owns the Run's result. Missing but well-formed refs
-remain authored routes and become available in the next model-call scope after
-the watcher publishes them. No explicit refresh action is needed.
-Flows pass these route defaults to descendants. `runtime` inner runtime tools cannot be selected
-through `tools`; use `hands` or `handoffs` to authorize targets. Runtime tool
-definitions remain available independently of these lists.
+[Agic routing](agic.md#runnable-routing) owns model-facing run/exec selection
+and the effect of a hand or handoff.
 
 Each newly accepted named child Run selects the latest published State and checks
 its signature against the caller's bound definition or the invoking Model Call's
@@ -628,7 +614,7 @@ $review path=src/app.py focus="only errors"
 ```
 
 Prompt Call Input, include references, and escaping are defined in
-[call-input.md](call-input.md) and [input-syntax.md](input-syntax.md). A
+[call-input.md](call-input.md) and [Content](content.md). A
 dollar prompt call invokes one reusable prompt template during content
 evaluation. Slash is reserved for terminal Chat commands and does not invoke
 prompts.
@@ -655,44 +641,10 @@ command text at the language boundary. Markdown cap files keep their
 catalog-owned frontmatter format.
 
 
-## Surface Rules
+## Invocation surfaces
 
-Driver entries resolve in this order: invocation selection, user handler named
-after the driver, runtime handler named after the driver, then the user's unnamed
-entry. Missing all candidates fails before run acceptance. Only absence permits
-fallback; an invalid selection or a selected handler's failure is reported.
-
-```text
-script  explicit name, else unnamed entry, else file help
-chat    chat, else unnamed entry, else reported failure
-talk    user talk, else runtime talk
-chore   chore, else unnamed entry, else reported failure
-```
-
-The chosen user entry may be an agic or a flow. Runtime ships a packaged `talk`
-agic and no Chat or Chore handler. A file export such as `runnables/talk.too`
-acts as a named public handler even if its declaration is unnamed. Existing
-public-name conflicts with `agent.too` remain errors. Script exposes authored
-declarations only and keeps its existing selection rules.
-
-There is no global `[default].runnable`, `TOOLANG_DEFAULT_RUNNABLE`, or runtime
-startup runnable default. Use a driver-named handler. Chat may select its own
-session entry; that selection is passed as the invocation choice and affects
-only that session. An explicit `_` can select the unnamed entry ahead of any
-driver handler.
-
-Every run surface must resolve one `RunnableInput`, including all required named
-inputs, before execution. Text surfaces first parse `CallInput[str]`; `RunnableInput` is an alias for
-`CallInput[Value]`. Both use `_` and argument names as sibling keys. Script
-derives its CLI from the selected
-signature; Chat and Chore input may begin with `RunOverride` lines,
-and runnable shortcuts may carry `name=value` named sources.
-
-Content evaluation turns interactive or authored `Content` into canonical
-`Part[]` before execution. After resolving the runnable's signature, `RunExecutor` uses
-language-owned input coercion to decode and validate another declared primary
-type before accepting the run. The caller does not duplicate signature
-parsing.
-
-Execution context such as `cwd`, agent home, and Toolang root is runtime state,
-not runnable parameters.
+Driver-named and unnamed declarations participate in the handler resolution
+owned by [Drivers](drivers.md#handler-selection). Script selects authored entries;
+Chat can supply a session choice. The language signature remains the contract
+for every surface. [Call Input](call-input.md) owns capture and coercion, and
+[Workspaces](workspaces.md) owns execution path authority.

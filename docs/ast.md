@@ -3,7 +3,7 @@
 Toolang's `lang` package converts the installed grammar's concrete syntax tree
 (CST) into an immutable semantic `Program`. This guide is for language and State
 maintainers. [Program](program.md) owns declaration meaning; [Flow](flow.md)
-owns evaluation; [Source commands](source-commands.md) owns CLI inspection.
+owns evaluation; [Language commands](language-commands.md) owns CLI inspection.
 
 ## Source to Program
 

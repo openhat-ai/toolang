@@ -51,7 +51,26 @@ tools; neither mechanism repeats already successful tool effects. Automatic
 history compaction runs at model preflight and changes the
 thread horizon only after a successful summary. It cannot be requested as an
 ordinary model tool. [Models](models.md#automatic-compaction-configuration) owns
-budgets and settings, and [Execution](execution.md#threads) owns horizon effects.
+budgets and settings, and [Execution](execution.md#history-compaction) owns horizon effects.
+
+## Runnable routing
+
+For a named invocation with no requested follow-up, the model uses
+`runtime/exec`. When asked to summarize, compare, or otherwise process the
+result afterward, it uses `runtime/run`. Asking about parameters alone does not
+execute the target. When the user delegates test-input choice, the model chooses
+a reasonable value; it asks only for required values it cannot establish or choose.
+Scope conflicts are reported without silently changing the target or operation.
+
+A hand is a child Run: the runtime acknowledges scheduling, executes the child,
+then supplies its outcome as context before the Agic continues.
+A handoff replaces the current runnable in the same Run: the target continues
+at the next Step and owns the Run's result. Missing but well-formed refs
+remain authored routes and become available in the next model-call scope after
+the watcher publishes them. No explicit refresh action is needed.
+Flows pass these route defaults to descendants. `runtime` inner runtime tools cannot be selected
+through `tools`; use `hands` or `handoffs` to authorize targets. Runtime tool
+definitions remain available independently of these lists.
 
 ## Messages
 

@@ -210,7 +210,7 @@ The formatter works on syntax-valid source even when semantic validation fails.
 Naming, inserting `{{_}}`, rewriting prose, deleting explicit types or redundant
 capability directives, hoisting `context`/`instruct`, and omitting a sole `user:`
 role remain authoring decisions. The formatter does not make those rewrites.
-See [source commands](docs/source-commands.md) for output modes and color controls.
+See [language commands](docs/language-commands.md) for output modes and color controls.
 
 ## Review Checklist
 

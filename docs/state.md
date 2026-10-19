@@ -12,7 +12,7 @@ Accepted home `chores/*.md` files and chore declarations inside `agent.too`
 are part of Agent State. The chore driver owns activation, checkpoints, and
 execution progress. Root chores are ignored; the home directory is created
 only on its first explicit file write. Installed providers, tools, environments,
-and other `AgentSetup` data remain separate from Agent State.
+and other [Setup](setup.md) data remain separate from Agent State.
 
 State preparation reads authored source but never edits it. The Toolang root
 and agent home must already exist. A missing `agent.too` produces the empty

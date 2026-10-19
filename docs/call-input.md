@@ -113,8 +113,8 @@ support fenced input:
 Named arguments use `name=value` and precede the marker. On these Content
 surfaces, markers are recognized only as unquoted standalone tokens. Quoting
 or escaping a marker keeps it in an argument value. Script command headers
-support only line and stream input, as described below; shell quoting does not
-change a standalone token's role after the shell removes its quotes.
+support only line and stream input; [Scripts](scripts.md#runnable-input-and-help)
+owns that boundary after shell quoting has been removed.
 
 The form is capture syntax, not part of the resulting Call Input. It is used by
 the parser for boundaries and diagnostics and is discarded after capture. An
@@ -168,7 +168,7 @@ longer hyphen runs, and hyphens embedded in another line do not close the block.
 Root runnable calls reject fenced input; use stream input instead. Backtick
 fences do not introduce Call Input.
 
-## Chat Runnable Calls
+## Text runnable calls
 
 A slash directive selects the root runnable and accepts arguments before input:
 
@@ -187,11 +187,6 @@ explicit call goes to the default runnable. `/review` alone leaves `_` absent;
 `/review -` supplies an empty `_`. Requiredness and types follow the
 [runnable signature](program.md#runnable-signatures).
 
-Leading `/model`, `/allow`, `/limit`, or `/workdir` overrides require at least
-one supplied primary or named input key; naming a runnable alone does not count.
-Direct calls without overrides may omit all input when the signature permits it.
-Unknown, duplicate, or mistyped arguments and positional arguments reject.
-
 Prompt calls inside runnable input support all three explicit forms. A closing
 prompt fence returns to the same root input:
 
@@ -203,147 +198,70 @@ Source material.
 Also check security.
 ```
 
-## Authored Runnable Input
+## Requests and overrides
 
-`chore` and `agic` bodies are runnable Content surfaces. They can call
-prompts with the same three forms. A runnable Call Input supplied through Chat
-or Script can do the same. These are prompt calls contained by runnable input,
-not prompt calls nested inside another prompt call.
+Text request parsing produces `RunOverride` and `CallInput[str]` without loading
+an agent. Chore input and interactive submissions use this invocation envelope;
+[Chat](chat.md#session-commands) additionally recognizes standalone commands.
+Authored Agic and prompt bodies are [Content](content.md), not caller envelopes.
 
-## Script Runnable Calls
-
-Use `too run FILE [RUNNABLE]` for a local `.too` file; `too FILE [RUNNABLE]`
-remains a shorthand. Omitting the selector executes the module's unnamed entry.
-Without an unnamed entry, omitting arguments shows file help. Bare words in the selector position
-are runnable names, so default-entry text uses `--`, `-`, or redirected stdin:
-
-```sh
-too run app.too -- "Handle this request"
-too run app.too topic=demo -- "Handle this request"
-too run app.too review -- "Review this request"
-```
-
-`too run FILE --help` shows file help; `too run FILE _ --help` shows the
-unnamed entry's signature. `_`, `agic:_`, and `flow:_` select that entry explicitly;
-`-` remains stdin input. Help does not read stdin or prepare an agent. Explicit `run`
-can select a runnable whose name is a CLI command, such as `serve`.
-Global `--root` / `-r` overrides are not supported in Script mode.
-
-Runnable help summarizes the available input categories:
+Leading `/model`, `/allow`, `/limit`, and `/workdir` lines affect one submission.
+They do not update Chat defaults. Overrides occupy complete leading lines and
+use POSIX quoting without shell expansion. Model and workdir may each occur
+once; allow queries can accumulate; duplicate limit fields fail. A root runnable
+call ends prefix parsing and following lines become primary input:
 
 ```text
-Usage: too run app.too demo [OPTIONS] [ARGUMENTS]
-```
+/model effort=high
+/allow skills=reviewer tools=shell/*
+/review focus=security
 
-`[ARGUMENTS]` appears when the signature accepts named or primary input, including
-implicit `Part[]` input. Empty signatures omit it. The Arguments panel describes
-each input's assignment or capture syntax and marks required values with `*`.
-The category brackets do not make required signature inputs optional.
-
-The opening description uses `Run KIND NAME.` or `Run KIND NAME - DESCRIPTION`
-when an authored doc comment exists. Usage and the help panels follow. Flows
-end with an epilog: `The flow proceeds as follows:`, a blank line, and an outline
-in normal style with one blank line between sibling steps; each step's doc and
-operation description remain adjacent.
-
-The **Arguments** panel lists named parameters in signature order with per-name
-metavars such as `begin=<BEGIN>`, without a separate type label. A `*` marks required
-parameters, and parameter doc comments appear in the help column. Missing docs use
-the authored type, for example `Named input (Text)` or `Primary input (Part[])`.
-The INPUT row is last when primary input is accepted, and appends
-`reads stdin with - or when input is omitted` to its description. Arguments may be
-supplied in any order, interspersed with command options, before input.
-
-| Form | Behavior |
-| --- | --- |
-| `TEXT...` | The first ordinary operand starts input; the remaining shell words are its text. |
-| `-- TEXT...` | Explicitly starts input, including text beginning with an option or assignment. |
-| `-` | Reads stdin through EOF, including an empty stream. |
-| Omitted | Reads piped or redirected stdin; an empty stream means input is absent. |
-
-When primary input is forbidden, its row and instructions are absent. Empty
-signatures omit Arguments entirely. **Options** follows Arguments. Top-level
-Script file help says `Execute a runnable from FILE.` and lists **Runnables** before
-Options, without a redundant Arguments panel. Its three columns are name, kind,
-and description. The unnamed `_` comes first with its `<entry:LINE>` identity and
-authored comment, then named agics and flows in source order within each kind.
-Named entries use authored descriptions or `Agic NAME` / `Flow NAME` fallbacks.
-Qualified selectors and bare names are both accepted. RUNNABLE is optional in
-Usage only when the file has an unnamed entry.
-
-Root and runnable help show the same common options, ordered as `-q` / `--quiet`,
-`-o` / `--out`, `--model`, `-w` / `--workspace`, `-d` / `--workdir`,
-`--sandbox`, `--allow`, `--limit`, `--dev`, then
-`-h` / `--help`. Common options may appear on either side of RUNNABLE, before
-input. Runnable-level scalar values override root values when explicitly set;
-repeated `--workspace`, `--allow`, and `--limit` values accumulate in command-line
-order. `--workdir` may be specified only once across both levels. See
-[Scripts](scripts.md) for workspace and path rules.
-`--quiet` at either level enables quiet mode, and `--help` describes that level.
-
-Both line forms accept the same text:
-
-```bash
-toolang agent.too review focus=security Review this API
-toolang agent.too review focus=security -- Review this API
-```
-
-After input starts, all remaining words are content, including `name=value`,
-`--help`, `-`, and `---`. Before input starts, an undeclared `name=value`
-assignment is an error; use `-- name=value` for literal input. Shell quoting
-alone does not make such an assignment literal. Remaining shell words are
-joined with spaces, while quoted newlines and include items retain their
-Content boundaries. An explicit `--` requires nonempty line input.
-
-The standalone `-` marker must be the final command-line token:
-
-```bash
-toolang agent.too review focus=security - < request.md
-```
-
-Omitted input does not read an interactive terminal. Missing required input or
-arguments displays runnable help with exit status 2; explicit `--help` exits
-with status 0. Neither starts a run.
-
-A standalone `---` in the command header is rejected before reading stdin or
-starting a run, with this diagnostic:
-
-```text
-fenced input marker '---' is not supported in script mode; use '-' to read stream input from stdin
-```
-
-Replace the old header marker with `-` and remove the closing fence:
-
-```bash
-toolang agent.too review focus=security - <<'EOF'
 Review this API.
-EOF
+@./api.md
 ```
 
-Stream input continues through EOF, including any `---` lines. `---` remains
-literal as a declared argument value, an option value, or part of line input.
-Prompt calls inside Script input retain all three Content capture forms.
+An override prefix requires at least one supplied primary or named input key,
+including explicit empty values where permitted. A direct call without an
+override can have no input when its signature permits it. Missing, duplicate,
+unknown, or incompatible arguments reject before Run admission. A runnable with
+`()` can be called directly but cannot accept an override prefix.
 
-## Prompt Expansion
+Allow overrides add ceilings and cannot broaden an inherited base. Limits use
+`agic_model_calls`, `agic_tool_calls`, `tokens`, `cost`, and `time`; nonnegative
+values enable a limit and `none` disables that field. [Setup](setup.md#policy)
+owns defaults and precedence; [Execution](execution.md#run-execution) owns budget
+enforcement. [Models](models.md#runtime-configuration) owns model expressions.
+One-run model `default` restores the surface model; `unset` removes the inherited
+binding. `none` is invalid. Selecting an identity clears unmentioned explicit
+model parameters; parameter-only changes retain the identity.
 
-A prompt binds named placeholders and the primary `{{_}}` placeholder, then
-returns Text. Prompt calls in runnable input expand before the complete runnable
-input is parsed as Content:
+Clients resolve session-relative paths and materialize their policy before
+submission. Execution captures Setup/State, evaluates Content once, coerces the
+flat mapping to the selected signature, and constructs a concrete RunSpec.
+Direct-value requests bypass Content interpretation, including for native Json
+strings. [API](api.md#run-and-thread-endpoints) owns transport schemas.
+
+## Coercion boundary
+
+Content evaluates to `Part[]` before signature binding:
 
 ```text
-raw runnable input
--> locate prompt Call Input
--> expand prompt templates to Text
--> combine the complete runnable input Text
--> parse Content once
--> produce Part[]
+Part[]      preserve all parts
+Part        require exactly one part
+Text        require text-only content
+Number      parse one canonical number
+Boolean     parse true or false
+Json/S/T[]  parse JSON and validate the declared type
 ```
 
-This allows a prompt to produce only one fragment of a larger input. Includes
-and other Content markers become structural according to their position in the
-final combined text. A runnable Call Input may contain multiple prompt calls,
-but prompt input and prompt results cannot contain another prompt call. A fenced
-prompt call returns to the runnable input, where sibling prompt calls may follow.
+Conversion does not discard non-text input Parts. Structured model output may
+also use one Markdown code block labeled `json`. Native internal values are
+bound without parsing their strings again. [Program](program.md#output) owns
+output contracts.
+
+Script headers have a distinct shell-token boundary; [Scripts](scripts.md#runnable-input-and-help)
+owns their line/stdin forms and generated help. Prompt expansion and nested-call
+restrictions belong to [Content](content.md#expansion-and-evaluation).
 
 ## Errors
 

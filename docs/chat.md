@@ -21,19 +21,64 @@ snapshots when visible defaults change. The server captures Setup/State and
 validates the request before admission. It owns provider/environment values,
 workspace authorization, input evaluation, and compatible handler resolution.
 
-[Input syntax](input-syntax.md) owns parsing: standalone Chat commands inspect or
-change the session; one-run directives and CallInput produce a submission.
-`/help` and `/?` show the full syntax, `:?` session settings, and `/keys` keyboard
-controls. `/models`, `/tools`, `/caps`, `/agics`, and `/flows` inspect the session's
-available resources. `/output` reopens durable output; `/show` remains its alias.
-`:model`, `:runnable`, `:allow`, `:limit`, and `:workdir` change session values.
-They do not silently change accepted or queued work.
+[Call Input](call-input.md#requests-and-overrides) owns one-run parsing.
+Standalone commands inspect or change this session without changing accepted
+or queued work.
 
 A nullable runnable ref with `driver: "chat"` requests automatic handler
 selection. A session choice or `/NAME` supplies an explicit selection. The server
 selects the user Chat handler or unnamed entry; no runtime Chat handler is
 packaged. A failed or invalid selected handler does not fall back to another.
-[Drivers](drivers.md) and [Program](program.md#surface-rules) own this selection.
+[Drivers](drivers.md#handler-selection) owns this selection.
+
+## Session commands
+
+The command parser consumes the complete normalized submission. Colon commands
+change defaults for subsequent requests; slash commands inspect or control the
+client. One-run slash directives belong to [Call Input](call-input.md#requests-and-overrides).
+
+The complete command registry is exposed by `/help`, with `/keys` for focused
+keyboard controls and `:?` for session values. Bare setting commands show
+focused usage. These paths never submit a Run.
+
+Resource commands inspect the session's allowed base. Their query intersects
+that base; `-a` instead starts from all available resources and reports whether
+rows are allowed. Changing visibility does not change ceilings. Runnable lists
+use visible language declarations rather than resource queries.
+
+When the session's model ceiling changes, Chat preserves the complete current
+model request if it remains available. Otherwise it selects the configured
+default when present in the ordered result, then the first result. Only an empty
+model collection leaves the session model unset.
+
+`/help` and `/?` describe commands and run directives. `/keys` lists interactive
+shortcuts. Known command help and errors enter scrollback and clear the input.
+Unknown colon commands and rejected run submissions retain the draft and show
+an error in the status bar. Unreserved slash names are resolved as runnables.
+
+`:runnable`, `:agic`, and `:flow` select the session entry without arguments.
+Only `:runnable default` restores automatic handler selection; kind-specific
+commands treat `default` as a name. Startup `--default runnable=REF` initializes
+this session only. Other sessions and drivers keep their own selections.
+
+`:model` accepts an optional identity and `effort`/`max_output` assignments.
+Parameter-only changes preserve identity; selecting an identity clears omitted
+explicit parameters. `auto` clears one parameter. `:model default` selects the
+effective default within session `allow.models`; `:model unset` and `:model none`
+are invalid. [Models](models.md#runtime-configuration) owns expression validation.
+
+`:allow` replaces the named session field; a one-run `/allow` adds a ceiling.
+Repeated queries union within a field, while `all`/`none` cannot mix with queries.
+`:limit` changes subsequent-run limits. `:workdir` queries when bare; `default`
+or `unset` resets it. Relative paths use the current session directory, and
+selection never grants a new workspace. [Workspaces](workspaces.md) owns that
+authority boundary.
+
+Chat trims leading/trailing blank lines and horizontal whitespace at the end of
+the final line, preserving indentation and internal input whitespace. Completion
+only edits the draft. A root `/NAME` resolves a runnable after reserved built-in
+names; qualified `/agic:NAME` or `/flow:NAME` can address a colliding name.
+`/runnable NAME`, `/agic NAME`, and `/flow NAME` are not selector forms.
 
 ## Queue and steering
 
@@ -129,7 +174,39 @@ are `(m-enter)steer (e)dit (d)elete`. Input's cursor hides during Queue focus.
 Stable blocks progressively enter native scrollback; only replaceable blocks
 stay in the live area. Resize preserves terminal scrollback while repainting
 live input. Execution bars, errors, metric footers, Markdown, colors, and status
-geometry belong to [Execution presentation](execution-presentation.md).
+geometry follow [Execution presentation](execution-presentation.md) and
+[Terminal UI](terminal-ui.md).
+
+## Control bars and status
+
+Submitted input, steering, and command results enter stable scrollback as
+separate interactions. Input bars carry the submitted runnable/model/reasoning
+snapshot, so later session settings cannot relabel accepted work. Root RunBegin
+can update the resolved runnable. Steering keeps its authored text and original
+accent; pending feedback counts sending requests and accepted-but-unconsumed
+controls. Only confirmed terminal non-adoption adds `not applied`; uncertain
+transport never rewrites completed history.
+
+Session and Run status have separate lifetimes. The session bar shows the
+current session runnable/model at the edges and agent/workspace at the center.
+During a Run the center follows the root's effective workspace, including root
+`runtime.chdir`, then returns to the latest session workdir on settlement. Child
+changes do not move it. Session-setting changes update the edges immediately
+without changing the accepted request.
+
+The Run status bar owns elapsed time and survives a cancellation request until
+the Run settles. It clears between queued Runs; session errors do not stop its
+timer. Status remains replaceable and is never committed to execution history.
+Narrow layouts prioritize the center context and explicit reasoning choice,
+eliding names before dropping context. Short terminals preserve minimum Input,
+Queue, and steer feedback space before decorative status rows.
+
+Command tables keep structured columns in scrollback and elide flexible cells
+instead of wrapping physical rows. Their allowed/all distinction and model
+marker survive projection. Command prose, help, tables, and reopened outputs
+share the execution-output width. Chat adds the interaction separation after
+the complete result. [Terminal UI](terminal-ui.md) owns display-cell geometry,
+palette resolution, and terminal ownership.
 
 ## Implementation evidence
 

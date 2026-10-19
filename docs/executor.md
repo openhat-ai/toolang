@@ -1,4 +1,4 @@
-# Executor
+# Executor Internals
 
 `RunExecutor` owns process-local execution. It accepts durable work, runs the
 bound plan, writes complete facts directly to RunStore, and publishes value-only
@@ -33,17 +33,11 @@ Transport disconnection does not cancel accepted work.
 
 ## Admission and task ownership
 
-Admission validates the target and input, reserves an ID, verifies the thread is
-idle for an independent root, and commits the pending Run plus applied index-zero
-run control before scheduling the owner task. Request IDs are unique control
-identifiers, not arbitrary retry keys. A failed ID reservation/write can leave a
-gap; it never returns an ID to circulation.
-
-If task launch fails after admission, the ordinary terminal path persists a
-failed Run, closes pending controls, and publishes RunEnd before surfacing the
-startup error. It does not remove the accepted receipt or invent a RunBegin.
-Shutdown drains terminal fallback, resource cleanup, and observers even when a
-waiter is canceled. Stop is terminal for that executor instance.
+[Execution admission](execution.md#run-execution) owns validation, durable
+acceptance, request identity, and startup-failure outcomes. This engine schedules
+an owner only after admission commits. Shutdown drains terminal fallback,
+resource cleanup, and observers even if a waiter is canceled. Stop is terminal
+for that executor instance.
 
 A synchronous call keeps its source Step open until the child terminates.
 Async run commits child admission and the source handle/output, then closes the

@@ -143,11 +143,8 @@ trigger = "80%"
 
 - `summary`: soft target for summary length; default 4096 tokens.
 - `recent`: soft target for retained historical Steps; default 30%. It excludes
-  the summary, fixed instructions, and the current Run. Keep the latest complete
-  Step and paired tool calls/results; add earlier Steps while they fit the target
-  and the complete request without a summary. Fixed instructions and current
-  input take precedence over optional retained Steps. Compaction advances at
-  least one unit and may stop inside a root.
+  the summary, fixed instructions, and the current Run. Execution preserves
+  complete Steps and paired tool calls/results within the retained view.
 - `trigger`: complete-request input budget; default 80%. Preflight compacts when
   the estimated input exceeds the smaller of this value and the calling model's
   safe input allowance (input limit, output reservation, and estimation margin).
@@ -159,24 +156,9 @@ history size. For a 200,000-token window, `summary = "2%"`, `recent = 60000`, an
 `trigger = "80%"` mean 4,000, 60,000, and 160,000 tokens respectively. Conversion
 rounds down, with a minimum of one token. Recent must be less than trigger.
 
-Retained history and summary are soft targets, not a guarantee that the resulting
-request fits. The complete request is checked again after compaction; required
-content that cannot fit fails the Run. The 30%/80% defaults leave room for fixed
-content, a summary, and subsequent conversation, but do not guarantee 50% free.
-
-If the thread model has no declared context window, a percentage trigger leaves
-admission to the known safety budget. No input limit is substituted as the
-percentage base. When compaction is needed, percentage summary/recent settings
-require context metadata or replacement with absolute token counts.
-
-Compact batches use the compact model's own input capacity. Unless its model
-specification explicitly sets `max_output`, the output allowance is
-`max(2 * summary, summary + 1024)`, clamped to the model output limit. The default
-allowance is 8192 tokens, including reasoning. A root can span multiple batches.
-Oversized Step input/output is shortened with explicit omission markers, keeping
-original stored records intact. The mandatory latest Step is bounded to half the
-calling model's input budget so a single large historical reply does not block
-progress. Fixed instructions and current execution input must still fit.
+[Execution](execution.md#history-compaction) owns retained-history selection,
+batching, durable coverage, and adoption of a successful summary. These settings
+are budgets for that mechanism, not a guarantee that required input will fit.
 
 Fields inherit independently: agent config, root config, built-in defaults.
 Override only the model with `TOOLANG_COMPACT_MODEL='openai/gpt-5 effort=low'`
@@ -184,7 +166,7 @@ or `too start alice --compact-model 'openai/gpt-5 effort=low'`. Model precedence
 CLI, environment, agent config, root config, then the thread model.
 `--compact-model` also applies to `serve` and `chat` when starting a runtime;
 it cannot reconfigure an already running agent. Accepted Runs retain their
-captured configuration. [Execution](execution.md#threads) owns horizon adoption;
+captured configuration. [Execution](execution.md#history-compaction) owns horizon adoption;
 the recorded batching and coverage loop lives in
 [runs/compact.py](../src/toolang/execution/executor/runs/compact.py).
 

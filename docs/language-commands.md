@@ -1,9 +1,9 @@
-# Source Commands
+# Language Commands
 
-`too` and `toolang` expose the same offline `parse`, `fmt`, and `highlight`
-commands, listed by `too more` rather than the main help. They use the
-installed Tree-sitter Python grammar and Rich; no
-Tree-sitter CLI, agent setup, model configuration, or network is required.
+The language commands `parse`, `fmt`, and `highlight` inspect and transform
+Toolang source offline. `too` and `toolang` expose the same commands, listed by
+`too more`. They use the installed Tree-sitter Python grammar and Rich without
+agent setup, model configuration, or network access.
 
 ## Parse
 

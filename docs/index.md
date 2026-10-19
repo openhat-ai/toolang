@@ -1,60 +1,78 @@
 # Design Documentation
 
-These guides describe the current Toolang implementation for maintainers and
-client/plugin implementers. Source and tests are authoritative. Repository,
-testing, audit, and authoring standards live at the root; start with
-[CONTRIBUTING.md](../CONTRIBUTING.md). User tutorials live on the
-[documentation website](https://toolang.ai/docs).
+These guides describe the current implementation, organized by design
+responsibility. Source and tests are authoritative. Repository standards live
+at the root; start with [CONTRIBUTING.md](../CONTRIBUTING.md). User tutorials
+live on the [documentation website](https://toolang.ai/docs).
 
-## Reading paths
+Read the overview first, then the relevant chapter. Files stay flat; the
+chapters below express design responsibilities rather than Python packages.
 
-- System: [Architecture](architecture.md), [Layout](layout.md), [State](state.md),
-  [Execution](execution.md).
-- Language: [Program](program.md), [AST](ast.md), [Input syntax](input-syntax.md),
-  [Call Input](call-input.md), [Flow](flow.md), [Agic](agic.md).
-- Integration: [Plugins](plugins.md), [CLI](cli.md), [HTTP API](api.md),
-  [Events](events.md), [Messaging](messaging.md).
+## System overview
 
-## Design owners
+- [Architecture](architecture.md): concepts, package boundaries, source identity, placement, and the path from authored input to execution.
 
-| Guide | Owns |
-| --- | --- |
-| [Architecture](architecture.md) | Terms, package responsibilities, source identity, placement, and hosting boundaries |
-| [Layout](layout.md) | Authored files, State revisions, runtime data, discovery, and locks |
-| [State](state.md) | Parsed layers, publication, accepted sources, immutable revisions, and adoption |
-| [Program](program.md) | Modules, declarations, signatures, types, and documentation binding |
-| [AST](ast.md) | Semantic nodes, lowering, static validation, and serialization |
-| [Input syntax](input-syntax.md) | Content evaluation, Chat settings, and one-run overrides |
-| [Call Input](call-input.md) | Flat mappings, capture boundaries, prompt expansion, and coercion |
-| [Flow](flow.md) | Binding, calls, arrays, loops, async work, spawn, and exec |
-| [Agic](agic.md) | Model/tool loop, instruction assembly, guidance, output recovery, and compaction |
-| [Caps](caps.md) | Composable agent primitives, source refs, scope, precedence, and projections |
-| [Queries](queries.md) | Public resource records and native TQ matching |
-| [Models](models.md) | Catalogs, route resolution, model settings, adapters, and accounting |
-| [Tools](tools.md) | User/runtime tools, workspaces, services, State edits, and conversations |
-| [Plugins](plugins.md) | Toolset, sandbox, catalog, and adapter contracts and loading |
-| [Scripts](scripts.md) | Source-local configuration, workspace grants, and input origins |
-| [Source commands](source-commands.md) | Offline parse, CST inspection, formatting, highlighting, and diagnostics |
-| [Execution](execution.md) | Run admission/lifecycle, limits, controls, threads, and State capture |
-| [Executor](executor.md) | Execution internals, async ownership, terminalization, and resident LiveTree |
-| [Records](records.md) | Durable records, values, references, and historical inspection |
-| [Events](events.md) | Subscriber payloads, post-commit delivery, cursors, SSE recovery, and Hub observation |
-| [Drivers](drivers.md) | Chat/Talk/Chore activation, handler selection, scheduling, and recovery |
-| [Chores](chores.md) | Named definitions, deterministic identity, checkpoints, and manual occurrences |
-| [Chat](chat.md) | Session state, queued submissions, steering, and remote recovery |
-| [Execution presentation](execution-presentation.md) | Shared progress projection, terminal geometry, and scrollback |
-| [Messaging](messaging.md) | Conversations, shared rules, Talk consumption, Hub APIs, and backend storage |
-| [IDs](ids.md) | Agent-keyed allocation, deterministic chore IDs, and conversation codecs |
-| [Execution statistics](execution-statistics.md) | Incremental usage cache, query windows, and archival |
-| [Top](top.md) | Current/recent observation, coverage, totals, and dashboard interaction |
-| [HTTP API](api.md) | Agent application composition, requests, responses, and driver-gated routes |
-| [Hosting](hosting.md) | Sandbox processes, server lifetime/leases, installation, environment, logging, discovery, and cleanup |
-| [CLI](cli.md) | Command routing, inspection, server acquisition, and terminal metadata |
+## Programming model
 
-## Plans and reference
+- [Program](program.md): modules, declarations, signatures, types, and shared directives.
+- [Content](content.md): authored text, prompt/include expansion, templates, and message Parts.
+- [Call Input](call-input.md): invocation envelopes, capture boundaries, one-run overrides, and coercion.
+- [Flow](flow.md): statements, bindings, collections, async work, spawn, and exec.
+- [Agic](agic.md): the model/tool loop, instruction assembly, and guidance visibility.
+- [AST](ast.md): semantic representation, lowering, validation, and serialization.
 
-[Plans](plans/) retain discussion, feature-definition, and implementation records.
-They may become outdated and do not define current behavior. Current design
-guides stand independently and link implementation evidence rather than
-individual plans. [Generated reference](../reference/README.md) provides
-module-level details directly from source.
+## Language commands
+
+- [Language commands](language-commands.md): offline `parse`, `fmt`, and `highlight`, their shared language pipeline and output/error boundaries.
+- [Diagnostic examples](source-diagnostics-examples.md): verified AST/CST/formatter evidence supporting those commands.
+
+## Preparation and resources
+
+- [Setup](setup.md): installed runtime generations, configuration, lazy resource views, and publication.
+- [State](state.md): authored layers, acceptance, immutable revisions, and publication.
+- [Caps](caps.md): capability kinds, sources, scope, precedence, and materialization.
+- [Workspaces](workspaces.md): directory grants, logical paths, workdir, capture, and guest authority.
+- [Models](models.md): catalogs, connection routes, selection, model-call budgets, and accounting.
+- [Tools](tools.md): tool invocation and built-in operation contracts.
+- [Queries](queries.md): resource projections, matching, and availability/allow tags.
+
+## Execution and scheduling
+
+- [Execution](execution.md): Run/Thread lifecycle, admission, controls, limits, State capture, and history compaction.
+- [Executor](executor.md): engine structure, task ownership, terminalization, and LiveTree.
+- [Records](records.md): durable facts, values, references, and historical inspection.
+- [Events](events.md): post-commit notifications, subscribers, SSE, replay/replacement, and Hub delivery.
+- [Drivers](drivers.md): Chat/Talk/Chore activation, handler selection, scheduling, and recovery.
+- [Chores](chores.md): named work definitions, identity, checkpoints, and manual occurrences.
+- [IDs](ids.md): allocation and deterministic identity codecs.
+
+## Hosting and storage
+
+- [Hosting](hosting.md): sandbox processes, lifecycle/leases, installation, environment transport, and recovery.
+- [Layout](layout.md): physical paths, discovery, locks, and storage locations.
+
+## Clients and interaction
+
+- [CLI](cli.md): command routing, inspection, server acquisition, and terminal metadata.
+- [Scripts](scripts.md): source-local projects, invocation/help, and file-input origins.
+- [Chat](chat.md): session commands, queued request snapshots, steering, recovery, and control/status UI.
+- [Terminal UI](terminal-ui.md): shared terminal ownership, geometry, Markdown, palettes, and scrollback.
+
+## Collaboration and integration
+
+- [Messaging](messaging.md): Hub, conversations/rules, Talk consumption, and backend coordination.
+- [HTTP API](api.md): application composition, request/response boundaries, and driver-gated routes.
+- [Plugins](plugins.md): extension families, factories, loading, and plugin-facing contracts.
+
+## Observation and presentation
+
+- [Execution statistics](execution-statistics.md): derived usage cache, time windows, queries, and archival.
+- [Top](top.md): current/recent activity, coverage, totals, and dashboard interaction.
+- [Execution presentation](execution-presentation.md): progress projection and Run/Step rendering semantics.
+
+## Historical records and reference
+
+[Plans](plans/) retain discussion and implementation records that may become
+outdated. They do not define current behavior; these guides link current owners
+and implementation evidence instead of individual plans.
+[Generated reference](../reference/README.md) provides module-level details.

@@ -8,6 +8,10 @@ async callables and isolate synchronous Python callables in a worker thread,
 so blocking tool implementations do not stall the run event loop.
 
 
+This guide owns tool invocation and built-in operation contracts.
+[Workspaces](workspaces.md), [State](state.md), and [Messaging](messaging.md)
+own the corresponding authority, publication, and collaboration models.
+
 ## Tool identity
 
 A tool has one toolset and leaf name. Queries and configuration use `toolset/tool`,
@@ -72,17 +76,10 @@ toolset; user resource selectors apply only to user tools.
 `fs` operates inside the workspace list available to the Run. It provides
 `read`, `write`, `append`, `list`, `glob`, `stat`, `mkdir`, and `remove`.
 Each operation takes a `path` (default `"."` for `list` and `glob`), with no
-`workspace` or `cwd` argument. Paths are absolute within an authorized workspace,
-relative to the current workdir, or workspace-qualified as `name://path`, where `name` is an available workspace;
-`name://` denotes that workspace's root. Relative paths cannot leave their
-workspace.
-
-The runtime sends `<toolang:workspace list="lab,repo1"/>` and the current
-`<toolang:workdir path="repo1://src"/>` on every Model Call. The list contains
-currently usable workspaces, with implicit `lab` first and configured workspaces
-in configuration order. `lab` is rooted at `<agent home>/.lab` and is not a config
-grant. The last usable workspace supplies the fallback default; explicit Run
-workdir selection takes precedence and is reported separately by the workdir tag.
+`workspace` or `cwd` argument. [Workspaces](workspaces.md#logical-paths-and-authorization)
+owns logical paths, workdir resolution, and grant checks. Model Calls report
+usable workspace names and the current workdir as runtime context; that
+presentation does not add authority.
 
 ## Shell
 

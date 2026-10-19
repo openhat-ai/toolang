@@ -3,7 +3,7 @@
 The `too` and `toolang` entry points use the same command router. This guide
 explains routing, inspection, and client orchestration for maintainers.
 `too --help` shows common commands; `too more` shows the additional groups.
-Source command details belong to [Source commands](source-commands.md), script
+Source command details belong to [Language commands](language-commands.md), script
 inputs/configuration to [Scripts](scripts.md), and HTTP to [API](api.md).
 
 ## Routing
@@ -49,7 +49,7 @@ too aid.too update_changelog --help
 
 These help examples use the repository's `aid.too`, which defines
 `update_changelog`. A file created by `too init` uses the bundled script template
-and provides a different runnable set. [Call Input](call-input.md#script-runnable-calls)
+and provides a different runnable set. [Call Input](scripts.md#runnable-input-and-help)
 owns assignments, line input, stdin, escaping, and input boundaries.
 
 Progress goes to stderr. Results remain in durable history unless `-o`/`--out`

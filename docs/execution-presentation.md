@@ -121,19 +121,9 @@ does not display this Script header.
 
 ## Width and Alignment
 
-Progress is at most 120 terminal cells wide by default and never wider than an
-attached TTY. Set `TOOLANG_PROGRESS_MAX_WIDTH` to a positive integer to change
-the maximum for both surfaces. Non-TTY script output uses that configured
-maximum as its available width, equivalent to a TTY with no narrower physical
-width.
-
-Execution markers start in column zero. Wrapped content and unmarked
-continuations align with the text after the marker:
-
-```text
-• Alpha beta gamma delta epsilon
-  zeta eta theta
-```
+Shared output/input limits and display-cell measurement belong to
+[Terminal UI](terminal-ui.md#geometry). The rules below specify semantic
+Step/Run alignment within that available width.
 
 ## Chat Input and Queue Controls
 
@@ -610,193 +600,17 @@ normal intensity. The divider uses a fixed 42-cell width and shortens only when
 the available width requires caption truncation. Exactly one blank line
 separates the divider from the result body.
 
-## Surface Behavior
+## Surface ownership
 
-Script writes progress to stderr. It does not copy the durable root result to
-stdout by default. `--out -` writes the result to stdout and `--out PATH`
-atomically writes it to a file. Failed and canceled Runs do not write the
-selected destination. Progress is enabled by default for both TTY and non-TTY
-stderr; `-q` or `--quiet` suppresses prepare and execution progress, including
-the root Run footer. Actionable errors remain visible in quiet mode. Non-TTY
-output contains stable newline-delimited content without color, cursor
-movement, or partial delta lines. Its semantic rows and block geometry match
-TTY output; only live replacement, ANSI emission, and width-dependent wrapping
-differ.
+Script sends progress to stderr and leaves results in durable history unless
+`--out` requests stdout or a file. Quiet mode suppresses prepare/execution
+progress. [Scripts](scripts.md) owns invocation/output selection;
+[Terminal UI](terminal-ui.md) owns live areas, display-cell widths, Markdown,
+palette discovery, and TTY/non-TTY mechanics.
 
-TTY script output uses one event-driven Rich `Live` area per root Run. Chat
-does not create a Rich `Live` because prompt_toolkit owns its terminal; it uses
-the same Rich Markdown renderables while moving committed fragments into
-scrollback and retaining only replaceable fragments in its live container.
-
-Model and result Markdown leaves ordinary text on the terminal's default
-foreground and background. Semantic styles use named ANSI colors, so the
-terminal theme owns their actual RGB values. Inline code retains Rich's
-Markdown text style (bold ANSI cyan by default) with an explicit background.
-Both Chat and Script derive a stronger inline background from the terminal
-background. Inline spans add no padding. In both modes, fenced-code base text
-inherits the terminal foreground and its background uses Code. Both retain
-Rich's `ansi_dark` named ANSI syntax-token colors. Top and bottom padding,
-trailing background cells, and authored blank lines remain one rectangular
-surface.
-
-Chat preserves terminal-default and 16-color ANSI identities through both its
-live prompt_toolkit path and stable scrollback path. Script uses the same ANSI
-identities and truecolor background fills on a TTY and continues to emit no
-color for non-TTY output.
-
-Interactive Chat resolves one concrete palette before prompt_toolkit begins
-reading keyboard input. Script resolves the same palette before starting run
-output, including remote execution and rerun. The public backgrounds are
-Input, Queue, and Code, in that order. Input fills the input box and the non-
-accent cells of Run, Steer, and Command bars. Queue fills the adjacent
-queue area; a focused queue selection uses Input. Code fills fenced-code
-rectangles; inline code has a separate derived background. These surfaces
-assign no ordinary foreground: normal text inherits the terminal foreground,
-dim text adds only the dim attribute, and the input cursor uses reverse video.
-
-`TOOLANG_COLOR_SCHEME` accepts case-insensitive `dark` or `light`, or exactly
-three comma-separated `#RRGGBB` values in `input,queue,code` order. An explicit
-value is final and bypasses terminal discovery. With three explicit colors, the
-third color fills both fenced and inline code. Without one, both modes request
-the terminal's default foreground and background through bounded OSC 10 and 11
-queries when stdin and the output stream (stdout for Chat, stderr for Script)
-are the same TTY and no input is pending. A complete response derives subtle
-surfaces from those defaults; unsupported, incomplete, or failed queries always
-use the dark palette. `COLORFGBG` is not consulted. Quiet Script execution and
-non-TTY output never probe; non-interactive Chat does not probe either.
-
-The fixed palettes are:
-
-| Scheme | Input | Queue | Code | Inline code |
-| --- | --- | --- | --- | --- |
-| Dark | `#1f1f1f` | `#121212` | `#0b0b0b` | `#151515` |
-| Light | `#e3e3e3` | `#f2f2f2` | `#f9f9f9` | `#efefef` |
-
-Detected code backgrounds mix the terminal background toward black or white
-(whichever offers greater contrast) in linear RGB. The block contrast target
-is 1.05, or 1.07 for near-black backgrounds with luminance at most 0.005; the
-inline target is 1.15. These targets describe contrast against the terminal
-background, not text readability. Neither code background depends on default
-foreground color. Input and Queue retain their foreground-based contrast cap.
-
-OSC reports RGB colors but not terminal opacity. All resolved surfaces paint
-RGB cells; they do not infer or preserve terminal transparency. A light
-terminal where OSC is unavailable must set `TOOLANG_COLOR_SCHEME=light` or an
-explicit three-color palette.
-
-Chat submission and steer controls preserve their complete authored message
-between one top and one bottom padding row. Body text starts two cells from
-the left and leaves two cells at the right. Input uses the same insets. Padding
-never collapses into body rows as messages wrap. The bottom padding can hold a
-dim, single-line annotation ending two cells before the bar edge. Root inputs
-show `runnable · model · reasoning` from the submitted request: explicit effort
-or token budget, otherwise `auto` for no reasoning override. An absent model
-reads `model unspecified`. This snapshot needs no catalog or persistence lookup,
-and later session defaults do not change it. The root RunBegin updates its
-runnable before the bar is committed. Display `kind:name` without the `module$`
-prefix, retaining the complete reference in the snapshot. Long annotations
-shorten the runnable first, then the model, preserving explicit reasoning
-where space permits. Their left background-filled accent cells distinguish
-start from steer without displaying Run IDs. The start accent uses the same ANSI
-bright cyan as the banner logo and wordmark. Command bars use the same
-background-cell treatment with their own accent, and the prompt uses the start
-accent. Control bars and the input box share Input background. Control-bar
-messages use the terminal's default foreground and explicitly clear dim styling
-in both stable and live output. An empty prompt shows the muted
-placeholder `Describe your task`; the
-placeholder disappears as soon as the buffer contains text and is never part of
-the submitted message. Root, Steer, and command control bars use the same
-output width as execution and command output: the lesser of the available
-width and `TOOLANG_PROGRESS_MAX_WIDTH`. Command result, help, table, and
-reopened-output content align to the same output boundary. The editable input,
-Queue, and status bars use `TOOLANG_INPUTBOX_MAX_WIDTH`, falling back to the
-progress limit when unset; see [Chat](chat.md).
-
-Steer bars keep their original purple accent regardless of adoption. Pending
-bars have one aggregate dim row below them, including its marker:
-`• 1 steer pending` or `• 3 steers pending`. The count combines locally submitted
-requests awaiting receipts and accepted controls awaiting consumption. Receipt
-acceptance alone does not change the count. The wording is the same during and
-between steps, with no separate sending label. Continuations align after the
-marker, and live clipping reserves this feedback while preserving Input and Queue
-focus. A blank row above and below separates the explanation from surrounding
-areas. Very short
-viewports omit this spacing before clipping the explanation.
-Only matching `StepBegin.preceded_by` control references or durable applied
-status commit an adopted bar. Receipt/event reordering does not imply adoption.
-The aggregate disappears when no steers remain, with no applied message.
-At Run end, only confirmed unapplied steers show `not applied` in bottom-right
-padding; pending and adopted bars have no corner label during execution.
-Incomplete transport evidence keeps corners empty and uses existing recovery
-or error diagnostics. Late callbacks cannot change a completed transcript.
-
-The session status bar below Input does not paint a base background and
-therefore inherits the terminal background. Its left corner always shows the
-current session runnable as `agic:name` or `flow:name`, without the `module$`
-prefix. The active root runnable is never shown there. A session runnable
-change updates only this left corner; it never adds a runnable beside the
-model.
-
-The absolute center anchor is the Chat agent and current workspace in
-`agent@workspace` form. The agent stays constant for the session. The
-workspace is the session workspace while idle and the active root run's
-effective workspace while running. Successful `runtime.chdir` calls in the
-root run update this workspace; child run changes do not. `:workdir` updates the
-session setting for subsequent runs without changing the active run's
-workspace. When the run ends, the center returns to the latest session
-workspace. Directory paths within a workspace are not shown.
-
-A separate run status bar directly precedes the Queue panel, or Input when the
-queue is empty. It has a blank first row separating live output and a second
-row showing dim elapsed time at column two. It inherits the terminal background.
-The label is `Working` below one elapsed second, then `Working for` followed
-by whole-second time, such as `Working for 1m3s` or `Working for 1h1m1s`.
-`0s` is never shown. The timer resets for each queued run and clears when the active run settles; requesting cancellation alone does
-not clear it. Both rows remain blank while idle. An idle Ctrl+L collapses both
-rows until the next run starts. Run settlement keeps the restored blank rows
-so Input does not move. The right side, inset two cells,
-is reserved for future context information and renders no value or placeholder.
-On very short terminals, the separator and then the information row yield to
-minimum Input, Queue, and steer-feedback space.
-
-The session bar never renders elapsed or the `Working` label. Agent/workspace
-text uses normal intensity; the structural `@` is dim. If the full line overflows, the
-complete center stays fixed with a one-cell margin on each side; session edge
-labels elide inward with one `…`. If the center plus margins cannot fit, both
-edge labels are hidden, and the center is truncated only when it cannot fit alone.
-
-The right corner contains only the current session model and its existing
-effort suffix. It is never replaced by an active model step. An empty effective
-model collection appears as `[no models available]`; an explicit effort or
-token budget appears as `MODEL · VALUE`; a model that advertises effort-level
-or token-budget control but has no explicit session value appears as
-`MODEL · auto`. Models without applicable reasoning control omit the suffix.
-The model remains right-aligned against the terminal edge. At narrow widths,
-the model ref is elided before an applicable effort suffix if the session
-corners alone need more space. Runnable, model, and center labels
-inherit the terminal's default foreground; only the `@` separator is dim.
-Setting commands remain available while running and update the session
-corners immediately without changing the active run's center context. Hotkey
-hints are omitted.
-The status bars redraw when a visible value, run state, error, or elapsed
-second changes. Session errors do not suppress run elapsed updates. Run
-completion returns immediately to the idle form, and status state is never
-committed to execution scrollback.
-
-Submitted `/models`, `/caps`, and `/tools` results retain structured columns
-through scrollback rendering. Their headers use normal terminal text and a dim
-`─` separator row. Each table derives widths from only that result, uses two
-spaces between columns and a two-space output indent, measures Unicode display
-cells, and keeps every header and data row on one physical line. Flexible cells
-are elided with `…` in command-specific order rather than wrapped. `-a` results
-add an `ALLOWED` column. The current model marker is the protected suffix ` *`.
-
-Every submitted command control bar, help page, focused help result, resource
-table, and reopened run output uses the lesser of the terminal width and the
-configured progress maximum width. Prose wraps while table rows elide. Command
-content owns no trailing blank rows; Chat adds exactly one scrollback separation
-row after the complete interaction. Scripted Chat applies the same maximum-width
-policy to its plain-text projection.
+Chat's submitted controls, queue, session/run status, and command-result blocks
+belong to [Chat](chat.md#control-bars-and-status). They consume progress without
+introducing execution states or changing control adoption.
 
 ## Implementation evidence
 

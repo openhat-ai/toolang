@@ -55,7 +55,7 @@ KEYWORD ...:
 ```
 
 When a statement consumes authored content, its `BODY` is `Content` and
-follows [input-syntax.md](input-syntax.md). A statement block uses `STMTS`
+follows [Content](content.md). A statement block uses `STMTS`
 instead.
 
 

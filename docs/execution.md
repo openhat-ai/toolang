@@ -1,9 +1,9 @@
-# Execution
+# Execution Model
 
-This document defines the ownership and lifecycle boundaries of
-`toolang.execution`. Detailed record shapes live in
-[Records](records.md), and runtime behavior lives in
-[executor.md](executor.md).
+This guide owns Run/Thread lifecycle, admission, controls, limits, and capture
+boundaries. [Executor](executor.md) owns engine structure and task mechanics,
+[Records](records.md) owns durable representation, and [Events](events.md) owns
+post-commit notification and delivery contracts.
 
 
 ## Responsibilities
@@ -124,25 +124,10 @@ The process-local executor is the execution engine. [Executor](executor.md#publi
 identifies its public operations and links the exact signatures. Transport
 requests are resolved to RunSpec before acceptance.
 
-`start()` is an idempotent lifecycle hook. `run()` accepts durable truth,
-creates the owner task, and immediately
-returns an awaitable `LocalRunHandle`. Awaiting the handle returns the terminal
-`RunRecord`; canceling one waiter does not cancel execution. The handle also
-provides same-process `cancel()`, `steer()`, and
-`cancel_control()` conveniences.
-Cross-process callers address the run by ID through their local `RunExecutor`.
-
-`steer()` and `cancel()` only accept durable controls; `cancel_control()` changes
-one pending steer or cancel to `revoked`. Without `expected_control`, these
-controls do not require ownership by the submitting process. Supplying it
-requires the expected invocation to be live in that executor. Run execution remains local:
-the process that calls `run(spec)` accepts and executes that run. `stop()` is
-terminal and cancels the run tasks owned by that executor instance. The process
-owner closes the shared `RunStore` after the executor stops.
-
-Cancellation during `stop()`'s owned-task drain still runs terminal fallback and
-resource cleanup before it propagates. Observer cleanup also runs when its drain
-is canceled. Automatic Run completion drains its observer after terminal publication.
+The engine's process-local API and task lifecycle belong to
+[Executor](executor.md#public-boundary). A caller waiting on a LocalRunHandle can
+stop waiting without canceling accepted execution. Controls are durable requests;
+[Run controls](#run-controls) owns their adoption and live-invocation guards.
 
 Callers resolve the captured `AgentSetup` defaults and any session or run
 policy into `RunSpec.limits` before `run()`. Per-agic model and tool call
@@ -273,14 +258,6 @@ public control status.
 
 ## Threads
 
-The thread's `horizon` optionally points to a valid compact-summary producer
-Run or successful summary Model Step. A committed compact control publishes that
-horizon for subsequent recall while retaining physical history. An unusable
-horizon contributes no summary; history reads do not silently execute compaction.
-[Models](models.md#automatic-compaction-configuration) owns budgets and
-[runs/compact.py](../src/toolang/execution/executor/runs/compact.py) owns the
-recorded batched compaction loop.
-
 `ThreadManager` synchronously performs `create()`, `fork()`, and `rewind()`.
 Create and fork return the newly allocated thread id. Rewind changes the
 specified thread in place and returns nothing. Fork and rewind accept an
@@ -315,6 +292,45 @@ the rewind idle check, and control insertion occur in one SQLite write
 transaction. The store keeps expected-head comparison as an internal defensive
 check; it is not part of the public manager API.
 
+
+## History compaction
+
+The thread's `horizon` optionally points to a valid compact-summary producer
+Run or successful summary Model Step. A committed compact control publishes that
+horizon for subsequent recall while retaining physical history. An unusable
+horizon contributes no summary; history reads do not silently execute compaction.
+[Models](models.md#automatic-compaction-configuration) owns budgets and
+[runs/compact.py](../src/toolang/execution/executor/runs/compact.py) owns the
+recorded batched compaction loop.
+
+Model preflight initiates compaction when required input exceeds the active
+budget. It is an internal recorded Run, not an ordinary model tool. The compact
+control adopts a successful summary for later recall; it preserves physical
+history and does not resume old execution.
+
+The retained near history keeps the latest complete Step and paired tool
+exchanges, then adds older Steps while they fit. Fixed instructions and current
+input take precedence. Compaction advances at least one history unit and may
+stop inside a root.
+
+Retained history and summary are soft targets, not a guarantee that the resulting
+request fits. The complete request is checked again after compaction; required
+content that cannot fit fails the Run. The 30%/80% defaults leave room for fixed
+content, a summary, and subsequent conversation, but do not guarantee 50% free.
+
+If the thread model has no declared context window, a percentage trigger leaves
+admission to the known safety budget. No input limit is substituted as the
+percentage base. When compaction is needed, percentage summary/recent settings
+require context metadata or replacement with absolute token counts.
+
+Compact batches use the compact model's own input capacity. Unless its model
+specification explicitly sets `max_output`, the output allowance is
+`max(2 * summary, summary + 1024)`, clamped to the model output limit. The default
+allowance is 8192 tokens, including reasoning. A root can span multiple batches.
+Oversized Step input/output is shortened with explicit omission markers, keeping
+original stored records intact. The mandatory latest Step is bounded to half the
+calling model's input budget so a single large historical reply does not block
+progress. Fixed instructions and current execution input must still fit.
 
 ## State Capture
 

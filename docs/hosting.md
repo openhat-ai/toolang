@@ -52,47 +52,12 @@ field overrides passed to `SetupWatcher`.
 `--compact-model MODEL` selects the new runtime's compaction model,
 using the same model expression as `--model`, without a `model=` prefix.
 
-Setup policy uses the following TOML shape in root and agent-home `config.toml`
-files:
-
-```toml
-[allow]
-models = ["gateway/*"]
-tools = ["shell/*"]
-skills = ["skill/reviewer"]
-
-[default]
-model = "gateway/chat effort=high"
-
-[limit]
-agic_model_calls = 200
-agic_tool_calls = "none"
-tokens = 200000
-cost = "2.50"
-time = 900
-```
-
-Limit fields are non-negative. Quoted `"none"` disables a limit. Empty allow
-arrays deny all resources in that field. Text CLI/environment values use
-`none` for an empty allow set or an unlimited limit, according to the target
-field. Runtime startup has no default-runnable setting; driver handler selection
-belongs to [Program](program.md#surface-rules). Models use canonical `unset`; legacy `none` in
-Setup default sources is normalized to it. `all` removes an allow restriction.
-Empty text is always invalid.
-
-Default model values use one shared model body across TOML,
-`TOOLANG_DEFAULT_MODEL`, and startup `--default model=BODY`. A body contains an
-optional exact identity followed by typed assignments such as `effort=high`,
-`effort=4096`, `effort=auto`, `max_output=8192`, or `max_output=auto`. Setup publishes the resulting complete model
-request only after validating it against the effective model. Chat startup uses
-`--default model=BODY` for its multi-run session, while Script and rerun use
-`--model BODY` for one-run selection above the Setup default.
-
-The precedence order is built-in values, root config, agent-home config,
-runtime environment, CLI, then any request-level binding or limit fields.
-Config is re-read dynamically; environment and CLI mappings remain fixed for
-the process lifetime. Each `--default` or `--limit` field may occur once;
-repeated `--allow` values for the same domain accumulate within the CLI layer.
+These are fixed watcher inputs. [Setup](setup.md#policy) owns configuration
+sources, field precedence, and generation publication. Startup model defaults
+use `--default model=BODY`; Script/rerun `--model BODY` selects one Run, while
+Chat initializes its own multi-run session. Default/limit fields occur once;
+repeated allow values accumulate within the CLI layer. Driver handler selection
+belongs to [Drivers](drivers.md#handler-selection).
 
 ## Sandbox selection and development wheels
 

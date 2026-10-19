@@ -68,6 +68,11 @@ Check every touched guide against these conditions:
 | Examples | Validate complete source/configuration examples offline. Label fragments, placeholders, external prerequisites, and deliberately invalid inputs. |
 | Navigation | Update the index, relative paths, anchors, and non-document consumers when moving a guide. Keep plans outside a current-contract audit unless explicitly in scope. |
 
+Organize the current-design index by responsibility. Explain ownership, data
+flow, capture/update boundaries, failure handling, and consequential tradeoffs.
+Omit self-evident usage and implementation inventories that source/help already
+provides; link exact schemas and constants instead of duplicating them.
+
 Record the implementation revision, substantive findings, moved/deleted owners,
 and checks in the PR description. A guide can pass without an edit. Preserve
 accurate changelog records; internal documentation organization does not require
