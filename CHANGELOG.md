@@ -9,6 +9,47 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Changed
 
+- **Breaking:** the formatter preserves inline text literally, including `#`
+  and `"`, and never extracts or moves comments from it; place intended
+  comments on separate structural lines.
+
+- **Breaking:** program documentation moves from `##!` to `#@`, while `##!`
+  now documents an item with a literal leading `!`; rewrite existing program
+  documentation with `#@`.
+
+- **Breaking:** lane clauses belong before `using`, `if`, and `by`: the
+  formatter rejects suffix order without reordering it, so move existing suffix
+  clauses ahead of those keywords.
+
+- `lane`/`lanes` and `time`/`times` both parse, and the formatter writes
+  canonical unit spelling and removes leading zeros in those counts.
+
+- Parameters and locals may use keyword names where the grammar allows, and
+  retired flow words are ordinary prose or names.
+
+- **Breaking:** agic and flow headers are closed, so an unknown `key = value`
+  opening line is a syntax error; put assignment-like opening messages in an
+  explicit `user:` text block.
+
+- Cap and chore prefixes accept arbitrary `key = value` properties, with blank
+  lines and comments allowed between them, until the first substantive body
+  line; supported names stay validated.
+
+- **Breaking:** raw CST consumers read `program` instead of `source_file`,
+  `target` for call targets, `local` for `let` bindings, and `param` and
+  `description` on direct `param_doc` nodes.
+
+- **Breaking:** CST text bodies use `content` containers with direct `text`
+  leaves; replace old text wrappers with these paths and `comment_text` with
+  `text`.
+
+- **Breaking:** documentation uses peer `program_doc`, `item_doc`, and
+  `param_doc` nodes; `program_doc` belongs to `program`, while structural
+  bodies include their leading member documentation.
+
+- **Breaking:** raw CST punctuation, fixed operators, and keywords are anonymous
+  terminals, so inspect terminal text instead of named nodes.
+
 - `too top` and `too AGENT top` count agent instances separately from root
   Runs: the first summary reads `N running, M total: R resident, V visiting,
   O roaming`, where a running idle agent still counts as running, preparing or
