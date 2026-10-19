@@ -81,7 +81,8 @@ The runtime sends `<toolang:workspace list="lab,repo1"/>` and the current
 `<toolang:workdir path="repo1://src"/>` on every Model Call. The list contains
 currently usable workspaces, with implicit `lab` first and configured workspaces
 in configuration order. `lab` is rooted at `<agent home>/.lab` and is not a config
-grant. The last listed name is the runtime default.
+grant. The last usable workspace supplies the fallback default; explicit Run
+workdir selection takes precedence and is reported separately by the workdir tag.
 
 ## Shell
 
@@ -292,8 +293,9 @@ errors and inspect `revision` and the scoped `files` manifest. There is no loade
 receipt-polling operation. Historical tool-call records remain readable.
 
 Reading after a save observes the saved source. Running code remains governed by
-Run binding and publication: static calls in an accepted flow use its bound
-program; a later permitted named Run can use the latest published State. Editing
+Run binding and publication: accepted statements and inline bodies keep their
+bound plan; each newly accepted named call selects the latest valid State and
+checks compatibility with the caller's contract. Editing
 config does not install new tools, refresh captured Setup, or grant authority to
 the active Run.
 

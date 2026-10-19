@@ -89,8 +89,11 @@ snapshots. Restart the guest to refresh those captured configuration files. An e
 server cannot be rebound to different local directories; stop it before changing
 its grants. Chat can select an existing server workspace with
 `--workdir NAME://SUBDIR`. A Script without `-w` still requests its source grant,
-including when `-d` selects a URI. A server started by Chat remains running after
-Chat exits, together with its temporary grants; they are not written to config.
+including when `-d` selects a URI. Chat retains resident and roaming servers
+after exit; an implicit visiting server automatically stops once client leases
+and accepted work finish. Explicit
+start/serve uses a persistent lifetime. Temporary grants belong to that server
+generation and are not written to config. See [server lifetime](hosting.md#server-lifetime-and-client-leases).
 
 `too ./aid.too workspace list` reads source-local workspace configuration and
 shows configured names, resolved paths, and local directory availability without

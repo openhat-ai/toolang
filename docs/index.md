@@ -35,7 +35,7 @@ testing, audit, and authoring standards live at the root; start with
 | [Plugins](plugins.md) | Toolset, sandbox, catalog, and adapter contracts and loading |
 | [Scripts](scripts.md) | Source-local configuration, workspace grants, and input origins |
 | [Source commands](source-commands.md) | Offline parse, CST inspection, formatting, highlighting, and diagnostics |
-| [Execution](execution.md) | Admission, lifecycle, limits, controls, threads, and State capture |
+| [Execution](execution.md) | Run admission/lifecycle, limits, controls, threads, and State capture |
 | [Executor](executor.md) | Execution internals, async ownership, terminalization, and resident LiveTree |
 | [Records](records.md) | Durable records, values, references, and historical inspection |
 | [Events](events.md) | Subscriber payloads, post-commit delivery, cursors, SSE recovery, and Hub observation |
@@ -48,7 +48,7 @@ testing, audit, and authoring standards live at the root; start with
 | [Execution statistics](execution-statistics.md) | Incremental usage cache, query windows, and archival |
 | [Top](top.md) | Current/recent observation, coverage, totals, and dashboard interaction |
 | [HTTP API](api.md) | Agent application composition, requests, responses, and driver-gated routes |
-| [Hosting](hosting.md) | Sandbox processes, installation, captured environment, logging, discovery, and cleanup |
+| [Hosting](hosting.md) | Sandbox processes, server lifetime/leases, installation, environment, logging, discovery, and cleanup |
 | [CLI](cli.md) | Command routing, inspection, server acquisition, and terminal metadata |
 
 ## Plans and reference

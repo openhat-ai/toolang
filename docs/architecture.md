@@ -142,7 +142,7 @@ on handled exit; `start` returns after readiness. Host scripts execute directly;
 guest scripts use temporary servers. Resident Chat retains its shared server;
 visiting Chat uses a shared automatic server that waits for clients and accepted
 work to finish before exiting. Explicit start retains either placement. See
-[execution ownership](execution.md) for lifecycle details.
+[server lifetime](hosting.md#server-lifetime-and-client-leases) for lifecycle details.
 
 
 ## Execution vocabulary

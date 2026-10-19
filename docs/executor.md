@@ -47,8 +47,10 @@ waiter is canceled. Stop is terminal for that executor instance.
 
 A synchronous call keeps its source Step open until the child terminates.
 Async run commits child admission and the source handle/output, then closes the
-launch Step while retaining parent-tree ownership. The parent tree shares its
-budgets and cannot complete while owned async descendants remain active.
+launch Step while retaining parent-tree ownership and shared budgets. Returning,
+failing, canceling, or executing a handoff cancels and drains the immediate
+owner's unfinished async children before that owner can finish. Discarding a
+handle does not detach work; spawn is the independent-root operation.
 Await records dependencies and the target result/error without reparenting the
 child or charging its usage a second time.
 
@@ -68,6 +70,8 @@ owns the persisted representation.
 | [resources.py](../src/toolang/execution/executor/resources.py) | Effective resources, ceilings, and module-scoped selectors |
 | [frame.py](../src/toolang/execution/executor/frame.py) | Agic frame, model/adapter selection, templates, tools, and budgets |
 | [assembly](../src/toolang/execution/assembly/) | Provider-neutral instructions/messages, recall, tool replies, and run results |
+| [runs](../src/toolang/execution/executor/runs/) | Agic loop, Flow evaluation, and internal compaction Runs |
+| [stmts](../src/toolang/execution/executor/stmts/) | Dispatch/evaluation of individual authored Flow statements |
 | [steps](../src/toolang/execution/executor/steps/) | Model, tool, child Run, flow parallel/loop/value, agent, and human units |
 | [awaitables.py](../src/toolang/execution/executor/awaitables.py), [spawn.py](../src/toolang/execution/executor/spawn.py) | Async results and independent-root admission |
 | [limits.py](../src/toolang/execution/executor/limits.py) | Per-agic call limits and shared root budgets |

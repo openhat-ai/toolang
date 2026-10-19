@@ -71,7 +71,7 @@ selector, then host. Concurrent starters converge on one generation. Fresh
 implicit resident/visiting Chat servers enable chat only: residents persist,
 visiting servers automatically reclaim after leases and accepted work finish.
 Explicit start retains either placement. See [Hosting](hosting.md) and
-[server lifetime](execution.md#run-execution) for concrete timing and cleanup.
+[server lifetime](hosting.md#server-lifetime-and-client-leases) for concrete timing and cleanup.
 
 RemoteRunClient records the accepted Run ID and observes its canonical root
 stream. After interruption it reconnects through GET with the committed cursor;

@@ -72,8 +72,9 @@ time = 900
 
 Limit fields are non-negative. Quoted `"none"` disables a limit. Empty allow
 arrays deny all resources in that field. Text CLI/environment values use
-`none` for an empty allow set, a cleared runnable, or an unlimited limit,
-according to the target field. Models use canonical `unset`; legacy `none` in
+`none` for an empty allow set or an unlimited limit, according to the target
+field. Runtime startup has no default-runnable setting; driver handler selection
+belongs to [Program](program.md#surface-rules). Models use canonical `unset`; legacy `none` in
 Setup default sources is normalized to it. `all` removes an allow restriction.
 Empty text is always invalid.
 
@@ -98,16 +99,12 @@ no current port input overrides it; a busy remembered port is reallocated, while
 an explicit/configured busy port fails. Successful settings are recorded only
 after readiness; failed attempts do not replace them. Stopped records retain
 these settings and database/log history. Temporary script ports remain temporary.
-Docker sandbox control is supported from Linux and macOS hosts. Windows users
-must run Toolang through WSL2; native Windows host control is not supported.
+Docker sandbox control is supported from Linux and macOS hosts. Windows is not
+supported yet.
 
-Chat uses the same sandbox selection when no AgentServer is active.
-For resident/visiting agents, fresh implicit servers enable chat only; explicit
-start/serve keep placement driver defaults. Resident servers remain running;
-visiting implicit servers automatically stop after all clients and accepted work
-finish. Start retains either placement until stop and cannot detach foreground
-serve. Roaming and standalone script behavior is unchanged. See
-[server lifetime](execution.md#run-execution) for the lifecycle and command combinations.
+Chat uses the same sandbox selection when no AgentServer is active. See
+[server lifetime](#server-lifetime-and-client-leases) for driver defaults,
+retention, and command combinations.
 If an AgentServer is already running, Chat attaches to it and rejects an explicit
 incompatible selector without executing or restarting the server.
 `chat --dev [PATH]` installs a local Toolang wheel in a new non-host runtime;
@@ -131,7 +128,7 @@ wheel and select it with:
 
 ```sh
 uv build --wheel
-too alice run --sandbox docker --dev
+too start alice --sandbox docker --dev
 ```
 
 A following non-option token is consumed as PATH. Before a runnable selector or
@@ -287,8 +284,46 @@ ephemeral port.
 An agent recorded on `7001` receives a new port on its next default start.
 Explicit CLI, environment, or home configuration port overrides still take
 precedence, including `7001`. Running processes are not relocated.
+## Server lifetime and client leases
 
+Terminal Chat shares a compatible AgentServer for the same agent, Toolang root,
+source identity, and startup settings. Resident implicit servers remain running;
+visiting implicit servers exit once no client leases or accepted work remain.
+Fresh implicit resident/visiting servers enable chat only. Fresh start/serve
+keep placement defaults: resident chat,talk,chore; visiting chat,talk. Roaming
+Chat servers remain running after exit. Standalone scripts use embedded host
+execution or stop the guest server they created when the command exits.
 
+Use `too start <agent-or-ref>` for unattended availability. It promotes an
+automatic visiting server in place or reuses a persistent server, reports actual
+drivers, and never adds drivers implicitly. To change a running server's drivers
+or startup configuration, stop and restart it with the desired options.
+`too stop <agent-or-ref>` explicitly ends the current generation and active work;
+clients do not relaunch it. Start cannot detach foreground serve.
+
+The server owns idle exit, with no supervisor process. Automatic clients renew
+leases every five seconds; leases expire fifteen seconds after the last renewal.
+Once a renewal confirms promotion to persistent, clients stop renewing. Expired
+clients stop submitting work, including after suspension or a delayed response.
+Accepted pending/running roots, independent spawn roots, owned async children, and terminal
+cleanup retain the server even without clients. Client transport loss never
+cancels accepted work. Startup has a thirty-second hold, consumed on the first
+client registration. Docker removes automatic containers on exit; history and diagnostics
+remain on host mounts. Host staging cleanup may wait for a later management call.
+
+Generation checks reject delayed requests to replacement servers. Steer/cancel
+attach only to a healthy live owner and pin the target invocation; stale history
+cannot start a replacement or redirect a control to another invocation. Fork/rewind --chat
+retains one acquisition through both phases. Legacy servers stay unmanaged and
+retained; stop/restart them to use lifecycle promotion and guarded controls.
+
+Chat checks health/profile before use. It retains session defaults locally and
+uses HTTP for runtime/model/runnable inspection, thread creation, and result
+reads. Failed cursor recovery falls back to durable detail without repeating
+execution. Lease-loss errors include the last accepted Chat run ID when known.
+Rerun observation failures report accepted run IDs without
+canceling; explicit interruption requests cancellation. Standalone scripts remain
+separate: inactive host execution is embedded and script-created guests stop on exit.
 
 ## Implementation evidence
 

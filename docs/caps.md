@@ -283,52 +283,8 @@ published resources.
 
 ## HTTP API
 
-Read endpoints:
-
-- `GET /api/v0/caps`
-- `GET /api/v0/psyches`
-- `GET /api/v0/skills`
-- `GET /api/v0/services`
-- `GET /api/v0/prompts`
-- `GET /api/v0/psyches/{name}`
-- `GET /api/v0/skills/{name}`
-- `GET /api/v0/services/{name}`
-- `GET /api/v0/prompts/{name}`
-- `GET /api/v0/psyches/templates`
-- `GET /api/v0/skills/templates`
-- `GET /api/v0/services/templates`
-- `GET /api/v0/prompts/templates`
-- `GET /api/v0/psyches/templates/default`
-- `GET /api/v0/skills/templates/default`
-- `GET /api/v0/services/templates/default`
-- `GET /api/v0/prompts/templates/default`
-
-Write endpoints:
-
-- `PUT /api/v0/psyches/{name}/authored`
-- `PUT /api/v0/skills/{name}/authored`
-- `PUT /api/v0/services/{name}/authored`
-- `PUT /api/v0/prompts/{name}/authored`
-- `DELETE /api/v0/psyches/{name}/authored`
-- `DELETE /api/v0/skills/{name}/authored`
-- `DELETE /api/v0/services/{name}/authored`
-- `DELETE /api/v0/prompts/{name}/authored`
-- `PUT /api/v0/psyches/{name}/configured`
-- `PUT /api/v0/skills/{name}/configured`
-- `PUT /api/v0/services/{name}/configured`
-- `PUT /api/v0/prompts/{name}/configured`
-- `DELETE /api/v0/psyches/{name}/configured`
-- `DELETE /api/v0/skills/{name}/configured`
-- `DELETE /api/v0/services/{name}/configured`
-- `DELETE /api/v0/prompts/{name}/configured`
-
-Authored write requests carry `scope` and `content`. Configured write requests
-carry `scope` and `ref`. Deletes use a `scope` query parameter. Scope is
-`root` or `home` and defaults to `home`.
-
-Each kind has one bundled `default` template. Template lists contain that one
-entry; default detail responses include metadata and raw content. Cap read
-requests return the effective runtime view with `scope`, `origin`, `form`,
-`cap`, `source`, `definition_file`, and optional `line`. CLI lists use `CAP`, `DESCRIPTION`, `LOCATION`, and `TAGS`. Location addresses
-actual content; only inline caps use `file:line`. Form, origin, scope, and allow
-status are tags. See [Resource Queries](queries.md) for the complete record shape.
+[Cap endpoints](api.md#cap-endpoints) owns routes, request/response fields,
+publication receipts, and conflict handling. Each kind has one bundled `default`
+template. Runtime reads expose the effective cap view; source mutations address
+`root` or `home` and await State publication without rebinding accepted Runs.
+[Queries](queries.md) owns the CLI record shape and tag vocabulary.

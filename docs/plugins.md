@@ -149,13 +149,17 @@ part of the sentence when safe, while `detail` is reserved for diagnostics.
 
 ### Model Catalog
 
-Model catalog plugins return immutable provider/model snapshots. Static and
-local discovery use the same `Provider` and `Model` runtime types. The bundled
-and user-selected static file uses Toolang's flat `{providers: [...], models: [...]}`
-format; convert upstream models.dev data externally before selection. Only
-models.dev-derived records carry an `npm` package; every other source
-declares its protocol through `ProviderToolang.adapter`. Catalog plugins do not
-execute model calls or install packages named by catalog metadata.
+Model catalog plugins return immutable `CatalogSnapshot` declarations containing
+`CatalogProvider` and `CatalogModel` values. Neutral providers declare `adapter`,
+`api`, and environment requirement names; Setup translates them into resolved
+runtime `Provider`/`Model` records. The protocol also accepts internal
+`ModelCatalogSnapshot` values. Neither form lets the catalog execute a model call.
+
+The bundled and user-selected static file uses the flat
+`{providers: [...], models: [...]}` format. Convert upstream models.dev data before
+selection. Its importer retains npm provenance for resolver mapping; neutral
+catalogs can name an adapter directly. Catalog plugins do not install packages
+named by metadata. [Models](models.md#catalog-plugins) owns selection and merging.
 
 ### Model Adapter
 

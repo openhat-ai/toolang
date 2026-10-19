@@ -43,8 +43,12 @@ ownership boundaries; see [Tools](tools.md#runtime-rule).
 
 [Model response recovery](models.md#model-response-recovery) distinguishes
 transient failures, rejected model tool names, and structured-output repair.
-Repair calls receive no tools; recovery does not repeat already successful tool
-effects. Automatic history compaction runs at model preflight and changes the
+One output-contract repair is available for a structured result when its first
+coercion fails and the model-call limit permits another call. `Text`, `Part`, and
+`Part[]` outputs do not use that repair. The separate two-attempt response-recovery allowance is
+shared across the Agic's turns, including repair turns. Repair calls receive no
+tools; neither mechanism repeats already successful tool effects. Automatic
+history compaction runs at model preflight and changes the
 thread horizon only after a successful summary. It cannot be requested as an
 ordinary model tool. [Models](models.md#automatic-compaction-configuration) owns
 budgets and settings, and [Execution](execution.md#threads) owns horizon effects.
@@ -182,6 +186,6 @@ or recommending Toolang commands.
 
 ## Implementation evidence
 
-- [Agic execution](../src/toolang/execution/executor/steps/agent.py), [frame construction](../src/toolang/execution/executor/frame.py)
+- [Agic execution](../src/toolang/execution/executor/runs/agic.py), [frame construction](../src/toolang/execution/executor/frame.py)
 - [Prompt assembly](../src/toolang/execution/assembly/prompting.py), [runtime protocol](../src/toolang/execution/assembly/prompts/protocol.md)
 - [Agic scenarios](../tests/integration/execution/test_agic_scenarios.py), [instruction boundaries](../tests/unit/execution/test_instruction_boundaries.py)

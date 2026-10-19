@@ -20,9 +20,10 @@ It does not own API streaming protocols, CLI rendering, agent events, event
 hubs, or exact historical event replay.
 
 `RunHistory` is the read-only caller-facing entry point over durable execution
-truth. In addition to thread and run listing/detail, `get_run_result()` resolves
-one output edge and `latest_thread_result()` selects the newest succeeded root
-run with a nonempty output. It remains independent from `RunExecutor` and
+truth. In addition to thread and Run listing/detail, `get_output()` resolves
+one output edge. The HTTP [latest-result endpoint](api.md#run-and-thread-endpoints)
+selects the newest succeeded root with nonempty output through the history view;
+it is not a RunHistory method. It remains independent from `RunExecutor` and
 `ThreadManager`, so callers can inspect `runs.db` while no agent process is
 running. `RunStore` performs raw and batched record reads; execution schemas
 perform the final pure record-to-schema conversion.
@@ -41,7 +42,8 @@ perform the final pure record-to-schema conversion.
 
 Run events are transient facts emitted during execution. They are never stored
 as `EventRecord` rows. A reconnecting caller reconstructs current state from
-records and observes only new live events.
+records, optionally replays retained events, and then observes the live suffix.
+[Events](events.md) owns retention and structural replacement rules.
 
 Persistence makes completed history available after process restart and for
 later model calls. Toolang does not resume an unfinished run after its owner
@@ -99,68 +101,28 @@ schemas. Local library consumers can use this client; execution owners such as
 `AgentCore` continue to use `RunExecutor` directly.
 
 `RemoteRunClient` implements the same boundary over an agent runtime's absolute
-HTTP origin. It sends self-contained, materialized requests to
-`POST /api/v0/runs/authored/stream`, consumes canonical `RunEvent` values from
-the accepted run's SSE response, and uses the existing run detail, cancel, and
-steer endpoints. The server owns setup/state snapshots, request validation,
-authored-input resolution, and file includes; mutable session defaults and
-fallback rules never cross the request boundary. After an interrupted stream,
+HTTP origin. Noninteractive submission uses `/api/v0/runs/authored/stream`;
+interactive clients use `/api/v0/chat/runs/authored/stream` and the chat-gated
+steer/rerun routes. Both consume canonical execution events and the same durable
+Run detail. The server owns Setup/State capture, handler resolution, validation,
+and Content evaluation. CLI clients capture file bytes before submission; the
+HTTP path uses the supplied attachment map rather than opening client filenames
+on the server. Direct local library calls can provide a filesystem include
+resolver. Mutable session defaults remain client-owned. After an interrupted stream,
 the client makes up to three GET reconnection attempts using its committed
 cursor (100 ms, 500 ms, and 1 s delays); it never repeats a POST. Structural
 replacement clears unfinished Parts before presentation. Disconnecting detaches readers and
 owned HTTP resources without canceling server runs or managing the server
 process.
 
-Terminal Chat shares a compatible AgentServer for the same agent, Toolang root,
-source identity, and startup settings. Resident implicit servers remain running;
-visiting implicit servers exit once no client leases or accepted work remain.
-Fresh implicit resident/visiting servers enable chat only. Fresh start/serve
-keep placement defaults: resident chat,talk,chore; visiting chat,talk.
-Roaming and standalone script lifetimes remain unchanged.
+[Hosting](hosting.md#server-lifetime-and-client-leases) owns shared-server
+acquisition, placement-dependent lifetimes, leases, generation guards, promotion,
+and cleanup. These control whether a server remains available; they do not
+change the execution semantics of an accepted Run.
 
-Use `too start <agent-or-ref>` for unattended availability. It promotes an
-automatic visiting server in place or reuses a persistent server, reports actual
-drivers, and never adds drivers implicitly. To change a running server's drivers
-or startup configuration, stop and restart it with the desired options.
-`too stop <agent-or-ref>` explicitly ends the current generation and active work;
-clients do not relaunch it. Start cannot detach foreground serve.
-
-The server owns idle exit, with no supervisor process. Automatic clients renew
-leases every five seconds; leases expire fifteen seconds after the last renewal.
-Once a renewal confirms promotion to persistent, clients stop renewing. Expired
-clients stop submitting work, including after suspension or a delayed response.
-Accepted pending/running roots, independent spawn roots, owned async children, and terminal
-cleanup retain the server even without clients. Client transport loss never
-cancels accepted work. Startup has a thirty-second hold, consumed on the first
-client registration. Docker removes automatic containers on exit; history and diagnostics
-remain on host mounts. Host staging cleanup may wait for a later management call.
-
-Generation checks reject delayed requests to replacement servers. Steer/cancel
-attach only to a healthy live owner and pin the target invocation; stale history
-cannot start a replacement or redirect a control to another invocation. Fork/rewind --chat
-retains one acquisition through both phases. Legacy servers stay unmanaged and
-retained; stop/restart them to use lifecycle promotion and guarded controls.
-
-Chat checks health/profile before use. It retains session defaults locally and
-uses HTTP for runtime/model/runnable inspection, thread creation, and result
-reads. Failed cursor recovery falls back to durable detail without repeating
-execution. Lease-loss errors include the last accepted Chat run ID when known.
-Rerun observation failures report accepted run IDs without
-canceling; explicit interruption requests cancellation. Standalone scripts remain
-separate: inactive host execution is embedded and script-created guests stop on exit.
-
-The process-local executor remains the execution engine:
-
-`RunExecutor` is the public run entry point:
-
-```text
-start()                                             -> None
-run(RunSpec, run_id?, request_id?, tracer?)         -> LocalRunHandle
-cancel(run_id, timing, request_id?, reason?, expected_control?) -> ControlRecord
-steer(run_id, message, timing, request_id?, expected_control?)   -> ControlRecord
-cancel_control(run_id, index)                        -> ControlRecord
-await stop()                                         -> None
-```
+The process-local executor is the execution engine. [Executor](executor.md#public-boundary)
+identifies its public operations and links the exact signatures. Transport
+requests are resolved to RunSpec before acceptance.
 
 `start()` is an idempotent lifecycle hook. `run()` accepts durable truth,
 creates the owner task, and immediately
@@ -310,6 +272,14 @@ public control status.
 
 
 ## Threads
+
+The thread's `horizon` optionally points to a valid compact-summary producer
+Run or successful summary Model Step. A committed compact control publishes that
+horizon for subsequent recall while retaining physical history. An unusable
+horizon contributes no summary; history reads do not silently execute compaction.
+[Models](models.md#automatic-compaction-configuration) owns budgets and
+[runs/compact.py](../src/toolang/execution/executor/runs/compact.py) owns the
+recorded batched compaction loop.
 
 `ThreadManager` synchronously performs `create()`, `fork()`, and `rewind()`.
 Create and fork return the newly allocated thread id. Rewind changes the

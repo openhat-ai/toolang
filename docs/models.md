@@ -180,9 +180,9 @@ progress. Fixed instructions and current execution input must still fit.
 
 Fields inherit independently: agent config, root config, built-in defaults.
 Override only the model with `TOOLANG_COMPACT_MODEL='openai/gpt-5 effort=low'`
-or `too alice run --compact-model 'openai/gpt-5 effort=low'`. Model precedence is
+or `too start alice --compact-model 'openai/gpt-5 effort=low'`. Model precedence is
 CLI, environment, agent config, root config, then the thread model.
-`--compact-model` also applies to `start` and `chat` when starting a runtime;
+`--compact-model` also applies to `serve` and `chat` when starting a runtime;
 it cannot reconfigure an already running agent. Accepted Runs retain their
 captured configuration. The [compaction design](plans/persist-batched-compaction-run.md)
 describes execution, batching, durable coverage, and history adoption.
@@ -301,17 +301,11 @@ precedence; other provider IDs are unchanged. The Messages adapter appends
 
 ## Adapter Plugins
 
-Adapter plugins use the `toolang.model_adapter` entry-point group and implement:
-
-```python
-class ModelAdapter(Protocol):
-    name: str
-    description: str | None
-    default_api: str | None
-
-    async def invoke(self, target, request) -> ModelCallResult: ...
-    async def stream(self, target, request, *, on_event) -> ModelCallResult: ...
-```
+Adapter plugins use the `toolang.model_adapter` entry-point group and implement
+the [Model Adapter contract](plugins.md#model-adapter). Both asynchronous call
+methods receive a resolved `Model`, a `ModelCall`, and keyword-only `environ`;
+streaming additionally receives keyword-only `on_event`. The canonical protocol
+is [base/protocols/model.py](../src/toolang/base/protocols/model.py).
 
 Built-in adapters are:
 
@@ -334,18 +328,22 @@ Adapters receive the effective connection, the resolved `Model`, and the
 `ModelCall`. They translate
 canonical messages and tools, normalize streaming, usage, cache, reasoning,
 and audio meters, and preserve protocol state needed by later calls. For
-example, the Generate Content adapter retains Gemini thought signatures in
-provider state and restores them on subsequent tool-call turns. The Messages
+example, the Generate Content adapter retains Gemini thought signatures on
+their original Parts and restores them on compatible subsequent tool-call turns. The Messages
 adapter likewise preserves signed Anthropic thinking and redacted-thinking
 blocks and replays them before the associated tool use.
 
-Canonical model-call resource controls are `effort` and `max_output`:
+Model selection expressions accept the convenience controls `effort` and
+`max_output`:
 
 ```text
 effort     = auto | LEVEL | TOKENS
 max_output = auto | TOKENS
 ```
 
+These expressions resolve to `ModelRequest.reasoning` and `ModelRequest.max_output`.
+A dispatched ModelCall instead carries `reasoning` and the resolved inclusive
+`max_output_tokens`; it does not carry an `effort` convenience field.
 Omitted controls inherit; `auto` cancels the inherited control. Automatic reasoning
 sends no control. Explicit effort, `none`, and token budgets may be attempted even
 when `reasoning_options` is missing. Enforce known constraints and exhaustive
@@ -383,7 +381,9 @@ extensions are not inferred.
 
 An external adapter should contain no provider matching table. If a new npm
 package needs to use it automatically, add that small mapping to the resolver;
-users can also select the adapter explicitly in provider configuration.
+a catalog can also declare the adapter explicitly through its provider or
+model connection declarations. Core `[models.providers.*]` overrides remain
+unsupported.
 
 ## Local Providers
 

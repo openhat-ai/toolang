@@ -80,15 +80,19 @@ filesystem paths do not determine remote availability.
     `api_version: 0`
   - `sandbox.driver`
   - the complete `sandbox.selector`
-  - the complete, unprojected `sandbox.instance` for Docker, otherwise `null`
+  - `sandbox.instance`: Docker's 12-character lowercase hexadecimal guest
+    identity, otherwise `null`; the full container ID stays in host lifecycle state
   - the host-plugin-supplied `sandbox.description` for non-Docker runtimes,
     otherwise `null`
 
 - environment summary
-`sandbox.description` is optional presentation metadata. Its absence or a `null`
-value does not block Chat: host execution falls back to the local host sandbox
-plugin description, while Docker continues to use `sandbox.instance`. Runtime
-profile readers ignore unknown additive fields. Lifecycle and pagination
+
+The profile endpoint validates sandbox metadata: Docker requires its 12-character
+instance and a null description; non-Docker runtimes require a valid description
+and a null instance. Invalid/missing required runtime metadata returns HTTP 500.
+Chat's reader tolerates an absent/null description in a supplied profile by using
+the local host-plugin fallback; that tolerance does not change server validation.
+Runtime profile readers ignore unknown additive fields. Lifecycle and pagination
 payloads share the agent API version; incompatible versions are rejected.
 
 Lease upsert/release and promotion accept `{"launch_id": "<generation>"}`.
@@ -105,7 +109,7 @@ renewal is independent of SSE; readers do not retain automatic servers. See
 shutdown eligibility, and failure handling.
 
 `GET /api/v0/models` returns the server's current effective
-`AgentSetup.models` collection. Runnable `models` directives are applied when a
+`AgentSetup.models_effective()` view. Runnable `models` directives are applied when a
 run starts, not by this inspection endpoint. The response includes:
 
 - `default`
@@ -131,7 +135,7 @@ million tokens and are `null` when the corresponding catalog price is absent.
 
 `GET /api/v0/models` accepts repeatable `query` parameters evaluated by the
 runtime model collection. `GET /api/v0/tools` uses the same convention and
-returns effective tool `ref`, structured `toolset`, `plugin`, and `description`
+returns effective tool `ref`, `toolset`, `plugin`, and `description`
 fields. Omitting
 `query` lists the complete effective collection. Repeated query values and
 comma-separated top-level matches form a union. Models use first matching
@@ -260,12 +264,17 @@ client creates a thread when needed, converts the interaction to the shared
 An existing chat thread can be passed directly to the authored endpoint; the
 client does not create another thread for every turn. The server resolves the
 request against its current setup and Agent State, including fallback
-selection, policy precedence, prompts, named input, and server-relative file
-includes. This keeps the Chat TUI and a future WebUI on the same run protocol
+selection, materialized policy, prompts, named input, and client-supplied file
+Parts. CLI clients discover includes with `/api/v0/runs/input-references`, read
+those files against procdir, then submit `attachments` and `source_revision`.
+The authored HTTP route treats an omitted attachment map as empty; a missing
+referenced key returns 422 rather than reading the server filesystem. See
+[client file inputs](#client-file-inputs).
+This keeps TUI and WebUI clients on the same run protocol
 without adding a chat-specific server vocabulary.
 
 The separate non-interactive `POST /api/v0/runs/stream` endpoint continues to
-accept a selected runnable and canonical percept parts such as:
+accept a selected runnable and canonical input Parts such as:
 
 - `text`
 - `image`
@@ -434,7 +443,7 @@ with a named `audience` parameter, plus an available route accepting high effort
   "runnable": {
     "ref": "agic:chat",
     "input": {
-      "_": "Summarize\n@notes.md",
+      "_": "Summarize these notes.",
       "audience": "maintainers"
     }
   },
@@ -472,7 +481,7 @@ no Local wrapper or dimension flag.
 See [Records](records.md) for output reference paths.
 
 The server reads setup and state once and validates the concrete runnable,
-model parameters, policy, input, prompts, named sources, and file includes
+model parameters, policy, input, prompts, named sources, and supplied file Parts
 before accepting the run. Reasoning effort is validated against the selected
 catalog route and replaces that target's complete reasoning choice. Named input
 names must be unique. Unknown fields and invalid combinations return `422`; a
@@ -492,11 +501,20 @@ validation of the complete request.
 `RunDetail` with a nonempty resolved output. An unknown thread and a known
 thread without a result return distinct `404` details.
 
-`POST /api/v0/runs/input-references` expands prompts and returns the selected
-State revision plus required file-reference strings without opening files.
-Clients can materialize these against their invocation directory and submit
-`attachments` with `source_revision`; changed source is rejected rather than
-silently reopening a different local file on the server.
+### Client file inputs
+
+`POST /api/v0/runs/input-references` accepts `runnable`, authored flat `input`,
+and optional `driver`. It expands prompts and returns `{state, references}`
+without opening files. Clients read those references against their invocation
+directory, then submit `attachments: {reference: Part}` and the returned State
+revision as `source_revision` on the authored Run request.
+
+The server requires every encountered include key in that map, including keys
+introduced by prompt expansion. Missing keys or changed source revisions reject
+admission with 422 and create no Run. With no includes the map may be empty;
+HTTP omission also becomes an empty map. Client-read bytes do not grant workspace
+access. Direct-value requests put already materialized Parts under runnable input
+instead of evaluating `@file` text. [Scripts](scripts.md#file-inputs) owns path origins.
 
 ### Live execution snapshots
 

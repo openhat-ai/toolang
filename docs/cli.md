@@ -37,7 +37,8 @@ scripts use their own layout and do not accept the global root override.
 
 Omitting RUNNABLE selects the unnamed entry; without one, it shows file help.
 `_`, `agic:_`, and `flow:_` explicitly select an unnamed entry. Help and progress
-label it `agic:` or `flow:` rather than exposing the internal lined lookup key.
+label it `agic:` or `flow:`. File help can also show `<entry:LINE>` as the entry's
+source identity; `_` remains the invocation selector.
 Script help does not read stdin, prepare State, or create execution records.
 Required input failures show the runnable's dynamic help before Run admission.
 
@@ -117,8 +118,9 @@ A Run ID selects its Thread; a Thread ID selects its active Run for steering/
 cancellation or its latest terminal root for rerun/fork/rewind. Rerun accepts a
 new root from the source invocation. Fork includes its anchor; rewind removes
 its anchor and the visible suffix. Only Chat threads are branchable.
-[Execution](execution.md) owns admission, durable effects, and server retention;
-[Chat](chat.md) owns session snapshots and queue behavior.
+[Execution](execution.md) owns admission and durable effects;
+[Hosting](hosting.md#server-lifetime-and-client-leases) owns server retention,
+and [Chat](chat.md) owns session snapshots and queue behavior.
 
 The Hub runs independently of an agent; bare `too hub` shows its instance status.
 [Messaging](messaging.md) owns Talk/Convo and shared rules. [Top](top.md) owns

@@ -36,8 +36,10 @@ client IDs and thread prefixes do not decide admission.
 
 Requests carry `client_id` and `request_id`; controls retain both. Client IDs
 identify caller instances, not thread owners. Reconnecting clients can use the
-same thread. Request identity is preserved across transport retries and retains
-its existing deduplication scope.
+same thread. A non-null request ID is unique across Run and Thread controls in
+the agent's execution store; it is not a general submission-replay key. Reconnect
+accepted work with GET instead of repeating POST. Talk batches and runtime operations have separate
+durable admission receipts; see [Execution](execution.md#run-execution).
 
 ## Chore scheduling
 
