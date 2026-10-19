@@ -77,6 +77,16 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Fixed
 
+- `too AGENT top` reads only the selected resident's status document, including
+  its temporary instances, without discovering peers or consulting the global
+  runtime registry, so unrelated discovery errors no longer invalidate its
+  totals.
+
+- `too top` pages completed roots on dedicated workers, so a slow page no longer
+  occupies live polling, and a failed supplemental history lookup preserves the
+  fresh snapshot and its totals, records `page_error`, and stays retryable
+  through normal PgDn paging.
+
 - `too top` fits short terminals: it keeps the function-key bar in the last
   row, hides the column heading and its sort targets below three rows, and
   compacts embedded help and details panels. In very short terminals table
