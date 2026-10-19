@@ -1,19 +1,26 @@
 # Current and recent activity
 
 `too top` observes the selected root's validated local resident, visiting and
-roaming inventory. `too alice top` selects one resident agent. Observation neither
-starts agents nor acquires server leases. Discovery refreshes every five seconds;
-known source paths remain in memory for eight hours after their last discovery.
-Each new Top session starts from the resident list and current validated instance
-registrations. It does not recover previously deregistered visiting/roaming
-instances from an earlier session or persist an additional source registry.
+roaming inventory. `too alice top` scopes discovery to that resident's status and
+matching registration references, including its temporary instances. Unrelated
+agents and registry entries cannot invalidate its totals; stopped or unresolved
+instances still registered to that resident remain part of its scope.
+Observation neither starts agents nor acquires server leases. Discovery refreshes
+every five seconds; known source paths remain in memory for eight hours after
+their last discovery.
+Each new team Top session starts from the resident list and current validated
+instance registrations. It does not recover previously deregistered
+visiting/roaming instances from an earlier session or persist an additional source registry.
 These retained sources contribute historical completions and usage only; their
 departure stops polling the old live endpoint and does not make current
 active-root coverage unavailable. Queued live requests are canceled; running
 requests may supply durable completions but cannot restore an obsolete live
 sample. Rediscovery updates the existing source binding without counting its
-history twice. Sources still in inventory retain the normal unavailable/stale
-live diagnostics. Instance departure never implies a Run's terminal status.
+history twice. Instances confirmed `not running` contribute zero active roots
+without live diagnostics; their durable completions and usage remain visible.
+Live diagnostics distinguish failed published endpoints from pending or
+unsupported observation.
+Instance departure or shutdown never implies a Run's terminal status.
 
 ```sh
 too top
@@ -28,23 +35,36 @@ positive polling interval in seconds (default `1`). JSON and non-TTY output take
 one snapshot. JSON includes per-source observations and a scope-wide `summary`;
 incomplete totals are null rather than partial values presented as complete.
 
-The header counts inventory placements, current active roots and recent terminal
-statuses, then model/tool calls, input/cached/output tokens and USD spend.
+The agents summary shows `N running, M total: R resident, V visiting, O roaming`.
+These are agent-instance counts, independent of root Runs: a running idle agent
+still counts as running, and multiple roots do not add agents. Installed stopped
+residents remain in total; retained departed sources contribute history only.
+Known preparing/starting instances are not yet running. Unknown liveness leaves
+running unknown while complete membership still supplies total and placements;
+unrelated driver metadata does not invalidate readable statistics.
+
+The other summaries count current active roots and recent terminal statuses,
+then model/tool calls, input/cached/output tokens and USD spend.
 The table combines active trees and recently completed roots. Row consumption is
 lifetime consumption; a parent Run includes descendants, while a Step shows only
 its own invocation facts. Large numeric values use compact units to keep columns
 aligned; USD spend uses four decimal places without an approximation marker.
 JSON retains source amounts and approximation metadata. Period and folds do not
 change these values. RUN always shows the full owning physical root ID. Terminal Runs show
-only their state. AGENT and source diagnostics show the existing instance name
+only their state. AGENT shows the existing instance name
 (for example, `aid@r70200d1f`) without the appended `#runtime_instance` ID.
 
 Interactive Top fills the terminal: a green table heading, deep cyan selected
-row, and cyan status/function-key bars anchored at the bottom. Fn numbers use
-white on black; action labels use black on cyan. The title, clock and summary
-fields have normal intensity and weight. Active roots and their entire visible
-subtrees use normal text; finished roots use dim text across the whole row,
-including when selected. Active roots have a leading `+` whether expanded or
+row, and one cyan function-key bar anchored at the bottom. Fn numbers use
+white on black; action labels use black on cyan. Labels compact at narrow widths,
+keeping F10 visible; all bindings remain available. There is no separate status
+line or error text in the footer. The title and clock keep normal intensity and
+weight. The summaries have two cells of left and right padding, with dim captions
+on the right. Only nonzero numeric values use cyan; zeros, unknown values, field
+names and punctuation retain normal foreground. Summaries wrap inside their
+padded columns, omitting captions when the terminal is too narrow. Active roots
+and their entire visible subtrees use normal text; finished roots use dim text
+across the whole row, including when selected. Active roots have a leading `+` whether expanded or
 collapsed. Child rows retain tree branches, and finished roots show only their
 state. The physical cursor stays hidden.
 
@@ -61,6 +81,17 @@ Step start; model tokens and cost belong to Step completion. Unfinished calls
 appear in live rows immediately and enter window counters after settlement.
 Unknown usage/pricing remains unknown. Offline readable stores still contribute
 durable usage and completions; disconnected live paths freeze and are marked stale.
+An inactive agent whose history store has not been created contributes zero
+completions and usage without creating a database. A previously observed store
+that disappears, or an existing unreadable/corrupt store, remains unavailable.
+
+Loading, window switches, samples older than five seconds, normal paging and
+missing provider usage/pricing do not produce error notices. Embedded execution
+without an HTTP endpoint may have unknown live coverage without an error.
+Only actual observation failures produce compact yellow notices between the
+scope and clock; raw source errors remain in JSON diagnostics. Metric sentences
+have no `partial`, `updating` or `unavailable` suffixes. Paging errors preserve
+known totals/rows and remain in JSON without a global notice.
 
 The read-only agent adapter exposes:
 
@@ -75,10 +106,13 @@ The read-only agent adapter exposes:
   directly. Usage workers are separate from inventory and live polling; obsolete
   window responses are discarded. Source read failures return HTTP 503.
 
-Completed-root paging runs separately from live polling and keeps its original
-completion bounds. Local observation resolves previously live root IDs through
-the source Stats reader when their completion falls outside the first page,
-without advancing the page cursor or loading results/errors. Window changes keep
+Completed-root paging uses separate workers so slow pages cannot occupy live
+polling capacity, and keeps its original completion bounds. Local observation
+resolves previously live root IDs through the source Stats reader when their
+completion falls outside the first page, without advancing the page cursor or
+loading results/errors. A failed supplemental
+lookup preserves the fresh HTTP snapshot and its totals, records `page_error`,
+and can be retried through normal PgDn paging. Window changes keep
 eligible terminal facts and selection while the new totals load; a late response
 from an older window cannot delay the selected window's next query.
 

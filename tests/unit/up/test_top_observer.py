@@ -4,6 +4,7 @@ from concurrent.futures import Future
 from contextlib import closing
 from threading import Event
 from dataclasses import replace
+import json
 
 import httpx
 import pytest
@@ -299,7 +300,7 @@ def test_slow_usage_never_blocks_live_or_marks_new_window_with_old_metrics(
     monkeypatch.setattr(
         top,
         "runtime_inventory",
-        lambda _: RuntimeInventory(
+        lambda _, **kwargs: RuntimeInventory(
             RuntimeInstanceSnapshot((source.instance,)), (source,)
         ),
     )
@@ -456,23 +457,16 @@ def test_durable_completion_retires_stale_live_tree_after_recent_expiry(tmp_path
         observer.close()
 
 
-def test_inventory_removal_keeps_known_sources_for_windows_and_single_scope_filters(
-    tmp_path,
-):
+def test_inventory_removal_keeps_unique_known_sources_for_windows(tmp_path):
     source = binding(tmp_path)
     observer = top.TopObserver(
         tmp_path, agent="alice", period=3600, recent=300, refresh=1
     )
-    visitor = RuntimeSource(
-        RuntimeInstance("alice", "visiting", None, "visitor", "running", ()),
-        source.layout,
-        None,
-    )
     try:
         observer.discovery_job = resolved(
             RuntimeInventory(
-                RuntimeInstanceSnapshot((source.instance, visitor.instance)),
-                (source, source, visitor),
+                RuntimeInstanceSnapshot((source.instance,)),
+                (source, source),
             )
         )
         observer._inventory(NOW)
@@ -959,3 +953,614 @@ def test_page_from_a_previous_epoch_cannot_restore_old_rows_or_cursor(tmp_path):
         assert state.value.completed is not None and not state.value.completed.roots
     finally:
         observer.close()
+
+
+@pytest.mark.parametrize("mode", ["new", "empty", "corrupt"])
+def test_inactive_agent_history_is_empty_only_when_uninitialized(tmp_path, mode):
+    layout = AgentLayout.resident(tmp_path, "alice")
+    layout.home.mkdir(parents=True)
+    if mode == "empty":
+        with closing(RunStore(layout.run_store)):
+            pass
+    elif mode == "corrupt":
+        layout.run_store.parent.mkdir(parents=True)
+        layout.run_store.write_text("not sqlite")
+    with closing(
+        top.TopObserver(tmp_path, agent=None, period=3600, recent=300, refresh=60)
+    ) as observer:
+        snapshot = observer.once()
+        summary = snapshot.summary
+        assert summary.running == 0 and summary.total == 1 and summary.active == 0
+        if mode == "corrupt":
+            assert summary.completed is None and summary.usage is None
+            assert (
+                snapshot.sources[0].activity_error and snapshot.sources[0].usage_error
+            )
+        else:
+            assert summary.completed is not None and summary.completed.total == 0
+            assert summary.usage == Metrics()
+            assert (
+                not snapshot.sources[0].activity_error
+                and not snapshot.sources[0].usage_error
+            )
+        assert layout.run_store.exists() == (mode != "new")
+        assert not layout.stats_store.exists()
+
+
+def test_lost_history_never_becomes_empty_after_a_successful_read(tmp_path):
+    source = replace(
+        binding(tmp_path),
+        instance=replace(binding(tmp_path).instance, state="not running"),
+        endpoint=None,
+    )
+    with closing(RunStore(source.layout.run_store)):
+        pass
+    state = top._Source(
+        source,
+        NOW,
+        SourceActivity(identity="source", label="alice", placement="resident"),
+    )
+    assert state.read_usage(source, 3600, lambda: False).metrics == Metrics()
+    source.layout.run_store.unlink()
+    with pytest.raises(StatsUnavailable):
+        state.read_activity(source, 300, previous=None, cancelled=lambda: False)
+    with pytest.raises(StatsUnavailable):
+        state.read_usage(source, 3600, lambda: False)
+    assert not source.layout.run_store.exists()
+
+
+def test_published_endpoint_failure_is_distinct_from_an_embedded_runtime(
+    tmp_path, monkeypatch
+):
+    source = binding(tmp_path)
+    with closing(RunStore(source.layout.run_store)):
+        pass
+    calls = []
+
+    def offline(*args, **kwargs):
+        calls.append(args)
+        raise httpx.ConnectError("connection refused")
+
+    monkeypatch.setattr(top.httpx, "get", offline)
+    result = top.read_activity(replace(source, endpoint=None), 300)
+    assert result.live is None and result.live_error is None and not calls
+    result = top.read_activity(source, 300)
+    assert result.live is None and result.live_error == "connection refused"
+    assert result.completed.counts.total == 0 and len(calls) == 1
+    response = httpx.Response(
+        200,
+        json=ActivitySnapshot(
+            live=LiveSnapshot("epoch", timestamp(NOW), ()), completed=completed()
+        ).model_dump(mode="json"),
+        request=httpx.Request("GET", source.endpoint),
+    )
+    monkeypatch.setattr(top.httpx, "get", lambda *args, **kwargs: response)
+    result = top.read_activity(source, 300)
+    assert result.live is not None and result.live_error is None
+
+
+def test_once_reports_initial_discovery_failure_without_fabricating_zero(
+    tmp_path, monkeypatch
+):
+    def denied(_, **kwargs):
+        raise PermissionError("permission denied")
+
+    monkeypatch.setattr(top, "runtime_inventory", denied)
+    with closing(
+        top.TopObserver(tmp_path, agent=None, period=3600, recent=300, refresh=60)
+    ) as observer:
+        snapshot = observer.once()
+        assert snapshot.summary.total is None and snapshot.summary.running is None
+        assert snapshot.inventory.diagnostics == ("permission denied",)
+
+
+def test_live_error_recovers_and_obsolete_failure_cannot_restore_it(tmp_path):
+    source = binding(tmp_path)
+    state = top._Source(
+        source,
+        NOW,
+        SourceActivity(identity="source", label="alice", placement="resident"),
+    )
+    state.activity_recent = 300
+    with closing(
+        top.TopObserver(tmp_path, agent=None, period=3600, recent=300, refresh=60)
+    ) as observer:
+        state.activity = resolved(
+            ActivitySnapshot(
+                live=None, completed=completed(), live_error="connection refused"
+            )
+        )
+        observer._collect(state, NOW)
+        assert state.value.live_error == "connection refused" and state.value.live_stale
+        state.activity = resolved(
+            ActivitySnapshot(
+                live=LiveSnapshot("epoch", timestamp(NOW), ()), completed=completed()
+            )
+        )
+        observer._collect(state, NOW)
+        assert state.value.live_error is None and not state.value.live_stale
+        state.activity = Future()
+        state.activity.set_running_or_notify_cancel()
+        state.rebind(replace(source, endpoint=None))
+        state.activity.set_result(
+            ActivitySnapshot(
+                live=None,
+                completed=completed(),
+                live_error="obsolete failure",
+                page_error="obsolete lookup failure",
+            )
+        )
+        observer._collect(state, NOW)
+        assert state.value.live_error is None
+        assert state.value.page_error is None
+
+
+def test_unreadable_store_metadata_cannot_be_treated_as_new_history(
+    tmp_path, monkeypatch
+):
+    source = replace(
+        binding(tmp_path),
+        instance=replace(binding(tmp_path).instance, state="not running"),
+        endpoint=None,
+    )
+    state = top._Source(
+        source,
+        NOW,
+        SourceActivity(identity="source", label="alice", placement="resident"),
+    )
+    original = type(source.layout.run_store).stat
+
+    def denied(path, *args, **kwargs):
+        if path == source.layout.run_store:
+            raise PermissionError("permission denied")
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(type(source.layout.run_store), "stat", denied)
+    with pytest.raises(PermissionError):
+        state.read_usage(source, 3600, lambda: False)
+
+
+def test_healthy_endpoint_does_not_require_readable_local_store_metadata(
+    tmp_path, monkeypatch
+):
+    source = binding(tmp_path)
+    state = top._Source(
+        source,
+        NOW,
+        SourceActivity(identity="source", label="alice", placement="resident"),
+    )
+    original = type(source.layout.run_store).stat
+
+    def denied(path, *args, **kwargs):
+        if path == source.layout.run_store:
+            raise PermissionError("permission denied")
+        return original(path, *args, **kwargs)
+
+    expected = ActivitySnapshot(
+        live=LiveSnapshot("epoch", timestamp(NOW), ()), completed=completed()
+    )
+    response = httpx.Response(
+        200,
+        json=expected.model_dump(mode="json"),
+        request=httpx.Request("GET", source.endpoint),
+    )
+    monkeypatch.setattr(type(source.layout.run_store), "stat", denied)
+    monkeypatch.setattr(top.httpx, "get", lambda *args, **kwargs: response)
+    assert (
+        state.read_activity(source, 300, previous=None, cancelled=lambda: False)
+        == expected
+    )
+
+
+def test_http_history_cannot_become_uninitialized_after_agent_stops(
+    tmp_path, monkeypatch
+):
+    source = binding(tmp_path)
+    state = top._Source(
+        source,
+        NOW,
+        SourceActivity(identity="source", label="alice", placement="resident"),
+    )
+    expected = ActivitySnapshot(
+        live=LiveSnapshot("epoch", timestamp(NOW), ()),
+        completed=completed().model_copy(
+            update={"counts": CompletionCounts(succeeded=3)}
+        ),
+    )
+    response = httpx.Response(
+        200,
+        json=expected.model_dump(mode="json"),
+        request=httpx.Request("GET", source.endpoint),
+    )
+    monkeypatch.setattr(top.httpx, "get", lambda *args, **kwargs: response)
+    assert (
+        state.read_activity(source, 300, previous=None, cancelled=lambda: False)
+        == expected
+    )
+    stopped = replace(
+        source, instance=replace(source.instance, state="not running"), endpoint=None
+    )
+    state.rebind(stopped)
+    with pytest.raises(StatsUnavailable):
+        state.read_activity(stopped, 300, previous=None, cancelled=lambda: False)
+    with pytest.raises(StatsUnavailable):
+        state.read_usage(stopped, 3600, lambda: False)
+    assert not source.layout.run_store.exists()
+
+
+@pytest.mark.parametrize("recovered", [False, True])
+def test_failed_docker_batch_keeps_membership_and_readable_history(
+    tmp_path, monkeypatch, recovered
+):
+    from toolang.base.types.sandbox import SandboxRef
+    from toolang.up.instance import SandboxState
+    from toolang.up.process import AgentProcess, AgentStatus
+
+    layout = AgentLayout.resident(tmp_path, "alice")
+    layout.home.mkdir(parents=True)
+    with (
+        closing(RunStore(layout.run_store)),
+        RuntimeRegistration(
+            layout, toolang_root=tmp_path, drivers=frozenset()
+        ) as registration,
+    ):
+        SandboxState(
+            "docker:image",
+            SandboxRef("container", "http://localhost:7001", runtime_kind="container"),
+            registration.token,
+        ).save(layout.runtime_status)
+
+        def failed_batch(cls, owners):
+            assert len(owners) == 1
+            raise OSError("Docker inspection failed")
+
+        def inspect(self, **kwargs):
+            if not recovered:
+                raise OSError("container inspection failed")
+            return AgentStatus(
+                self.layout.name, "running", None, None, None, "docker:image"
+            )
+
+        monkeypatch.setattr(
+            AgentProcess, "cache_docker_states", classmethod(failed_batch)
+        )
+        monkeypatch.setattr(AgentProcess, "status", inspect)
+        with closing(
+            top.TopObserver(tmp_path, agent=None, period=3600, recent=300, refresh=60)
+        ) as observer:
+            snapshot = observer.once()
+    assert snapshot.summary.total == snapshot.summary.resident == 1
+    assert snapshot.summary.running == (1 if recovered else None)
+    assert snapshot.summary.completed == CompletionCounts()
+    assert snapshot.summary.usage == Metrics()
+    assert not snapshot.inventory.diagnostics
+    assert bool(snapshot.inventory.instances[0].diagnostic) == (not recovered)
+
+
+@pytest.mark.parametrize("agent", [None, "alice"])
+@pytest.mark.parametrize(
+    "fault",
+    [
+        "peer",
+        "registry",
+        "enumeration",
+        "own_metadata",
+        "own_reference",
+        "same_name_roaming",
+    ],
+)
+def test_agent_scope_isolates_discovery_but_preserves_its_own_failures(
+    tmp_path, monkeypatch, agent, fault
+):
+    from contextlib import ExitStack
+
+    with ExitStack() as stack:
+        for name in ("alice", "bob"):
+            layout = AgentLayout.resident(tmp_path, name)
+            layout.home.mkdir(parents=True)
+            stack.enter_context(closing(RunStore(layout.run_store)))
+        alice = AgentLayout.resident(tmp_path, "alice")
+        temporary = replace(alice, instance="one")
+        stack.enter_context(closing(RunStore(temporary.run_store)))
+        own_registration = stack.enter_context(
+            RuntimeRegistration(temporary, toolang_root=tmp_path, drivers=frozenset())
+        )
+        bob = AgentLayout.resident(tmp_path, "bob")
+        stack.enter_context(
+            RuntimeRegistration(bob, toolang_root=tmp_path, drivers=frozenset())
+        )
+        if fault == "peer":
+            document = json.loads(bob.runtime_status.read_text())
+            document["instances"]["bad"] = []
+            bob.runtime_status.write_text(json.dumps(document))
+        elif fault == "registry":
+            (tmp_path / ".runtime" / "instances" / "broken.json").write_text("invalid")
+        elif fault == "own_reference":
+            reference = json.loads(own_registration.path.read_text())
+            reference["status"] = str(bob.runtime_status)
+            own_registration.path.write_text(json.dumps(reference))
+        elif fault == "same_name_roaming":
+            roaming = AgentLayout.roaming(tmp_path / "alice.too")
+            stack.enter_context(closing(RunStore(roaming.run_store)))
+            registration = stack.enter_context(
+                RuntimeRegistration(roaming, toolang_root=tmp_path, drivers=frozenset())
+            )
+            reference = json.loads(registration.path.read_text())
+            reference["version"] = -1
+            registration.path.write_text(json.dumps(reference))
+        elif fault == "enumeration":
+            original_iterdir = type(tmp_path).iterdir
+
+            def denied_iterdir(path):
+                if path == tmp_path / "agents":
+                    raise PermissionError("cannot enumerate resident peers")
+                return original_iterdir(path)
+
+            monkeypatch.setattr(type(tmp_path), "iterdir", denied_iterdir)
+        else:
+            original_stat = type(tmp_path).stat
+
+            def denied_stat(path, *args, **kwargs):
+                if path == alice.home:
+                    raise PermissionError("selected home is unreadable")
+                return original_stat(path, *args, **kwargs)
+
+            monkeypatch.setattr(type(tmp_path), "stat", denied_stat)
+        with closing(
+            top.TopObserver(tmp_path, agent=agent, period=3600, recent=300, refresh=60)
+        ) as observer:
+            snapshot = observer.once()
+        if agent is None or fault in ("own_metadata", "own_reference"):
+            assert snapshot.summary.total is None and snapshot.inventory.diagnostics
+        else:
+            assert not snapshot.inventory.diagnostics
+            assert snapshot.summary.total == snapshot.summary.resident == 2
+            assert snapshot.summary.running == 1
+            assert snapshot.summary.completed == CompletionCounts()
+            assert snapshot.summary.usage == Metrics()
+            assert {source.label for source in snapshot.sources} == {
+                "alice",
+                "alice#one",
+            }
+
+
+@pytest.mark.parametrize("agent", [None, "alice"])
+@pytest.mark.parametrize(
+    "state", ["stopped", "missing_document", "missing_entry", "linked_stopped"]
+)
+def test_scopes_agree_on_registered_residents_when_status_changes(
+    tmp_path, agent, state
+):
+    from toolang.up.instance import update_instance
+
+    layout = AgentLayout.resident(tmp_path, "alice")
+    layout.home.mkdir(parents=True)
+    instance = replace(layout, instance="one")
+    with (
+        closing(RunStore(layout.run_store)),
+        closing(RunStore(instance.run_store)),
+        RuntimeRegistration(instance, toolang_root=tmp_path, drivers=frozenset()),
+    ):
+        original = instance.runtime_status.read_bytes()
+        try:
+            if state in ("stopped", "linked_stopped"):
+                update_instance(
+                    instance.runtime_status,
+                    lambda entry: entry["workload"].update(status="stopped", pid=None),
+                    instance="one",
+                )
+                if state == "linked_stopped":
+                    target = instance.runtime_status.with_name("linked-status.json")
+                    instance.runtime_status.rename(target)
+                    instance.runtime_status.symlink_to(target)
+            elif state == "missing_document":
+                instance.runtime_status.unlink()
+            else:
+                document = json.loads(original)
+                document["instances"].pop("one")
+                instance.runtime_status.write_text(json.dumps(document))
+            with closing(
+                top.TopObserver(
+                    tmp_path, agent=agent, period=3600, recent=300, refresh=60
+                )
+            ) as observer:
+                snapshot = observer.once()
+            assert snapshot.summary.total == snapshot.summary.resident == 2
+            assert snapshot.summary.running == (
+                0 if state in ("stopped", "linked_stopped") else None
+            )
+            assert snapshot.summary.completed == CompletionCounts()
+            assert snapshot.summary.usage == Metrics()
+            assert {source.label for source in snapshot.sources} == {
+                "alice",
+                "alice#one",
+            }
+        finally:
+            instance.runtime_status.write_bytes(original)
+
+
+@pytest.mark.parametrize("agent", [None, "alice"])
+def test_resident_scope_excludes_roaming_instances_with_the_same_home(tmp_path, agent):
+    root = tmp_path / ".toolang"
+    resident = AgentLayout.resident(root, "alice")
+    resident.home.mkdir(parents=True)
+    roaming = replace(AgentLayout.roaming(tmp_path / "alice.too"), instance="inline")
+    assert resident.home == roaming.home
+    with (
+        closing(RunStore(resident.run_store)),
+        closing(RunStore(roaming.run_store)),
+        RuntimeRegistration(roaming, toolang_root=root, drivers=frozenset()),
+        closing(
+            top.TopObserver(root, agent=agent, period=3600, recent=300, refresh=60)
+        ) as observer,
+    ):
+        snapshot = observer.once()
+    assert snapshot.summary.total == (2 if agent is None else 1)
+    assert snapshot.summary.running == (1 if agent is None else 0)
+    assert {source.placement for source in snapshot.sources} == (
+        {"resident", "roaming"} if agent is None else {"resident"}
+    )
+
+
+@pytest.mark.parametrize("agent", [None, "alice"])
+@pytest.mark.parametrize("error", [StatsUnavailable, PermissionError])
+def test_failed_retired_lookup_preserves_http_snapshot_and_retries_as_paging(
+    tmp_path, monkeypatch, agent, error
+):
+    from toolang.cli.common.top_view import TopView
+
+    source = binding(tmp_path)
+    with closing(RunStore(source.layout.run_store)) as store:
+        for identity in [*(f"run_{index:03}" for index in range(100)), "run_zz"]:
+            project_run_start(
+                store,
+                run_id=identity,
+                thread_id="chat",
+                origin="chat",
+                input=Message.user("fixture"),
+                started_at=timestamp(NOW - 10),
+            )
+            store.finish_run(
+                run_id=identity, finished_at=timestamp(NOW), report=RunReport()
+            )
+        with top.recent_source(source.layout.run_store) as reader:
+            reader.pin()
+            first = reader.completed(now=NOW, recent=300)
+        root = RunNode("run_zz", None, "agic:work", "running", timestamp(NOW - 10))
+        previous = LiveSnapshot(
+            "epoch", timestamp(NOW - 1), (LiveTreeSnapshot(root.id, "chat", (root,)),)
+        )
+        fresh = LiveSnapshot("epoch", timestamp(NOW), ())
+        response = httpx.Response(
+            200,
+            json=ActivitySnapshot(live=fresh, completed=first).model_dump(mode="json"),
+            request=httpx.Request("GET", source.endpoint),
+        )
+        monkeypatch.setattr(top.httpx, "get", lambda *args, **kwargs: response)
+        monkeypatch.setattr(top.time, "time", lambda: NOW)
+        state = top._Source(
+            source,
+            NOW,
+            SourceActivity(
+                identity="source", label="alice", placement="resident", live=previous
+            ),
+        )
+        state.next_usage = NOW + 3600
+        state.activity_recent = 300
+        with closing(
+            top.TopObserver(tmp_path, agent=agent, period=3600, recent=300, refresh=60)
+        ) as observer:
+            observer.sources["source"] = state
+            observer.inventory = RuntimeInstanceSnapshot((source.instance,))
+            observer.discovered = True
+            observer.next_discovery = NOW + 3600
+            with monkeypatch.context() as denied:
+
+                def unavailable(*args, **kwargs):
+                    raise error("retired lookup unavailable")
+
+                denied.setattr(top, "recent_source", unavailable)
+                state.activity = resolved(
+                    state.read_activity(
+                        source, 300, previous=previous, cancelled=lambda: False
+                    )
+                )
+            snapshot = observer.tick()
+            assert snapshot.summary.active == 0
+            assert (
+                snapshot.summary.completed is not None
+                and snapshot.summary.completed.total == 101
+            )
+            assert (
+                snapshot.sources[0].live == fresh and not snapshot.sources[0].live_stale
+            )
+            assert snapshot.sources[0].activity_error is None
+            assert snapshot.sources[0].page_error == "retired lookup unavailable"
+            assert not TopView().notices(snapshot)
+            observer.more()
+            observer.tick()
+            assert state.page is not None
+            state.page.result(timeout=2)
+            recovered = observer.tick()
+            assert recovered.sources[0].completed is not None
+            assert {node.id for node in recovered.sources[0].completed.roots} == {
+                node.id for node in first.roots
+            } | {root.id}
+            assert recovered.sources[0].page_error is None
+
+
+@pytest.mark.parametrize("agent", [None, "alice"])
+@pytest.mark.parametrize("count", [1, 8])
+def test_slow_completion_pages_cannot_starve_live_polls(
+    tmp_path, monkeypatch, agent, count
+):
+    release, started = Event(), Event()
+    now = [NOW]
+
+    def page(*args):
+        started.set()
+        assert release.wait(5)
+        return completed()
+
+    def activity(*args, **kwargs):
+        return ActivitySnapshot(
+            live=LiveSnapshot("epoch", timestamp(now[0]), ()), completed=completed()
+        )
+
+    monkeypatch.setattr(top, "read_page", page)
+    monkeypatch.setattr(top, "read_activity", activity)
+    monkeypatch.setattr(top.time, "time", lambda: now[0])
+    with closing(
+        top.TopObserver(tmp_path, agent=agent, period=3600, recent=300, refresh=60)
+    ) as observer:
+        observer.next_discovery = NOW + 3600
+        for index in range(count):
+            source = binding(tmp_path)
+            source = replace(
+                source,
+                instance=replace(
+                    source.instance,
+                    identity=f"source{index}",
+                    runtime_instance=f"slot{index}",
+                ),
+                layout=replace(source.layout, instance=f"slot{index}"),
+            )
+            state = top._Source(
+                source,
+                NOW,
+                SourceActivity(
+                    identity=source.instance.identity,
+                    label=source.instance.label,
+                    placement="resident",
+                    live=LiveSnapshot("epoch", timestamp(NOW), ()),
+                ),
+            )
+            state.next_activity = state.next_usage = NOW + 3600
+            state.cursor, state.cursor_at = (timestamp(NOW), "run_099"), NOW
+            state.request_page = True
+            observer.sources[source.instance.identity] = state
+        try:
+            observer.tick()
+            assert started.wait(2)
+            now[0] += 1
+            for state in observer.sources.values():
+                state.next_activity = 0
+            observer.tick()
+            for state in observer.sources.values():
+                assert state.activity is not None
+                assert state.activity.result(timeout=2).live is not None
+            snapshot = observer.tick()
+            assert all(
+                source.live is not None and source.live.observed_at == timestamp(now[0])
+                for source in snapshot.sources
+            )
+            assert any(
+                state.page is not None and not state.page.done()
+                for state in observer.sources.values()
+            )
+        finally:
+            release.set()
+            for state in observer.sources.values():
+                for job in (state.page, state.activity):
+                    if job is not None:
+                        job.result(timeout=2)

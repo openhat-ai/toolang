@@ -15,6 +15,8 @@ class ActivitySnapshot(BaseModel):
     live: LiveSnapshot | None
     completed: CompletedRoots
     retired: tuple[RunNode, ...] = ()
+    live_error: str | None = None
+    page_error: str | None = None
 
 
 class SourceActivity(BaseModel):
@@ -23,6 +25,7 @@ class SourceActivity(BaseModel):
     placement: AgentPlacement
     live: LiveSnapshot | None = None
     live_stale: bool = True
+    live_error: str | None = None
     completed: CompletedRoots | None = None
     usage: RecentUsage | None = None
     activity_error: str | None = None
@@ -31,6 +34,8 @@ class SourceActivity(BaseModel):
 
 
 class TopSummary(BaseModel):
+    running: int | None
+    total: int | None
     resident: int | None
     visiting: int | None
     roaming: int | None
@@ -48,17 +53,30 @@ class TopSnapshot(BaseModel):
     sources: tuple[SourceActivity, ...]
     inventory_updating: bool = False
 
+    @property
+    def membership_unknown(self) -> bool:
+        return self.inventory_updating or bool(self.inventory.diagnostics)
+
+    @property
+    def live_identities(self) -> set[str]:
+        """Instances whose active roots still require live observation."""
+        return {
+            item.identity
+            for item in self.inventory.instances
+            if item.needs_live_observation
+        }
+
     @computed_field
     @property
     def summary(self) -> TopSummary:
-        unknown = self.inventory_updating or self.inventory.partial
+        unknown = self.membership_unknown
         counts = [
             None
             if unknown
             else sum(item.placement == placement for item in self.inventory.instances)
             for placement in ("resident", "visiting", "roaming")
         ]
-        current = {item.identity for item in self.inventory.instances}
+        current = self.live_identities
         live_sources = {
             source.identity: source
             for source in self.sources
@@ -95,6 +113,14 @@ class TopSnapshot(BaseModel):
                 }
             )
         return TopSummary(
+            running=None
+            if unknown
+            or any(
+                item.state == "unknown" and item.identity in current
+                for item in self.inventory.instances
+            )
+            else sum(item.state == "running" for item in self.inventory.instances),
+            total=None if unknown else len(self.inventory.instances),
             resident=counts[0],
             visiting=counts[1],
             roaming=counts[2],
@@ -104,7 +130,7 @@ class TopSnapshot(BaseModel):
         )
 
     def usage_total(self) -> Metrics | None:
-        if self.inventory_updating or self.inventory.partial or self._missing_sources():
+        if self.membership_unknown or self._missing_sources():
             return None
         result = Metrics()
         for source in self.sources:

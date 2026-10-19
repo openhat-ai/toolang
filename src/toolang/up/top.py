@@ -7,7 +7,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 import time
-from threading import Event
+from threading import Event, Lock
 
 import httpx
 
@@ -15,8 +15,8 @@ from toolang.api.version import AGENT_API_VERSION
 from toolang.execution.schemas import LiveSnapshot, RunNode
 from toolang.stats.errors import StatsUnavailable
 from toolang.stats.recent import recent_source, recent_usage
-from toolang.stats.schemas import CompletedRoots, RecentUsage
-from toolang.stats.types import seconds, timestamp
+from toolang.stats.schemas import CompletedRoots, CompletionCounts, RecentUsage
+from toolang.stats.types import Metrics, seconds, timestamp
 
 from .activity import activity_snapshot
 from .observation import (
@@ -35,6 +35,7 @@ def read_activity(
     previous: LiveSnapshot | None = None,
     cancelled: Callable[[], bool] | None = None,
 ) -> ActivitySnapshot:
+    live_error = None
     if source.endpoint:
         try:
             response = httpx.get(
@@ -45,6 +46,8 @@ def read_activity(
             )
             response.raise_for_status()
             result = ActivitySnapshot.model_validate(response.json())
+            if result.live is None:
+                result.live_error = "live snapshot is unavailable"
             if (
                 previous is not None
                 and result.live is not None
@@ -60,20 +63,24 @@ def read_activity(
                 if missing:
                     # Within one epoch, absence from live means the immutable
                     # terminal record was committed before the pinned boundary.
-                    with recent_source(
-                        source.layout.run_store, cancelled=cancelled
-                    ) as reader:
-                        reader.pin()
-                        result.retired = reader.completed_roots(
-                            now=seconds(result.completed.end),
-                            recent=recent,
-                            identities=missing,
-                        )
+                    try:
+                        with recent_source(
+                            source.layout.run_store, cancelled=cancelled
+                        ) as reader:
+                            reader.pin()
+                            result.retired = reader.completed_roots(
+                                now=seconds(result.completed.end),
+                                recent=recent,
+                                identities=missing,
+                            )
+                    except (StatsUnavailable, OSError, ValueError, RuntimeError) as exc:
+                        # Supplemental history must not invalidate a healthy sample.
+                        result.page_error = str(exc)
             return result
-        except (httpx.HTTPError, ValueError):
+        except (httpx.HTTPError, ValueError) as exc:
             # Preserve durable completions when the control plane disconnects.
-            pass
-    return activity_snapshot(
+            live_error = str(exc)
+    result = activity_snapshot(
         source.layout.run_store,
         recent=recent,
         known_roots=tuple(tree.root_run_id for tree in previous.trees)
@@ -81,6 +88,8 @@ def read_activity(
         else (),
         cancelled=cancelled,
     )
+    result.live_error = live_error
+    return result
 
 
 def read_page(
@@ -128,6 +137,66 @@ class _Source:
     cursor_at: int | None = None
     request_page: bool = False
     loaded: dict[str, RunNode] = field(default_factory=dict)
+    history_seen: bool = False
+    history_lock: Lock = field(default_factory=Lock, repr=False)
+
+    def empty_history(self, binding: RuntimeSource) -> bool:
+        # Workers share this fact so a lost established store never becomes zero.
+        with self.history_lock:
+            try:
+                binding.layout.run_store.stat()
+            except FileNotFoundError:
+                return (
+                    not self.history_seen
+                    and not binding.instance.needs_live_observation
+                )
+            self.history_seen = True
+            return False
+
+    def read_activity(
+        self,
+        binding: RuntimeSource,
+        recent: int,
+        *,
+        previous: LiveSnapshot | None,
+        cancelled: Callable[[], bool],
+    ) -> ActivitySnapshot:
+        try:
+            empty = self.empty_history(binding)
+        except OSError:
+            # A published endpoint can observe history independently of local I/O.
+            if not binding.endpoint:
+                raise
+            empty = False
+        if empty:
+            now = int(time.time())
+            return ActivitySnapshot(
+                live=None,
+                completed=CompletedRoots(
+                    observed_at=timestamp(now),
+                    start=timestamp(now - recent),
+                    end=timestamp(now),
+                    counts=CompletionCounts(),
+                    roots=(),
+                ),
+            )
+        result = read_activity(binding, recent, previous=previous, cancelled=cancelled)
+        with self.history_lock:
+            self.history_seen = True
+        return result
+
+    def read_usage(
+        self, binding: RuntimeSource, period: int, cancelled: Callable[[], bool]
+    ) -> RecentUsage:
+        if self.empty_history(binding):
+            now = int(time.time())
+            return RecentUsage(
+                observed_at=timestamp(now),
+                start=timestamp(now - period),
+                end=timestamp(now),
+                metrics=Metrics(),
+            )
+        return read_usage(binding, period, cancelled)
 
     def rebind(self, binding: RuntimeSource) -> None:
         self.binding = binding
@@ -135,6 +204,7 @@ class _Source:
         # live sample belongs to the previous binding, even after rediscovery.
         self.activity_obsolete = True
         self.value.live_stale = True
+        self.value.live_error = None
         self.next_activity = 0
         if self.activity is not None and self.activity.cancel():
             self.activity = None
@@ -159,6 +229,9 @@ class TopObserver:
         self.usage_pool = ThreadPoolExecutor(
             max_workers=4, thread_name_prefix="top-usage"
         )
+        self.page_pool = ThreadPoolExecutor(
+            max_workers=2, thread_name_prefix="top-page"
+        )
         self.discovery_job: Future[RuntimeInventory] | None = None
         self.next_discovery = 0.0
         self.discovered = False
@@ -166,7 +239,7 @@ class TopObserver:
 
     def close(self) -> None:
         self.stopped.set()
-        for pool in (self.discovery, self.live_pool, self.usage_pool):
+        for pool in (self.discovery, self.live_pool, self.usage_pool, self.page_pool):
             pool.shutdown(wait=False, cancel_futures=True)
 
     def set_period(self, period: int) -> None:
@@ -200,12 +273,7 @@ class TopObserver:
             try:
                 result = self.discovery_job.result()
                 previous_current = {item.identity for item in self.inventory.instances}
-                current = {
-                    item.identity: item
-                    for item in result.snapshot.instances
-                    if self.agent is None
-                    or (item.placement == "resident" and item.name == self.agent)
-                }
+                current = {item.identity: item for item in result.snapshot.instances}
                 unique: dict[str, RuntimeSource] = {}
                 for item in result.sources:
                     if item.instance.identity in current:
@@ -245,7 +313,9 @@ class TopObserver:
             self.discovery_job = None
             self.next_discovery = now + 5
         if self.discovery_job is None and now >= self.next_discovery:
-            self.discovery_job = self.discovery.submit(runtime_inventory, self.root)
+            self.discovery_job = self.discovery.submit(
+                runtime_inventory, self.root, agent=self.agent
+            )
         current = {item.identity for item in self.inventory.instances}
         for identity, source in list(self.sources.items()):
             if identity not in current and now - source.seen > 8 * 3600:
@@ -284,6 +354,11 @@ class TopObserver:
             )
 
     def _collect(self, source: _Source, now: float) -> None:
+        self._collect_activity(source, now)
+        self._collect_page(source, now)
+        self._collect_usage(source, now)
+
+    def _collect_activity(self, source: _Source, now: float) -> None:
         if source.activity is not None and source.activity.done():
             try:
                 result = source.activity.result()
@@ -302,12 +377,16 @@ class TopObserver:
                 source.value.live_stale = (
                     result.live is None or source.activity_obsolete
                 )
+                if not source.activity_obsolete:
+                    source.value.live_error = result.live_error
                 self._retire_live(source, (*result.completed.roots, *result.retired))
                 page = result.completed.roots
                 reset_cursor = bool(page) and page[-1].id not in source.loaded
                 if source.activity_recent == self.recent:
                     source.value.activity_error = None
                     source.value.completed = result.completed
+                    if result.page_error and not source.activity_obsolete:
+                        source.value.page_error = result.page_error
                     if page and (source.cursor is None or reset_cursor):
                         source.cursor = (page[-1].finished_at or "", page[-1].id)
                         source.cursor_at = seconds(result.completed.end)
@@ -325,6 +404,8 @@ class TopObserver:
                 and not source.activity_obsolete
                 else 0
             )
+
+    def _collect_page(self, source: _Source, now: float) -> None:
         if source.page is not None and source.page.done():
             current_page = source.page_recent == self.recent and source.page_epoch == (
                 source.value.live.epoch if source.value.live else None
@@ -346,6 +427,8 @@ class TopObserver:
                 if current_page:
                     source.value.page_error = str(exc)
             source.page = None
+
+    def _collect_usage(self, source: _Source, now: float) -> None:
         if source.usage is not None and source.usage.done():
             try:
                 result = source.usage.result()
@@ -369,7 +452,7 @@ class TopObserver:
                 source.activity_recent = self.recent
                 source.activity_obsolete = False
                 source.activity = self.live_pool.submit(
-                    read_activity,
+                    source.read_activity,
                     source.binding,
                     self.recent,
                     previous=source.value.live,
@@ -386,7 +469,7 @@ class TopObserver:
                     source.value.live.epoch if source.value.live else None
                 )
                 source.page_cursor = (source.cursor_at or int(now), source.cursor)
-                source.page = self.live_pool.submit(
+                source.page = self.page_pool.submit(
                     read_page,
                     source.binding,
                     self.recent,
@@ -397,7 +480,7 @@ class TopObserver:
             if source.usage is None and now >= source.next_usage:
                 source.usage_period = self.period
                 source.usage = self.usage_pool.submit(
-                    read_usage, source.binding, self.period, self.stopped.is_set
+                    source.read_usage, source.binding, self.period, self.stopped.is_set
                 )
         return TopSnapshot(
             observed_at=timestamp(int(now)),
@@ -415,7 +498,10 @@ class TopObserver:
         # One snapshot waits for each first result, unlike interactive refreshes.
         self.tick()
         assert self.discovery_job is not None
-        self.discovery_job.result()
+        try:
+            self.discovery_job.result()
+        except (OSError, ValueError, RuntimeError):
+            pass  # _inventory preserves discovery diagnostics in the snapshot.
         self.tick()
         for source in self.sources.values():
             for job in (source.activity, source.usage):

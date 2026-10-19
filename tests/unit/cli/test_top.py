@@ -305,10 +305,10 @@ def test_header_fixed_fields_right_edge_footer_and_normal_width_clipping():
     view = TopView()
     header = view.header(snapshot, 140)
     assert header[0].cell_len == 140
-    assert header[2].plain.endswith("agents") and header[3].plain.endswith(
-        "runs last 5m"
-    )
-    assert header[4].plain.endswith("stats last 1h")
+    assert header[2].plain.rstrip().endswith("agents") and header[
+        3
+    ].plain.rstrip().endswith("runs last 5m")
+    assert header[4].plain.rstrip().endswith("stats last 1h")
     assert all(line.cell_len == 140 for line in header if line.plain)
     assert (
         "76 model calls, 188 tool calls, 512k input, 360k cached, 54k output, $2.4600 spend"
@@ -343,11 +343,51 @@ def test_unknown_coverage_stale_duration_and_details_placeholder():
     view = TopView(details=True)
     text = view.render(snapshot, width=140, height=25).plain
     assert "- active" in text and "- completed" in text and "- model calls" in text
-    assert "updating" in text and "stale" in text
+    assert "updating" not in text and "live unavailable" not in text
     assert "6m40s" in text  # Frozen at the source's last successful observation.
     assert "Details are not defined yet" in text
     assert "F3 Close" in text
     assert len(text.splitlines()) == 25
+
+
+@pytest.mark.parametrize("cached_live", [False, True])
+def test_stopped_resident_has_zero_active_roots_without_live_warnings(cached_live):
+    done = root(id="run_done", status="succeeded", finished_at=AT)
+    snapshot = frame((root(), step()), completed=(done,), stale=True)
+    snapshot.inventory = RuntimeInstanceSnapshot(
+        tuple(
+            replace(instance, state="not running", drivers=None)
+            for instance in snapshot.inventory.instances
+        )
+    )
+    if not cached_live:
+        snapshot.sources[0].live = None
+    assert snapshot.summary.active == 0
+    assert snapshot.summary.resident == 1
+    assert snapshot.summary.completed is not None
+    assert snapshot.summary.completed.total == 1
+    view = TopView()
+    text = view.render(snapshot, width=160, height=25).plain
+    assert "0 active, 1 completed: 1 succeeded, 0 failed, 0 canceled" in text
+    assert "partial" not in text and "live unavailable" not in text
+    assert "live stale" not in text
+    assert [row.root for row in view.rows] == [done.id]
+
+
+@pytest.mark.parametrize("state", ["running", "unknown"])
+def test_unavailable_live_remains_unknown_for_potentially_running_instances(state):
+    snapshot = frame((), stale=True)
+    snapshot.inventory = RuntimeInstanceSnapshot(
+        tuple(
+            replace(instance, state=state) for instance in snapshot.inventory.instances
+        )
+    )
+    snapshot.sources[0].live = None
+    snapshot.sources[0].live_error = "connection reset"
+    assert snapshot.summary.active is None
+    text = TopView().render(snapshot, width=140, height=25).plain
+    assert "- active" in text and "partial" not in text
+    assert "live unavailable" in text
 
 
 @pytest.mark.parametrize("present", [False, True])
@@ -364,6 +404,7 @@ def test_retained_roaming_history_affects_live_coverage_only_while_in_inventory(
         stale=True,
         metrics=Metrics(model_calls=5),
     )
+    snapshot.sources[0].live_error = "connection reset"
     snapshot.sources[0].placement = "roaming"
     snapshot.sources[0].label = "aid@r70200d1f#instance"
     snapshot.inventory = RuntimeInstanceSnapshot(
@@ -380,8 +421,8 @@ def test_retained_roaming_history_affects_live_coverage_only_while_in_inventory(
     assert summary.usage is not None and summary.usage.model_calls == 5
     view = TopView()
     text = view.render(snapshot, width=160, height=30).plain
-    assert ("live stale" in text) == present
-    assert ("partial" in text) == present
+    assert ("live unavailable" in text.splitlines()[0]) == present
+    assert "partial" not in text
     assert any(row.root == ROOT for row in view.rows) == present
     assert {row.root for row in view.rows if row.root_finished} == {
         node.id for node in completed
@@ -404,21 +445,40 @@ def test_loading_departed_history_does_not_report_partial_live_coverage(error):
     snapshot.sources = (*snapshot.sources, retained)
     assert snapshot.summary.active == 0 and snapshot.summary.completed is None
     text = TopView().render(snapshot, width=140, height=25).plain
-    assert ("partial" in text) == (error is not None)
-    assert ("updating" in text) == (error is None)
+    assert ("runs unavailable" in text.splitlines()[0]) == (error is not None)
+    assert "updating" not in text and "partial" not in text
     assert "live stale" not in text and "live unavailable" not in text
 
 
-def test_summary_has_normal_intensity_including_numbers_and_right_titles():
+def test_summary_emphasizes_only_nonzero_values_and_dims_captions():
     console = Console()
     header = TopView().header(
         frame(metrics=Metrics(512000, 54000, 360000, 2460000, 76, 188)), 140
     )
-    for line in header:
-        for index in range(len(line)):
+    assert "1 running, 1 total: 1 resident, 0 visiting, 0 roaming" in header[2].plain
+    for line, caption in zip(header[2:5], ("agents", "runs last 5m", "stats last 1h")):
+        assert line.plain.startswith("  ") and line.plain.endswith("  ")
+        caption_at = line.plain.rindex(caption)
+        for index in range(caption_at, caption_at + len(caption)):
             style = line.get_style_at_offset(console, index)
-            assert style.bold is False and style.dim is False
-            assert style.color is None and style.bgcolor is None
+            assert style.dim and style.color is None and style.bgcolor is None
+        for index in range(len(line) - 17):
+            style = line.get_style_at_offset(console, index)
+            assert not style.bold and not style.dim and style.bgcolor is None
+    for token in ("76", "188", "512k", "$2.4600"):
+        style = header[4].get_style_at_offset(console, header[4].plain.index(token))
+        assert style.color is not None and style.color.name == "cyan"
+    for line, token in (
+        (header[2], "resident"),
+        (header[2], "0 visiting"),
+        (header[3], "0 active"),
+    ):
+        assert line.get_style_at_offset(console, line.plain.index(token)).color is None
+    empty = TopView().header(frame(), 140)
+    assert (
+        empty[4].get_style_at_offset(console, empty[4].plain.index("$0.0000")).color
+        is None
+    )
 
 
 @pytest.mark.parametrize("status", ["succeeded", "failed", "canceled"])
@@ -492,10 +552,7 @@ def test_htop_header_selection_and_bottom_bars_cover_the_terminal_width():
             95,
         )
         assert style.dim is False
-        coverage = lines[-2].get_style_at_offset(console, index)
-        assert coverage.color is not None and coverage.color.name == "black"
-        assert coverage.bgcolor is not None and coverage.bgcolor.name == "cyan"
-        assert coverage.dim is False
+        assert lines[-2].get_style_at_offset(console, index).bgcolor is None
     footer = lines[-1]
     for label in ("F1", "F3", "F5", "F7", "F8", "F10"):
         key_style = footer.get_style_at_offset(console, footer.plain.index(label))
@@ -551,8 +608,8 @@ def test_table_and_coverage_use_instance_name_without_runtime_id(label):
     assert next(line for line in text.splitlines() if ROOT in line).startswith(
         name + " "
     )
-    assert f"{name}: live stale" in text
-    assert f"{name}: 0/2 completed loaded" in text
+    assert "live stale" not in text
+    assert "completed loaded" not in text
     assert "#runtime" not in text
     assert source.label == label and view.selected == selected
 
@@ -702,7 +759,7 @@ def test_viewport_reveals_earlier_rows_when_the_whole_table_fits(transition):
     view = TopView(sort_menu=transition == "close_sort")
     view.project(snapshot)
     view.selected = view.rows[-1].key
-    initial_height = 20 if transition == "close_sort" else 17
+    initial_height = 19 if transition == "close_sort" else 16
     view.render(snapshot, width=140, height=initial_height)
     assert view.offset > 0
     selected = view.selected
@@ -717,6 +774,33 @@ def test_viewport_reveals_earlier_rows_when_the_whole_table_fits(transition):
     assert view.offset == 0
     assert view.selected == selected
     assert all(row.root in text for row in view.rows)
+
+
+@pytest.mark.parametrize("width", [40, 80, 140])
+@pytest.mark.parametrize("height", [1, 2, 3, 8, 12])
+@pytest.mark.parametrize("panel", [None, "help", "details", "sort_menu"])
+def test_short_viewport_preserves_footer_selection_and_visible_mouse_targets(
+    width, height, panel
+):
+    snapshot = sorting_frame()
+    view = TopView()
+    view.project(snapshot)
+    view.selected = view.rows[-1].key
+    selected = view.selected
+    if panel:
+        setattr(view, panel, True)
+    lines = view.render(snapshot, width=width, height=height).plain.splitlines()
+    assert len(lines) == height
+    assert "F10" in lines[-1]
+    assert all(cell_len(line) == width for line in lines)
+    assert all(0 <= y < height - 1 for y in view._row_hits)
+    assert all(
+        0 <= y < height - 1 and lines[y].startswith("AGENT")
+        for y, _, _, _ in view._sort_hits
+    )
+    assert view.selected == selected
+    view.render(snapshot, width=140, height=35)
+    assert view.selected == selected and selected in view._row_hits.values()
 
 
 @pytest.mark.parametrize("choice, delta", [(0, -1), (len(SORT_FIELDS), 1)])
@@ -833,9 +917,160 @@ def test_resident_prefix_recovers_offline_completion_without_starting_runtime(
         assert cli.main(["--root", str(tmp_path), "alice", "top", "--json"]) == 0
     data = json.loads(capsys.readouterr().out)
     assert data["agent"] == "alice" and data["summary"]["resident"] == 1
-    assert data["summary"]["active"] is None
+    assert data["summary"]["active"] == 0
     assert data["summary"]["completed"]["total"] == 1
     assert len(data["sources"]) == 1
     assert data["sources"][0]["completed"]["roots"][0]["id"] == "run_alice"
     assert not list(tmp_path.rglob("stats.db"))
     assert not list(tmp_path.rglob("status.json"))
+
+
+@pytest.mark.parametrize("width", [40, 80, 100, 140])
+@pytest.mark.parametrize("failure", [False, True])
+def test_padded_header_and_single_footer_fit_resizes_with_real_failures(width, failure):
+    snapshot = frame((root(), step(name="工具" * 30)))
+    source = snapshot.sources[0]
+    if failure:
+        snapshot.inventory = replace(
+            snapshot.inventory, diagnostics=("private/path: cannot read",)
+        )
+        source.activity_error = source.usage_error = (
+            "private/path: malformed record\ntraceback"
+        )
+    view = TopView(scope="too gus top")
+    lines = view.render(snapshot, width=width, height=35).split("\n")
+    assert len(lines) == 35 and all(line.cell_len == width for line in lines)
+    assert lines[0].plain[-8:].count(":") == 2
+    assert lines[0].plain.startswith("too gus top")
+    assert ("agents" in lines[0].plain) == failure
+    if failure and width == 40:
+        assert "+2" in lines[0].plain
+    assert "private/path" not in "\n".join(line.plain for line in lines)
+    assert lines[-1].plain.startswith("F1 Help") and "F10 Quit" in lines[-1].plain
+    assert all("unavailable" not in line.plain for line in lines[1:])
+    header = view.header(snapshot, width)
+    for line in header[2:-1]:
+        assert line.plain.startswith("  ") and line.plain.endswith("  ")
+        assert line.cell_len == width
+    assert view.page_size == 35 - len(header) - 2
+
+
+@pytest.mark.parametrize(
+    "state, observed, diagnostic, running",
+    [
+        ("running", None, "effective launch drivers are missing or invalid", 1),
+        ("unknown", "preparing", "observed preparing", 0),
+        ("unknown", "starting", "observed starting", 0),
+        ("not running", "failed", None, 0),
+        ("unknown", "running", "cannot inspect runtime", None),
+    ],
+)
+def test_agent_counts_keep_membership_and_readable_metrics_independent(
+    state, observed, diagnostic, running
+):
+    snapshot = frame(metrics=Metrics(model_calls=9))
+    snapshot.inventory = RuntimeInstanceSnapshot(
+        tuple(
+            replace(item, state=state, observed_state=observed, diagnostic=diagnostic)
+            for item in snapshot.inventory.instances
+        )
+    )
+    summary = snapshot.summary
+    assert summary.running == running and summary.total == summary.resident == 1
+    assert summary.completed is not None and summary.completed.total == 0
+    assert summary.usage is not None and summary.usage.model_calls == 9
+    text = TopView().render(snapshot, width=140).plain
+    assert ("agents unavailable" in text) == (running is None)
+    assert "partial" not in text and "updating" not in text
+    assert snapshot.model_dump()["summary"]["running"] == running
+
+
+def test_running_counts_agents_independently_of_roots_and_retained_history():
+    snapshot = frame((root(),))
+    snapshot.sources[0].live = replace(
+        snapshot.sources[0].live,
+        trees=tuple(
+            LiveTreeSnapshot(f"run_{index}", "chat_top", (root(id=f"run_{index}"),))
+            for index in range(3)
+        ),
+    )
+    instance = snapshot.inventory.instances[0]
+    snapshot.inventory = RuntimeInstanceSnapshot(
+        (
+            instance,
+            replace(instance, name="bob", identity="source-b", state="not running"),
+            replace(instance, name="worker", identity="source-c", placement="roaming"),
+        )
+    )
+    snapshot.sources = (
+        *snapshot.sources,
+        frame().sources[0].model_copy(update={"identity": "source-b"}),
+        frame()
+        .sources[0]
+        .model_copy(update={"identity": "source-c", "placement": "roaming"}),
+        frame()
+        .sources[0]
+        .model_copy(update={"identity": "departed", "placement": "visiting"}),
+    )
+    summary = snapshot.summary
+    assert (
+        summary.running,
+        summary.total,
+        summary.resident,
+        summary.visiting,
+        summary.roaming,
+    ) == (2, 3, 2, 0, 1)
+    assert summary.active == 3
+
+
+@pytest.mark.parametrize(
+    "case", ["pending", "window", "old_usage", "provider", "paging", "page_failure"]
+)
+def test_routine_missing_or_delayed_observations_do_not_create_notices(case):
+    snapshot = frame()
+    source = snapshot.sources[0]
+    if case in ("pending", "window"):
+        source.live = None
+        source.live_stale = True
+        source.completed = source.usage = None
+    elif case == "old_usage":
+        source.usage.observed_at = timestamp(NOW - 60)
+    elif case == "provider":
+        source.usage.metrics = Metrics(
+            model_calls=1,
+            input_tokens=None,
+            output_tokens=None,
+            cached_tokens=None,
+            spend_micros=None,
+        )
+    elif case == "paging":
+        source.completed.counts = CompletionCounts(succeeded=101)
+    else:
+        source.page_error = "database locked"
+    view = TopView()
+    assert view.notices(snapshot) == []
+    text = view.render(snapshot, width=140, height=25).plain
+    for message in (
+        "partial",
+        "updating",
+        "unavailable",
+        "stats as of",
+        "completed loaded",
+        "database locked",
+    ):
+        assert message not in text
+
+
+def test_initial_discovery_failure_is_not_rendered_as_empty_inventory():
+    snapshot = frame().model_copy(
+        update={
+            "inventory_updating": True,
+            "inventory": RuntimeInstanceSnapshot((), ("permission denied",)),
+            "sources": (),
+        }
+    )
+    assert snapshot.summary.total is None and snapshot.summary.running is None
+    view = TopView()
+    text = view.render(snapshot, width=140).plain
+    assert "- running, - total" in text and "agents unavailable" in text.splitlines()[0]
+    assert "permission denied" not in text

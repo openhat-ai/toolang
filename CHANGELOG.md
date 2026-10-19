@@ -9,6 +9,20 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Changed
 
+- `too top` and `too AGENT top` count agent instances separately from root
+  Runs: the first summary reads `N running, M total: R resident, V visiting,
+  O roaming`, where a running idle agent still counts as running, preparing or
+  starting agents are not yet running, and uncertain liveness leaves only
+  `running` unknown while total and placement counts stay exact. Snapshot JSON
+  gains `running` and `total`, and `live_error` reports a source's failed live
+  observation.
+
+- Top summaries drop `partial`, `updating`, and `unavailable` suffixes and the
+  separate bottom status line: only an actual observation failure adds a
+  compact yellow notice between the scope and the clock, the function-key bar
+  keeps the bottom row, and summaries use two cells of padding with dim
+  captions and cyan only on known nonzero numbers.
+
 - The bundled model catalog refreshes to the 2026-10-18 release with 232
   providers and 2,547 models, so newly published models are selectable
   without an external catalog.
@@ -62,6 +76,47 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   rebuild from compatible execution records.
 
 ### Fixed
+
+- `too AGENT top` scopes discovery to the selected resident's status document
+  and its matching runtime registrations: stopped or unresolved temporary
+  instances still registered to that resident stay in its totals, while
+  unrelated agents and foreign placements, including roaming instances that
+  share the same home, are excluded so their discovery errors cannot invalidate
+  those totals.
+
+- `too top` pages completed roots on dedicated workers, so a slow page no longer
+  occupies live polling, and a failed supplemental history lookup preserves the
+  fresh snapshot and its totals, records `page_error`, and stays retryable
+  through normal PgDn paging.
+
+- `too top` fits short terminals: it keeps the function-key bar in the last
+  row, hides the column heading and its sort targets below three rows, and
+  compacts embedded help and details panels. In very short terminals table
+  rows and their mouse targets can be hidden; the selection is retained and
+  the selected row becomes visible after expansion.
+
+- `too top` observes a published endpoint independently of local run-store
+  metadata: an unreadable store no longer blanks a reachable agent, and a
+  successful HTTP sample keeps history established, so a stopped agent
+  reports statistics unavailable only when its established local history
+  store is missing or unreadable; readable stopped history still contributes
+  exact totals.
+
+- `too top` keeps agent membership and readable history when a Docker batch
+  inspection fails, reports no snapshot-level diagnostic, and leaves the
+  cause to the affected instance.
+
+- `too top` reports no error for a newly installed inactive agent without a
+  history store, which now contributes zero completions and usage without
+  creating a database, for a readable usage sample older than five seconds, for
+  a failed completion page, or for embedded execution without an HTTP endpoint;
+  preserved totals, rows, and retry behavior are unchanged, and raw causes stay
+  in the JSON diagnostics.
+
+- `too top` treats instances reported as `not running` as zero active roots
+  without live-coverage warnings or partial diagnostics, while their durable
+  completions and usage stay visible; running or unknown instances retain
+  unavailable and stale live diagnostics.
 
 - Preparation progress uses sentence case for state in labels such as
   `Prepared state in 2s`, `Waiting for root state...`, and

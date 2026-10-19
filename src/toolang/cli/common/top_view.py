@@ -16,9 +16,10 @@ from toolang.execution.schemas import LiveNode, RunNode, StepNode
 from toolang.lang.types import parse_runnable_ref_parts
 from toolang.stats.types import seconds
 from toolang.up.schemas import SourceActivity, TopSnapshot
+from toolang.up.types import TopPeriod, TopRecent
 
-PERIODS = (3600, 14400, 28800)
-RECENTS = (60, 300, 900)
+PERIODS = tuple(value.seconds for value in TopPeriod)
+RECENTS = tuple(value.seconds for value in TopRecent)
 SORT_FIELDS = ("MODEL", "TOOL", "INPUT", "CACHED", "OUTPUT", "SPEND", "TIME+")
 Key = tuple[str, str, str]
 TERMINAL = frozenset(("succeeded", "failed", "canceled"))
@@ -174,7 +175,7 @@ class TopView:
 
     def project(self, snapshot: TopSnapshot) -> list[Row]:
         roots: list[tuple[SourceActivity, RunNode, tuple[LiveNode, ...]]] = []
-        current = {instance.identity for instance in snapshot.inventory.instances}
+        current = snapshot.live_identities
         for source in snapshot.sources:
             active_roots = set()
             known_completed = (
@@ -471,99 +472,147 @@ class TopView:
                 self.sort_menu = False
                 break
 
-    def footer(self, snapshot: TopSnapshot) -> Text:
-        text = Text(
+    def footer(self, snapshot: TopSnapshot, width: int | None = None) -> Text:
+        labels = (
             f"F1 Help   F3 {'Close' if self.details else 'Details'}   "
             f"F5 {'Tree' if self.list_mode else 'List'}   "
             f"F6 {'Apply' if self.sort_menu else 'Sort'}   "
             f"F7 Runs({window(next_value(RECENTS, snapshot.recent))})   "
-            f"F8 Stats({window(next_value(PERIODS, snapshot.period))})   F10 Quit",
-            style=STATUS_BAR,
+            f"F8 Stats({window(next_value(PERIODS, snapshot.period))})   F10 Quit"
         )
+        if width is not None and cell_len(labels) > width:
+            labels = " ".join(labels.split())
+            if cell_len(labels) > width:
+                labels = "F1 Help F10 Quit"
+        text = Text(labels, style=STATUS_BAR)
         text.highlight_regex(r"\bF\d+\b", FUNCTION_KEY)
         return text
+
+    def notices(self, snapshot: TopSnapshot) -> list[str]:
+        notices = []
+        if snapshot.inventory.diagnostics:
+            notices.append("agents unavailable")
+        elif not snapshot.inventory_updating and snapshot.summary.running is None:
+            notices.append("agents unavailable")
+        if any(source.activity_error for source in snapshot.sources):
+            notices.append("runs unavailable")
+        elif any(
+            source.live_error and source.identity in snapshot.live_identities
+            for source in snapshot.sources
+        ):
+            notices.append("live unavailable")
+        if any(source.usage_error for source in snapshot.sources):
+            notices.append("stats unavailable")
+        return notices
 
     def header(self, snapshot: TopSnapshot, width: int) -> list[Text]:
         clock = datetime.fromtimestamp(seconds(snapshot.observed_at)).strftime(
             "%H:%M:%S"
         )
-        lines = [
-            Text(
-                self.scope + " " * max(1, width - cell_len(self.scope) - 8) + clock,
-                style=NORMAL,
-            ),
-            Text(),
-        ]
+        scope = Text(self.scope, style=NORMAL)
+        scope.truncate(max(0, width - 10), overflow="ellipsis")
+        title = scope.copy()
+        notices = self.notices(snapshot)
+        budget = max(0, width - scope.cell_len - 8 - 4)
+        if notices and budget:
+            notice = Text(" · ".join(notices), style="yellow")
+            if notice.cell_len > budget:
+                suffix = f" +{len(notices) - 1}" if len(notices) > 1 else ""
+                notice = Text(notices[0], style="yellow")
+                notice.truncate(max(0, budget - len(suffix)), overflow="ellipsis")
+                notice.append(suffix)
+                notice.truncate(budget, overflow="ellipsis")
+            title.append("  ")
+            title.append_text(notice)
+        title.append(" " * max(0, width - title.cell_len - 8))
+        title.append(clock)
+        lines = [title, Text()]
         summary = snapshot.summary
-        counts = (summary.resident, summary.visiting, summary.roaming)
-        unknown_inventory = snapshot.inventory_updating or snapshot.inventory.partial
-        agents = ", ".join(
-            f"{'-' if count is None else count} {kind}"
-            for count, kind in zip(counts, ("resident", "visiting", "roaming"))
+
+        def metric(value: str, label: str) -> Text:
+            text = Text(style=NORMAL)
+            text.append(
+                value, style="cyan" if value not in ("-", "0", "$0.0000") else NORMAL
+            )
+            text.append(" " + label, style=NORMAL)
+            return text
+
+        def count(value: int | None) -> str:
+            return "-" if value is None else str(value)
+
+        placements = Text(", ", style=NORMAL).join(
+            metric(count(value), label)
+            for value, label in (
+                (summary.resident, "resident"),
+                (summary.visiting, "visiting"),
+                (summary.roaming, "roaming"),
+            )
         )
-        active_unknown = summary.active is None
-        completed_unknown = summary.completed is None
+        agents = Text.assemble(
+            metric(count(summary.running), "running"),
+            ", ",
+            metric(count(summary.total), "total"),
+            ": ",
+            placements,
+            style=NORMAL,
+        )
         terminal = summary.completed
-        completed_total = terminal.total if terminal else "-"
-        runs = f"{'-' if active_unknown else summary.active} active, {completed_total} completed: "
-        runs += ", ".join(
-            f"{getattr(terminal, state) if terminal else '-'} {state}"
-            for state in ("succeeded", "failed", "canceled")
+        runs = Text.assemble(
+            metric(count(summary.active), "active"),
+            ", ",
+            metric(str(terminal.total) if terminal else "-", "completed"),
+            ": ",
+            style=NORMAL,
+        )
+        runs.append_text(
+            Text(", ", style=NORMAL).join(
+                metric(str(getattr(terminal, state)) if terminal else "-", state)
+                for state in ("succeeded", "failed", "canceled")
+            )
         )
         total = summary.usage
-        quantities = [
-            (compact(total.model_calls) if total else "-", "model calls"),
-            (compact(total.tool_calls) if total else "-", "tool calls"),
-            (compact(total.input_tokens) if total else "-", "input"),
-            (compact(total.cached_tokens) if total else "-", "cached"),
-            (compact(total.output_tokens) if total else "-", "output"),
-            (
-                spend(
-                    total.spend_micros / 1e6
-                    if total.spend_micros is not None
-                    else None,
-                )
-                if total
-                else "-",
-                "spend",
-            ),
-        ]
-        stats = ", ".join(f"{value} {label}" for value, label in quantities)
-        if unknown_inventory:
-            agents += " · updating" if snapshot.inventory_updating else " · partial"
-        if active_unknown or completed_unknown:
-            current = {item.identity for item in snapshot.inventory.instances}
-            runs += (
-                " · partial"
-                if any(
-                    source.activity_error
-                    or (source.identity in current and source.live_stale)
-                    for source in snapshot.sources
-                )
-                else " · updating"
+        stats = Text(", ", style=NORMAL).join(
+            metric(value, label)
+            for value, label in (
+                (compact(total.model_calls) if total else "-", "model calls"),
+                (compact(total.tool_calls) if total else "-", "tool calls"),
+                (compact(total.input_tokens) if total else "-", "input"),
+                (compact(total.cached_tokens) if total else "-", "cached"),
+                (compact(total.output_tokens) if total else "-", "output"),
+                (
+                    spend(
+                        total.spend_micros / 1e6
+                        if total.spend_micros is not None
+                        else None
+                    )
+                    if total
+                    else "-",
+                    "spend",
+                ),
             )
-        if total is None:
-            stats += (
-                " · unavailable"
-                if any(source.usage_error for source in snapshot.sources)
-                else " · updating"
-            )
-        title_width = 15
-        left_width = max(1, width - title_width - 2)
+        )
+        inner_width = max(1, width - 4)
+        caption_width = 15 if inner_width >= 37 else 0
+        left_width = max(1, inner_width - caption_width - (2 if caption_width else 0))
         console = Console(width=left_width)
-        for value, title in (
+        for text, caption in (
             (agents, "agents"),
             (runs, f"runs last {window(snapshot.recent)}"),
             (stats, f"stats last {window(snapshot.period)}"),
         ):
-            text = Text(value, style=NORMAL)
-            wrapped = text.wrap(console, left_width)
-            for index, line in enumerate(wrapped):
-                line.pad_right(max(0, left_width - line.cell_len))
-                line.append(
-                    "  "
-                    + (title.rjust(title_width) if index == 0 else " " * title_width),
-                )
+            for index, part in enumerate(text.wrap(console, left_width)):
+                line = Text("  ", style=NORMAL)
+                line.append_text(part)
+                line.pad_right(2 + left_width - line.cell_len)
+                if caption_width:
+                    line.append("  ")
+                    line.append(
+                        caption.rjust(caption_width)
+                        if index == 0
+                        else " " * caption_width,
+                        style=Style(dim=True),
+                    )
+                line.append("  ")
                 lines.append(line)
         return [*lines, Text()]
 
@@ -572,6 +621,10 @@ class TopView:
     ) -> Text:
         self.project(snapshot)
         lines = self.header(snapshot, width)
+        show_heading = height is None or height >= 3
+        if height is not None:
+            # Reserve the footer even when wrapped metrics exceed the screen.
+            lines = lines[: max(0, height - 1 - int(show_heading))]
         agent_width = max(
             [5, *(cell_len(instance_name(row.source)) for row in self.rows)]
         )
@@ -597,7 +650,7 @@ class TopView:
         self._sort_hits.clear()
         column = 0
         for name, size in zip(("AGENT", "RUN", *SORT_FIELDS), widths, strict=True):
-            if name in SORT_FIELDS:
+            if show_heading and name in SORT_FIELDS:
                 self._sort_hits.append((len(lines), column, column + size, name))
             column += size + 1
 
@@ -610,7 +663,8 @@ class TopView:
                 + " "
             )
 
-        lines.append(Text(prefix(headings) + "STATUS", style=TABLE_HEADER))
+        if show_heading:
+            lines.append(Text(prefix(headings) + "STATUS", style=TABLE_HEADER))
         panel = []
         if self.help:
             panel = [
@@ -649,15 +703,18 @@ class TopView:
                 ),
             ]
         if height is not None:
-            panel = panel[: max(1, (height - len(lines) - 2) // 2)]
-            self.page_size = max(1, height - len(lines) - len(panel) - 2)
-            index = next(
-                (i for i, row in enumerate(self.rows) if row.key == self.selected), 0
-            )
-            self.offset = min(
-                self.offset, index, max(0, len(self.rows) - self.page_size)
-            )
-            self.offset = max(self.offset, index - self.page_size + 1)
+            available = max(0, height - len(lines) - 1)
+            panel = panel[: available // 2]
+            self.page_size = available - len(panel)
+            if self.page_size:
+                index = next(
+                    (i for i, row in enumerate(self.rows) if row.key == self.selected),
+                    0,
+                )
+                self.offset = min(
+                    self.offset, index, max(0, len(self.rows) - self.page_size)
+                )
+                self.offset = max(self.offset, index - self.page_size + 1)
             displayed = self.rows[self.offset : self.offset + self.page_size]
         else:
             displayed = self.rows
@@ -701,37 +758,10 @@ class TopView:
                 line.stylize(SELECTED)
             lines.append(line)
         if height is not None:
-            while len(lines) < height - len(panel) - 2:
+            while len(lines) < height - len(panel) - 1:
                 lines.append(Text())
         lines.extend(panel)
-        coverage = []
-        current = {instance.identity for instance in snapshot.inventory.instances}
-        for source in snapshot.sources:
-            issues = []
-            if source.live_stale and source.identity in current:
-                issues.append("live stale" if source.live else "live unavailable")
-            if source.activity_error or source.usage_error:
-                issues.append("source unavailable")
-            if source.page_error:
-                issues.append("completion page unavailable")
-            if (
-                source.usage is not None
-                and seconds(snapshot.observed_at) - seconds(source.usage.observed_at)
-                > 5
-            ):
-                issues.append("stats as of " + source.usage.observed_at)
-            if issues:
-                coverage.append(instance_name(source) + ": " + "; ".join(issues))
-            if (
-                source.completed is not None
-                and len(source.completed.roots) < source.completed.counts.total
-            ):
-                coverage.append(
-                    f"{instance_name(source)}: {len(source.completed.roots)}/{source.completed.counts.total} completed loaded (PgDn)"
-                )
-        status = " · ".join([*snapshot.inventory.diagnostics, *coverage])
-        lines.append(Text(status, style=STATUS_BAR if status else NORMAL))
-        lines.append(self.footer(snapshot))
+        lines.append(self.footer(snapshot, width))
         for line in lines:
             line.truncate(width, overflow="ellipsis")
             line.pad_right(max(0, width - line.cell_len))

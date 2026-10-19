@@ -1,11 +1,18 @@
 """Discover materialized agents at the host boundary."""
 
 from pathlib import Path
+from stat import S_ISDIR
 
 from toolang.common.layout import AgentLayout, is_agent_name
 
 
-def agent_layouts(root: Path) -> tuple[AgentLayout, ...]:
+def agent_layouts(root: Path, *, agent: str | None = None) -> tuple[AgentLayout, ...]:
+    if agent is not None:
+        layout = AgentLayout.resident(root, agent)
+        try:
+            return (layout,) if S_ISDIR(layout.home.stat().st_mode) else ()
+        except FileNotFoundError:
+            return ()
     directory = root / "agents"
     try:
         return tuple(
