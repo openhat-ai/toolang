@@ -77,6 +77,23 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Fixed
 
+- `too top` fits short terminals: it keeps the function-key bar in the last
+  row, hides the column heading and its sort targets below three rows, and
+  compacts embedded help and details panels. In very short terminals table
+  rows and their mouse targets can be hidden; the selection is retained and
+  the selected row becomes visible after expansion.
+
+- `too top` observes a published endpoint independently of local run-store
+  metadata: an unreadable store no longer blanks a reachable agent, and a
+  successful HTTP sample keeps history established, so a stopped agent
+  reports statistics unavailable only when its established local history
+  store is missing or unreadable; readable stopped history still contributes
+  exact totals.
+
+- `too top` keeps agent membership and readable history when a Docker batch
+  inspection fails, reports no snapshot-level diagnostic, and leaves the
+  cause to the affected instance.
+
 - `too top` reports no error for a newly installed inactive agent without a
   history store, which now contributes zero completions and usage without
   creating a database, for a readable usage sample older than five seconds, for
