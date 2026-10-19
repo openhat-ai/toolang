@@ -105,6 +105,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.docs_only != 'true'
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -141,7 +142,27 @@ jobs:
           echo "$RUNNER_TEMP/tmux" >> "$GITHUB_PATH"
 
       - name: Run tests
-        run: uv run --frozen pytest -q -n auto
+        timeout-minutes: 12
+        shell: bash
+        env:
+          TOOLANG_TEST_DIAGNOSTICS: ${{ runner.temp }}/test-results
+        run: |
+          mkdir -p "$TOOLANG_TEST_DIAGNOSTICS"
+          uv run --frozen pytest -q -n auto \
+            -p tests.support.ci_diagnostics \
+            --ci-diagnostics-dir="$TOOLANG_TEST_DIAGNOSTICS" \
+            --max-worker-restart=0 --durations=30 \
+            --junitxml="$TOOLANG_TEST_DIAGNOSTICS/junit.xml" \
+            -o faulthandler_timeout=60 -o faulthandler_exit_on_timeout=true \
+            2>&1 | tee "$TOOLANG_TEST_DIAGNOSTICS/pytest.log"
+
+      - name: Upload test diagnostics
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: test-results-${{ matrix.os }}-py${{ matrix.python-version }}
+          path: ${{ runner.temp }}/test-results
+          retention-days: 7
 
   package:
     name: Package
