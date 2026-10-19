@@ -63,6 +63,11 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Fixed
 
+- `too top` treats instances reported as `not running` as zero active roots
+  without live-coverage warnings or partial diagnostics, while their durable
+  completions and usage stay visible; running or unknown instances retain
+  unavailable and stale live diagnostics.
+
 - Preparation progress uses sentence case for state in labels such as
   `Prepared state in 2s`, `Waiting for root state...`, and
   `Failed to prepare agent state`.

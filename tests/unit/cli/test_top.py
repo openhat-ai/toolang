@@ -350,6 +350,45 @@ def test_unknown_coverage_stale_duration_and_details_placeholder():
     assert len(text.splitlines()) == 25
 
 
+@pytest.mark.parametrize("cached_live", [False, True])
+def test_stopped_resident_has_zero_active_roots_without_live_warnings(cached_live):
+    done = root(id="run_done", status="succeeded", finished_at=AT)
+    snapshot = frame((root(), step()), completed=(done,), stale=True)
+    snapshot.inventory = RuntimeInstanceSnapshot(
+        tuple(
+            replace(instance, state="not running", drivers=None)
+            for instance in snapshot.inventory.instances
+        )
+    )
+    if not cached_live:
+        snapshot.sources[0].live = None
+    assert snapshot.summary.active == 0
+    assert snapshot.summary.resident == 1
+    assert snapshot.summary.completed is not None
+    assert snapshot.summary.completed.total == 1
+    view = TopView()
+    text = view.render(snapshot, width=160, height=25).plain
+    assert "0 active, 1 completed: 1 succeeded, 0 failed, 0 canceled" in text
+    assert "partial" not in text and "live unavailable" not in text
+    assert "live stale" not in text
+    assert [row.root for row in view.rows] == [done.id]
+
+
+@pytest.mark.parametrize("state", ["running", "unknown"])
+def test_unavailable_live_remains_unknown_for_potentially_running_instances(state):
+    snapshot = frame((), stale=True)
+    snapshot.inventory = RuntimeInstanceSnapshot(
+        tuple(
+            replace(instance, state=state) for instance in snapshot.inventory.instances
+        )
+    )
+    snapshot.sources[0].live = None
+    assert snapshot.summary.active is None
+    text = TopView().render(snapshot, width=140, height=25).plain
+    assert "- active" in text and "partial" in text
+    assert "live unavailable" in text
+
+
 @pytest.mark.parametrize("present", [False, True])
 def test_retained_roaming_history_affects_live_coverage_only_while_in_inventory(
     present,
@@ -833,7 +872,7 @@ def test_resident_prefix_recovers_offline_completion_without_starting_runtime(
         assert cli.main(["--root", str(tmp_path), "alice", "top", "--json"]) == 0
     data = json.loads(capsys.readouterr().out)
     assert data["agent"] == "alice" and data["summary"]["resident"] == 1
-    assert data["summary"]["active"] is None
+    assert data["summary"]["active"] == 0
     assert data["summary"]["completed"]["total"] == 1
     assert len(data["sources"]) == 1
     assert data["sources"][0]["completed"]["roots"][0]["id"] == "run_alice"

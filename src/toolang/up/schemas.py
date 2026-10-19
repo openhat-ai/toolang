@@ -48,6 +48,15 @@ class TopSnapshot(BaseModel):
     sources: tuple[SourceActivity, ...]
     inventory_updating: bool = False
 
+    @property
+    def live_identities(self) -> set[str]:
+        """Instances whose active roots still require live observation."""
+        return {
+            item.identity
+            for item in self.inventory.instances
+            if item.state != "not running"
+        }
+
     @computed_field
     @property
     def summary(self) -> TopSummary:
@@ -58,7 +67,7 @@ class TopSnapshot(BaseModel):
             else sum(item.placement == placement for item in self.inventory.instances)
             for placement in ("resident", "visiting", "roaming")
         ]
-        current = {item.identity for item in self.inventory.instances}
+        current = self.live_identities
         live_sources = {
             source.identity: source
             for source in self.sources

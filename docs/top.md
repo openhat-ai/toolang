@@ -12,8 +12,10 @@ departure stops polling the old live endpoint and does not make current
 active-root coverage unavailable. Queued live requests are canceled; running
 requests may supply durable completions but cannot restore an obsolete live
 sample. Rediscovery updates the existing source binding without counting its
-history twice. Sources still in inventory retain the normal unavailable/stale
-live diagnostics. Instance departure never implies a Run's terminal status.
+history twice. Instances confirmed `not running` contribute zero active roots
+without live diagnostics; their durable completions and usage remain visible.
+Running or unknown instances retain the normal unavailable/stale live diagnostics.
+Instance departure or shutdown never implies a Run's terminal status.
 
 ```sh
 too top

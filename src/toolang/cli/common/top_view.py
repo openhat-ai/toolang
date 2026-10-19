@@ -174,7 +174,7 @@ class TopView:
 
     def project(self, snapshot: TopSnapshot) -> list[Row]:
         roots: list[tuple[SourceActivity, RunNode, tuple[LiveNode, ...]]] = []
-        current = {instance.identity for instance in snapshot.inventory.instances}
+        current = snapshot.live_identities
         for source in snapshot.sources:
             active_roots = set()
             known_completed = (
@@ -532,7 +532,7 @@ class TopView:
         if unknown_inventory:
             agents += " · updating" if snapshot.inventory_updating else " · partial"
         if active_unknown or completed_unknown:
-            current = {item.identity for item in snapshot.inventory.instances}
+            current = snapshot.live_identities
             runs += (
                 " · partial"
                 if any(
@@ -705,7 +705,7 @@ class TopView:
                 lines.append(Text())
         lines.extend(panel)
         coverage = []
-        current = {instance.identity for instance in snapshot.inventory.instances}
+        current = snapshot.live_identities
         for source in snapshot.sources:
             issues = []
             if source.live_stale and source.identity in current:
