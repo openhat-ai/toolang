@@ -53,9 +53,8 @@ applies, raise the ambiguity and ask the human before proceeding.
 - `src/toolang/plugin`: reusable tool, model, and sandbox plugins.
 - `src/toolang/up`, `src/toolang/api`, and `src/toolang/cli`: hosting, HTTP, and
   process orchestration, respectively.
-- Repository, testing, and audit standards live at the root; Toolang authoring
-  conventions live in [docs/authoring.md](docs/authoring.md). See
-  [CONTRIBUTING.md](CONTRIBUTING.md) for documentation ownership.
+- [CONTRIBUTING.md](CONTRIBUTING.md) covers workflow, testing, and review;
+  [docs/authoring.md](docs/authoring.md) covers Toolang source style.
 - `docs/design/`: current implementation design. Treat the implementation as the
   source of truth and verify docs against it. `docs/plans/` contains discussion,
   feature definitions, and implementation records that may become outdated.
@@ -123,6 +122,8 @@ applies, raise the ambiguity and ask the human before proceeding.
 - Use the GitHub CLI (`gh`) for GitHub operations; never use the GitHub App.
 - Always create or reuse a dedicated Git worktree for repository changes; never
   create a work branch directly in the primary or local checkout.
+- Use the agent or human branch prefixes defined in
+  [CONTRIBUTING.md](CONTRIBUTING.md#workflow).
 - Before final handoff, fetch and rebase PR branches onto the latest
   `origin/main`, rerun verification, and push rebased history with
   `--force-with-lease`.
