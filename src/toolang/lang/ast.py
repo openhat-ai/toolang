@@ -27,10 +27,6 @@ CapKind = Literal["psyche", "skill", "service", "prompt"]
 Role = Literal["user", "assistant", "tool"]
 Position = Literal["first", "last"]
 Order = Literal["ascending", "descending"]
-_QUERY_DIRECTIVE_RE = re.compile(
-    rb"^[ \t]*(?:models|tools|skills|services|psyches|prompts)"
-    rb"[ \t]*(?:\+=|-=|=)"
-)
 _EMPTY_CAP_PROPERTY_RE = re.compile(
     r"^[ \t]+(?P<property>[a-z][a-z0-9_]*(?:_[a-z0-9]+)*)"
     r"[ \t]*=[ \t]*(?:#.*)?$"
@@ -511,48 +507,52 @@ def _empty_cap_property_details(
 
 
 def _parse_tree(source: bytes) -> Tree:
-    return parse_cst(_mask_query_hashes(source))
+    tree = parse_cst(source)
+    if b"#" not in source:
+        return tree
+    masked = _mask_query_hashes(source, tree.root_node)
+    return tree if masked is None else parse_cst(masked)
 
 
-def _mask_query_hashes(source: bytes) -> bytes:
-    """Mask query-data hashes while preserving byte offsets for the CST."""
+def _mask_query_hashes(source: bytes, root: TreeSitterNode) -> bytes | None:
+    """Protect query data only in grammar-owned query directive values."""
 
-    source = re.sub(
-        rb"\{\{[ \t]*#",
-        lambda match: match[0].replace(b"#", b"x"),
-        source,
-    )
-    lines: list[bytes] = []
-    for line in source.splitlines(keepends=True):
-        match = _QUERY_DIRECTIVE_RE.match(line)
-        if match is None:
-            lines.append(line)
+    masked: bytearray | None = None
+    for declaration in root.named_children:
+        if declaration.type not in {"agic", "flow"}:
             continue
-        masked = bytearray(line)
-        quoted = False
-        escaped = False
-        for index in range(match.end(), len(masked)):
-            value = masked[index]
-            if quoted:
-                if escaped:
-                    escaped = False
-                elif value == ord("\\"):
-                    escaped = True
-                elif value == ord('"'):
-                    quoted = False
-                elif value == ord("#"):
-                    masked[index] = ord("x")
+        body = declaration.child_by_field_name("body")
+        if body is None:
+            continue
+        for directive in body.children_by_field_name("directive"):
+            value = directive.child_by_field_name("value")
+            if value is None or value.type != "query_value":
                 continue
-            if value == ord('"'):
-                quoted = True
-                continue
-            if value != ord("#"):
-                continue
-            if index > 0 and chr(masked[index - 1]).isspace():
-                break
-            masked[index] = ord("x")
-        lines.append(bytes(masked))
-    return b"".join(lines)
+            end = source.find(b"\n", value.start_byte)
+            raw = source[value.start_byte : end if end >= 0 else len(source)].decode(
+                "utf-8"
+            )
+            quoted = False
+            escaped = False
+            offset = value.start_byte
+            for index, char in enumerate(raw):
+                if quoted:
+                    if escaped:
+                        escaped = False
+                    elif char == "\\":
+                        escaped = True
+                    elif char == '"':
+                        quoted = False
+                elif char == '"':
+                    quoted = True
+                elif char == "#" and (index == 0 or raw[index - 1].isspace()):
+                    break
+                if char == "#":
+                    if masked is None:
+                        masked = bytearray(source)
+                    masked[offset] = ord("x")
+                offset += len(char.encode("utf-8"))
+    return bytes(masked) if masked is not None else None
 
 
 def to_data(value: object) -> object:

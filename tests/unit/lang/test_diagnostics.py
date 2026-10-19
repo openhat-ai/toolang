@@ -74,6 +74,23 @@ def test_missing_cap_value_keeps_semantic_details_but_explains_format_failure():
     )
 
 
+@pytest.mark.parametrize(
+    "header",
+    ["generate", "generate 2 using", "map using", "map in 2 lanes", "reduce using"],
+)
+def test_incomplete_operations_do_not_guess_a_missing_using_clause(header):
+    source = f"flow work:\n  {header}\n"
+    for parse, error in [
+        (Program.from_source, ToolangSyntaxError),
+        (format_source, ToolangFormatError),
+    ]:
+        with pytest.raises(error) as caught:
+            parse(source)
+        assert "requires 'using'" not in str(caught.value)
+        assert "omit 'using'" not in str(caught.value)
+        assert caught.value.line == 2
+
+
 def test_recovery_error_does_not_blame_valid_run_syntax_for_missing_block():
     source = "flow work:\n  repeat 2 times:\n  run: Review.\n"
     with pytest.raises(ToolangFormatError) as caught:

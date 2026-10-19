@@ -418,7 +418,8 @@ def _format_syntax_line(stripped_line: str, *, node: Node) -> str:
     if "property" in ancestors:
         return _format_property_line(stripped_line)
     if "directive" in ancestors:
-        return _format_directive_line(stripped_line)
+        directive = next(item for item in _ancestors(node) if item.type == "directive")
+        return _format_directive_line(stripped_line, node=directive)
     if "message" in ancestors:
         if match := _MESSAGE_HEADER_RE.match(stripped_line):
             return _format_message_header_line(match)
@@ -625,8 +626,10 @@ def _format_signature_params(raw: str) -> str:
     return ", ".join(rendered)
 
 
-def _format_directive_line(stripped_line: str) -> str:
-    body, comment = _split_inline_comment(stripped_line, query=True)
+def _format_directive_line(stripped_line: str, *, node: Node) -> str:
+    value = node.child_by_field_name("value")
+    query = value is not None and value.type == "query_value"
+    body, comment = _split_inline_comment(stripped_line, query=query)
     match = re.fullmatch(
         r"(?P<key>models|tools|skills|services|psyches|prompts|hands|handoffs|recall|lanes|instruct|context)"
         r"[ \t]*(?P<op>=|\+=|-=)[ \t]*(?P<values>.*)",
@@ -635,10 +638,9 @@ def _format_directive_line(stripped_line: str) -> str:
     if match is None:
         return stripped_line
     values = (
-        _format_csv_values(match.group("values"))
-        if match.group("key")
-        in {"hands", "handoffs", "recall", "lanes", "instruct", "context"}
-        else format_query_text(match.group("values"))
+        format_query_text(match.group("values"))
+        if query
+        else _format_csv_values(match.group("values"))
     )
     return f"{match.group('key')} {match.group('op')} {values}{comment}".rstrip()
 

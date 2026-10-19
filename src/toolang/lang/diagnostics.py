@@ -143,23 +143,6 @@ def empty_property_operator(node: Node) -> Node | None:
     return None
 
 
-def _target_hint(node: Node) -> str | None:
-    operations = {"generate", "map", "reduce"}
-    if node.type == "invalid_flow_statement":
-        keyword = next(
-            (child.type for child in node.children if child.type in operations), None
-        )
-        if keyword is not None:
-            return f"{keyword.capitalize()} requires 'using' for a named runnable; omit 'using' for an inline body"
-    if node.is_error and any(child.type == "using" for child in node.children):
-        if any(
-            parent.type in {f"{word}_statement" for word in operations}
-            for parent in _ancestors(node)
-        ):
-            return "Inline runnable bodies must omit 'using'"
-    return None
-
-
 def syntax_diagnostic(node: Node, source: bytes) -> SourceDiagnostic:
     """Describe evidence, not the parser's arbitrary recovery-token choice."""
     context = _context(node)
@@ -198,8 +181,6 @@ def syntax_diagnostic(node: Node, source: bytes) -> SourceDiagnostic:
         reason = "Parse error"
         if context != "source":
             reason += f" in {context}"
-    if hint := _target_hint(node):
-        reason = hint
     line, column = source_position(node, source)
     if property_operator is not None:
         line, column = (
