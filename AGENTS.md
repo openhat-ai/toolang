@@ -86,33 +86,14 @@ applies, raise the ambiguity and ask the human before proceeding.
   do not document the standalone `caps` command there.
 - Keep platform support in the README: macOS and Linux are supported; Windows
   is not supported yet.
-- Maintain `CHANGELOG.md` as the canonical user-facing change record, following
-  [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/): `Unreleased`
-  first, releases in reverse chronological order, `YYYY-MM-DD` release dates,
-  only nonempty change categories, and comparison links with verified baseline
-  tags. The target tag may be pending publication when preparing a release PR.
-- In each relevant pull request, update `Unreleased` for user-visible behavior,
-  compatibility, and important fixes. Omit internal-only refactors, tests, CI,
-  and empty categories.
-- Generate changelog updates with `too aid.too update_changelog`, or select a
-  baseline with `too aid.too update_changelog since=v0.3.4`. Have a maintainer
-  verify every entry against the rules above before merge; make corrections
-  through the runnable.
-- Preserve existing records and prepend new information. Change old entries only
-  to correct verified factual errors or necessary migration guidance, and report
-  the reason for each correction. If the record is complete and accurate, skip
-  writing it; wording or formatting preferences do not justify another edit.
-- Explain the impact and migration path for breaking changes.
-- Every release PR must include a verified `CHANGELOG.md` release entry alongside
-  the version changes in `pyproject.toml` and `uv.lock`. First refresh coverage
-  with `too aid.too update_changelog since=PREVIOUS_TAG`, then prepare the entry
-  with `too aid.too update_changelog since=PREVIOUS_TAG version=VERSION date=YYYY-MM-DD`
-  using the target version and planned release date. Keep `Unreleased` above it
-  and update both comparison links. If the matching entry is already complete
-  and accurate, preserve it unchanged. Do not report a release PR as ready until
-  its changelog coverage, version, date, and links have been verified.
-- Do not maintain separate release notes or a separate known-limitations
-  document; reuse the changelog content for any GitHub Release notes.
+- Generate and correct `CHANGELOG.md` for user-visible behavior, compatibility,
+  and important fixes through `too aid.too update_changelog`. Keep content and
+  format rules in `aid.too`; have a maintainer verify entries before merge.
+- Every release PR must include a verified changelog entry alongside version
+  changes in `pyproject.toml` and `uv.lock`. First refresh coverage with
+  `too aid.too update_changelog since=PREVIOUS_TAG`, then prepare the entry with
+  `too aid.too update_changelog since=PREVIOUS_TAG version=VERSION date=YYYY-MM-DD`.
+  Verify coverage, version, date, and links before reporting the PR as ready.
 - Verify examples against current CLI behavior and bundled templates. Link to
   focused documentation for detailed configuration and reference material.
 
