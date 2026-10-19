@@ -7,7 +7,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 import time
-from threading import Event
+from threading import Event, Lock
 
 import httpx
 
@@ -15,8 +15,8 @@ from toolang.api.version import AGENT_API_VERSION
 from toolang.execution.schemas import LiveSnapshot, RunNode
 from toolang.stats.errors import StatsUnavailable
 from toolang.stats.recent import recent_source, recent_usage
-from toolang.stats.schemas import CompletedRoots, RecentUsage
-from toolang.stats.types import seconds, timestamp
+from toolang.stats.schemas import CompletedRoots, CompletionCounts, RecentUsage
+from toolang.stats.types import Metrics, seconds, timestamp
 
 from .activity import activity_snapshot
 from .observation import (
@@ -35,6 +35,7 @@ def read_activity(
     previous: LiveSnapshot | None = None,
     cancelled: Callable[[], bool] | None = None,
 ) -> ActivitySnapshot:
+    live_error = None
     if source.endpoint:
         try:
             response = httpx.get(
@@ -45,6 +46,8 @@ def read_activity(
             )
             response.raise_for_status()
             result = ActivitySnapshot.model_validate(response.json())
+            if result.live is None:
+                result.live_error = "live snapshot is unavailable"
             if (
                 previous is not None
                 and result.live is not None
@@ -70,10 +73,10 @@ def read_activity(
                             identities=missing,
                         )
             return result
-        except (httpx.HTTPError, ValueError):
+        except (httpx.HTTPError, ValueError) as exc:
             # Preserve durable completions when the control plane disconnects.
-            pass
-    return activity_snapshot(
+            live_error = str(exc)
+    result = activity_snapshot(
         source.layout.run_store,
         recent=recent,
         known_roots=tuple(tree.root_run_id for tree in previous.trees)
@@ -81,6 +84,8 @@ def read_activity(
         else (),
         cancelled=cancelled,
     )
+    result.live_error = live_error
+    return result
 
 
 def read_page(
@@ -128,6 +133,59 @@ class _Source:
     cursor_at: int | None = None
     request_page: bool = False
     loaded: dict[str, RunNode] = field(default_factory=dict)
+    history_seen: bool = False
+    history_lock: Lock = field(default_factory=Lock, repr=False)
+
+    def empty_history(self, binding: RuntimeSource) -> bool:
+        # Workers share this fact so a lost established store never becomes zero.
+        with self.history_lock:
+            try:
+                binding.layout.run_store.stat()
+            except FileNotFoundError:
+                return not self.history_seen and (
+                    binding.instance.state == "not running"
+                    or (
+                        binding.instance.state == "unknown"
+                        and binding.instance.observed_state in ("preparing", "starting")
+                    )
+                )
+            self.history_seen = True
+            return False
+
+    def read_activity(
+        self,
+        binding: RuntimeSource,
+        recent: int,
+        *,
+        previous: LiveSnapshot | None,
+        cancelled: Callable[[], bool],
+    ) -> ActivitySnapshot:
+        if self.empty_history(binding):
+            now = int(time.time())
+            return ActivitySnapshot(
+                live=None,
+                completed=CompletedRoots(
+                    observed_at=timestamp(now),
+                    start=timestamp(now - recent),
+                    end=timestamp(now),
+                    counts=CompletionCounts(),
+                    roots=(),
+                ),
+            )
+        return read_activity(binding, recent, previous=previous, cancelled=cancelled)
+
+    def read_usage(
+        self, binding: RuntimeSource, period: int, cancelled: Callable[[], bool]
+    ) -> RecentUsage:
+        if self.empty_history(binding):
+            now = int(time.time())
+            return RecentUsage(
+                observed_at=timestamp(now),
+                start=timestamp(now - period),
+                end=timestamp(now),
+                metrics=Metrics(),
+            )
+        return read_usage(binding, period, cancelled)
 
     def rebind(self, binding: RuntimeSource) -> None:
         self.binding = binding
@@ -135,6 +193,7 @@ class _Source:
         # live sample belongs to the previous binding, even after rediscovery.
         self.activity_obsolete = True
         self.value.live_stale = True
+        self.value.live_error = None
         self.next_activity = 0
         if self.activity is not None and self.activity.cancel():
             self.activity = None
@@ -302,6 +361,8 @@ class TopObserver:
                 source.value.live_stale = (
                     result.live is None or source.activity_obsolete
                 )
+                if not source.activity_obsolete:
+                    source.value.live_error = result.live_error
                 self._retire_live(source, (*result.completed.roots, *result.retired))
                 page = result.completed.roots
                 reset_cursor = bool(page) and page[-1].id not in source.loaded
@@ -369,7 +430,7 @@ class TopObserver:
                 source.activity_recent = self.recent
                 source.activity_obsolete = False
                 source.activity = self.live_pool.submit(
-                    read_activity,
+                    source.read_activity,
                     source.binding,
                     self.recent,
                     previous=source.value.live,
@@ -397,7 +458,7 @@ class TopObserver:
             if source.usage is None and now >= source.next_usage:
                 source.usage_period = self.period
                 source.usage = self.usage_pool.submit(
-                    read_usage, source.binding, self.period, self.stopped.is_set
+                    source.read_usage, source.binding, self.period, self.stopped.is_set
                 )
         return TopSnapshot(
             observed_at=timestamp(int(now)),
@@ -415,7 +476,10 @@ class TopObserver:
         # One snapshot waits for each first result, unlike interactive refreshes.
         self.tick()
         assert self.discovery_job is not None
-        self.discovery_job.result()
+        try:
+            self.discovery_job.result()
+        except (OSError, ValueError, RuntimeError):
+            pass  # _inventory preserves discovery diagnostics in the snapshot.
         self.tick()
         for source in self.sources.values():
             for job in (source.activity, source.usage):

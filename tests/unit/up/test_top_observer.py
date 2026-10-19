@@ -959,3 +959,164 @@ def test_page_from_a_previous_epoch_cannot_restore_old_rows_or_cursor(tmp_path):
         assert state.value.completed is not None and not state.value.completed.roots
     finally:
         observer.close()
+
+
+@pytest.mark.parametrize("mode", ["new", "empty", "corrupt"])
+def test_inactive_agent_history_is_empty_only_when_uninitialized(tmp_path, mode):
+    layout = AgentLayout.resident(tmp_path, "alice")
+    layout.home.mkdir(parents=True)
+    if mode == "empty":
+        with closing(RunStore(layout.run_store)):
+            pass
+    elif mode == "corrupt":
+        layout.run_store.parent.mkdir(parents=True)
+        layout.run_store.write_text("not sqlite")
+    with closing(
+        top.TopObserver(tmp_path, agent=None, period=3600, recent=300, refresh=60)
+    ) as observer:
+        snapshot = observer.once()
+        summary = snapshot.summary
+        assert summary.running == 0 and summary.total == 1 and summary.active == 0
+        if mode == "corrupt":
+            assert summary.completed is None and summary.usage is None
+            assert (
+                snapshot.sources[0].activity_error and snapshot.sources[0].usage_error
+            )
+        else:
+            assert summary.completed is not None and summary.completed.total == 0
+            assert summary.usage == Metrics()
+            assert (
+                not snapshot.sources[0].activity_error
+                and not snapshot.sources[0].usage_error
+            )
+        assert layout.run_store.exists() == (mode != "new")
+        assert not layout.stats_store.exists()
+
+
+def test_lost_history_never_becomes_empty_after_a_successful_read(tmp_path):
+    source = replace(
+        binding(tmp_path),
+        instance=replace(binding(tmp_path).instance, state="not running"),
+        endpoint=None,
+    )
+    with closing(RunStore(source.layout.run_store)):
+        pass
+    state = top._Source(
+        source,
+        NOW,
+        SourceActivity(identity="source", label="alice", placement="resident"),
+    )
+    assert state.read_usage(source, 3600, lambda: False).metrics == Metrics()
+    source.layout.run_store.unlink()
+    with pytest.raises(StatsUnavailable):
+        state.read_activity(source, 300, previous=None, cancelled=lambda: False)
+    with pytest.raises(StatsUnavailable):
+        state.read_usage(source, 3600, lambda: False)
+    assert not source.layout.run_store.exists()
+
+
+def test_published_endpoint_failure_is_distinct_from_an_embedded_runtime(
+    tmp_path, monkeypatch
+):
+    source = binding(tmp_path)
+    with closing(RunStore(source.layout.run_store)):
+        pass
+    calls = []
+
+    def offline(*args, **kwargs):
+        calls.append(args)
+        raise httpx.ConnectError("connection refused")
+
+    monkeypatch.setattr(top.httpx, "get", offline)
+    result = top.read_activity(replace(source, endpoint=None), 300)
+    assert result.live is None and result.live_error is None and not calls
+    result = top.read_activity(source, 300)
+    assert result.live is None and result.live_error == "connection refused"
+    assert result.completed.counts.total == 0 and len(calls) == 1
+    response = httpx.Response(
+        200,
+        json=ActivitySnapshot(
+            live=LiveSnapshot("epoch", timestamp(NOW), ()), completed=completed()
+        ).model_dump(mode="json"),
+        request=httpx.Request("GET", source.endpoint),
+    )
+    monkeypatch.setattr(top.httpx, "get", lambda *args, **kwargs: response)
+    result = top.read_activity(source, 300)
+    assert result.live is not None and result.live_error is None
+
+
+def test_once_reports_initial_discovery_failure_without_fabricating_zero(
+    tmp_path, monkeypatch
+):
+    def denied(_):
+        raise PermissionError("permission denied")
+
+    monkeypatch.setattr(top, "runtime_inventory", denied)
+    with closing(
+        top.TopObserver(tmp_path, agent=None, period=3600, recent=300, refresh=60)
+    ) as observer:
+        snapshot = observer.once()
+        assert snapshot.summary.total is None and snapshot.summary.running is None
+        assert snapshot.inventory.diagnostics == ("permission denied",)
+
+
+def test_live_error_recovers_and_obsolete_failure_cannot_restore_it(tmp_path):
+    source = binding(tmp_path)
+    state = top._Source(
+        source,
+        NOW,
+        SourceActivity(identity="source", label="alice", placement="resident"),
+    )
+    state.activity_recent = 300
+    with closing(
+        top.TopObserver(tmp_path, agent=None, period=3600, recent=300, refresh=60)
+    ) as observer:
+        state.activity = resolved(
+            ActivitySnapshot(
+                live=None, completed=completed(), live_error="connection refused"
+            )
+        )
+        observer._collect(state, NOW)
+        assert state.value.live_error == "connection refused" and state.value.live_stale
+        state.activity = resolved(
+            ActivitySnapshot(
+                live=LiveSnapshot("epoch", timestamp(NOW), ()), completed=completed()
+            )
+        )
+        observer._collect(state, NOW)
+        assert state.value.live_error is None and not state.value.live_stale
+        state.activity = Future()
+        state.activity.set_running_or_notify_cancel()
+        state.rebind(replace(source, endpoint=None))
+        state.activity.set_result(
+            ActivitySnapshot(
+                live=None, completed=completed(), live_error="obsolete failure"
+            )
+        )
+        observer._collect(state, NOW)
+        assert state.value.live_error is None
+
+
+def test_unreadable_store_metadata_cannot_be_treated_as_new_history(
+    tmp_path, monkeypatch
+):
+    source = replace(
+        binding(tmp_path),
+        instance=replace(binding(tmp_path).instance, state="not running"),
+        endpoint=None,
+    )
+    state = top._Source(
+        source,
+        NOW,
+        SourceActivity(identity="source", label="alice", placement="resident"),
+    )
+    original = type(source.layout.run_store).stat
+
+    def denied(path, *args, **kwargs):
+        if path == source.layout.run_store:
+            raise PermissionError("permission denied")
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(type(source.layout.run_store), "stat", denied)
+    with pytest.raises(PermissionError):
+        state.read_usage(source, 3600, lambda: False)
