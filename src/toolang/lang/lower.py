@@ -19,11 +19,12 @@ from .validate import _validate_cap_source
 
 _TRIVIA = {
     "blank_line",
+    "newline",
     "plain_comment",
     "shebang_comment",
-    "item_doc_comment",
-    "line_end",
-    "module_doc_comment",
+    "item_doc",
+    "param_doc",
+    "program_doc",
 }
 NodeT = TypeVar("NodeT", bound=ast.Node)
 
@@ -42,7 +43,7 @@ class _DocComments:
         while pending:
             node = pending.pop()
             row, column = node.start_point
-            if node.type in _TRIVIA - {"blank_line", "line_end"}:
+            if node.type in _TRIVIA - {"blank_line", "newline"}:
                 if column == len(self._indent(lines[row])) + (
                     bom_size if row == 0 else 0
                 ):
@@ -54,7 +55,7 @@ class _DocComments:
             [
                 self._field_text(node, "text")
                 for node in comments.values()
-                if node.type == "module_doc_comment"
+                if node.type == "program_doc"
                 and not self._indent(lines[node.start_point.row])
             ]
         )
@@ -64,11 +65,11 @@ class _DocComments:
                 row != block[-1].start_point.row + 1
                 or self._indent(lines[row])
                 != self._indent(lines[block[-1].start_point.row])
-                or node.type != "item_doc_comment"
+                or node.type not in {"item_doc", "param_doc"}
             ):
                 self._attach(block, cst=cst, lines=lines, comments=comments)
                 block = []
-            if node.type == "item_doc_comment":
+            if node.type in {"item_doc", "param_doc"}:
                 block.append(node)
         if block:
             self._attach(block, cst=cst, lines=lines, comments=comments)
@@ -96,17 +97,18 @@ class _DocComments:
         assert target is not None
         while (
             target.parent is not None
-            and target.parent.type not in {"source_file", "item"}
+            and target.parent.type != "program"
             and target.parent.start_point.row == row
         ):
             target = target.parent
-        tags = [node.child_by_field_name("parameter") for node in block]
+        tags = [node for node in block if node.type == "param_doc"]
         for tag in tags:
-            if tag is not None and target.type not in {"agic", "flow"}:
+            marker = next(child for child in tag.children if child.type == "@param")
+            if target.type not in {"agic", "flow"}:
                 raise ToolangValidationError(
                     "Parameter documentation must attach to an agic or flow declaration",
-                    line=tag.start_point.row + 1,
-                    column=tag.start_point.column + 1,
+                    line=marker.start_point.row + 1,
+                    column=marker.start_point.column + 1,
                 )
         self._attached[row] = tuple(block)
 
@@ -122,28 +124,29 @@ class _DocComments:
         docs: dict[str, str] = {}
         locations: dict[str, SourceLocation] = {}
         for comment in self._attached.get(owner.start_point.row, ()):
-            tag = comment.child_by_field_name("parameter")
-            if tag is None:
+            if comment.type != "param_doc":
                 continue
-            name = self._field_text(tag, "name")
+            tag = comment
+            marker = next(child for child in tag.children if child.type == "@param")
+            name = self._field_text(tag, "param")
             if name not in names:
                 raise ToolangValidationError(
                     f"Unknown parameter {name!r} in documentation",
-                    line=tag.start_point.row + 1,
-                    column=tag.start_point.column + 1,
+                    line=marker.start_point.row + 1,
+                    column=marker.start_point.column + 1,
                 )
             if name in docs:
                 raise ToolangValidationError(
                     f"Duplicate documentation for parameter {name!r}",
-                    line=tag.start_point.row + 1,
-                    column=tag.start_point.column + 1,
+                    line=marker.start_point.row + 1,
+                    column=marker.start_point.column + 1,
                     related=(
                         RelatedLocation("Previous documentation", locations[name]),
                     ),
                 )
             docs[name] = self._field_text(tag, "description")
             locations[name] = SourceLocation(
-                tag.start_point.row + 1, tag.start_point.column + 1
+                marker.start_point.row + 1, marker.start_point.column + 1
             )
         return docs
 
@@ -174,8 +177,7 @@ def _lower(cst: ast._ParsedSource) -> ast.Program:
 
 def _lower_caps(cst: ast._ParsedSource) -> ast.Program:
     lowerer = _Lowerer(cst)
-    for child in cst.tree.root_node.named_children:
-        node = lowerer._item(child)
+    for node in cst.tree.root_node.named_children:
         if node.type in {"with", "psyche", "skill", "service", "prompt", "struct"}:
             lowerer._lower_item(node, doc=lowerer.docs.for_node(node))
     return ast.Program(
@@ -192,8 +194,8 @@ def _lower_chores(cst: ast._ParsedSource) -> tuple[ast.ChoreDecl, ...]:
     lowerer = _Lowerer(cst)
     return tuple(
         lowerer._lower_chore(node, doc=lowerer.docs.for_node(node))
-        for child in cst.tree.root_node.named_children
-        if (node := lowerer._item(child)).type == "chore"
+        for node in cst.tree.root_node.named_children
+        if node.type == "chore"
     )
 
 
@@ -211,8 +213,7 @@ class _Lowerer:
         self.flows: list[ast.FlowDecl] = []
 
     def lower(self) -> ast.Program:
-        for child in self.cst.tree.root_node.named_children:
-            node = self._item(child)
+        for node in self.cst.tree.root_node.named_children:
             if node.type in _TRIVIA:
                 continue
             with source_location(self._line(node), node.start_point.column + 1):
@@ -247,10 +248,6 @@ class _Lowerer:
         if node.type in {"psyche", "skill", "service", "prompt"}:
             self.caps.append(self._lower_cap(node, doc=doc))
             return
-        if node.type == "task":
-            raise ToolangValidationError(
-                "Use chore for one-off or scheduled work", line=self._line(node)
-            )
         if node.type == "chore":
             self.chores.append(self._lower_chore(node, doc=doc))
             return
@@ -283,7 +280,9 @@ class _Lowerer:
                 self._required_text(child, "value").strip(),
                 self._line(child),
             )
-            for child in node.children_by_field_name("property")
+            for child in (
+                body_node.children_by_field_name("property") if body_node else ()
+            )
         )
         kind = cast(ast.CapKind, node.type)
         meta = _validate_cap_source(
@@ -309,8 +308,8 @@ class _Lowerer:
         )
 
     def _lower_chore(self, node: CstNode, *, doc: str | None) -> ast.ChoreDecl:
-        body = self._required(node, "body")
-        meta = self._properties(body)
+        body = node.child_by_field_name("body")
+        meta = self._properties(body) if body is not None else {}
         if "schedule" in meta:
             schedule = meta["schedule"]
             try:
@@ -323,7 +322,7 @@ class _Lowerer:
                 ) from exc
         return ast.ChoreDecl(
             name=self._required_text(node, "name").strip(),
-            body=self._content_text(body),
+            body=self._content_text(body) if body is not None else "",
             meta=meta,
             span=self._span(node),
             doc=doc,
@@ -363,7 +362,7 @@ class _Lowerer:
     ) -> ast.ContextDecl:
         return ast.ContextDecl(
             name=self._optional_text(node.child_by_field_name("name")) or "default",
-            body=self._block_text(self._required(node, "body")),
+            body=self._block_text(self._required(node, "content")),
             span=self._span(node),
             doc=doc,
         )
@@ -376,7 +375,7 @@ class _Lowerer:
     ) -> ast.InstructDecl:
         return ast.InstructDecl(
             name=self._optional_text(node.child_by_field_name("name")) or "default",
-            body=self._block_text(self._required(node, "body")),
+            body=self._block_text(self._required(node, "content")),
             span=self._span(node),
             doc=doc,
         )
@@ -428,15 +427,12 @@ class _Lowerer:
                 else:
                     directives.append(directive)
                 continue
-            if child.type == "messages":
-                messages.extend(self._lower_messages(child))
-                continue
             if child.type == "message":
                 messages.append(
                     self._lower_message(child, doc=self.docs.for_node(child))
                 )
                 continue
-            if child.type in {"pass_keyword", "pass_statement"}:
+            if child.type == "pass_statement":
                 continue
             raise RuntimeError(
                 f"Unsupported agic CST node {child.type!r} at line {self._line(child)}."
@@ -455,25 +451,9 @@ class _Lowerer:
             doc=doc,
         )
 
-    def _lower_messages(self, node: CstNode) -> list[ast.Message]:
-        messages: list[ast.Message] = []
-        for child in node.named_children:
-            if child.type in _TRIVIA:
-                continue
-            if child.type != "message":
-                raise RuntimeError(
-                    f"Unsupported message CST node {child.type!r} at line {self._line(child)}."
-                )
-            messages.append(self._lower_message(child, doc=self.docs.for_node(child)))
-        return messages
-
     def _lower_message(self, node: CstNode, *, doc: str | None) -> ast.Message:
-        role = self._child_of_type(node, "role")
-        content = self._child_of_type(node, "text_inline") or self._child_of_type(
-            node, "unroled_message"
-        )
-        if content is None:
-            raise RuntimeError(f"Missing message content at line {self._line(node)}.")
+        role = node.child_by_field_name("role")
+        content = self._required(node, "content")
         return ast.Message(
             role=cast(
                 ast.Role, self._text(role).strip() if role is not None else "user"
@@ -531,14 +511,10 @@ class _Lowerer:
                 else:
                     directives.append(directive)
                 continue
-            if child.type == "statements":
-                stmts.extend(self._lower_statements(child))
+            if child.type == "pass_statement":
                 continue
-            if child.type in {"pass_keyword", "pass_statement"}:
-                continue
-            raise RuntimeError(
-                f"Unsupported flow CST node {child.type!r} at line {self._line(child)}."
-            )
+            with source_location(self._line(child), child.start_point.column + 1):
+                stmts.append(self._lower_stmt(child, doc=self.docs.for_node(child)))
         return ast.FlowDecl(
             name=self._optional_text(name),
             name_explicit=name is not None,
@@ -555,8 +531,8 @@ class _Lowerer:
 
     def _lower_statements(self, node: CstNode) -> list[ast.FlowStmt]:
         stmts: list[ast.FlowStmt] = []
-        for child in node.named_children:
-            if child.type in _TRIVIA or child.type == "until_clause":
+        for child in node.children_by_field_name("statement"):
+            if child.type == "pass_statement":
                 continue
             with source_location(self._line(child), child.start_point.column + 1):
                 stmts.append(self._lower_stmt(child, doc=self.docs.for_node(child)))
@@ -565,7 +541,7 @@ class _Lowerer:
     def _lower_stmt(self, node: CstNode, *, doc: str | None) -> ast.FlowStmt:
         if node.type == "let_statement":
             if value := node.child_by_field_name("value"):
-                binding = self._required_text(node, "name").strip()
+                binding = self._required_text(node, "local").strip()
                 return ast.LetStmt(
                     binding=binding,
                     value=self._block_text(value),
@@ -578,13 +554,15 @@ class _Lowerer:
                     "Repeat cannot have a let binding", line=self._line(node)
                 )
             stmt = self._lower_stmt(nested, doc=doc)
-            binding = self._optional_text(node.child_by_field_name("name"))
+            binding = self._optional_text(node.child_by_field_name("local"))
             return replace(stmt, binding=binding)
 
         span = self._span(node)
         if node.type == "implicit_run_statement":
             runnable = self._generated_agic(
-                node, body=self._block_text(node), output=None
+                node,
+                body=self._block_text(self._required(node, "content")),
+                output=None,
             )
             return ast.RunStmt(runnable=runnable, span=span, doc=doc)
         if node.type == "exec_statement":
@@ -613,7 +591,7 @@ class _Lowerer:
             )
         if node.type == "ask_statement":
             return ast.AskStmt(
-                request=self._block_text(self._required(node, "body")),
+                request=self._block_text(self._required(node, "content")),
                 span=span,
                 doc=doc,
             )
@@ -705,14 +683,9 @@ class _Lowerer:
         evaluator: bool = False,
         default_output: str = "Text",
     ) -> str:
-        runnable = node.child_by_field_name("runnable") or node.child_by_field_name(
-            "target"
-        )
-        if runnable is not None and runnable.type == "runnable":
-            return self._text(runnable).strip()
-        agic = runnable or node.child_by_field_name("agic")
-        if agic is None:
-            raise RuntimeError(f"Missing runnable at line {self._line(node)}.")
+        agic = self._required(node, "target")
+        if agic.type == "runnable_name":
+            return self._text(agic).strip()
         declared_output = self._optional_text(agic.child_by_field_name("return"))
         if output is not None and declared_output not in {None, output}:
             raise ToolangValidationError(
@@ -722,7 +695,7 @@ class _Lowerer:
         declared_output = declared_output or output or default_output
         return self._generated_agic(
             agic,
-            body=self._block_text(self._required(agic, "body")),
+            body=self._block_text(self._required(agic, "content")),
             output=output or declared_output,
             params=generated_params,
             evaluator=evaluator,
@@ -876,40 +849,16 @@ class _Lowerer:
         }
 
     def _content_text(self, node: CstNode) -> str:
-        body = self._child_of_type(node, "text_body")
+        body = node.child_by_field_name("content")
         return self._block_text(body) if body is not None else ""
 
     def _block_text(self, node: CstNode) -> str:
-        if node.type in {"context_body", "instruct_body", "text_inline", "text_block"}:
-            child = next(
-                (
-                    item
-                    for item in node.named_children
-                    if item.type
-                    in {"text_inline", "text_line", "text_block", "text_body"}
-                ),
-                None,
-            )
-            return self._block_text(child) if child is not None else ""
-        if node.type == "text_line":
-            return self._text(node).strip()
-        if node.type in {"text_body", "unroled_message", "implicit_run_statement"}:
-            lines: list[str] = []
-            for child in node.named_children:
-                if child.type == "text_body_line":
-                    content = child.child_by_field_name(
-                        "content"
-                    ) or self._child_of_type(child, "indented_raw_text")
-                    lines.append(self._text(content).rstrip())
-                elif child.type == "blank_line":
-                    lines.append("")
-            return "\n".join(dedent_text_lines(lines)).strip()
-        if node.type == "text_body_line":
-            content = node.child_by_field_name("content") or self._child_of_type(
-                node, "indented_raw_text"
-            )
-            return self._text(content).strip()
-        return self._text(node).strip()
+        lines = [
+            self._text(child).rstrip() if child.type == "text" else ""
+            for child in node.named_children
+            if child.type in {"text", "blank_line"}
+        ]
+        return "\n".join(dedent_text_lines(lines)).strip()
 
     def _required_int(self, node: CstNode, field: str) -> int:
         return self._integer(self._required(node, field))
@@ -954,14 +903,3 @@ class _Lowerer:
                 f"Missing CST field {field!r} at line {node.start_point.row + 1}."
             )
         return child
-
-    @staticmethod
-    def _child_of_type(node: CstNode, node_type: str) -> CstNode | None:
-        for child in node.named_children:
-            if child.type == node_type:
-                return child
-        return None
-
-    @staticmethod
-    def _item(node: CstNode) -> CstNode:
-        return node.named_children[0] if node.type == "item" else node

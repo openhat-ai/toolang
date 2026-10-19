@@ -42,8 +42,8 @@ STMTS      indented flow statements
 
 Uppercase words are placeholders, not keywords. `[X]` marks optional syntax,
 and `A | B` marks alternatives. Counts and sort direction immediately follow
-the verb. Lane placement follows each statement's form below; an inline
-runnable always comes last. Generate/map require lanes before their target.
+the verb. Lane clauses precede `using`, `if`, and `by`; an inline runnable
+always comes last.
 
 `BODY` never includes its introducing colon:
 
@@ -401,14 +401,15 @@ are clipped: keep retains everything and drop removes everything.
 
 - Generate/map/reduce require `using` for named targets and must omit it for
   inline bodies. The rule also applies to named and discarded `let` results.
-  Generate/map lane clauses precede the target: `map in 2 lanes using worker`.
+  Lane clauses precede the target: `map in 2 lanes using worker`.
   Run/exec/seek use direct targets; keep/drop retain `if`, sort retains `by`.
 
 - `in P lanes` limits independent child work without changing result order.
   The fallback is the enclosing runnable's inherited lane setting, initially 4.
   A statement override does not change its children's default.
   It is supported by generate, map, predicate keep/drop, and sort. Use `in 1 lane`
-  for numeric value 1, including `01`; other positive values require `lanes`.
+  for numeric value 1, including `01`. The parser accepts `lane` and `lanes` for
+  any integer; the formatter chooses the spelling by value.
 - `keep/drop first|last N` select directly by outer array position.
 - `sort ascending` orders scores from lowest to highest; `sort descending`
   orders highest to lowest. Equal scores preserve input order in both directions.
@@ -418,8 +419,8 @@ are clipped: keep retains everything and drop removes everything.
   selects from it. Selection starts no child runs, and retry reuses a committed
   sort result. Cancellation between them can leave the complete sorted list
   committed. Inspection shows a `par` Step followed by a `value` Step.
-- Counts are non-negative integer literals. Use `repeat 1 time`, including
-  numeric value `01`; other values require `times`.
+- Counts are non-negative integer literals. The parser accepts `time` and `times`;
+  the formatter emits `repeat 1 time` and uses `times` for other values.
 - Repeat retains 3 prior frames by default. `windowing P` overrides that positive
   capacity independently of the iteration count.
 - Count and condition are independently optional. Without either, repeat runs

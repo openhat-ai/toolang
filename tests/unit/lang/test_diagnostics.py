@@ -26,9 +26,14 @@ def rendered(error, source):
     [
         ("flow work(value: Text:\n  pass\n", "Expected ')'", 1, 22),
         ("struct X:\n  field:\n", "Expected a field type", 2, 9),
-        ("flow work:\n  sort these items\n", "Malformed flow statement 'sort'", 2, 3),
+        ("flow work:\n  sort these items\n", "Parse error in flow block", 2, 1),
         ("agic review:\n  user, broken\n", "Malformed message header 'user'", 2, 3),
-        ("flow work(value: ):\n  run\n  repeat:\n", "flow block", 1, 1),
+        (
+            "flow work(value: ):\n  run\n  repeat:\n",
+            "Malformed parameter 'value'",
+            1,
+            11,
+        ),
     ],
 )
 def test_parser_and_formatter_explain_and_locate_syntax(
@@ -73,12 +78,12 @@ def test_recovery_error_does_not_blame_valid_run_syntax_for_missing_block():
     source = "flow work:\n  repeat 2 times:\n  run: Review.\n"
     with pytest.raises(ToolangFormatError) as caught:
         format_source(source)
-    assert "Parse error in flow block" in str(caught.value)
+    assert "Expected an indented body in repeat block" in str(caught.value)
     assert "Malformed flow statement" not in str(caught.value)
     assert "run: Review." in rendered(caught.value, source)
-    assert (caught.value.line, caught.value.column) == (1, 1)
+    assert (caught.value.line, caught.value.column) == (3, 1)
     assert caught.value.diagnostic.location is not None
-    assert caught.value.diagnostic.location.precision == "recovery"
+    assert caught.value.diagnostic.location.precision == "construct"
     assert format_source(source.replace("  run:", "    run:"))
 
 
@@ -87,7 +92,9 @@ def test_broad_error_reports_original_fragment_without_guessing_repair(header):
     with pytest.raises(ToolangFormatError) as caught:
         format_source(header)
     assert header in rendered(caught.value, header)
-    assert "Parse error" in str(caught.value)
+    assert (
+        "Expected an indented body" if header.endswith(":") else "Parse error"
+    ) in str(caught.value)
     assert "Expected ':'" not in str(caught.value)
 
 
@@ -161,9 +168,9 @@ def test_cst_keeps_overlapping_error_entries_and_native_ranges():
         (item["kind"], item["node_type"], item["start_byte"], item["end_byte"])
         for item in data["diagnostics"]
     ] == [
-        ("error", "ERROR", 0, 36),
-        ("error", "ERROR", 15, 16),
-        ("invalid", "invalid_flow_reserved_statement", 22, 26),
+        ("invalid", "invalid_param", 10, 16),
+        ("invalid", "invalid_flow_statement", 22, 26),
+        ("invalid", "invalid_missing_body", 36, 36),
     ]
 
 

@@ -12,7 +12,12 @@ from pydantic import Discriminator, StrictInt, Tag, TypeAdapter
 from tree_sitter import Node as TreeSitterNode, Tree
 
 from .cst import parse as parse_cst
-from .diagnostics import primary_error, source_position, syntax_diagnostic
+from .diagnostics import (
+    empty_property_operator,
+    primary_error,
+    source_position,
+    syntax_diagnostic,
+)
 from .types import parse_runnable_ref_parts
 
 from toolang.common.immutable import freeze_mapping
@@ -470,6 +475,8 @@ def _parse_source(source: str) -> _ParsedSource:
             from .validate import _raise_empty_cap_property
 
             kind, name, property_name = details
+            if operator := empty_property_operator(error):
+                line, column = operator.end_point.row + 1, operator.end_point.column + 1
             from .errors import source_location
 
             with source_location(line, column):

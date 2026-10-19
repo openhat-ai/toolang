@@ -156,9 +156,10 @@ translate the statement into prose.
 generate 8 in 4 lanes using investigate
 ```
 
-Use an unindented `#@` when the complete module needs a description. The legacy
-`##!` spelling remains accepted, but indented comments do not document a parent.
-A source file should rarely need more than one module description.
+Use `#@` at program level when the complete source needs a description. It cannot
+appear between a declaration header and its body. `##!` is ordinary item
+documentation with a literal leading `!`. A program should rarely need more than
+one description.
 
 Document runnable inputs with `## @param NAME DESCRIPTION` immediately before
 the agic or flow, alongside its ordinary `##` description. Use `_` for primary
@@ -181,6 +182,11 @@ Avoid comments that narrate the syntax, long design notes, and frequent inline
 comments. Prefer a short standalone line when a comment is necessary, and keep
 comments outside natural-language content.
 
+After an explicit text introducer such as `run:`, `user:`, or `let note =`,
+the rest of the line is text: `#` and double quotes are literal characters.
+Place comments on separate structural lines. Property values and directive
+values continue to support inline comments.
+
 ## Automatic Formatting
 
 `too fmt` applies mechanical conventions consistently to file writes, `--check`,
@@ -200,8 +206,10 @@ comments outside natural-language content.
 - Separate prose and explicit flow statements with a structural blank line,
   while preserving whitespace inside each literal text body.
 - Normalize comment/tag spacing using the installed grammar. Preserve documentation
-  attachment and deliberate detachment, exact parameter names, legacy marker
-  spellings, module boundaries, and the executable shebang.
+  attachment and deliberate detachment, exact parameter names, program boundaries,
+  and the executable shebang.
+- Accept either unit spelling and format by numeric value: `1 lane`, `2 lanes`,
+  `1 time`, and `2 times`. Put lane clauses before `using`, `if`, or `by`.
 
 Comments and text ownership take precedence over compact grouping. Formatting
 must be idempotent and preserve semantic content and documentation bindings.

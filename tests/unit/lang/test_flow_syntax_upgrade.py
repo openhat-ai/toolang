@@ -89,8 +89,8 @@ def test_legacy_scatter_is_rejected_by_executable_ast():
     legacy = {**encoded, "kind": "scatter", "count": 4}
     with pytest.raises(ValueError, match="migrate source to 'run'"):
         flow_stmt_from_data(legacy)
-    with pytest.raises(ToolangError):
-        Program.from_source("flow work:\n  scatter 4 using expand\n")
+    program = Program.from_source("flow work:\n  scatter 4 using expand\n")
+    assert program.agics[0].messages[0].content == "scatter 4 using expand"
 
 
 @pytest.mark.parametrize("named", [True, False])

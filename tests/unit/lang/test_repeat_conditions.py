@@ -99,7 +99,6 @@ def test_repeat_without_condition(count):
         "until agic:ready\n    let value = Body.",
         "until checks::ready\n    let value = Body.",
         "let result = until ready\n    let value = Body.",
-        "let until = value\n    let value = Body.",
     ],
 )
 def test_invalid_repeat_forms_are_rejected(body):
@@ -201,14 +200,26 @@ def test_historical_nested_repeat_without_condition_index_is_rejected():
         flow_stmt_from_data(data)
 
 
-@pytest.mark.parametrize("name", ["value", "a0", "two_words", "a__b", "a_", "runtime"])
+@pytest.mark.parametrize(
+    "name",
+    [
+        "value",
+        "a0",
+        "two_words",
+        "a__b",
+        "a_",
+        "runtime",
+        "until",
+        "repeat",
+        "spawn",
+        "run",
+    ],
+)
 def test_regular_names_are_accepted(name):
     Program.from_source(f"flow main({name}: Text):\n  let {name} = Body.\n")
 
 
-@pytest.mark.parametrize(
-    "name", ["until", "repeat", "spawn", "run", "0value", "Upper", "a-b"]
-)
+@pytest.mark.parametrize("name", ["0value", "Upper", "a-b"])
 @pytest.mark.parametrize("kind", ["parameter", "local"])
 def test_invalid_variable_names_are_rejected(name, kind):
     source = (

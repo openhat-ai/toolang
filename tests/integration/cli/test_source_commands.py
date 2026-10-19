@@ -39,13 +39,11 @@ def test_tree_and_representation_are_independent(tree, representation):
             assert payload == to_data(Program.from_source(SOURCE))
         else:
             assert payload["source"] == SOURCE
-            assert payload["root"]["type"] == "source_file"
+            assert payload["root"]["type"] == "program"
         if "--compact" in representation:
             assert result.stdout.count("\n") == 1
     else:
-        assert result.stdout.startswith(
-            "(program" if tree == "--ast" else "(source_file"
-        )
+        assert result.stdout.startswith("(program")
 
 
 @pytest.mark.parametrize(
@@ -111,7 +109,7 @@ flow pipeline:
   map in 4 lanes using action
   keep first 2
   drop last 1
-  sort descending by score in 2 lanes
+  sort descending in 2 lanes by score
   let saved = run action
   let note = Store this note.
   repeat 2 times:

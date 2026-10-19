@@ -10,12 +10,12 @@ from toolang.lang.errors import ToolangSyntaxError, ToolangValidationError
 def test_program_docs_are_collected_from_top_level_comments() -> None:
     program = Program.from_source(
         """
-##! Toolang program.
+#@ Toolang program.
 agic first:
   First body.
 
-##! Documents all declarations.
-##! Not only the following one.
+#@ Documents all declarations.
+#@ Not only the following one.
 agic second:
   Second body.
 """
@@ -133,7 +133,7 @@ agic worker:
     )
 
     assert program.doc is None
-    assert program.agics[0].messages[0].doc is None
+    assert program.agics[0].messages[0].doc == "! Not program documentation."
 
 
 @pytest.mark.parametrize("newline", ["\n", "\r\n"])
@@ -147,9 +147,7 @@ def test_module_comments_use_structured_text_and_keep_source_order(
         "agic worker:\n  pass\n#@ Final module line." + ending
     ).replace("\n", newline)
     program = Program.from_source(source)
-    assert program.doc == (
-        "Résumé.\nLegacy overview.\n@param _ Module prose.\nFinal module line."
-    )
+    assert program.doc == ("Résumé.\n@param _ Module prose.\nFinal module line.")
     assert program.agics[0].doc is None
     assert program.agics[0].span.line == 7
 
@@ -244,9 +242,7 @@ def test_parameter_docs_reject_non_runnable_targets(source: str) -> None:
         Program.from_source(source)
 
 
-@pytest.mark.parametrize(
-    "separator", ["\n", "# Plain.\n", "#@ Module.\n", "##! Module.\n"]
-)
+@pytest.mark.parametrize("separator", ["\n", "# Plain.\n", "#@ Module.\n"])
 def test_detached_parameter_tags_do_not_bind_or_validate(separator: str) -> None:
     program = Program.from_source(
         "## @param unknown Detached.\n## @param unknown Duplicate but detached.\n"
@@ -303,7 +299,7 @@ def test_first_explicit_text_line_is_never_documentation(marker: str) -> None:
     "comment, module_doc, runnable_doc, input_doc",
     [
         ("#@ Module.", "Module.", None, None),
-        ("##! Module.", "Module.", None, None),
+        ("##! Module.", None, "! Module.", None),
         ("## Runnable.", None, "Runnable.", None),
         ("## @param _ Input.", None, None, "Input."),
     ],

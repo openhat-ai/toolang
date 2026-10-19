@@ -23,9 +23,9 @@ CASES = [
     ("struct X:\n  field:\n", "2:9", "Expected a field type", "field:"),
     (
         "flow work(value: ):\n  pass\n",
-        "1:16",
-        "Parse error in parameter list",
-        ":",
+        "1:11",
+        "Malformed parameter 'value'",
+        "flow work(value: ):",
     ),
     (
         "skill review:\n  description =\n  Review.\n",
@@ -35,8 +35,8 @@ CASES = [
     ),
     (
         "flow work:\n  sort these items\n",
-        "2:3",
-        "Malformed flow statement 'sort'",
+        "2:1",
+        "Parse error in flow block",
         "sort these items",
     ),
     (
@@ -47,12 +47,12 @@ CASES = [
     ),
     (
         "flow work:\n  repeat 2 times:\n  run: Review.\n",
-        "1:1",
-        "Parse error in flow block",
-        "flow work:\n  repeat 2 times:\n  run: Review.",
+        "3:1",
+        "Expected an indented body in repeat block",
+        "run: Review.",
     ),
     ("flow work", "1:1", "Parse error in flow block", "flow work"),
-    ("flow work:", "1:1", "Parse error in flow block", "flow work:"),
+    ("flow work:", "1:11", "Expected an indented body in flow block", "flow work:"),
     ("@\n", "1:1", "Parse error", "@"),
     (
         "flow work:\n  sort {{#中文}}\n",
@@ -103,8 +103,8 @@ def test_cst_output_keeps_raw_entries_but_uses_the_same_rendering_contract(
     if source == "struct X:\n\tfield:":
         position, reason, excerpt = "1:1", "Parse error in struct declaration", source
     expected = f"case.too:{position}: {reason}: {excerpt!r}\n"
-    if "repeat 2 times" in source:
-        expected += "case.too:3:3: Parse error in flow block: 'run: Review.'\n"
+    if "sort these items" in source:
+        expected += "case.too:3:1: Expected an indented body in flow block: ''\n"
     if source.startswith("@\nflow"):
         expected += (
             "case.too:2:22: Expected ')' in parameter list: 'flow work(value: Text:'\n"
@@ -130,7 +130,7 @@ def test_cst_output_keeps_raw_entries_but_uses_the_same_rendering_contract(
             "end_point",
         }
     else:
-        assert result.stdout.startswith("(source_file")
+        assert result.stdout.startswith("(program")
 
 
 def test_unlocated_validation_failure_has_no_fake_position_or_excerpt(monkeypatch):
