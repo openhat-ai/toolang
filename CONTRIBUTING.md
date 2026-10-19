@@ -16,19 +16,21 @@ uv run too --help
 | Location | Responsibility |
 | --- | --- |
 | Root [AGENTS.md](AGENTS.md) | Repository policy and definition of done |
-| Root [AUTHORING.md](AUTHORING.md) | Recommended Toolang source style |
+| [docs/authoring.md](docs/authoring.md) | Recommended Toolang source style |
 | Root [TESTING.md](TESTING.md) | Test design, coverage review, isolation, and execution |
 | Root [AUDITING.md](AUDITING.md) | Package audit method and evidence requirements |
-| [docs/](docs/index.md) | Current architecture and implementation design, organized by owning concept |
+| [docs/index.md](docs/index.md) | Documentation TOC |
+| [docs/design/](docs/design/) | Current architecture and implementation design, organized by owning concept |
 | [docs/plans/](docs/plans/) | Discussion, feature-definition, and implementation records that may become outdated |
 | [reference/](reference/README.md) | Generated implementation reference |
 
-Keep contribution and authoring standards at the root. A product's implemented
-behavior, data formats, ownership, and protocol belong in its focused design
-guide under `docs/`, even when those contracts impose rules on consumers.
+Keep repository contribution, testing, and audit standards at the root. Toolang
+source-style conventions belong in `docs/authoring.md`. A product's implemented
+behavior, data formats, ownership, and protocol belong in its focused guide under
+`docs/design/`, even when those contracts impose rules on consumers.
 Discussion and implementation records belong under `docs/plans/`. They may
 become outdated as the product evolves and are not current specifications.
-Current `docs/*.md` guides must never reference individual documents under
+Current `docs/design/*.md` guides must never reference individual documents under
 `docs/plans/`; link the current design owner instead. Directory navigation may
 link to `docs/plans/` as historical context.
 Remove superseded drafts and empty pointer documents after preserving any
@@ -43,7 +45,7 @@ behavior. Do not infer compatibility from matching version numbers.
 
 ## Find the implementation owner
 
-Start with the [architecture map](docs/architecture.md#package-ownership), then
+Start with the [architecture map](docs/design/architecture.md#package-ownership), then
 read the relevant source, direct callers, design guide, and tests. The
 opt-in [package-boundary tests](tests/architecture/test_package_boundaries.py)
 record reviewed dependency rules; some boundaries remain unreviewed. Preserve plugin factories and entry points;
@@ -68,7 +70,8 @@ Check every touched guide against these conditions:
 | Examples | Validate complete source/configuration examples offline. Label fragments, placeholders, external prerequisites, and deliberately invalid inputs. |
 | Navigation | Update the index, relative paths, anchors, and non-document consumers when moving a guide. Keep plans outside a current-contract audit unless explicitly in scope. |
 
-Organize the current-design index by responsibility. Explain ownership, data
+Keep `docs/index.md` as the single TOC and design files flat in `docs/design/`.
+Organize design chapters by responsibility. Explain ownership, data
 flow, capture/update boundaries, failure handling, and consequential tradeoffs.
 Omit self-evident usage and implementation inventories that source/help already
 provides. Keep schemas linked when needed to explain a contract. Do not add

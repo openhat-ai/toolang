@@ -3,7 +3,7 @@
 A Mod is a `.too` module; its parsed representation is `Program`. This document
 describes semantic representation, validation, and declarations. [Flow](flow.md)
 owns evaluation and [Content](content.md) owns content parsing. Follow the
-[authoring conventions](../AUTHORING.md) for source style, type annotations,
+[authoring conventions](../authoring.md) for source style, type annotations,
 and documentation comments.
 
 

@@ -191,7 +191,7 @@ values without interpreting strings as Content again. The resulting `RunSpec`
 contains typed inputs. CLI/HTTP/session state stays outside the execution core.
 
 Canonical model messages are `{role, parts}` from
-[message.py](../src/toolang/base/types/message.py). `Part` covers text, reasoning,
+[message.py](../../src/toolang/base/types/message.py). `Part` covers text, reasoning,
 image, audio, document, tool-call, and tool-result values. Roles constrain the
 allowed variants: user input excludes reasoning and tool protocol parts;
 assistant output can include reasoning and tool calls; tool messages contain

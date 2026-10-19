@@ -27,8 +27,8 @@ model, tool, or flow activity. Completion carries direct typed JSON data,
 summary/usage, and display errors. Bindings, State references, full calls, and
 provider-native evidence remain in records and explicit inspection.
 
-See [event dataclasses](../src/toolang/execution/events.py) for exact fields and
-[event projection](../src/toolang/execution/event_projection.py) for the boundary
+See [event dataclasses](../../src/toolang/execution/events.py) for exact fields and
+[event projection](../../src/toolang/execution/event_projection.py) for the boundary
 from runtime values to public payloads.
 
 ## Agent subscriptions and SSE

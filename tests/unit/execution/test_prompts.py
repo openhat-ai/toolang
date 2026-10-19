@@ -86,12 +86,12 @@ def test_protocol_preserves_guidance_and_execution_boundaries() -> None:
 def test_protocol_authoring_references_exist() -> None:
     authoring = prompts.load("protocol.md").split("# Authoring Toolang\n", 1)[1]
     paths = re.findall(
-        r"https://github.com/openhat-ai/toolang/blob/main/([^)]+)", authoring
+        r"https://github.com/openhat-ai/toolang/blob/main/(docs/[^)]+)", authoring
     )
     assert paths == [
-        "docs/program.md",
-        "docs/caps.md",
-        "AUTHORING.md",
+        "docs/design/program.md",
+        "docs/design/caps.md",
+        "docs/authoring.md",
     ]
     root = Path(__file__).resolve().parents[3]
     assert all((root / path).is_file() for path in paths)

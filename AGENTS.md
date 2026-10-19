@@ -53,11 +53,12 @@ applies, raise the ambiguity and ask the human before proceeding.
 - `src/toolang/plugin`: reusable tool, model, and sandbox plugins.
 - `src/toolang/up`, `src/toolang/api`, and `src/toolang/cli`: hosting, HTTP, and
   process orchestration, respectively.
-- Repository, authoring, testing, and audit standards live at the root; see
-  [CONTRIBUTING.md](CONTRIBUTING.md).
-- `docs/`: current implementation design. Treat the implementation as the source
-  of truth and verify docs against it. `docs/plans/` contains feature definitions
-  and plans, which may describe behavior not implemented yet.
+- Repository, testing, and audit standards live at the root; Toolang authoring
+  conventions live in [docs/authoring.md](docs/authoring.md). See
+  [CONTRIBUTING.md](CONTRIBUTING.md) for documentation ownership.
+- `docs/design/`: current implementation design. Treat the implementation as the
+  source of truth and verify docs against it. `docs/plans/` contains discussion,
+  feature definitions, and implementation records that may become outdated.
 - `reference/`: generated code reference; `tests/`: automated tests.
 
 ## Conventions

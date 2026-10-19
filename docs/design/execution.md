@@ -300,7 +300,7 @@ Run or successful summary Model Step. A committed compact control publishes that
 horizon for subsequent recall while retaining physical history. An unusable
 horizon contributes no summary; history reads do not silently execute compaction.
 [Models](models.md#automatic-compaction-configuration) owns budgets and
-[runs/compact.py](../src/toolang/execution/executor/runs/compact.py) owns the
+[runs/compact.py](../../src/toolang/execution/executor/runs/compact.py) owns the
 recorded batched compaction loop.
 
 Model preflight initiates compaction when required input exceeds the active
@@ -362,8 +362,8 @@ State before each Model Call; otherwise it uses the bound State. Caps and
 available runnable routes can therefore change between calls without replacing the
 running declaration. Installed model/tool collections still come from the
 accepted Setup, and workspace authority stays bound. See
-[Agic frame construction](../src/toolang/execution/executor/runs/agic.py) and
-[resource resolution](../src/toolang/execution/executor/resources.py).
+[Agic frame construction](../../src/toolang/execution/executor/runs/agic.py) and
+[resource resolution](../../src/toolang/execution/executor/resources.py).
 
 ## Terminal usage and cost records
 

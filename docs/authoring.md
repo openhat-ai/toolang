@@ -15,8 +15,8 @@ Keep comments rare, short, and close to what they describe.
 
 Call primary input **input** and named inputs **arguments** (singular:
 **argument**). Use the full names when the distinction needs emphasis. Follow
-the [input terminology](docs/call-input.md#terminology) and
-[flat mapping convention](docs/call-input.md#flat-input-mappings) across authored
+the [input terminology](design/call-input.md#terminology) and
+[flat mapping convention](design/call-input.md#flat-input-mappings) across authored
 prose, documentation, and CLI help.
 
 ## Natural Language
@@ -164,7 +164,7 @@ Document runnable inputs with `## @param NAME DESCRIPTION` immediately before
 the agic or flow, alongside its ordinary `##` description. Use `_` for primary
 input and exact signature names for named parameters. Keep each description on
 one line and explain its purpose; types and optionality come from the signature.
-See [documentation comments](docs/program.md#documentation-comments) for binding
+See [documentation comments](design/program.md#documentation-comments) for binding
 and validation rules.
 
 ## Ordinary Comments

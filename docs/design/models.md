@@ -259,7 +259,7 @@ Adapter plugins use the `toolang.model_adapter` entry-point group and implement
 the [Model Adapter contract](plugins.md#model-adapter). Both asynchronous call
 methods receive a resolved `Model`, a `ModelCall`, and keyword-only `environ`;
 streaming additionally receives keyword-only `on_event`. The canonical protocol
-is [base/protocols/model.py](../src/toolang/base/protocols/model.py).
+is [base/protocols/model.py](../../src/toolang/base/protocols/model.py).
 
 Built-in adapters are:
 
@@ -520,7 +520,7 @@ micro-USD units; amounts must be between zero and 999,999,999.999999 USD.
 Accounting uses numeric fields; rates and intermediate lines are not rounded
 before final settlement. The records change intentionally does not support old
 formats. [Records](records.md) owns the persisted shapes, and
-[accounting.py](../src/toolang/execution/accounting.py) owns cost settlement.
+[accounting.py](../../src/toolang/execution/accounting.py) owns cost settlement.
 
 ## Model Response Recovery
 

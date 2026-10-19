@@ -311,7 +311,7 @@ without further requested work uses exec; use run when its result is needed
 before continuing. Current `routes` declarations govern hands (run), handoffs
 (exec), and spawns (spawn), independently. Missing restrictions mean all visible
 targets; `none` disables the operation. Invocation guards still apply. See the
-[runtime protocol](../src/toolang/execution/assembly/prompts/protocol.md).
+[runtime protocol](../../src/toolang/execution/assembly/prompts/protocol.md).
 
 `AgentSetup.tools()` retains registered runtime tools independently of user tool
 ceilings. Each invocation has an ordinary Tool Step. Trusted runtime tools receive

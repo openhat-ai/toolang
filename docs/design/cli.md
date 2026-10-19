@@ -8,7 +8,7 @@ Script inputs/configuration belong to [Scripts](scripts.md), and HTTP to [API](a
 `parse`, `fmt`, and `highlight` run offline without agent or runtime acquisition.
 Parsing constructs a validated [Program](program.md#parsing-and-validation) or
 exposes raw CST; formatting requires valid syntax; highlighting tolerates
-incomplete source. [AUTHORING.md](../AUTHORING.md#automatic-formatting) owns
+incomplete source. [Authoring conventions](../authoring.md#automatic-formatting) define
 formatting conventions. Command help describes their options and output modes.
 
 ## Routing
