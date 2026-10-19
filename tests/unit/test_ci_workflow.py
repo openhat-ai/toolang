@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import shlex
+import signal
 import subprocess
+import sys
+import xml.etree.ElementTree as ET
 
 import pytest
 import yaml
@@ -221,3 +225,100 @@ def test_gate_rejects_invalid_change_classification(
         gate_env(docs_only, event),
     )
     assert result.returncode != 0
+
+
+def test_test_job_reserves_time_for_unconditional_diagnostic_upload() -> None:
+    job = WORKFLOW["jobs"]["tests"]
+    steps = job["steps"]
+    run_index = next(i for i, step in enumerate(steps) if step["name"] == "Run tests")
+    upload_index = next(
+        i for i, step in enumerate(steps) if step["name"] == "Upload test diagnostics"
+    )
+    assert 0 < steps[run_index]["timeout-minutes"] < job["timeout-minutes"] <= 15
+    upload = steps[upload_index]
+    assert upload_index > run_index and upload["if"] == "always()"
+    assert upload["with"]["path"] == steps[run_index]["env"]["TOOLANG_TEST_DIAGNOSTICS"]
+    assert "${{ matrix.os }}" in upload["with"]["name"]
+    assert "${{ matrix.python-version }}" in upload["with"]["name"]
+
+
+@pytest.mark.parametrize("outcome", ["pass", "fail", "setup", "call", "teardown"])
+def test_test_step_retains_diagnostics_and_bounds_stalled_tests(
+    tmp_path: Path, outcome: str
+) -> None:
+    """Run the actual CI shell step against passing, failing, and stalled probes."""
+    root = Path(__file__).parents[2]
+    config = tmp_path / "pytest.ini"
+    config.write_text("[pytest]\n")
+    probe = tmp_path / "test_probe.py"
+    probe.write_text(
+        "import threading\n"
+        "import pytest\n"
+        "@pytest.fixture(autouse=True)\n"
+        "def resource():\n"
+        f"    if {outcome == 'setup'}: threading.Event().wait()\n"
+        "    yield\n"
+        f"    if {outcome == 'teardown'}: threading.Event().wait()\n"
+        "def test_probe():\n"
+        f"    if {outcome == 'call'}: threading.Event().wait()\n"
+        f"    assert {outcome != 'fail'}\n"
+    )
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    uv = bin_dir / "uv"
+    # Keep the workflow's pytest flags; only reduce workers and the probe timeout.
+    uv.write_text(
+        "#!/bin/sh\n"
+        "shift 3\n"
+        f"exec {shlex.quote(sys.executable)} -m pytest -p xdist.plugin "
+        f'"$@" -c {shlex.quote(str(config))} -n 2 -o faulthandler_timeout=1 '
+        f"{shlex.quote(str(probe))}\n"
+    )
+    uv.chmod(0o755)
+    reports = tmp_path / "reports"
+    step = next(
+        step
+        for step in WORKFLOW["jobs"]["tests"]["steps"]
+        if step["name"] == "Run tests"
+    )
+    env = {
+        **os.environ,
+        "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
+        "PYTHONPATH": str(root),
+        "PYTEST_ADDOPTS": "",
+        "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
+        "TOOLANG_TEST_DIAGNOSTICS": str(reports),
+    }
+    command = ["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", step["run"]]
+    with subprocess.Popen(
+        command,
+        cwd=tmp_path,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        start_new_session=True,
+    ) as process:
+        try:
+            output, _ = process.communicate(timeout=30)
+        except subprocess.TimeoutExpired:
+            os.killpg(process.pid, signal.SIGKILL)
+            output, _ = process.communicate()
+            pytest.fail(f"CI probe did not terminate:\n{output}")
+    assert process.returncode == (0 if outcome == "pass" else 1), output
+    assert "slowest" in output, output
+    assert (reports / "pytest.log").read_text() == output
+    report = ET.parse(reports / "junit.xml").getroot()
+    cases = report.findall(".//testcase")
+    assert cases and all("time" in case.attrib for case in cases)
+    if outcome != "pass":
+        assert report.findall(".//failure") or report.findall(".//error"), output
+    journals = "".join(path.read_text() for path in reports.glob("gw*.log"))
+    assert "START" in journals and "test_probe.py::test_probe" in journals
+    if outcome in {"setup", "call", "teardown"}:
+        assert "Timeout" in output and "threading.py" in output
+        assert "test_probe.py" in output and "crashed" in output
+        assert "replacing crashed worker" not in output
+        assert "FINISH" not in journals
+    else:
+        assert "FINISH" in journals
