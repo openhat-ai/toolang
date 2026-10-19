@@ -1,47 +1,34 @@
 #!/usr/bin/env too
 
-## Generate CHANGELOG.md following Keep a Changelog 1.1.0.
+psyche changelog:
+  Write only CHANGELOG.md, in English, using Keep a Changelog 1.1.0.
+  Use full git log messages; consult a PR description with gh only to resolve
+  unclear user impact or migration. Apart from the current changelog and Git
+  metadata for baseline and links, read no repository files, including AGENTS.md,
+  or commit diffs. Never read or restore historical changelogs.
+  Preserve existing records; prepend missing changes. Correct only verified
+  factual errors or necessary migration guidance, explaining each correction.
+  Summarize the range's final user impact; omit internal details and boilerplate.
+  Link available PRs; each new entry uses one sentence of at most 30 words.
+  Mark breaking entries **Breaking:**; use at most two sentences and 50 words
+  naming the affected public interface and the required user action.
+  Never recurse, commit, push, create issues or PRs, tag, or publish.
+
+## Update the changelog or prepare a release entry.
 agic update_changelog(since?: Text, version?: Text, date?: Text):
-  Read AGENTS.md. Maintain CHANGELOG.md as the canonical user-facing change
-  record using Keep a Changelog 1.1.0. Reuse the current dedicated worktree and
-  write only CHANGELOG.md, in English; do not invoke this runnable recursively,
-  commit, push, create issues or pull requests, tag, or publish. Reuse the record
-  for GitHub Release notes; do not create separate release notes or
-  known-limitations documents.
+  psyches = psyche/changelog
 
-  Inputs: baseline {{since}}, release version {{version}}, release date {{date}}.
-  With neither version nor date, update Unreleased. Require both for release
-  preparation; validate the version against the project and date as YYYY-MM-DD
-  before writing. If the release heading, date, and comparison links already
-  match and Unreleased is empty, return the no-change response without auditing
-  history. Use default mode to refresh coverage.
-
-  Verify the supplied baseline or use the latest release tag reachable from
-  HEAD. Inspect only relevant repository files, commits through HEAD, tags,
-  and pending diffs. If CHANGELOG.md is absent, create it from this evidence,
-  state the tracking baseline, and do not restore or backfill historical records.
-
-  Preserve existing entries and links; prepend only missing information.
-  Correct records only for verified factual errors or necessary migration
-  guidance, and report each correction. Leave complete records unchanged.
-  For release preparation, move verified Unreleased entries unchanged into the
-  target version and date, keeping Unreleased above it. The target tag may be
-  unpublished. Compare the baseline to the target tag and the target to HEAD
-  for Unreleased. If the target section exists, add only missing changes that
-  belong to it; preserve later releases.
-
-  Describe one user-visible outcome per new entry in one sentence of at most
-  30 words. For breaking changes, allow up to two sentences and 50 words total,
-  including a concrete migration step. Group related implementation changes by
-  their impact on users. Include technical names only when needed for users to
-  act; link verified pull requests or documentation for details instead of
-  listing types, fields, methods, options, or schema internals. Omit internal-only
-  work.
-
-  Check every new entry against these sentence and word limits before saving.
-  Verify claims and links, then run git diff --check on the final edits.
-  Stop when verified.
-  If no update is needed, reply only:
+  Read CHANGELOG.md if present. Baseline: {{since}}; version: {{version}};
+  date: {{date}}. Require version and date together; validate YYYY-MM-DD.
+  If that release heading, date, and links match and Unreleased is empty,
+  return the no-change response without reviewing history.
+  Verify the supplied baseline or use the latest release tag reachable from HEAD.
+  Review full git log messages from the baseline through HEAD.
+  Update Unreleased with a comparison link from baseline to HEAD; new files state the baseline.
+  With release inputs, move Unreleased entries unchanged under that version and
+  date; keep empty Unreleased above, linking baseline to target tag to HEAD.
+  The target tag may be unpublished. If its section exists, add only missing
+  changes belonging to it; preserve later releases.
+  Check coverage, count new entries' words with code, and run git diff --check.
+  Report changes briefly; if unchanged, reply only:
   "CHANGELOG.md is up to date. No changes made."
-  Otherwise, report additions and necessary corrections in at most three short
-  bullets and 60 words total; include a blocker only if it prevents completion.
