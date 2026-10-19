@@ -78,7 +78,7 @@ root derived from the resolved Toolang root and Source Ref:
 
 Agent Names are bounded to 64 ASCII characters; the complete 16-character
 source hash is retained without shortening either component. See
-[Agent Sources](concepts.md#agent-sources) for derivation and migration rules.
+[Agent Sources](architecture.md#agent-sources) for derivation and migration rules.
 
 Repeated launches of the same source under the same Toolang root reuse this
 agent root; a different Toolang root gets a different visiting root. Earlier
@@ -299,7 +299,7 @@ revisions can be loaded when root and home are mounted at different absolute
 paths. Stored workspace paths remain frozen; preparing relative workspace
 configuration at a new location produces a new revision. Sandbox preparation
 mounts symbolic-linked State source files read-only at their logical guest
-paths. See [agent-state.md](./agent-state.md) for the canonical documents,
+paths. See [State](state.md) for the canonical documents,
 revision calculation, validation, and publication rules.
 
 

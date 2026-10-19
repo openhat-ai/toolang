@@ -1,4 +1,4 @@
-# Plugin Model
+# Plugins
 
 Toolang uses small entry-point contracts for runtime integrations. Shared
 protocols and canonical value types live in `toolang.base`. Plugins should

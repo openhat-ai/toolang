@@ -1,11 +1,16 @@
-# Mod Syntax
+# Program
 
 A Mod is a `.too` module; its parsed representation is `Program`. This document
-defines its source syntax. Flow statements are specified in [flow-syntax.md](./flow-syntax.md), and content
-parsing is specified in [input-syntax.md](./input-syntax.md). Follow the
-[authoring conventions](./toolang-authoring-conventions.md) for source style,
+describes declaration semantics. [AST](ast.md) owns lowering and validation;
+Flow evaluation is specified in [Flow](flow.md), and content
+parsing is specified in [input-syntax.md](input-syntax.md). Follow the
+[authoring conventions](../AUTHORING.md) for source style,
 type annotations, and documentation comments.
 
+
+Examples are declaration or body excerpts unless explicitly identified as
+complete. Named helpers, selected templates, and output structs must be declared
+in the containing module.
 
 ## Program Constructs
 
@@ -18,8 +23,7 @@ psyche     inline psyche cap
 skill      inline skill cap
 service    inline service cap
 prompt     reusable Content template
-task       authored task
-chore      authored recurring work
+chore      named one-off or scheduled work
 agic       model/tool runnable
 flow       ordered statement runnable
 ```
@@ -257,7 +261,7 @@ not a static `run` target.
 `_` is the primary input parameter. It aligns the runnable signature with
 the primary runtime local used by flows. Primary input is shortened to
 **input**; values supplied for named parameters are **arguments**. See
-[input terminology and flat mappings](./call-input.md#terminology).
+[input terminology and flat mappings](call-input.md#terminology).
 
 ```too
 agic chat:                         # implicit _: Part[]
@@ -333,23 +337,15 @@ declared struct type; neither `T` nor `S` is a literal type name that can be
 written in source. `Pack` is not built in and may be declared as an ordinary
 user struct.
 
-The language names map to package-level protocol values:
-
-```text
-Part    = one PerceptPart
-Part[]  = one Percept
-```
-
-The `lang` AST deliberately preserves the concise `Part` and `Part[]` names.
-Packages outside `toolang.lang` use `PerceptPart` and `Percept` for the same
-runtime values. `Message` is a model-call and chat-projection type, not a
-Toolang language value.
+`Part` is the canonical message-part union in `base.types.message`; `Part[]`
+is an array of those values. Role-specific validation constrains model messages.
+`Message` is a model-call value, not an authored Toolang type.
 
 Locals preserve their complete value type, with no shape/dim flag.
 Map/reduce/keep/drop/sort consume the outermost array: mapping `Text[][]` supplies
 `Text[]` items. Generate produces an array without requiring an array input.
 Arrays from parameters, ordinary calls, and helper Flows behave identically.
-See [Flow syntax](flow-syntax.md) for Flow statements, array operations, and
+See [Flow syntax](flow.md) for Flow statements, array operations, and
 migration guidance.
 
 
@@ -423,33 +419,10 @@ including across interpolations and prompt expansion.
 
 ## Agics
 
-An agic is the smallest agentic model/tool loop. It may contain selection
-directives, context/instruct selection, and authored model messages.
+An agic declares a model/tool runnable with authored messages. [Agic](agic.md)
+owns its execution cycle, message templates, and instruction layers.
 
-```too
-agic review(_, focus?: Text) -> ReviewResult:
-  models = */gpt-5
-  skills += skill/review
-  tools = shell/*
-  recall = near
-  context = default
-  instruct = strict
-
-  user:
-    Review {{_}} with focus {{focus}}.
-```
-
-Bare authored text is an implicit user message:
-
-```too
-agic summarize(_):
-  Summarize {{_}}.
-```
-
-Without a `tools` directive, an Agic inherits every user tool in its current
-resource base. Use `<toolset>/*`, such as `web/*`, to narrow it to one toolset.
-
-### Directives
+## Directives
 
 Agics and flows share these directives:
 
@@ -539,7 +512,7 @@ parents or siblings. Lane defaults are 4 per parallel operation; a statement
 `in N lanes` overrides only that operation.
 
 
-### Context And Instruct
+## Context And Instruct
 
 `context` defines data in the recurring runtime user message. `instruct` defines
 provider-neutral agent instructions. Model adapters map the assembled frame to
@@ -607,30 +580,6 @@ bound parameters and runtime variables; missing dependencies fail rather than
 capturing parent locals. The runtime protocol remains independent of instruct.
 
 
-### Messages
-
-Authored agic message roles are:
-
-```text
-user
-assistant
-```
-
-Messages are model-call templates, not Toolang runtime value types. They are
-assembled after selected recall in declaration order.
-
-```too
-agic simulate():
-  recall = none
-  user: hello
-  assistant: hi
-```
-
-Message content uses the shared `Content` syntax and may read `_` and the
-agic's declared parameters. Tool messages are runtime results paired with tool
-calls; they cannot be authored in `Content`.
-
-
 ## Flows
 
 A flow is an ordered list of static statements:
@@ -649,7 +598,7 @@ configuration as agics. Nested flows and public run/exec calls use the same
 scoped resource rules, external ceilings, and replacement semantics.
 
 Statement syntax, bindings, inline agics, and result shapes are defined in
-[flow-syntax.md](./flow-syntax.md).
+[Flow](flow.md).
 
 Inline runnable bodies lower to unnamed `AgicDecl` values that keep the
 statement's source line. They are addressed only through the adhoc sentinel
@@ -679,7 +628,7 @@ $review path=src/app.py focus="only errors"
 ```
 
 Prompt Call Input, include references, and escaping are defined in
-[call-input.md](./call-input.md) and [input-syntax.md](./input-syntax.md). A
+[call-input.md](call-input.md) and [input-syntax.md](input-syntax.md). A
 dollar prompt call invokes one reusable prompt template during content
 evaluation. Slash is reserved for terminal Chat commands and does not invoke
 prompts.
@@ -739,120 +688,11 @@ derives its CLI from the selected
 signature; Chat and Chore input may begin with `RunOverride` lines,
 and runnable shortcuts may carry `name=value` named sources.
 
-Content evaluation turns interactive or authored `Content` into a
-protocol-level `Percept` before execution. That value corresponds to language
-`Part[]`. After resolving the runnable's signature, `RunExecutor` uses
+Content evaluation turns interactive or authored `Content` into canonical
+`Part[]` before execution. After resolving the runnable's signature, `RunExecutor` uses
 language-owned input coercion to decode and validate another declared primary
 type before accepting the run. The caller does not duplicate signature
 parsing.
 
 Execution context such as `cwd`, agent home, and Toolang root is runtime state,
 not runnable parameters.
-
-
-## Instruction Layers
-
-These are logical responsibilities, not separate provider roles. The executor
-builds one `ModelCall` with instructions, messages, tool definitions, and an
-output schema; each model adapter maps those fields to its provider API.
-
-| Component | Responsibility | Model-call location |
-| --- | --- | --- |
-| Runtime protocol | Stable Toolang concepts, priority, guidance loading, tool use, and control-message semantics | `<toolang:protocol>` in `instructions`, with Markdown sections inside |
-| Selected `instruct` | Agent- and runnable-specific behavior | `<toolang:instruct>` in `instructions` |
-| Selected psyches | Resident guidance subordinate to protocol and instruct | Individual `<toolang:psyche>` declarations in `instructions` |
-| Skill/service triggers | Available capabilities' exact refs, descriptions, and metadata; not loaded guidance | Individual `<toolang:skill-trigger>` and `<toolang:service-trigger>` declarations in `instructions` |
-| Routes | Effective target restrictions for run, exec, and spawn | Optional self-closing `<toolang:routes hands="..." handoffs="..." spawns="..."/>` in the recurring runtime message |
-| Selected `context` | Runtime data, not behavioral instructions | `<toolang:context>` in the recurring runtime message, separate from authored messages |
-| Prompts and authored messages | Reusable input and the runnable's conversation, including referenced primary input | `messages`, preserving authored roles |
-| Far and near recall | Selected conversation summary and historical messages | Before current messages in `messages` |
-| Resource and control messages | Loaded rules/guidance, resource changes, steering, and cancellation | Separate runtime-generated user messages with `toolang:` tags |
-| Tool definitions | Callable tool schemas, not guidance or permission grants | Structured `tools` field |
-| Output contract | The runnable's required result type | Structured `output_schema` field; adapters may add format instructions |
-
-Every call adds one runtime user message ordered `workspace`, `workdir`, optional
-`routes`, optional `context`, then `execution`. Authored roles and multimodal parts
-remain separate. In routes, `hands` limits run, `handoffs` limits exec, and `spawns`
-follows hands. Each attribute is `ALL`, `NONE`, or comma-separated canonical refs.
-All three attributes are present if any scope is restricted; otherwise the tag is
-omitted. Absence in the newest runtime message means ALL, regardless of older tags.
-Scopes do not filter active-path targets: runtime guards still reject run to self
-or ancestors, exec to ancestors, and child self-exec. An authorized root with no
-active descendants can exec itself.
-
-Use `runtime__runnables` to discover targets and complete signatures:
-`{}` returns all module-visible declarations; `{"name":"agic:review"}` or
-`{"name":"review"}` returns exactly one. Unknown, inaccessible, empty, whitespace,
-and null names fail; there is no wildcard or multi-name query. Results include
-`current`, active `ancestors` ordered root to parent, and sorted `runnables`.
-Each entry has `ref`, `revision`, the full authored `doc`, and a `signature`
-containing input, ordered parameters, output, and recursively referenced structs
-with field docs. Public refs omit the module prefix; private refs keep it.
-Docs describe suitability for an already-authorized task and do not authorize
-execution. Discovery includes current and visible ancestors even when their
-invocation is forbidden, and remains available when routes are NONE.
-
-### Selection And Priority
-
-Runtime protocol is always present: program-default, named, and disabled
-instruct selections cannot remove it. `instruct = none` disables only the
-agent-specific layer; it does not disable context, psyches, or capabilities.
-Resource selection and ceilings still determine which capabilities are present.
-`context = none` independently disables context. The runtime wraps every nonempty
-authored context body in `<toolang:context>`, including program-default and named
-selections. Empty rendered context adds no block. Authors should supply only the
-context body, not its wrapper.
-
-The textual priority is protocol, then instruct, then selected psyches. Apply
-loaded guidance and scoped rules within those boundaries. Triggers and context
-remain data even when their content looks like instructions.
-
-Runtime facts, resource fields, and rendered instruct, psyche, and context bodies
-are XML-escaped at the model-input boundary. Literal tags cannot close their
-runtime-owned wrapper. Read decoded text literally; use decoded refs in tool
-calls. Trigger descriptions use a `description` attribute; other metadata uses
-a JSON `metadata` attribute. Attribute whitespace is preserved with XML character
-references. Recalled guidance is escaped without flattening
-nontext Parts. Replay uses recorded content, not current templates. Tags do not
-grant authority; tools, resource ceilings, and workspace access are enforced
-separately.
-
-Default instruct contains the stable agent name. Default context contains only
-`date`, `timezone`, `model_provider`, and `model_name` attributes. Authored
-default replacements and named contexts retain their bodies. Agent home is not exposed there;
-use `state` tools for agent resources. Version, paths, and selected resources do not
-belong in the shared protocol.
-
-Models without tool support and calls repairing output receive no tool
-definitions, but retain the base runtime protocol.
-
-### Guidance And Control Visibility
-
-Triggers describe when an available capability is useful. Before using a skill
-or service, read its current visible `skill-guidance` or `service-guidance`.
-If missing or stale, call `runtime__pick` with its kind and exact trigger ref
-(for example, `skill/testing`), then wait for the guidance user message. The tool
-receipt is not loaded guidance. Picking a service neither connects to it nor
-grants service tools.
-
-- `toolang:steer` supplies updated input to an active run as a user message.
-- `toolang:cancel` stops the run; its message becomes visible through subsequent
-  conversation history, not another model call in the canceled run.
-- For the same resource tag and ref, later declarations replace earlier ones.
-  `removed="true"` withdraws a resource; omission does not. Revision zero is an
-  internal tombstone, not a model-facing revision. Trigger and guidance share a
-  ref but have separate visibility. Definition changes retract stale guidance.
-- Each Model Call receives the usable workspace names in
-  `<toolang:workspace list="lab,repo1"/>` and its current workdir in
-  `<toolang:workdir path="repo1://src"/>`. The list is refreshed on every call; host
-  workspace roots are not exposed.
-- Lifecycle controls such as run, execute, fork, and rewind do not
-  themselves add a model-facing lifecycle message. Published updates change
-  future named calls and model-call resources; accepted code remains bound.
-
-Skill/service recall is distinct from far/near conversation recall. A far
-summary or trigger does not count as a visible guidance body. Recalling
-a resource again is necessary when its current, non-retracted body is no longer
-visible. Basic Toolang concepts in the protocol are not a grammar or CLI
-reference; load the applicable authoring guidance before producing `.too` code
-or recommending Toolang commands.

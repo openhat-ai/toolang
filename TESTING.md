@@ -22,8 +22,11 @@ uv run pytest tests/unit/lang/test_program.py
 uv run pytest <failing-test> --pdb
 ```
 
-Live-provider and Docker tests remain opt-in; run them serially with their
-existing `--live-model` or `--live-docker` options. Each test must isolate its
+Live-provider, Docker, and Valkey/tmux tests remain opt-in; run them serially
+with `--live-model SELECTOR`, `--live-docker`, or `--live-valkey`.
+Architecture checks require `TOOLANG_TEST_ARCHITECTURE=1`; resize stress checks
+require `TOOLANG_TEST_RESIZE=1` (or `TOOLANG_TEST_ALL=1` for both).
+See [test configuration](tests/conftest.py) and the relevant test module. Each test must isolate its
 files and external resources across both workers and repeated suite runs.
 
 

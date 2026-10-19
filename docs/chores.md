@@ -63,7 +63,7 @@ too serve alice --enable chat,talk,chore
 ```
 
 Standalone scripts enable no persistent drivers, even when their source contains
-inline chores. Use `serve` to activate them. See [execution drivers](work.md).
+inline chores. Use `serve` to activate them. See [execution drivers](drivers.md).
 
 ## Transition from tasks and jobs
 

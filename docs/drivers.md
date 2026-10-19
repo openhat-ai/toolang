@@ -41,7 +41,7 @@ its existing deduplication scope.
 
 ## Chore scheduling
 
-See [Chores](tasks.md) for definitions, identity, and commands. `ChoreDriver`
+See [Chores](chores.md) for definitions, identity, and commands. `ChoreDriver`
 combines current Markdown definitions and inline State declarations. Runtime
 progress lives in the `chores` table in `runs.db`, owned by the driver, separate
 from authored definitions and immutable State/Setup.

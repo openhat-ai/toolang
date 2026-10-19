@@ -258,7 +258,7 @@ or `#dev` through OSC 0, refreshing when the conversation label changes. The
 footer retains the canonical ID. Pane-local marks identify `kind=talk`, root,
 `convo`, and the connection `context`; no sessions or windows are created or
 renamed. Directory listings and send-only commands publish nothing. See
-[terminal configuration and marks](api.md#terminal-titles-and-pane-marks).
+[terminal configuration and marks](cli.md#terminal-titles-and-pane-marks).
 
 ## Agent messaging
 

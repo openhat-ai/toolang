@@ -1,6 +1,7 @@
-# Capability Model
+# Caps
 
-Caps are composable agent primitives.
+Caps are composable agent primitives: psyches, skills, services, and prompts.
+
 
 
 ## Kinds
@@ -219,12 +220,12 @@ no State-specific layout rules.
 Root layers live under `${TOOLANG_ROOT}/.state/root/revs/<revision>`.
 Home layers live under
 `${TOOLANG_ROOT}/agents/<agent>/.state/home/revs/<revision>`. See
-[agent-state.md](./agent-state.md) for documents, times, and integrity rules.
+[State](state.md) for documents, times, and integrity rules.
 
 Inline skills retain literal guidance and description directly in their Cap
 value. Their inspection location is the authored `.too` file and declaration
 line; they have no bundled asset list. See
-[inline cap syntax](./program.md#inline-caps) for declaration and selection.
+[inline cap syntax](program.md#inline-caps) for declaration and selection.
 
 
 ## Local Cap Frontmatter

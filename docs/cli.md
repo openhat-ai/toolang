@@ -1,0 +1,197 @@
+# CLI
+
+The `too` and `toolang` entry points use the same command router. This guide
+explains routing, inspection, and client orchestration for maintainers.
+`too --help` shows common commands; `too more` shows the additional groups.
+Source command details belong to [Source commands](source-commands.md), script
+inputs/configuration to [Scripts](scripts.md), and HTTP to [API](api.md).
+
+## Routing
+
+| Input | Interpretation |
+| --- | --- |
+| `too new NAME`, `too clone SOURCE [NAME]`, `too remove NAME`, `too list` | Agent catalog commands; command first |
+| `too serve TARGET`, `too TARGET serve` | Foreground server; target can be resident, visiting, or local `.too` |
+| `too start TARGET`, `too stop TARGET` | Background lifecycle for resident/visiting targets; either target order |
+| `too TARGET info` | Agent information; command-first form is also accepted |
+| `too TARGET chat`, `too TARGET chore list`, `too TARGET inspect runs` | Targeted work, authoring, and history |
+| `too run FILE [RUNNABLE]`, `too FILE [RUNNABLE]` | Local script execution |
+| `too init DIR` | Create executable `aid.too` and comment-only `toolang.toml` without overwriting |
+
+A command name wins when an unassigned token could name either a command or a
+dynamic target. `agent:NAME` forces a resident target. After a `.too` target,
+`agic:NAME`, `flow:NAME`, and `runnable:NAME` force a colliding runnable name.
+A `.too` suffix selects a local source path even if absent; an explicit resident
+prefix can select a resident name ending in `.too`. Once a command is selected,
+its operands are not rerouted.
+
+A target alone shows its supported commands. An incomplete selected command
+shows command help before target/runtime validation. Remote target help does
+not fetch source. Agent names, explicit remote refs, and placement are defined
+in [Architecture](architecture.md#agent-sources).
+
+Top-level `--root`/`-r` and `TOOLANG_ROOT` select the resident root. Source-local
+scripts use their own layout and do not accept the global root override.
+
+## Script selection and output
+
+Omitting RUNNABLE selects the unnamed entry; without one, it shows file help.
+`_`, `agic:_`, and `flow:_` explicitly select an unnamed entry. Help and progress
+label it `agic:` or `flow:` rather than exposing the internal lined lookup key.
+Script help does not read stdin, prepare State, or create execution records.
+Required input failures show the runnable's dynamic help before Run admission.
+
+```sh
+too aid.too --help
+too aid.too update_changelog --help
+```
+
+These help examples use the repository's `aid.too`, which defines
+`update_changelog`. A file created by `too init` uses the bundled script template
+and provides a different runnable set. [Call Input](call-input.md#script-runnable-calls)
+owns assignments, line input, stdin, escaping, and input boundaries.
+
+Progress goes to stderr. Results remain in durable history unless `-o`/`--out`
+requests a file or `-` for stdout. Quiet mode suppresses preparation/execution
+progress. Non-TTY progress is plain append-only text. [Execution presentation](execution-presentation.md)
+owns rendering and [Scripts](scripts.md) owns temporary grants and path origins.
+
+Host scripts use embedded execution when no server is active. A compatible
+running AgentServer is reused; a new non-host script server is temporary and
+released on exit. An explicit sandbox mismatch fails before thread/Run creation.
+`--dev [PATH]` selects a built wheel only for a new guest; it cannot modify an
+attached server. [Hosting](hosting.md) owns sandbox selection, installation,
+logging, recovery, environment capture, and process cleanup.
+
+## Resource and plugin inspection
+
+`too [TARGET] caps`, kind-specific cap lists, `tools`, `models`, and `providers`
+inspect the selected scope. No target means root configuration, not an implicit
+`default` agent. `--all`/`-a` changes visibility for that same scope and grants no
+runtime authority. `--json` emits inspection arrays; human output is the default.
+See [Queries](queries.md) for records and query semantics. The standalone `caps`
+executable is removed; `too caps` remains supported.
+
+`catalogs`, `adapters`, `toolsets`, and `sandboxes` list installed entry-point names
+and distribution packages. They do not invoke factories or load agent settings.
+`toolsets --all` reveals internal entries. These are plugin inventory, distinct
+from the configured resources exposed by `tools` and `models`.
+
+## Historical inspection
+
+`too TARGET inspect SUBJECT... [PROJECTOR] [--human | --json]` reads durable
+history without starting a server or fetching a visiting source. Collections
+are unbounded; absent storage is an error and an empty existing collection is `[]`.
+
+| Subject | Selects |
+| --- | --- |
+| `threads`, `runs`, `controls` | Physical records, including rewound Runs |
+| `THREAD runs` | Logical history membership |
+| `RUN steps` | Direct physical Steps |
+| `STEP runs` | Direct accepted child Runs |
+| `LOOP_STEP steps` | Direct same-Run body Steps |
+| `POINTER` | One record or nested canonical field |
+
+[Records](records.md) owns IDs, references, canonical JSON, and resolution.
+`--json` on a raw Pointer does not follow stored references. Field tables show
+one level and bounded previews. Run `tree` and supported Step `call` projections
+read a consistent structural snapshot rather than replaying an event timeline.
+Model `call` reconstructs its persisted normalized request, including messages,
+tools, schema, and continuation, without calling a provider.
+
+`inspect RUN output` resolves the Run's result. Text is emitted unchanged with
+only a missing final newline added; textual Parts concatenate text while
+omitting reasoning/media. Structured or nontext output emits complete JSON.
+`--json` preserves the full resolved value. Absent output fails with Run ID and
+status; present null and empty values succeed. Raw `RUN/output/value` instead
+inspects the stored edge.
+
+## Runtime acquisition and controls
+
+Chat, rerun, and fork/rewind acquire a compatible shared server and use its API.
+Inspection stays offline. Resident/visiting steer and cancel attach to a healthy
+live owner without starting a replacement; invocation guards prevent delayed
+requests from reaching a different Run incarnation.
+
+A Run ID selects its Thread; a Thread ID selects its active Run for steering/
+cancellation or its latest terminal root for rerun/fork/rewind. Rerun accepts a
+new root from the source invocation. Fork includes its anchor; rewind removes
+its anchor and the visible suffix. Only Chat threads are branchable.
+[Execution](execution.md) owns admission, durable effects, and server retention;
+[Chat](chat.md) owns session snapshots and queue behavior.
+
+The Hub runs independently of an agent; bare `too hub` shows its instance status.
+[Messaging](messaging.md) owns Talk/Convo and shared rules. [Top](top.md) owns
+current and recent observation.
+## Terminal titles and pane marks
+
+Foreground interactive commands publish OSC 0 titles, which terminals and tmux
+`pane_title` can display according to user settings. Session/window names are
+untouched; Chat and Talk always run in the invoking terminal.
+
+| Command | Title |
+| --- | --- |
+| Chat | `alice: thread title`, initially `alice` |
+| Talk | `@alice`, `@alice,bob`, or `#dev` |
+| Serve | `serve alice` or `serve hub` |
+| Script Run | `run file.too` or `run file.too runnable` (basename only) |
+| Rerun | `rerun run_id` (source ID) |
+
+Each type's prefix defaults to an empty string. Configure
+`chat`, `talk`, `serve`, `run`, and `rerun` independently:
+
+```toml
+[terminal.title.prefix]
+chat = "💬 "
+talk = "[too] "
+```
+
+Precedence is `TOOLANG_TITLE_PREFIX_<TYPE>` > agent-home config > root
+config > empty. Omitted keys inherit; explicit empty strings clear. Root-only
+views skip agent-home config. Roaming/scripts use their existing outer-to-inner
+project `toolang.toml` layers. Environment values use root dotenv < home dotenv
+< process ordering; roaming/scripts use the process environment only.
+
+For a one-off override, set the type's environment variable:
+
+```sh
+TOOLANG_TITLE_PREFIX_CHAT='[too] ' too alice chat
+TOOLANG_TITLE_PREFIX_CHAT='' too alice chat
+```
+
+Prefixes concatenate directly: `"💬"` gives `💬alice`; `"💬 "` gives `💬 alice`.
+Printable spaces are preserved. Unsafe controls are removed and the complete
+title is clipped to 32 display columns without splitting graphemes. Titles clear
+on handled exit. TTY input, output, and presentation streams are required;
+snapshots, scripted Chat, quiet/file output, and background/internal services
+publish neither titles nor marks.
+
+In tmux, foreground commands also publish pane-local string options:
+
+| Option | Value |
+| --- | --- |
+| `@toolang_kind` | `chat`, `talk`, `serve`, `run`, or `rerun` |
+| `@toolang_root` | Agent root for agent commands; Toolang root for commands without an agent |
+| `@toolang_agent` | Bare agent name; empty for Talk, team Top, and Hub Serve |
+| `@toolang_thread` | Chat thread ID, once created |
+| `@toolang_run` | Actual executing run ID, once allocated or accepted |
+| `@toolang_convo` | Canonical Talk conversation ID |
+| `@toolang_context` | Opaque connection identity shared by Talk and team Top |
+
+Unused fields are empty. Consumers must require a recognized local `kind` and
+read pane options with `tmux show-options -p -t "$TMUX_PANE"` **without `-A`**;
+format expansion can inherit stale session/window values. Marks clear on handled
+exit. Abrupt termination can leave stale metadata; marks do not prove liveness.
+
+`TOOLANG_TMUX=0` (also `false`, `no`, or `off`, case-insensitive) disables marks
+while preserving OSC titles. `TOOLANG_TMUX_DEBUG=1` enables tmux diagnostics.
+Scripts using the old session/window marks must migrate to these pane options;
+`@toolang_pad` and `@toolang_talk` are retired. Users who need automatic placement
+can create their own tmux bindings using the pane metadata.
+
+
+## Implementation evidence
+
+- [Entry-point router](../src/toolang/cli/toolang/routing.py), [command registration](../src/toolang/cli/toolang/main.py)
+- [Agent server acquisition](../src/toolang/cli/common/agent_server.py), [terminal metadata](../src/toolang/cli/common/terminal_session.py)
+- [Routing tests](../tests/unit/cli/test_cli_routing.py), [help tests](../tests/unit/cli/test_cli_help.py), [inspection tests](../tests/unit/cli/test_inspect_subject_navigation.py)

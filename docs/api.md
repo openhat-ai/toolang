@@ -1,1047 +1,17 @@
-# Control Surfaces
-
-This document defines the public CLI and local agent HTTP API.
-Agent endpoints use `AGENT_API_VERSION = 0`; the independently versioned
-[statistics API](execution-statistics.md) uses `/api/v0/stats`.
-
-Interactive CLI, TUI, and WebUI surfaces may parse the `ChatInput` forms
-defined by [input-syntax.md](./input-syntax.md). Commands remain local to
-the interaction surface. Execution surfaces resolve `RunOverride` and
-`CallInput[str]` values into the structured run request described here.
-
-
-## CLI
-
-The CLI entry points are:
-
-- `toolang`
-- `too`
-
-Top-level commands are:
-
-- `new`
-- `clone`
-- `remove`
-- `list`
-- `home`
-- `workspace`
-- `hub`
-- `info`
-- `serve`
-- `start`
-- `stop`
-- `chore`
-- `psyche`
-- `skill`
-- `service`
-- `prompt`
-- `chat`
-- `talk`
-- `convo`
-- `steer`
-- `cancel`
-- `rerun`
-- `rewind`
-- `fork`
-- `inspect`
-- `top`
-- `caps`
-- `models`
-- `providers`
-- `tools`
-- `catalogs`
-- `adapters`
-- `toolsets`
-- `sandboxes`
-- `init`
-- `run`
-- `parse`
-- `highlight`
-- `fmt`
-- `more`
-
-Global options:
-
-- `--root`
-- `--version`
-
-`too talk [TARGET] [MESSAGE...]` opens a conversation, sends a message, or lists
-the directory when no target is supplied.
-`too convo` provides `list`, `create`, `join`, `leave`, and explicit rules file
-transfers. See [conversation commands and MEMBERS.md](messaging.md#shared-conversation-rules)
-for arguments, stdout/stderr, revisions, and Hub endpoints.
-
-Cap commands:
-
-- `too [AGENT] caps [--query QUERY]`
-- `too [AGENT] <kind> list [--query QUERY]`
-- `too [AGENT] <kind> new <name>`
-- `too [AGENT] <kind> edit <name>`
-- `too [AGENT] <kind> delete <name>`
-- `too [AGENT] <kind> add <source-ref>`
-- `too [AGENT] <kind> remove <name>`
-
-`<kind>` is one of `psyche`, `skill`, `service`, or `prompt`. Without `AGENT`,
-cap mutations target root caps. With `AGENT`, they target the selected agent home's caps.
-
-`too new` and cap `new` commands use one bundled default template per kind.
-Cap creation opens that content in the editor. For a stdio service, edit the
-generated definition to use `transport: stdio` and a command-line `target`.
-
-List output uses `CAP`, `DESCRIPTION`, `LOCATION`, and `TAGS` for combined and
-kind-specific lists. `location` addresses actual content, with `file:line` only
-for inline caps. JSON and query keys are lowercase. Cap records use `cap` for `kind/name` and
-`source` for the resolved Source Ref; Cap API summaries/details use the same
-fields. External TQ consumers use `cap` instead of `ref` as the identity key;
-API readers migrate Cap response `ref` to `source`. Configured write requests
-retain `ref` for the supplied Source Ref.
-
-Resource query parameters use native TQ over public model/tool/cap records.
-Cap identities have singular prefixes such as `skill/reviewer`, including
-kind-specific lists. Use tags for provenance and scope, for example
-`skill/*[tags has all (home,remote)]`. API response envelopes retain their
-existing shapes; see [Resource Queries](queries.md) for the matching records.
-
-Typical usage:
-
-```bash
-toolang new alice
-toolang list
-toolang init demo
-toolang run demo/work.too
-toolang run demo/work.too main --help
-PY_LOG=toolang.execution=info too ./examples/flows/proposal_workshop.too -- "Propose a weekly release process"
-too ./examples/flows/proposal_workshop.too --help
-too ./examples/flows/proposal_workshop.too -- "Propose a weekly release process"
-toolang serve alice
-toolang serve alice --sandbox docker
-too serve gh:brice/alice
-toolang serve https://toolang.ai/alice.too
-too clone gh:brice/alice
-toolang start alice
-toolang start alice --sandbox docker
-toolang stop alice
-toolang info alice
-toolang alice info
-toolang ./examples/flows/deep_search.too info
-toolang alice chat
-toolang alice chat --thread
-toolang alice chat --thread term_3nprht9x
-toolang alice chat --sandbox docker
-toolang alice inspect controls
-toolang alice inspect threads
-toolang alice inspect runs
-toolang alice inspect term_3nprht9x runs
-toolang alice inspect run_ppkp9e94 steps
-toolang alice inspect run_ppkp9e94.0/output/value
-toolang alice inspect run_ppkp9e94.0 call
-toolang alice rerun run_ppkp9e94 --limit tokens=200000 --limit time=900
-toolang alice rerun run_ppkp9e94 --model 'openai/gpt-5 effort=high'
-toolang alice steer run_ppkp9e94 "Use the smaller patch"
-toolang alice cancel term_3nprht9x
-toolang alice rewind run_ppkp9e94
-toolang alice fork run_ppkp9e94
-toolang models
-toolang catalogs
-toolang toolsets
-```
-
-Top-level routing uses these command shapes:
-
-- Script commands use `init DIR` and `run FILE [RUNNABLE]`. They appear
-  in the final Script Commands help panel. `init` creates `aid.too` exclusively
-  from the packaged template and never overwrites existing files or symlinks.
-  The directory is required: `init` alone shows help; `init .` creates the file
-  in the current directory. The generated file includes a shebang and executable
-  permission, so it can also run directly as `./aid.too`.
-  `run` accepts local `.too` files; foreground agents use `serve`.
-- catalog commands are command-first only: `new`, `clone`, `list`, and
-  `remove AGENT`
-- agent-self commands accept either order: `info`, `serve`, `start`, and `stop`
-- commands for an agent's execution history, caps or chores require
-  the target first, such as `toolang alice rerun RUN` or
-  `toolang alice skill list`
-
-A command name wins whenever an unassigned token could be either a command or
-a dynamic name. Use `agent:NAME` to force a colliding resident target. After a
-local `.too` target, use `agic:NAME`, `flow:NAME`, or `runnable:NAME` to force a
-colliding runnable name. A token ending in `.too` selects a local source path
-even when that path does not exist; use `agent:NAME` for a resident name ending
-in `.too`. Once a command is selected, its remaining operands are parsed by
-that command and are not reclassified.
-
-A target without a command shows the commands accepted by that placement.
-Plain resident names are recognized from the selected root's agent catalog;
-explicit resident Targets and remote Source Refs are unambiguous. Showing
-remote target help does not resolve or fetch the agent. An incomplete selected
-command shows its own help before target existence or other runtime validation.
-
-Thread and run inspection reads the selected agent's durable execution store
-without starting a server. Rerun and fork/rewind ensure a shared server
-and mutate through its API. Resident/visiting steer/cancel attach to a live
-owner without starting a replacement. A run id selects its owning thread; a
-thread id selects its active run for steering or cancellation and its latest
-terminal run for rerun, rewind, or fork. Rerun starts a new root run from the
-source invocation. Fork retains the anchor run, while rewind removes it and the
-following visible suffix.
-
-
-### Automatic History Compaction
-
-ModelCall preflight can initiate a runtime `runtime.compact()` Step when the
-assembled input exceeds its budget. The Step owns a same-thread child Run with
-the reserved identity `_:compact`. It records Step-level read/model batches and
-a cumulative text summary. A historical root can span batches and retain a suffix
-starting at a Step. Only model preflight can initiate this internal operation.
-
-After the child succeeds, the executor publishes its reference as the thread's
-horizon and records the calling Run's compact control in one transaction. The
-next Model Step adopts that summary plus retained history. Horizons also accept
-the completed producer's final successful summary Model Step. Original records and
-past ModelCalls remain inspectable. Failure stops the caller without dispatching
-the oversized call. See [model configuration](models.md#automatic-compaction-configuration) for
-`compact.model`, `summary`, `recent`, `trigger`, and runtime `--compact-model`
-settings.
-
-
-## Canonical execution subscriptions
-
-An enabled agent exports its canonical stream independently of execution and
-messaging. The Hub endpoint is `GET /events/stream`, with optional
-`agent=agent:alice`, and either `thread=ID` or `run=ID` when an agent is selected.
-No filter observes the team. `after` accepts only a Hub cursor
-(`h1.<epoch>.<stream-id>`); local agent cursors are separate. Root subscriptions
-close after the complete tree and queued events; other scopes stay open.
-
-Execution frames preserve their event name/data and add `agent`, `source_cursor`,
-and Hub `cursor`. SSE IDs acknowledge Hub positions. Structural context has
-`context: true` and no SSE ID. Ignore inherited SSE IDs on context,
-`stream_prefill`, and `stream_status` frames. `stream_prefill` carries `{cursor, scope, replace}`:
-`replace: null` resets the selected view; otherwise each `{agent, roots}` replaces
-that agent's selected view (`roots: null`) or named trees. Stage the entire prefix
-and atomically commit it at `stream_checkpoint`. `stream_status` supplies
-`{agent, online, complete, reason}`; incomplete origins must not be treated as
-completed executions. A failed or interrupted prefix advances no checkpoint.
-
-Invalid filters/cursors return `400`, unknown or unretained scopes `404`, and
-backend/schema failures `503`, with `code`/`detail` JSON. Once streaming starts,
-`stream_error` reports `overflow`, `snapshot_limit`, `backend_unavailable`,
-`scope_unavailable`, or `protocol_error`, then closes. Backend outages never
-cancel local runs. Event retention and repair boundaries are specified in the
-[team observation contract](plans/team-observation.md).
-
-## Agent Targets
-
-`serve` and runtime queries accept a local Agent Name (`alice` or `agent:alice`), a `.too`
-file, an explicit GitHub Source Ref (`gh:owner/name`, `github:owner/name`, or
-`github://owner/repo/path.too@rev`), or a complete HTTP(S) URL. Exact
-`gh:owner/repo/path.too@rev` and `github:owner/repo/path.too@rev` aliases normalize
-to `github://` without repository/path probes. Bare remote refs, domain/path
-shorthand, and OpenHat prefixes are unsupported. See
-[Agent Sources](concepts.md#agent-sources) for syntax, naming, and migration.
-`start` and `stop` accept resident names and visiting Source Refs in either target
-position; local `.too` targets do not accept these two commands. Stop uses the
-visiting source identity without fetching the source.
-
-Runtime port selection distinguishes shared agent servers from temporary execution:
-
-| Mode | Target | Default port behavior |
-| --- | --- | --- |
-| Resident, visiting, or roaming server | Agent Name, remote Source Ref, or `.too` path with `serve` | Reuse the last successful available port except `7001`, otherwise choose from `7002-7999` |
-| Script run | Local `.too` path with an agic or flow name | No port for embedded host execution; attached and temporary guest execution use the selected AgentServer endpoint |
-
-
-## Script Run Surface
-
-A script run uses one local `.too` source path:
-
-```text
-toolang run <SCRIPT> [RUNNABLE] [OPTIONS] [ARGUMENTS]
-toolang <SCRIPT> [RUNNABLE] [OPTIONS] [ARGUMENTS]
-```
-
-Script progress, inspection output, and chat TUI activity use the shared
-execution presentation language defined in
-[execution-presentation.md](./execution-presentation.md). Script mode retains
-its stdout/stderr contract; it does not use the TUI renderer.
-
-Arguments:
-
-- `SCRIPT` is the local Toolang script or agent file
-- `RUNNABLE` is the uniquely named authored agic or flow to run; omitting it
-  selects the module's unnamed entry, or shows file help when none exists
-- `NAME=VALUE` supplies a named runnable parameter; repeat for other parameters
-- `INPUT` is one logical input. With an explicit selector, ordinary trailing
-  words start input. Without a selector, use `--` to start primary text;
-  `-` reads stdin through EOF, and omitted command-line text reads piped or
-  redirected stdin
-
-The synopsis uses `[ARGUMENTS]` when the signature accepts named or primary input;
-empty signatures omit it. The category brackets do not change input requirements.
-The **Arguments** panel shows per-name metavars such as `begin=<BEGIN>`, without a
-separate type label, with parameter doc comments or `Named input (Text)` using
-the authored type. INPUT is last, with an authored description or a typed fallback
-such as `Primary input (Part[])`, followed by
-`reads stdin with - or when input is omitted`. A `*` marks required
-parameters; brackets in Usage do not make required signature inputs optional.
-
-Built-in help uses sentence-case section headings and concise descriptions.
-Options with multiple fields link to `Allow fields`, `Limit fields`,
-`Default fields`, or `Model parameters`, shown only where supported. Field tables
-include value formats, units, and repetition rules. Examples use compact
-command/description rows; wrapped descriptions stay aligned with their column.
-Callers compose sections with the formatter's existing layout primitives.
-
-Runnable descriptions use `Run KIND NAME.` or `Run KIND NAME - DESCRIPTION`
-when a doc comment exists, followed by Usage, **Arguments**, and **Options**.
-Flows end with an epilog: `The flow proceeds as follows:`, a blank line, and an
-outline in normal style with blank lines between sibling steps.
-Top-level Script help identifies `_` as the default when an unnamed
-entry exists and marks `[RUNNABLE]` optional; otherwise it shows `<RUNNABLE>`. It
-lists **Runnables** before Options in name, kind, and description columns. An
-unnamed entry shows `_` with its lined identity and any authored comment. Both
-qualified selectors (`agic:_`, `flow:_`) and `_` select that entry; `<entry>` is
-no longer a selector. Named runnables retain their names and descriptions.
-
-Both levels show the same common options, ordered as `-q` / `--quiet`,
-`-o` / `--out`, `--model`, `-w` / `--workspace`, `-d` / `--workdir`,
-`--sandbox`, `--allow`, `--limit`, `--dev`, then
-`-h` / `--help`.
-Common options may appear before or after RUNNABLE, before input. Explicit
-runnable-level scalar values override root values; repeated `--workspace`,
-`--allow`, and `--limit` values accumulate in command-line order. `--workdir`
-may appear only once across both levels. Quiet mode is enabled at
-either level. `--help` describes the level where it appears.
-
-Script mode parses run directives and root runnable calls; standalone Chat
-commands are not accepted.
-
-Behavior:
-
-- a local `.too` path enters script-run mode
-- `agic:NAME`, `flow:NAME`, and `runnable:NAME` explicitly select a runnable
-  when its name collides with a top-level command
-- default agics and generated internal agics are not exposed as script commands
-- runnable command descriptions use their authored `doc` or an agic/flow fallback
-- stdout is reserved for explicitly requested runnable output
-- progress messages are written to stderr by default
-- TTY progress uses color and live replacement; non-TTY progress is stable,
-  append-only, and contains no ANSI control sequences
-- `-q` or `--quiet` suppresses prepare and execution progress
-- `--out FILE` or `-o FILE` writes the Run result to a file; `--out -` or `-o -`
-  writes it to stdout. Without this option, the result remains stored without
-  being copied to stdout. This replaces the removed `--save` option.
-- `--sandbox SANDBOX` selects the execution sandbox for this invocation; an
-  already-running compatible AgentServer is attached instead
-- `--dev [PATH]` installs Toolang in a newly started guest from one wheel; a
-  directory selects its newest Toolang wheel recursively. Bare `--dev` uses `.`
-- `--model MODEL` supplies an invocation model identity and typed
-  parameters, for example `--model 'openai/gpt-5 effort=high'`
-- `--limit LIMIT=VALUE` overrides one run limit; it may be repeated
-- `--allow RESOURCE=QUERY` sets one of `models`, `tools`, `psyches`, `skills`,
-  `services`, or `prompts` and may be repeated
-- host execution remains embedded when no AgentServer is active; a selected
-  non-host sandbox starts a temporary AgentServer and cleans it up after the run
-- an explicit sandbox that does not match an active AgentServer is rejected
-  before creating a thread or run; `--dev` cannot modify an active AgentServer
-- `PY_LOG=toolang.execution=info toolang a.too summarize ...` writes runtime logs
-  under `.toolang/agents/<agent>/.runtime/logs/<runnable>/<run_id>.log`
-- `PY_LOG=debug toolang a.too summarize ...` also writes lower-level provider
-  and HTTP logs to that run log file
-- `toolang a.too --help` lists public runnables
-- `toolang a.too summarize --help` prints runnable-specific dynamic usage
-- `toolang a.too` shows usage instead of running a default agic
-- a runnable missing a required named argument or required primary input shows
-  its dynamic help and does not create a run; omitted input is first read from
-  stdin when available
-- script run reads one effective Setup and State publication; the executor
-  narrows their model, tool, and cap collections with request and runnable
-  directives
-- `name=value` supplies one named argument and is coerced using its declared
-  parameter type; arguments and command options may be interspersed before input
-- the first ordinary operand starts line input; `--` explicitly starts it when
-  the text begins with an option or assignment
-- after line input starts, all remaining words are content, including
-  `name=value`, `--help`, `-`, and `---`; an unknown assignment in the command
-  header is an error, even when shell-quoted
-- line-input rules, with or without `--`:
-  - adjacent ordinary shell words are joined with spaces into one text item
-  - `TEXT` adds one text part; use `@@TEXT` for literal text beginning with `@`
-  - `@PATH` adds one path-based percept part; text-like paths become text parts
-  - image extensions such as `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.bmp`, and `.svg` infer image parts
-  - `.mp3` and `.wav` infer audio parts
-  - supported document extensions infer document parts
-  - unsupported video, archive, executable, and binary formats are rejected
-  - explicit `--` requires nonempty input
-- a standalone `-` must be the final command-line token; it reads stream input
-  through stdin EOF and may be empty
-- a standalone `---` in the command header is rejected with guidance to use
-  `-`; remove the closing fence when migrating, since stdin is read through EOF
-- `---` remains literal in line input, stdin, and argument or option values;
-  prompt calls inside input retain fenced syntax
-- omitting input reads non-interactive stdin as an implicit stream when
-  available; an empty stream means input is absent, and TTY stdin is not read
-- complete Call Input syntax is defined in [call-input.md](./call-input.md)
-- `--option` selects Toolang runtime options before input begins
-- `PY_LOG` uses env_logger-style directive formatting and does not affect stdout
-- key execution events are recorded in `runs.db` for script runs just like chat,
-  talk, and chore runs
-
-The same roaming source path can select agent commands:
-
-```bash
-toolang SCRIPT info
-toolang SCRIPT run
-toolang SCRIPT chat [--thread [THREAD]]
-toolang SCRIPT inspect SUBJECT... [PROJECTOR] [--human | --json]
-toolang SCRIPT rerun RUN
-```
-
-It also supports `steer`, `cancel`, `rewind`, and `fork`. These command names
-immediately following the source are interpreted as agent commands. Prefix a
-same-named runnable with `agic:`, `flow:`, or `runnable:` to invoke it. The
-removed `threads` and `runs` command names are available to authored runnables
-without a typed prefix.
-
-Visiting Targets support the same agent-self and execution-history commands:
-
-```bash
-too gh:brice/alice info
-too gh:brice/alice chat [--thread [THREAD]]
-too gh:brice/alice inspect SUBJECT... [PROJECTOR] [--human | --json]
-too gh:brice/alice rerun RUN
-```
-
-Commands that execute or inspect current program state (`info`, `serve`, `chat`,
-and `rerun`) resolve and materialize the remote program. History-only
-commands, including `inspect`, derive the stable visiting layout and read its
-existing `runs.db` without fetching the source.
-
-### Historical record inspection
-
-`inspect` evaluates a subject chain and an optional terminal projector:
-
-```text
-toolang AGENT inspect SUBJECT... [PROJECTOR] [--human | --json]
-```
-
-The former top-level `threads` and `runs` commands have been removed. Replace
-them with `inspect threads`, `inspect runs`, or `inspect THREAD runs`. The old
-filters have no inspect equivalent; use `--json` and filter externally when
-needed. Inspect collections are unbounded rather than limited to 50 rows, and a
-missing `runs.db` is an error rather than an empty successful result.
-
-The initial collection and relation subjects are:
-
-```text
-threads                 every Thread record
-runs                    every physical Run record, including rewound Runs
-controls                Thread controls and controls of existing Runs
-THREAD runs             Runs in THREAD's logical history, including child Runs
-RUN steps               every Step physically owned by RUN
-STEP runs               every Run directly accepted by STEP
-LOOP_STEP steps         every direct same-Run Step owned by LOOP_STEP
-```
-
-Collections are unbounded and preserve durable ordering. Their JSON form is a
-bare array of canonical record objects; every object is identical to inspecting
-its printed Pointer individually. A missing `runs.db` is an error, while an
-existing store with no matching records returns an empty collection.
-`controls` combines all Thread Controls with Controls belonging to existing Runs,
-including rewound Runs. Controls without an existing owning Run are excluded.
-The collection orders records by creation time descending, target ascending, then
-Control index descending.
-
-A Pointer still selects one durable Thread, Control, Run, or Step record, or a
-field inside that record:
-
-```text
-term_ab12                         Thread record
-run_ab12                          Run record
-run_ab12.0                        Step record
-term_ab12@0                       Thread Control record
-run_ab12@1                        Run Control record
-run_ab12.0/output/value/0   nested field
-run_ab12@1/payload/input/_        nested Control field
-```
-
-`.` enters the Step hierarchy, `@` selects a Control index, and `/` enters a
-field using RFC 6901 escaping (`~0` for `~` and `~1` for `/`). Run ids occupy
-the `run_` namespace; thread ids cannot begin with `run_`.
-
-Exact `threads`, `runs`, `controls`, and `steps` tokens are reserved by this
-grammar and take precedence over Thread Pointer parsing. The accepted
-transitions are Agent to `threads`, `runs`, or `controls`, Thread to `runs`, Run
-to `steps`, container Step to `runs`, and loop Step to `steps`. The Step
-relations are direct and return an empty canonical array when no child was
-created. Collections, Controls, non-container Steps, and fields do not accept
-relation subjects.
-
-Every successful query selects one projector after its subject resolves:
-
-| Projector | Selection | Human result | JSON result |
-| --- | --- | --- | --- |
-| `records` | collection subject | summarized record rows | canonical record array |
-| `fields` | browsable Pointer value | direct child fields | exact selected value |
-| `value` | scalar, empty, resolved, or specialized value | rendered value | exact selected value |
-| `output` | Run with the explicit terminal name | complete result body | resolved result value |
-| `tree` | Run with the explicit terminal name | hierarchical durable execution | flat depth-first node array |
-| `call` | supported Step with the explicit terminal name | Step-owned historical call | normalized call or flat node array |
-
-`records`, `fields`, and `value` are implicit view kinds, not accepted command
-tokens. `tree` and `output` are explicit only on a whole Run. `call` is explicit
-only on a whole model, tool, run, par, or loop Step. Run and Step subjects never expose
-equivalent projector names, and the removed `model-call` spelling is not an
-alias.
-
-Read a Run's result with `output` (`too` is an alias for `toolang`):
-
-```sh
-too SCRIPT inspect run_ab12 output
-too SCRIPT inspect run_ab12 output | rich -m
-too SCRIPT inspect run_ab12 output | jq '.'
-too SCRIPT inspect run_ab12 output --json
-```
-
-`output` resolves stored references and extracts the value from `Output`.
-The default view writes Text unchanged and concatenates TextPart bodies in
-order for textual Parts. It preserves whitespace and Markdown source, adding
-only a final newline when nonempty text lacks one. Empty text and empty Parts
-emit no body. Structured values and nontext Parts emit complete indented JSON.
-The view does not render Markdown, add colors, wrap, or truncate content; use
-external tools such as `rich` or `jq` to present it. The `jq` example requires
-structured output or text that itself contains valid JSON.
-
-Textual Parts omit reasoning and nontext content from the default text view.
-The existing `--json` flag preserves every resolved Part and nested value;
-Text becomes a JSON string with its original whitespace. A JSON-looking Text
-value remains text and is never parsed to infer a type. `--human` and `--json`
-remain mutually exclusive; no new formatting flags are added. Output behavior
-is the same in a terminal and a pipe, including when `FORCE_COLOR` is set.
-
-A Run without an output fails with its ID and status instead of returning a
-blank success or waiting for completion. Present null and empty outputs succeed.
-Use `inspect RUN/output` to inspect the output wrapper, or
-`inspect RUN/output/value --json` for the raw stored value, including
-unresolved references. Existing Pointer queries retain their original behavior.
-The `output` projector is available only for whole Runs, not Steps or collections.
-
-`call` on a model Step reconstructs the complete normalized call persisted for
-that Step, including instructions, messages, tool definitions, the
-structured-output schema, and continuation data:
-
-```bash
-toolang alice inspect run_ab12.0 call
-toolang alice inspect run_ab12.0 call --json
-```
-
-This is distinct from `run_ab12.0/spec/call`, which exposes compact persisted
-references. Projection is local and read-only: it does not prepare a call,
-select a model, construct a provider-native request, or send provider traffic.
-
-The Human view follows call lifecycle order: summary, non-empty instructions,
-messages, tools, output contract, continuation, and result. Empty sections are
-omitted. Request text and result payloads are never truncated. All tool
-signatures and descriptions are shown, while parameter schemas remain
-summarized by the signatures. Text preserves authored line breaks. Messages use
-descending review numbers, tool-call and tool-result parts retain their fenced
-Human layout, structured values use indented key and index lines, and the
-output contract uses formatted JSON. Section headers contain only their title:
-message and tool counts and result Pointers are not appended. Result is last.
-The JSON view keeps the complete normalized call and exact `output_schema`
-value, including `null` for unstructured and historical calls.
-
-The model-call summary usage line uses
-`↑INPUT(CACHE%) ↓OUTPUT(REASONING)`. Output is inclusive and already contains
-reasoning. An explicit zero reasoning meter renders `(0)`; a missing meter
-omits the output parenthetical.
-
-`call` on a tool Step shows a summary, its persisted plugin, normalized
-invocation, and the stored result payload without truncation when present. Tool
-results retain the same fenced, structured Human layout used inside model
-messages. Both identifiers are shown only when they differ. Its JSON is the bare
-canonical `ToolCall` with exactly `tool_call_id`, `call_id`, `name`, and `input`;
-it does not add the result or an inspection envelope.
-
-`tree` on a Run and `call` on a run, par, or loop Step render the same durable
-structural model. A Run tree starts at that Run. A container-Step call starts at
-the selected Step, omits its owning Run and siblings, and retains each accepted
-child Run as a separate node:
-
-```text
-NODE                  ACTIVITY                       OCCUR
-run_parent            ✔ <flow>  parent
-└─ run_parent.0       ✔ [run]   <agic>  child        3 items · 2 lanes
-   └─ run_child       ✔ <agic>  child                item 2 · lane 1
-      └─ run_child.0  • [model] openai/gpt-5
-```
-
-Human trees contain exactly `NODE`, `ACTIVITY`, and `OCCUR`. Activity starts
-with `•` for pending or running, `✔` for succeeded, and `✖` for failed or
-canceled; color distinguishes the statuses that share a marker. A child shows
-only one-based item and lane indexes, while the owning Step shows known totals.
-JSON is a flat depth-first array with `pointer`, `record_kind`, `step_kind`,
-`parent`, `depth`, operation, status, occurrence, timestamps, canonical error,
-and metrics. This is a transactionally consistent structural snapshot, not
-event replay or a live trace; exact interleaving is unavailable because
-execution events are not persisted as a journal.
-
-Tree metrics include `reasoning_tokens` and `reasoning_complete` alongside the
-inclusive input/output totals. Every counted model call must have an integral
-`output.reasoning` token meter for the reasoning aggregate to be complete. A
-partial numeric value is a known lower bound, all-unknown reasoning is `null`,
-and zero model calls produce `reasoning_tokens: 0` with
-`reasoning_complete: true`. Consumers must not add reasoning tokens to output.
-
-Human output is the default. Record and container tables use the CLI's
-horizontal-rule Rich style. Run collections order identity, runnable, status,
-Step count, ownership, and creation time; they never show occurrence. Step
-collections use `STEP`, `ACTIVITY`, `CHILD RUNS`, `CHILD STEPS`, optional
-`PARENT STEP`, `CREATED`, and `OCCUR`. Their activity uses the same marker
-vocabulary as trees, and both child counts are direct visible relations.
-
-Field tables always use `FIELD`, `TYPE`, and `VALUE`. They list direct children
-as relative field suffixes and show a bounded preview of the raw canonical value
-in the third column. Long or multiline strings include size facts. Field tables
-do not follow a Pointer, mark a resolved type, or fail because a
-stored Pointer is missing, cyclic, or has a mismatched target. A directly
-selected value retains normal Pointer resolution and validation.
-
-Human projections have no trailing context footer. Direct scalar and
-specialized values print only their value. Strings have no JSON quotes, and
-nullable Human type labels use `T?`. Multiline Part content stays aligned
-inside the VALUE cell without a leading bullet. Pointer queries with `--json`
-do not resolve Pointers and print only the selected canonical JSON value. The
-explicit Run `output` view instead returns the resolved result as described
-above. Display modes are mutually exclusive, and `--type` is not an option.
-Inspection is read-only and historical and does not load a runnable.
-
-## Runtime Commands
-
-| Command | Resident name | Local `.too` | Remote Source Ref |
-| --- | --- | --- | --- |
-| `too serve` | yes | yes | yes |
-| `too start` | yes | no | yes |
-| `too stop` | yes | no | yes |
-
-Behavior:
-
-| Command | Behavior |
-| --- | --- |
-| `toolang serve` | Runs a local agent, or fetches one remote agent program into a stable visiting root and runs it in the foreground |
-| `toolang clone` | Clones one local agent, or fetches one remote agent program into a new local managed agent |
-| `too start` | Starts a persistent resident/visiting server, promotes an automatic one in place, or reuses a compatible persistent one |
-| `too stop` | Stops the selected generation, including active work, without fetching its source |
-
-`too serve` and `too start` resolve concrete startup inputs at the control
-boundary. Host `serve` executes in the foreground command's process; host
-`start` launches a detached child. Docker runs one guest workload and its host
-controller. Detached and guest workloads use hidden `too _serve`, receiving
-explicit agent paths, input policy, sandbox, location, and launch ID without
-placement decisions. The execution core is shared across sandboxes.
-
-The CLI preserves the interpreter's process name and command-line arguments.
-Terminal conversation titles continue to use OSC independently of process names.
-
-Server discovery uses lightweight references under the Toolang root's
-`.runtime/instances/`, pointing to the agent's authoritative
-`agents/<agent>/.runtime/status.json`. Host references validate PID and creation time;
-container references use adapter-owned instance IDs. `info` shows the referenced
-PID or instance even during startup and ignores status reports from another
-workload. Missing or unverifiable control state produces a diagnostic instead of
-adopting a process by name. Stop unregistered legacy servers before upgrading.
-
-Control-side launches report ordered operational work on stderr: preparing the
-sandbox, creating the runtime, and connecting to the Agent API. Host foreground
-`serve` reports workload lifecycle through its normal logging. Docker adds
-Toolang installation and compatibility checks. A TTY uses one transient line
-without a spinner and shows elapsed time after one second. A non-TTY writes
-each action and outcome as an append-only plain-text line. The stable
-`Agent NAME running: ...` (guest foreground) and `Agent NAME started: ...`
-result lines are written only after readiness succeeds.
-
-Both commands accept repeatable `--allow RESOURCE=QUERY`,
-`--limit LIMIT=VALUE`, and `--default SETTING=VALUE` options. The CLI parses these
-with `TOOLANG_ALLOW_*`, `TOOLANG_DEFAULT_*`, and `TOOLANG_LIMIT_*` into frozen
-field overrides passed to `SetupWatcher`.
-
-`--compact-model MODEL` selects the new runtime's compaction model,
-using the same model expression as `--model`, without a `model=` prefix.
-
-Setup policy uses the following TOML shape in root and agent-home `config.toml`
-files:
-
-```toml
-[allow]
-models = ["gateway/*"]
-tools = ["shell/*"]
-skills = ["skill/reviewer"]
-
-[default]
-model = "gateway/chat effort=high"
-
-[limit]
-agic_model_calls = 200
-agic_tool_calls = "none"
-tokens = 200000
-cost = "2.50"
-time = 900
-```
-
-Limit fields are non-negative. Quoted `"none"` disables a limit. Empty allow
-arrays deny all resources in that field. Text CLI/environment values use
-`none` for an empty allow set, a cleared runnable, or an unlimited limit,
-according to the target field. Models use canonical `unset`; legacy `none` in
-Setup default sources is normalized to it. `all` removes an allow restriction.
-Empty text is always invalid.
-
-Default model values use one shared model body across TOML,
-`TOOLANG_DEFAULT_MODEL`, and startup `--default model=BODY`. A body contains an
-optional exact identity followed by typed assignments such as `effort=high`,
-`effort=4096`, `effort=auto`, `max_output=8192`, or `max_output=auto`. Setup publishes the resulting complete model
-request only after validating it against the effective model. Chat startup uses
-`--default model=BODY` for its multi-run session, while Script and rerun use
-`--model BODY` for one-run selection above the Setup default.
-
-The precedence order is built-in values, root config, agent-home config,
-runtime environment, CLI, then any request-level binding or limit fields.
-Config is re-read dynamically; environment and CLI mappings remain fixed for
-the process lifetime. Each `--default` or `--limit` field may occur once;
-repeated `--allow` values for the same domain accumulate within the CLI layer.
-
-Sandbox selection uses CLI > current `[sandbox]` binding > last successful
-selector > `host`. An unavailable selected sandbox fails without falling back.
-Persistent servers reuse their last successful available host-facing port when
-no current port input overrides it; a busy remembered port is reallocated, while
-an explicit/configured busy port fails. Successful settings are recorded only
-after readiness; failed attempts do not replace them. Stopped records retain
-these settings and database/log history. Temporary script ports remain temporary.
-Docker sandbox control is supported from Linux and macOS hosts. Windows users
-must run Toolang through WSL2; native Windows host control is not supported.
-
-Chat uses the same sandbox selection when no AgentServer is active.
-For resident/visiting agents, fresh implicit servers enable chat only; explicit
-start/serve keep placement driver defaults. Resident servers remain running;
-visiting implicit servers automatically stop after all clients and accepted work
-finish. Start retains either placement until stop and cannot detach foreground
-serve. Roaming and standalone script behavior is unchanged. See
-[execution ownership](execution.md) for the lifecycle and command combinations.
-If an AgentServer is already running, Chat attaches to it and rejects an explicit
-incompatible selector without executing or restarting the server.
-`chat --dev [PATH]` installs a local Toolang wheel in a new non-host runtime;
-bare `--dev` searches the working directory. It is rejected for host execution
-or when Chat attaches to an existing
-AgentServer. Use `too stop <agent-or-ref>` to stop a retained server explicitly.
-
-For execution commands, `--catalog` and `--compact-model` apply only when
-starting a runtime. Stop the existing agent before changing those startup
-settings; an attached command rejects them rather than ignoring them.
-
-Commands that start a new guest accept `--dev [PATH]`. This includes `serve`,
-`start`, `chat`, Script `run`, and `rerun`. Omitting `--dev` keeps the
-existing package selection. Bare `--dev` uses `.` (the process working directory,
-not the script directory or agent home). An explicit `PATH` selects that path.
-`PATH` is either one Toolang `.whl` file or a directory to search recursively
-for Toolang wheels. Directory selection uses the most recent file modification
-time and breaks equal-time ties by absolute path. The selected concrete wheel
-is staged into Docker and supplies its `too _serve` command. Build a current
-wheel and select it with:
-
-```sh
-uv build --wheel
-too alice run --sandbox docker --dev
-```
-
-A following non-option token is consumed as PATH. Before a runnable selector or
-input, use `--dev=.` or terminate options with `--dev --`. For example,
-`too demo.too --dev=. summarize hello` and
-`too demo.too summarize --dev -- hello` both select from the working directory.
-Use `--dev=PATH` or a `./` prefix for paths beginning with `-`. Repeated `--dev`
-options use the last value; a runnable-level occurrence overrides the script
-root value. Explicit empty paths (`--dev=` or `--dev ""`) also resolve to `.`.
-
-Help displays environment, default, and bare-option metadata as separate tags:
-`[env: NAME=] [default: VALUE] [bare: VALUE]`. Only applicable tags are shown.
-For `--dev`, `[bare: .]` describes the value used when PATH is omitted; it does
-not change the default when the entire option is absent.
-
-`--dev` does not treat a directory as a source project and does not rebuild
-after launch. It applies only while starting a new guest: host execution uses
-the current Toolang installation, and an attached AgentServer has already
-selected its package. When the controlling CLI runs from development source, a
-new guest without `--dev` warns that it will install Toolang from the package
-index instead of the local source. The warning includes the wheel build command
-and does not block launch or query the package index.
-
-Sandbox selection and implementation configuration are separate:
-
-```toml
-[sandbox]
-driver = "docker"
-target = "python:3.13-slim"
-
-[plugin.sandbox.docker]
-root = "/root/.toolang"
-```
-
-Root and agent plugin tables are merged before the selected sandbox factory is
-created. Status, stop, and interrupted-launch recovery re-read this current
-configuration; `SandboxState` stores only the sandbox selector and runtime
-reference. Each plugin owns its runtime-root configuration and reports whether
-the workload runs on the host or in a guest environment; orchestration does not
-interpret plugin-specific path settings.
-
-The host fixes the workload's runtime environment before sandbox preparation.
-Docker includes every name authored in the root or agent `.env`, then includes
-host-process names that match its default environment allow pattern.
-That pattern covers Toolang controls, proxy and certificate settings, Python
-bootstrap settings, and common model-provider variables. Override it with a
-full-match regular expression when another process variable is required:
-
-```toml
-[plugin.sandbox.docker]
-environment_allow_pattern = '^(?:COMPANY_CATALOG_TOKEN|HTTPS?_PROXY)$'
-```
-
-The configured pattern replaces the default and is compiled as written. Root
-dotenv values are overlaid by agent dotenv values without applying the pattern.
-A host-process value overrides those layers only when its name matches the
-pattern.
-
-Docker writes the selected mapping to one mode-`0600` staged dotenv file. Its
-comments separate merged root/agent dotenv values from filtered host-process
-values, with the process section last to preserve precedence. The file is
-bind-mounted read-only over the guest agent's `.env`; the root `.env` is not
-mounted, and the original agent `.env` remains hidden behind the nested file
-mount. A small bootstrap reads this same generated dotenv into the guest process
-before package installation or plugin loading. Dotenv values are literal on
-both host and guest, so `${NAME}` is not expanded during either load.
-Toolang passes gateway, Toolang-root, sandbox, and workspace control values
-through Docker's environment arguments; `TOOLANG_ROOT` retains the selected
-Toolang root, and `_serve` receives the mapped agent root explicitly. Docker maps
-`host.docker.internal` through the engine's `host-gateway`. The complete staging
-mount is read-only in the guest. Staged files are removed on release and after a
-failed Docker launch whose workload was removed successfully. If Docker cleanup
-fails, the staged files remain with the persisted recovery reference.
-
-For every sandbox implementation, AgentServer is the environment's primary
-foreground workload. `serve` waits for that workload and releases it on exit,
-while `start` returns after the health endpoint is ready. `stop` reloads the
-persisted `SandboxState`, stops the primary workload, and releases its sandbox
-resources. Agent removal also asks the sandbox lifecycle to release any stopped
-workload before deleting the agent home; no caller deletes sandbox control state
-as ordinary filesystem data.
-
-Agent entrypoints also share one logging policy resolver:
-
-| Entrypoint | Log destination |
-| --- | --- |
-| `toolang serve` | `stderr` |
-| `toolang start` | `agent_log` under the agent `.runtime` directory |
-| embedded host `.too` script run | `run_log` under the agent `.runtime` directory when `PY_LOG` is set, otherwise `none` |
-| attached or temporary `.too` script run | AgentServer output remains in its `agent_log`; Script progress and result output retain their stderr/stdout split |
-
-The lifecycle saves intent before creation and binds recoverable references as
-soon as they are available, then attaches output observers and performs
-the readiness check. The Docker sandbox follows container output locally from
-container creation for foreground `serve`. Background `start` instead creates the
-host `agent_log` with mode `0600` and writes Docker launch diagnostics,
-bootstrap errors, and AgentServer output there. Early container diagnostics are
-copied to that log before a failed or stopped workload is released, bounded to
-the final 2000 Docker log lines and streamed without buffering them in memory.
-Diagnostic write failures do not prevent container cleanup. Foreground
-interruption, ready-reporting errors, and wait failures stop and release the
-workload; cleanup failures preserve `SandboxState` for a later forced stop.
-`SandboxState` reads the `control` section of agent instance format 3 `status.json`; host and
-guest update that shared file with generation checks and owned-field merges.
-Docker mounts the agent home read-write, including status, database sidecars,
-and logs; required inputs/workspaces and read-only bootstrap materials are added
-separately. Entire roots and discovery references are not mounted. Guest field
-ownership is cooperative, not filesystem isolation. Independent sandbox state
-is removed. Legacy `.sandbox/<agent>/state.json` and `.runtime/sandbox.json`
-block launch, stop, and removal: stop old workloads with the previous version
-before upgrading. Stopped legacy status reports migrate; history is preserved.
-Likewise, per-launch staging without a matching control reference is preserved
-and blocks relaunch or removal until any associated workload is removed and the
-staging directory is cleaned manually.
-
-Docker uses the engine's default missing-image pull behavior. Its guest script
-quietly bootstraps uv and installs the selected package with `uv tool install`.
-For a source-local roaming agent, Docker overlays linked `agent.too` and
-`config.toml` targets as explicit read-only guest files so host symlinks do not
-become broken paths in the container.
-Successful installation suppresses ensurepip chatter, pip's container root-user
-warning, package lists, and uv progress bars; installer failure stderr remains
-available. Before execution, the guest checks that the installed CLI can start
-the required AgentServer. Structured startup errors identify whether package
-index or wheel installation failed and recommend a source-appropriate fix. A
-compatibility failure from a development CLI recommends `uv build --wheel` and
-`--dev dist`; a selected wheel instead recommends rebuilding or selecting a
-compatible wheel. Foreground output reports that diagnostic once; background
-output also retains the guest diagnostic in `agent_log`.
-
-Guest stage observation uses a unique mode-`0600`, append-only token file under
-the agent runtime directory. Tokens are a closed vocabulary for install,
-validation, and server-start transitions; they contain no commands, logs, or
-environment values. Guest writes are best-effort, and the host reads only a
-bounded, regular, non-symlink file. The file is presentation-only: unknown,
-duplicate, out-of-order, or stale values cannot affect readiness, recovery, or
-cleanup. The referenced file is removed with the sandbox resources.
-
-An active `toolang info` uses the sandbox reference's structured workload
-identity. Host workloads show `PID`; Docker workloads show `Container` with the
-generated name and a 12-character hexadecimal ID, while recovery retains the
-full immutable container ID. Other sandbox kinds show `Runtime KIND:ID` without
-assuming their identifiers can be shortened. Older version-1 references without
-identity fields remain readable as generic workloads.
-
-When `toolang start` runs without `--port`, Toolang first tries the agent's last
-runtime port, except `7001`, which is reserved for the default Hub. If that port
-is not reusable, Toolang scans its auto-assigned local range `7002-7999`, starting
-at `7002` and counting upward, skipping ports
-already recorded by other local agents, instead of asking the OS for a random
-ephemeral port.
-
-An agent recorded on `7001` receives a new port on its next default start.
-Explicit CLI, environment, or home configuration port overrides still take
-precedence, including `7001`. Running processes are not relocated.
-
-
-## Terminal titles and pane marks
-
-Foreground interactive commands publish OSC 0 titles, which terminals and tmux
-`pane_title` can display according to user settings. Session/window names are
-untouched; Chat and Talk always run in the invoking terminal.
-
-| Command | Title |
-| --- | --- |
-| Chat | `alice: thread title`, initially `alice` |
-| Talk | `@alice`, `@alice,bob`, or `#dev` |
-| Serve | `serve alice` or `serve hub` |
-| Script Run | `run file.too` or `run file.too runnable` (basename only) |
-| Rerun | `rerun run_id` (source ID) |
-
-Each type's prefix defaults to an empty string. Configure
-`chat`, `talk`, `serve`, `run`, and `rerun` independently:
-
-```toml
-[terminal.title.prefix]
-chat = "💬 "
-talk = "[too] "
-```
-
-Precedence is `TOOLANG_TITLE_PREFIX_<TYPE>` > agent-home config > root
-config > empty. Omitted keys inherit; explicit empty strings clear. Root-only
-views skip agent-home config. Roaming/scripts use their existing outer-to-inner
-project `toolang.toml` layers. Environment values use root dotenv < home dotenv
-< process ordering; roaming/scripts use the process environment only.
-
-For a one-off override, set the type's environment variable:
-
-```sh
-TOOLANG_TITLE_PREFIX_CHAT='[too] ' too alice chat
-TOOLANG_TITLE_PREFIX_CHAT='' too alice chat
-```
-
-Prefixes concatenate directly: `"💬"` gives `💬alice`; `"💬 "` gives `💬 alice`.
-Printable spaces are preserved. Unsafe controls are removed and the complete
-title is clipped to 32 display columns without splitting graphemes. Titles clear
-on handled exit. TTY input, output, and presentation streams are required;
-snapshots, scripted Chat, quiet/file output, and background/internal services
-publish neither titles nor marks.
-
-In tmux, foreground commands also publish pane-local string options:
-
-| Option | Value |
-| --- | --- |
-| `@toolang_kind` | `chat`, `talk`, `serve`, `run`, or `rerun` |
-| `@toolang_root` | Agent root for agent commands; Toolang root for commands without an agent |
-| `@toolang_agent` | Bare agent name; empty for Talk, team Top, and Hub Serve |
-| `@toolang_thread` | Chat thread ID, once created |
-| `@toolang_run` | Actual executing run ID, once allocated or accepted |
-| `@toolang_convo` | Canonical Talk conversation ID |
-| `@toolang_context` | Opaque connection identity shared by Talk and team Top |
-
-Unused fields are empty. Consumers must require a recognized local `kind` and
-read pane options with `tmux show-options -p -t "$TMUX_PANE"` **without `-A`**;
-format expansion can inherit stale session/window values. Marks clear on handled
-exit. Abrupt termination can leave stale metadata; marks do not prove liveness.
-
-`TOOLANG_TMUX=0` (also `false`, `no`, or `off`, case-insensitive) disables marks
-while preserving OSC titles. `TOOLANG_TMUX_DEBUG=1` enables tmux diagnostics.
-Scripts using the old session/window marks must migrate to these pane options;
-`@toolang_pad` and `@toolang_talk` are retired. Users who need automatic placement
-can create their own tmux bindings using the pane metadata.
-
-## Resource Inspection Commands
-
-| Command | No agent | Selected resident agent |
-| --- | --- | --- |
-| `toolang [AGENT] caps [--all]` | Root-shared, allowed capability resources | Root plus agent-owned resources under effective allow and scope precedence |
-| `toolang [AGENT] tools [--all] [--query QUERY]` | Root-configured effective tools | Tools under merged root/agent configuration and allow policy |
-| `toolang [AGENT] models [--all] [--catalog PATH] [--query QUERY] [--json]` | Root-configured ready, allowed models | Models under the selected agent's configuration |
-| `toolang [AGENT] providers [--all] [--catalog PATH] [--json]` | Providers with ready, allowed models under root configuration | Providers under the selected agent's configuration |
-
-Omitting an agent never reads an implicit `agents/default`. Tools, models, and
-providers read published setup views without starting or parsing the resident
-agent's program. Model catalog selection is `--catalog`, effective
-`TOOLANG_MODEL_CATALOG`, selected agent's `catalog.json`, root `catalog.json`,
-then packaged data. These files must use the flat `{providers: [...], models: [...]}`
-cata format; convert upstream models.dev data externally. Static catalog files
-replace each other; root and agent files are not unioned. Additional catalog
-plugins retain their existing behavior. Provider order follows the selected file;
-model order follows its model array unless `allow.models` branch order ranks matches.
-
-Resource `--all` shows the complete diagnostic view for that same scope:
-allow-excluded caps, internal and allow-excluded tools, or unready and allow-excluded models/providers
-(including empty providers). It does not grant runtime access or combine scopes.
-Default tools hide internal `runtime` leaves. Queries and counts describe the
-selected view. `state` is not internally hidden and follows normal tool allow policy.
-
-Resource lists support `--json` inspection arrays and default human tables
-(`--human`). The two output flags cannot combine. Model/provider canonical records
-retain the flat models-repository shape plus `_toolang`; model ownership is the
-`provider` string and connection declarations use `override`. Runtime credentials
-and connection payloads are excluded from public route metadata.
-Providers never contain model records or ID lists. Their inspection `models`
-field formats setup's stored ready/total counts, unchanged by `--all`.
-
-Human headers uppercase record keys. Models use short inspection fields including
-`CONTEXT`, `MAX_OUTPUT`, and `PRICE`; providers show `ID`, `MODELS`, `ADAPTER`,
-`API`, `ENV`. Tools show `REF`, `DESCRIPTION`, `TAGS`; caps show `CAP`,
-`DESCRIPTION`, `LOCATION`, `TAGS`. Models/tools/caps have availability tags; providers do
-not. Caps also include form, scope, and origin; models include origin.
-See [Resource Queries](queries.md) for the records, columns, and tag groups.
-Providers have no built-in query option; their JSON supports external TQ.
-
-Every resource `--all` accepts `-a`. Human lists show displayed-row summaries;
-empty results show only `0 <items>`. Tools, aggregate caps, and models add the distinct
-toolset, kind, or provider count when more than one row is displayed. JSON has
-no summary and uses `[]` for an empty result. Prices are per million tokens.
-API readiness does not prove remote reachability or entitlement.
-See [models](models.md), [tools](tools.md), and [caps](caps.md) for exact semantics.
-
-
-## Plugin Inventory Commands
-
-- `toolang catalogs`
-- `toolang adapters`
-- `toolang toolsets [--all]`
-- `toolang sandboxes`
-
-These commands list installed entry-point `NAME` and distribution `PACKAGE`
-(such as `toolang`). They have no query, `--json`, or `--human` options. They reject agent names and do not read setup,
-configuration, or catalog files or invoke factories. An installed plugin remains
-visible even when it cannot load. `toolsets` hides internal entries such as
-`runtime` unless `--all` is given. Plugin lists have no agent allow policy.
-`tools` belongs to resource inspection, not plugin inventory.
-
-
-## Agent HTTP API
+# Agent HTTP API
+
+This guide describes the running agent's HTTP boundary. It is for client and
+server implementers. [CLI](cli.md) owns process commands, [Drivers](drivers.md)
+owns admission by driver, and [Events](events.md) owns live observation.
+Agent routes use `AGENT_API_VERSION = 0`; statistics have an independent
+[API version](execution-statistics.md). Inspect the server's `/openapi.json`
+for the complete current request and response schemas.
+
+## Application ownership
 
 Each running agent exposes one local FastAPI server.
 
-The process keeps one `AgentCore`, `CapsManager`, and `JobsManager` for the
+The process keeps one `AgentCore`, `CapsManager`, and `ChoresManager` for the
 application lifetime. `AgentCore` owns the process-local executor, history,
 thread manager, setup watcher, and state watcher. These owners are stored on
 `app.state` and exposed through small typed request dependencies. The API also
@@ -1063,11 +33,10 @@ Core endpoints are grouped as:
 - `runs`
 - `threads`
 
-Non-interactive execution uses `POST /api/v0/runs/stream`. It accepts an agic
-or flow's unique `runnable` name, primary input, optional model, and optional
-declared arguments, and returns the canonical trace event stream for HTTP
-clients. An omitted model uses the current `AgentSetup.defaults.model`. CLI
-script runs and TUI execution do not consume this endpoint.
+Non-interactive clients use `/api/v0/runs`; interactive Chat clients use the
+chat-gated `/api/v0/chat/runs` routes. Direct and authored requests are described
+below. Both produce canonical execution events; CLI clients share these
+protocols through RemoteRunClient.
 
 
 ## Agent Endpoints
@@ -1096,7 +65,7 @@ availability requires a matching captured mount and an existing guest directory.
 runtime workspace defaults. `too AGENT workspace list` reads authored workspace
 configuration and checks local directory availability without querying the server
 or preparing State. It excludes implicit `lab` and temporary grants. See
-[Script Projects](script-projects.md) for configuration locations and CLI options.
+[Scripts](scripts.md) for configuration locations and CLI options.
 Execution CLI commands parse local directory grants but leave named workspace URI
 validation to the embedded executor or remote server; client configuration and
 filesystem paths do not determine remote availability.
@@ -1323,56 +292,43 @@ Both run-streaming endpoints return the execution SSE protocol described below. 
 that needs another presentation shape adapts these events client-side; the API
 does not maintain a second chat event vocabulary.
 
-The CLI command for interactive chat is `toolang AGENT chat [--thread [THREAD]]
-[--sandbox SANDBOX] [--default SETTING=VALUE]
-[--allow RESOURCE=QUERY] [--limit LIMIT=VALUE]
-[--compact-model MODEL]`.
-The `--thread` option has a short alias, `-t`, and accepts an optional value:
-
-- Omit the option to start a new session; its terminal thread is created on
-  first input. Help and exit without input do not create a thread.
-- Pass bare `--thread` to resume the selected agent's most recently updated
-  thread, including recorded run activity. All thread origins and statuses
-  participate in selection. If no thread exists, the command fails with guidance
-  to omit the option to start a new session.
-- Pass `--thread THREAD` to continue that thread, or `--thread RUN` to continue
-  the run's thread. `--thread=THREAD` and `-tTHREAD` also accept explicit values.
-
-An explicitly empty thread value is invalid. Repeating the option uses the last
-occurrence. A following option, as in `--thread --sandbox host`, leaves thread
-selection bare. Positional thread IDs are no longer accepted.
-
-A resident, roaming, or visiting agent uses its recorded endpoint through
-`RemoteRunClient`. Chat starts the agent when needed; concurrent starters share
-one runtime, and an existing startup must become ready before Chat connects.
-Readiness failures are reported. Rerun and fork/rewind also ensure a server
-and mutate through its API. Resident/visiting steer/cancel attach only to a live
-owner; fork/rewind with `--chat` keeps one acquisition across both phases.
-Explicit Chat policy options become remotely validated session
-commands, while the server keeps ownership of setup, environment, providers,
-working directory, and sandbox.
-
-The banner always shows the TUI process version, executor, sandbox, and
-host-side agent home in that order. The executor links the normalized endpoint
-and follows it with the server version when it is not a confirmed clean match, for example
-`executor  http://localhost:7001 · v0.3.9`. Docker displays its complete selector
-and conventional twelve-character container ID, for example
-`sandbox  docker:python:3.13-slim · a1b2c3d4e5f6`. Host execution displays the
-ready OS description produced by the host sandbox plugin, for example
-`sandbox  host · macOS 27.0 arm64`. The middle-dot separators use the dim style,
-and OS build identifiers are omitted. `/api/v0/profile` returns the same
-twelve-character Docker hostname used to identify the guest; the host retains
-the complete container ID for Docker lifecycle operations.
-Chore thread IDs are inspectable through thread and run commands.
-Use `chore run` to request a manual occurrence.
-
-
 ## Chore Endpoints
 
-The [chore API](webui-jobs.md) provides current-definition list/detail,
-create/update/delete, manual run, and cancel. Definitions have a name, ref,
-derived ID, and optional schedule. Progress is stored in the `chores` table of
-`runs.db`. There are no task/job collections or lifecycle stages.
+| Request | Behavior |
+| --- | --- |
+| `GET /api/v0/chores` | List effective definitions and execution state |
+| `GET /api/v0/chores/{name-or-id}` | Read effective definition and state |
+| `POST /api/v0/chores` | Create a home definition with required `name` |
+| `PATCH /api/v0/chores/{name-or-id}` | Update home `title`, `body`, or `schedule` |
+| `DELETE /api/v0/chores/{name-or-id}` | Remove home definition, retain checkpoint/history |
+| `POST /api/v0/chores/{name-or-id}/run` | Request a serialized manual occurrence |
+| `POST /api/v0/chores/{name-or-id}/cancel` | Cancel active or pending work |
+
+Creation accepts optional `title`, `body`, and `schedule`. Missing schedule means
+one-off. Use a new name for a new identity. Inline definitions appear in
+inspection but must be edited in their `.too` source. Root chore files do not participate.
+
+Responses include `name`, `ref`, derived `id`, title, source `path` and optional
+`line`, schedule, and `runtime`. Runtime contains `thread_id`, `status`,
+`active_run_id`, `pending_at`, `next_scheduled_at`, `last_run`, `scheduler_error`,
+and checkpoint `updated_at`. `synced` indicates whether the checkpoint describes
+the current body and schedule; false means its status still belongs to an older
+or unobserved definition. Definitions have no execution timestamps or guessed
+remote issue fields. Status is null before the driver creates a checkpoint,
+then pending/running/done/failed/canceled. A recurring chore remains pending
+while future work exists; an already exhausted schedule starts as done.
+
+CLI and API inspection read the same current source definitions without resolving
+handlers. The driver uses accepted State for inline definitions and handlers.
+PATCH/DELETE reject inline definitions with 409 and identify the source
+to edit. Creating a home file hidden by an inline declaration also returns 409.
+
+Authoring and inspection work with the chore driver disabled. Manual dispatch
+returns 409 with `{ "code": "driver_disabled", "driver": "chore" }`.
+Unknown definitions return 404. Refresh the collection after a mutation and
+poll it for background progress. Execution history is available through the run
+and thread APIs; chore threads cannot be forked or rewound.
+
 
 ## Run And Thread Endpoints
 
@@ -1382,7 +338,7 @@ these write routes require the chat driver. Noninteractive scripts use the
 Interactive thread creation at `POST /api/v0/threads` creates `chat_` contexts.
 All callers use `client_id` and `request_id` rather than a client-type enum.
 Management, cancellation, inspection, and script execution remain available
-when chat is disabled. See [driver selection](work.md).
+when chat is disabled. See [driver selection](drivers.md).
 
 - `POST /api/v0/runs/stream`
 - `POST /api/v0/runs/authored/stream`
@@ -1409,9 +365,9 @@ Run collections return `RunInfo` arrays directly. `RunInfo` combines run
 identity, status, input text, output summary, failure, and timestamps; there is
 no separate `RunSummary` response type.
 
-`RunDetail.output` contains the canonical message parts resolved from the
-run's durable output edge. It is `null` until the run has an output edge and
-may be an empty array when the resolved runnable result is empty.
+`RunDetail.output` is a resolved Output envelope (`type`, `value`, `binding`),
+or `null` when no output edge exists. The complete value may itself be empty
+or JSON null; it is not implicitly converted to a Parts array.
 
 `steer` and `cancel` operate on active (`pending` or `running`) runs. Steer
 accepts a user message whose parts may be empty. Both accept optional
@@ -1468,10 +424,13 @@ Authored requests may supply `driver` (`chat`, `talk`, or `chore`) with
 normal validation and take precedence. A displayed default does not pin an
 automatic request to that handler; input source-revision checks still apply.
 
+The following request assumes an existing thread and an `agic:chat` declaration
+with a named `audience` parameter, plus an available route accepting high effort:
+
 ```json
 {
-  "thread_id": "term_example",
-  "request_id": "term_request",
+  "thread_id": "chat_example",
+  "request_id": "example_request",
   "runnable": {
     "ref": "agic:chat",
     "input": {
@@ -1481,7 +440,7 @@ automatic request to that handler; input source-revision checks still apply.
   },
   "model": {
     "ref": "openai/gpt-5",
-    "parameters": {"reasoning": {"effort": "high"}}
+    "reasoning": {"effort": "high"}
   },
   "policy": {
     "allow": [],
@@ -1510,7 +469,7 @@ control responses likewise use flat maps with self-describing value encodings.
 Run/Step outputs use `{"type": "Text", "value": "result", "binding": "_"}`.
 The binding is a name or null. The type describes the complete value; there is
 no Local wrapper or dimension flag.
-See [run-step-records.md](./run-step-records.md) for output reference paths.
+See [Records](records.md) for output reference paths.
 
 The server reads setup and state once and validates the concrete runnable,
 model parameters, policy, input, prompts, named sources, and file includes
@@ -1533,6 +492,12 @@ validation of the complete request.
 `RunDetail` with a nonempty resolved output. An unknown thread and a known
 thread without a result return distinct `404` details.
 
+`POST /api/v0/runs/input-references` expands prompts and returns the selected
+State revision plus required file-reference strings without opening files.
+Clients can materialize these against their invocation directory and submit
+`attachments` with `source_revision`; changed source is rejected rather than
+silently reopening a different local file on the server.
+
 ### Live execution snapshots
 
 `GET /api/v0/runs/live` returns `LiveSnapshot(epoch, observed_at, trees)` from
@@ -1552,99 +517,15 @@ read is performed. Treat each response as a replacement sample; epoch changes
 identify a different executor stream lifetime. Polls may miss short-lived Steps;
 use the existing event stream when every transition is needed.
 
-An accepted response exposes `X-Toolang-Run-ID` for compatibility; CORS exposes
-it to allowed origins. New-run POST streams begin with root `run_begin`, which
-also supplies the ID. Observation is installed before admission. Disconnecting
-never cancels execution; reconnect with GET once the run ID is known, never repeat POST.
-An older `after` cursor cannot prepend recovery to a newly admitted root: its
-subscription starts at admission. GET recovers the existing scope from `after`.
+## Execution streams
 
-Clients create a thread explicitly with `POST /api/v0/threads` before the first
-run. The thread request accepts `web`, `term`, `tui`, `chat`, or `script` as its
-client placement; `script` creates a `script_*` thread.
+POST submission and GET observation share the canonical SSE protocol in
+[Events](events.md). Observe an accepted Run through GET after a disconnect;
+never repeat a submission to reconnect. Accepted responses expose
+`X-Toolang-Run-ID`, including through CORS for allowed origins.
 
-All execution POST streams and these GET streams accept optional `?after=CURSOR`:
+## Implementation evidence
 
-| Endpoint | Scope and lifetime |
-| --- | --- |
-| `/api/v0/stream` | This agent's events; stays open. |
-| `/api/v0/threads/{thread_id}/stream` | Physical events of this thread, including forks from it; stays open. |
-| `/api/v0/runs/{run_id}/stream` | Complete root tree, through its last active descendant. A child ID returns `409` with the root ID. |
-
-Cursors are opaque agent-wide positions. Invalid or future cursors return `422`
-before POST admission. Filtering leaves legitimate gaps. Use `after` explicitly;
-`Last-Event-ID` alone does not select a cursor. The server replays retained events
-or reconstructs structure from records at a fixed boundary, then sends its live
-suffix. Finalized steps need no `part_*` replay. Joining an unfinished step supplies
-its missing ancestors and suppresses partial progress through `step_end`.
-Without `after`, a root initializes its recorded tree; thread/agent scopes initialize
-active trees. Incompatible epochs replace the whole selected scope, including
-retained terminal trees. Historical inspection remains separate; there is no
-exact historical `/events` collection.
-
-SSE `event` is the event name and `data` its payload. Source events carry `cursor`
-and an SSE ID. Structural context carries `context: true`, an optional original
-`cursor`, and **no new SSE ID**. Treat structure as upserts; an already applied End
-must survive a repeated Begin of the same incarnation. SSE parsers may retain a
-previous ID on context frames; do not acknowledge these as new source positions.
-
-| Control | Payload and action |
-| --- | --- |
-| `stream_prefill` | `{"cursor": B, "scope": {"kind": "run", "id": ID}, "roots": [ROOT, ...]}` starts replacement of listed trees. `kind` is `run`, `thread`, or `agent`; agent scope omits `id`. `roots: null` replaces the entire scope. Buffer the following structural context. |
-| `stream_checkpoint` | `{"cursor": B}`, with SSE ID B. Apply the complete replacement, then commit B; a disconnected prefix commits nothing. Also advances over filtered/suppressed events. |
-| `stream_error` | `{"code": "overflow"}` or `{"code": "snapshot_limit"}` ends this subscription. A failed write may close without an error frame. |
-
-Clear unfinished Part rendering on each attachment. `StreamClientState` handles
-replacement and checkpoint commits before dispatch to presentation. Keep-alive
-comments/checkpoints occur every 15 seconds; each ASGI write, including headers,
-has a five-second deadline. Idle event waits do not consume that deadline.
-
-Canonical run progress event names are:
-
-- `run_begin`
-- `step_begin`
-- `part_begin`
-- `part_delta`
-- `part_end`
-- `step_end`
-- `run_end`
-
-Run/Step IDs are scalar strings. `StepBegin` includes owning `run`, parent Step ID
-and `index`; its `spec.type` selects compact `model`, `tool` or `flow` information.
-Model metadata contains only the model identity. Calls, Flow ASTs, State/input
-references and accounting internals stay in records and explicit inspection APIs.
-Completion events carry direct `{type, value}` outputs, error text and necessary
-completion/usage summaries. `preceded_by` application facts and terminal `control`
-identify controls by `{run, index}`; `RunBegin.control` is its own Run binding control index.
-External subscribers must upgrade and reconnect for this schema.
-Step Begin/End fields use `spec`/`report`. History cursors use agent API v0;
-Hub publications use hub API v0 and persisted projections use hub store schema 4.
-Upgrade publishers and subscribers together. Model completion
-summaries expose four token fields under `report.usage`; USD `report.cost` and
-`report.cost_approximate` are siblings. They contain no full cost evidence.
-Stored model Report now uses `usage`, `cost`, `invoked`, `cont`, with no
-`accounting` envelope; Run records add terminal `report`. Schema 61 requires fresh
-storage without compatibility reads. See [terminal records](execution.md#terminal-usage-and-cost-records)
-and [Run Events](execution.md#run-events).
-
-Every payload retains its canonical `type` discriminator. A `part_begin`
-payload uses `part_type` for the message-part kind so it does not collide with
-the event discriminator.
-
-Reasoning uses these same events: `part_begin.part_type` is `"reasoning"`,
-`part_delta.delta` is `{"kind":"reasoning","text":"..."}`, and `part_end.data`
-contains `{"type":"reasoning","text":"..."}`. The call-local `part`
-ordinal also identifies its position in the completed Model Step's output.
-Provider signatures, provider metadata, full tool arguments and arbitrary tool
-result bodies remain in durable Parts and model history; they are excluded from
-Event PartData. Deltas are live only; complete execution Parts remain available
-through explicit output/inspection endpoints.
-
-Structural cursors are persisted in the execution store; supported schemas and
-write restrictions follow [Durable Truth](execution.md#durable-truth). See the
-[model adapter contract](plugins.md#model-adapter) for the required indexed
-stream interface. Human output continues to omit reasoning and native fields.
-
-Run control acceptance and status are durable `ControlRecord` truth. A thread
-stream may additionally carry `thread_created`, `thread_forked`, and `thread_rewound`, and aggregates live run
-events belonging to that thread.
+- [Application and lifespan](../src/toolang/api/app.py), [composition](../src/toolang/up/server.py)
+- [Request schemas](../src/toolang/api/schemas.py), [run routes](../src/toolang/api/routers/runs.py), [thread routes](../src/toolang/api/routers/threads.py)
+- [API integration tests](../tests/integration/api/), [contract version tests](../tests/unit/api/test_contract_versions.py)

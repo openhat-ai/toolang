@@ -68,7 +68,7 @@ Parallel activity and terminal rows retain both fields. Renderers add a textual
 or by parsing summary text. Long toolset labels leave room for the description.
 No icons or icon configuration are implemented. Active Step state retains that projection;
 headers, lanes, timers, and terminal rows consume it. The same module recognizes
-committed exec outcomes from either `ExecStepReport` or a tool reply. Raw tool-name
+committed exec outcomes from the completion summary or a tool reply. Raw tool-name
 matching belongs there, including result-only UI updates such as Chat's cwd label.
 Persisted Step kinds and execution metrics keep their original meaning. Script and
 Chat retain their existing source-specific styling.
@@ -107,7 +107,7 @@ reduce the right inset only to retain one content cell. Terminal controls are
 escaped as literal text.
 
 The runnable uses the resolved root identity, displaying an unnamed entry as
-`agic:_` or `flow:_`. The model is the resolved initial run-level setting;
+`agic:` or `flow:`. The model is the resolved initial run-level setting;
 Flow steps and child Runs may select other models. Reasoning shows an explicit
 effort or token budget, or `auto` when unspecified. A missing model request
 shows `model unspecified` with no reasoning field.
@@ -137,77 +137,17 @@ continuations align with the text after the marker:
 
 ## Chat Input and Queue Controls
 
-The Chat input area distinguishes sending, steering, and multiline editing.
-Enter submits when idle and queues runnable input while a run is starting or
-active. Meta+Enter sends literal steer text to the active run. Ctrl+J inserts a
-newline, with Shift+Enter registered when the terminal can report it
-distinctly.
-
-A non-empty Queue is expanded above Input without taking focus. Tab and
-Shift+Tab move focus between these two areas, except while an Input completion
-menu is active. Space expands or collapses focused Queue without moving focus;
-Tab never changes expansion. Input spaces and draft steering remain unchanged.
-
-Esc Esc, Ctrl+C, and Ctrl+D are Input-only controls; Queue focus cannot use
-them to cancel a run, clear a draft, or exit. Esc dismisses transient status
-without moving focus. Ctrl+L keeps its global idle clear-display behavior and
-Ctrl+Q remains a global explicit exit. `/keys` groups these scopes separately.
-
-Queue occupies the full terminal width in both modes and directly adjoins Input
-without a separator row. Queue and Input retain distinct backgrounds. Adaptive
-footer-stabilizing space belongs above Queue, never between Queue and Input.
-
-Expanded Queue has a left-aligned summary at the top, a blank gap row, up to
-eight single-line previews, and a trailing blank row before Input; collapsed
-Queue keeps only its summary. There is no omitted-count row or special header
-fill. Available height may reduce the entry count to leave room for Input,
-status, and the summary frame. Entry icons (`↳`) align with Input text and
-remain dim in every state; body text stays normal. While focused, the selected
-entry uses Input's background, starting one cell after the accent and reaching
-Queue's right edge. It has no selection marker or bold text; only the background
-indicates selection. Slightly brighter dim action hints occupy the right side on
-that same background, separated from the body by at least two cells. Entry hints
-end two cells from Queue's edge; truncation preserves their padding. Losing
-focus hides the highlight and entry hints while preserving selection. The
-summary counts all items.
-
-Hidden entries cannot be selected or mutated. In both modes the summary keeps
-normal text; selection is the only focus cue. Key hints stay dim. Queue's
-leading cell carries its accent bar, independent of focus and expansion.
-Input's accent always stays cyan. Its cursor hides on Queue focus and returns
-to its preserved position on Input focus.
-
-Unfocused Queue shows only `(tab to focus)`. Focused, expanded Queue shows
-`(space to collapse)`; focused, collapsed Queue shows `(space to expand)`. The
-selected entry also shows `m-enter steer · e edit · d delete`. These hints are
-dim. On narrow terminals entry previews truncate first, then the summary drops
-its state hint, keeping the count. Previews and summaries truncate by display
-cells. ↑/↓ or Ctrl+P/Ctrl+N select without wrapping; e edits, Meta+Enter steers,
-and d or Del removes. `/keys` documents these Queue-focused bindings. Mutations
-preserve the expansion choice and clamp selection; an empty queue disappears,
-restores Input focus, and resets the next non-empty queue to expanded.
-
-Inline hints use dim lowercase text with no brackets and ` · ` between actions.
-The summary states its action as `key to action` (`space to collapse`), entry
-hints keep the short `key action` form (`e edit`), and `m-enter` abbreviates
-Meta+Enter. Chords retain `+`. Only the primary key appears inline; `/keys`
-retains standard labels and aliases such as `d (Del)`.
-
-Flow headers also start in column zero and are followed by one blank line.
-Iteration and condition headers create the same kind of stable boundary.
-
-Automatic compaction emits a normal `_:compact` child Run beneath the runtime
-`runtime.compact` Tool Step. The projector tracks its Steps, errors, and usage,
-but the default view shows only the outer operation's elapsed time and outcome.
-Internal summary text is available through execution inspection and does not
-appear as an assistant reply. Child success does not finish the outer item until
-publication and adoption complete.
+[Chat](chat.md#queue-and-steering) owns keyboard dispatch, queued snapshots,
+steer adoption, and terminal input/Queue appearance. Input, Queue, and both
+status bars share the input-width limit, independently of execution output.
+Rendering must preserve the draft, focus, selection, and scrollback through
+live-area updates and resize.
 
 ## Markers and Style
 
 `•` marks Model and Flow Steps; `›` marks ordinary tools; `✧` marks the `pick`,
-`compact` and `honor` runtime helpers. `---  ` opens and closes a
-dynamic Run Step, and `∎` marks the root Run footer. The centered dot `·` is only
+`compact` and `honor` runtime helpers. `┌` and `└` frame a dynamic Run Step,
+and `▪︎` marks the root Run footer. The centered dot `·` is only
 an inline facts separator.
 
 - Model activity and output use `•` and normal text.
@@ -235,7 +175,7 @@ done.
 ## Agic Dynamic Run Steps
 
 A Run Step owned by an Agic Run uses a flat divider scope. Ownership is
-identified by the enclosing `RunBegin.runnable`, while the existing `RunStmt`
+identified by the enclosing `RunBegin.runnable`, while the compact flow operation
 provides the target label. Its header begins in column zero and uses the
 canonical resolved runnable ref:
 
@@ -301,7 +241,7 @@ without truncation. Script and Chat share the projector and renderer.
 ## Flow Headers
 
 A Flow Step uses its non-empty authored doc comment as the header. Without a
-doc comment, the presenter generates a short sentence from the typed AST. Named
+doc comment, the presenter generates a short sentence from compact flow metadata. Named
 and inline runnables use the same templates and preserve their names exactly,
 including the inline adhoc identity `agic:<adhoc:32>` (the inline
 declaration's source line). For example, an inline map displays
@@ -479,7 +419,7 @@ A Flow Step that owns child execution may append one dim footer:
 [2] Search the web for each query
 
 • Mapped 6 items
-  31s · 6 runs 12 models 8 tools · ↑18.4k ↓5.2k(3.1k) ≈$0.01        run_root.2
+  31s · 6 runs 12 models 8 tools · ↑18.4k(17%) ↓5.2k(3.1k) ≈$0.01        run_root.2
 ```
 
 Facts retain their two-cell indentation at the left, and the complete canonical
@@ -561,7 +501,7 @@ boundary error:
              provider returned status 429
 
 • parallel step stopped because lane 1 (#5) failed
-  31s · 7 runs 12 models 8 tools · ↑18.4k ↓5.2k(3.1k) ≈$0.01
+  31s · 7 runs 12 models 8 tools · ↑18.4k(17%) ↓5.2k(3.1k) ≈$0.01
 ```
 
 Cancellation uses the same counts without inventing a failure:
@@ -628,28 +568,27 @@ root-owned error row. There is no separate diagnostic marker.
 Script and Chat end a root Run with the same footer:
 
 ```text
-∎ run_nrqpt0mf succeeded        1m16s · 26 runs 32 models 8 tools · ↑43.8k ↓17.6k(9.2k) ≈$0.01
-∎ run_nrqpt0mf failed           1m16s · 26 runs 32 models 8 tools · ↑43.8k ↓17.6k(9.2k) ≈$0.01
-∎ run_nrqpt0mf canceled         1m16s · 26 runs 32 models 8 tools · ↑43.8k ↓17.6k(9.2k) ≈$0.01
+▪︎ run_nrqpt0mf succeeded        1m16s · 26 runs 32 models 8 tools · ↑43.8k(12%) ↓17.6k(9.2k) ≈$0.01
+▪︎ run_nrqpt0mf failed           1m16s · 26 runs 32 models 8 tools · ↑43.8k(12%) ↓17.6k(9.2k) ≈$0.01
+▪︎ run_nrqpt0mf canceled         1m16s · 26 runs 32 models 8 tools · ↑43.8k(12%) ↓17.6k(9.2k) ≈$0.01
 ```
 
-A CLI retry or rerun identifies the operation in the same footer instead of
+A CLI rerun identifies the operation in the same footer instead of
 appending a separate result line:
 
 ```text
-∎ run_zvczap2h: retry succeeded        2s · 1 model
+▪︎ run_zvczap2h: rerun succeeded        2s · 1 model
 ```
 
-The U+220E END OF PROOF character marks the complete root Run; square brackets
+The `▪︎` text-style small square marks the complete root Run; square brackets
 do not frame the footer. The Run caption stays at the left while facts end two
 cells before the available width's right edge. At least two spaces separate the
 fields, with no centered dot before the first fact. When both fields do not fit,
 the caption is followed by facts wrapped on two-cell-indented continuation lines.
 
-The marker, Run identity, operation, and status use normal intensity. A
-successful caption uses the terminal's default color; failed and canceled
-captions use red and yellow respectively. Facts always use dim intensity and
-the terminal's default color, independent of status.
+The marker and a successful Run caption are dim in the terminal's default
+color. Failed and canceled captions use red and yellow respectively. Facts
+always remain dim in the default color, independent of status.
 
 The footer owns total duration and whole-tree Run facts. Script does not append
 a separate `Run: RUN_ID` line. Errors before `RunBegin` are reported outside
@@ -858,3 +797,9 @@ configured progress maximum width. Prose wraps while table rows elide. Command
 content owns no trailing blank rows; Chat adds exactly one scrollback separation
 row after the complete interaction. Scripted Chat applies the same maximum-width
 policy to its plain-text projection.
+
+## Implementation evidence
+
+- [Progress projection](../src/toolang/cli/common/execution_progress/projector.py), [operation normalization](../src/toolang/cli/common/execution_progress/operations.py), [control bars](../src/toolang/cli/common/control_bars.py)
+- [Projector tests](../tests/unit/cli/test_execution_progress_projector.py), [Script presenter](../tests/unit/cli/test_script_run_presenter.py)
+- [Chat TUI tests](../tests/unit/cli/test_chat_tui.py), [tool identity](../tests/unit/cli/test_tool_identity_progress.py), [Markdown](../tests/unit/cli/test_markdown_rendering.py)

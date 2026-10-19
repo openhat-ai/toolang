@@ -205,7 +205,7 @@ runtime preflights, not model-callable commands.
 For program edits, load available grammar and authoring guidance; otherwise consult
 [toolang-syntax](https://github.com/openhat-ai/toolang/blob/main/docs/program.md),
 [caps files](https://github.com/openhat-ai/toolang/blob/main/docs/caps.md), and
-[coding conventions](https://github.com/openhat-ai/toolang/blob/main/docs/toolang-authoring-conventions.md).
+[coding conventions](https://github.com/openhat-ai/toolang/blob/main/AUTHORING.md).
 Verify syntax and CLI examples against the actual launcher's version and help;
 do not guess. Use permitted state tools and their schemas for home-source edits.
 Saving files does not publish State or change running code; validate and sync

@@ -124,10 +124,10 @@ Output modes emit only code/HTML, without status messages.
 `--tab-size N` sets structural indentation (positive integer, default 2).
 Formatting preserves omitted types, compacts adjacent imports of the same cap
 kind and resource directives of the same key, and keeps adjacent inline role
-messages compact. Different import kinds/directive keys are separated by one
-blank line. Source order, authored explicit types, literal text, and documentation
-bindings are preserved. See the
-[formatter conventions](./toolang-authoring-conventions.md#automatic-formatting)
+messages compact. Different import kinds are separated by a blank line;
+resource directive groups remain compact without blank lines. Source order,
+authored explicit types, literal text, and documentation bindings are preserved. See the
+[formatter conventions](../AUTHORING.md#automatic-formatting)
 for the boundary between mechanical rules and authoring decisions.
 
 ## Highlight

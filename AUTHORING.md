@@ -15,11 +15,15 @@ Keep comments rare, short, and close to what they describe.
 
 Call primary input **input** and named inputs **arguments** (singular:
 **argument**). Use the full names when the distinction needs emphasis. Follow
-the [input terminology](./call-input.md#terminology) and
-[flat mapping convention](./call-input.md#flat-input-mappings) across authored
+the [input terminology](docs/call-input.md#terminology) and
+[flat mapping convention](docs/call-input.md#flat-input-mappings) across authored
 prose, documentation, and CLI help.
 
 ## Natural Language
+
+Examples below are style excerpts. Referenced helpers and output structs are
+assumed to be declared in the containing module; standalone statement snippets
+belong inside a flow body.
 
 Toolang deliberately keeps authored instructions close to natural language.
 Write prompt bodies, agic messages, implicit runs, and other authored content as
@@ -160,7 +164,7 @@ Document runnable inputs with `## @param NAME DESCRIPTION` immediately before
 the agic or flow, alongside its ordinary `##` description. Use `_` for primary
 input and exact signature names for named parameters. Keep each description on
 one line and explain its purpose; types and optionality come from the signature.
-See [documentation comments](./program.md#documentation-comments) for binding
+See [documentation comments](docs/program.md#documentation-comments) for binding
 and validation rules.
 
 ## Ordinary Comments
@@ -195,7 +199,7 @@ comments outside natural-language content.
   messages as blocks and preserve role names.
 - Separate prose and explicit flow statements with a structural blank line,
   while preserving whitespace inside each literal text body.
-- Normalize comment/tag spacing using the 0.3.2 grammar. Preserve documentation
+- Normalize comment/tag spacing using the installed grammar. Preserve documentation
   attachment and deliberate detachment, exact parameter names, legacy marker
   spellings, module boundaries, and the executable shebang.
 
@@ -206,7 +210,7 @@ The formatter works on syntax-valid source even when semantic validation fails.
 Naming, inserting `{{_}}`, rewriting prose, deleting explicit types or redundant
 capability directives, hoisting `context`/`instruct`, and omitting a sole `user:`
 role remain authoring decisions. The formatter does not make those rewrites.
-See [source commands](./source-commands.md) for output modes and color controls.
+See [source commands](docs/source-commands.md) for output modes and color controls.
 
 ## Review Checklist
 

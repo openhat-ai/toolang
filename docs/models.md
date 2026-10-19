@@ -1,4 +1,4 @@
-# Model Catalog and Runtime Integration
+# Models
 
 Toolang separates model knowledge, runtime readiness, and protocol execution.
 The catalog describes what exists; adapters describe how to call one protocol;
@@ -562,16 +562,21 @@ ref, setup revision, and normalized call, including effective reasoning. The
 revision is provenance only: no historical setup table or model replay feature
 is provided.
 
-Run and rerun model requests use flat `ref`, `reasoning`, and `max_output` fields.
-Model step results contain only `accounting` and `cont`. Accounting retains usage,
-applied pricing plan/conditions and rate lines, provider-reported cost, estimated
-cost, and coverage. It does not duplicate catalog source/revision or reasoning
-controls. Historical costs are read from recorded amounts, never current prices.
+Run and rerun model requests use flat `ref`, `reasoning`, and `max_output`
+fields. Model Step reports contain `usage`, `cost`, `invoked`, and `cont`.
+ModelCost stores the selected amount/currency/source/coverage plus pricing,
+meters, and estimate lines; there is no `accounting` envelope or separate pair of
+reported/estimated amount wrappers. Historical costs use recorded amounts,
+not current catalog prices. [Execution](execution.md#terminal-usage-and-cost-records)
+owns terminal subtree reports.
 
-Cost selection is `reported`, `estimated`, `zero`, or `unknown`. `zero` requires
-an explicitly free, complete estimate; a positive rate rounded to zero remains
-`estimated`. Partial estimates retain `complete: false`. Unknown costs are not
-free. Provider reports remain `reported`, including zero and non-USD amounts.
+Cost selection is `reported`, `estimated`, `zero`, or `unknown`. A USD provider
+report wins, including zero. A non-USD report is selected only when no catalog
+estimate exists; an available estimate takes precedence over that report.
+`zero` requires a complete estimate whose rate lines are explicitly free and no
+provider report. A positive rate rounded to zero remains `estimated`. Partial
+estimates retain `complete: false`; unknown costs are not free. USD summaries and
+limits omit selected non-USD amounts.
 
 Call totals settle to six fractional USD digits, rounding half up after all
 components are calculated. Accumulation and budget comparison use integer

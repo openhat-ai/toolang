@@ -1,64 +1,60 @@
-# Developer Documentation
+# Design Documentation
 
-This directory contains the developer-facing documentation for the current
-Toolang runtime.
+These guides describe the current Toolang implementation for maintainers and
+client/plugin implementers. Source and tests are authoritative. Repository,
+testing, audit, and authoring standards live at the root; start with
+[CONTRIBUTING.md](../CONTRIBUTING.md). User tutorials live on the
+[documentation website](https://toolang.ai/docs).
 
-User-facing quickstart and guide content belongs in the separate
-`toolang-docs` site. Generated implementation reference belongs under
-`reference/`.
+## Reading paths
 
+- System: [Architecture](architecture.md), [Layout](layout.md), [State](state.md),
+  [Execution](execution.md).
+- Language: [Program](program.md), [AST](ast.md), [Input syntax](input-syntax.md),
+  [Call Input](call-input.md), [Flow](flow.md), [Agic](agic.md).
+- Integration: [Plugins](plugins.md), [CLI](cli.md), [HTTP API](api.md),
+  [Events](events.md), [Messaging](messaging.md).
 
-## Scope
+## Design owners
 
-Use this directory for:
-
-- runtime concepts and terminology
-- filesystem layout and durable state
-- capability, job, and execution models
-- CLI and local agent API surfaces
-- plugin and integration boundaries
-
-
-## Document Map
-
-| Document | Scope |
+| Guide | Owns |
 | --- | --- |
-| [concepts.md](./concepts.md) | Developer overview and core runtime vocabulary |
-| [ids.md](./ids.md) | Toolang-owned id families, reversible encoding, and durable allocator model |
-| [program.md](./program.md) | Mod declarations, runnable signatures, agics, flows, directives, and surface rules |
-| [toolang-authoring-conventions.md](./toolang-authoring-conventions.md) | Source style, natural prose, type defaults, and documentation comments |
-| [source-commands.md](./source-commands.md) | Offline formatting, AST/CST inspection, and syntax highlighting |
-| [flow-syntax.md](./flow-syntax.md) | Flow declarations, statements, result binding, and clauses |
-| [input-syntax.md](./input-syntax.md) | Policy commands, chat and runnable input, Content evaluation, and coercion |
-| [call-input.md](./call-input.md) | Shared line, stream, and fenced input for runnable and prompt calls |
-| [script-projects.md](./script-projects.md) | Script project discovery, configuration ownership, temporary workspace options, and attachment origins |
-| [layout.md](./layout.md) | Layout and storage, including Toolang root, agent home, and runtime room paths |
-| [agent-state.md](./agent-state.md) | Immutable Agent State layers, revisions, publication, loading, and watching |
-| [caps.md](./caps.md) | Capability model, including form, scope, origin, refs, precedence, and effective-cap rules |
-| [queries.md](./queries.md) | Native TQ resource queries, JSON fields, tags, and set semantics |
-| [work.md](./work.md) | Task and chore scheduling, checkpoints, event-loop ownership, and recovery |
-| [tasks.md](./tasks.md) | Current chore definitions, execution state, and authoring commands |
-| [webui-jobs.md](./webui-jobs.md) | Web UI job board integration guide |
-| [execution.md](./execution.md) | Execution boundaries, controls, threads, traces, and mandatory persistence |
-| [executor.md](./executor.md) | RunExecutor acceptance, execution, control polling, and tracing |
-| [run-step-records.md](./run-step-records.md) | Durable run, step, thread, and control records plus source events |
-| [chat.md](./chat.md) | Chat and transcript model, including thread, run, message, and stream behavior |
-| [execution-presentation.md](./execution-presentation.md) | Shared script and chat TUI presentation language for runs, steps, streaming, and scrollback |
-| [top.md](./top.md) | Current activity observation, source-only statistics, and Top controls |
-| [models.md](./models.md) | Model integrations, including queries, providers, routes, and built-in model providers |
-| [tools.md](./tools.md) | Tool runtime, including built-in tools and service-cap integration |
-| [plugins.md](./plugins.md) | Plugin model, including shared contracts, plugin families, and loading |
-| [api.md](./api.md) | Control surfaces, including the CLI and local agent HTTP API |
+| [Architecture](architecture.md) | Terms, package responsibilities, source identity, placement, and hosting boundaries |
+| [Layout](layout.md) | Authored files, State revisions, runtime data, discovery, and locks |
+| [State](state.md) | Parsed layers, publication, accepted sources, immutable revisions, and adoption |
+| [Program](program.md) | Modules, declarations, signatures, types, and documentation binding |
+| [AST](ast.md) | Semantic nodes, lowering, static validation, and serialization |
+| [Input syntax](input-syntax.md) | Content evaluation, Chat settings, and one-run overrides |
+| [Call Input](call-input.md) | Flat mappings, capture boundaries, prompt expansion, and coercion |
+| [Flow](flow.md) | Binding, calls, arrays, loops, async work, spawn, and exec |
+| [Agic](agic.md) | Model/tool loop, instruction assembly, guidance, output recovery, and compaction |
+| [Caps](caps.md) | Composable agent primitives, source refs, scope, precedence, and projections |
+| [Queries](queries.md) | Public resource records and native TQ matching |
+| [Models](models.md) | Catalogs, route resolution, model settings, adapters, and accounting |
+| [Tools](tools.md) | User/runtime tools, workspaces, services, State edits, and conversations |
+| [Plugins](plugins.md) | Toolset, sandbox, catalog, and adapter contracts and loading |
+| [Scripts](scripts.md) | Source-local configuration, workspace grants, and input origins |
+| [Source commands](source-commands.md) | Offline parse, CST inspection, formatting, highlighting, and diagnostics |
+| [Execution](execution.md) | Admission, lifecycle, limits, controls, threads, and State capture |
+| [Executor](executor.md) | Execution internals, async ownership, terminalization, and resident LiveTree |
+| [Records](records.md) | Durable records, values, references, and historical inspection |
+| [Events](events.md) | Subscriber payloads, post-commit delivery, cursors, SSE recovery, and Hub observation |
+| [Drivers](drivers.md) | Chat/Talk/Chore activation, handler selection, scheduling, and recovery |
+| [Chores](chores.md) | Named definitions, deterministic identity, checkpoints, and manual occurrences |
+| [Chat](chat.md) | Session state, queued submissions, steering, and remote recovery |
+| [Execution presentation](execution-presentation.md) | Shared progress projection, terminal geometry, and scrollback |
+| [Messaging](messaging.md) | Conversations, shared rules, Talk consumption, Hub APIs, and backend storage |
+| [IDs](ids.md) | Agent-keyed allocation, deterministic chore IDs, and conversation codecs |
+| [Execution statistics](execution-statistics.md) | Incremental usage cache, query windows, and archival |
+| [Top](top.md) | Current/recent observation, coverage, totals, and dashboard interaction |
+| [HTTP API](api.md) | Agent application composition, requests, responses, and driver-gated routes |
+| [Hosting](hosting.md) | Sandbox processes, installation, captured environment, logging, discovery, and cleanup |
+| [CLI](cli.md) | Command routing, inspection, server acquisition, and terminal metadata |
 
+## Plans and reference
 
-## Implementation Targets
-
-| Document | Scope |
-| --- | --- |
-| [refactor-target.md](./refactor-target.md) | Target package structure, core classes, dependency direction, CLI split, and migration order |
-
-
-## Generated Reference
-
-Use `reference/` for generated package and module reference derived directly
-from code.
+[Plans](plans/) record proposed or approved changes and their acceptance criteria.
+Their existence does not establish that a feature is implemented. The current
+design guides describe the result of implemented changes; plans are maintained
+separately. [Generated reference](../reference/README.md) provides module-level
+details directly from source.

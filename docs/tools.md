@@ -1,4 +1,4 @@
-# Tool Runtime
+# Tools
 
 Toolang exposes tools through the toolset plugin family.
 
@@ -285,7 +285,7 @@ Sync does not replace active code, captured Setup, or the current model-call
 snapshot. It confirms input inclusion, not runtime success or effective selection
 of every declaration. A child may edit, sync, and return so the root can self-exec
 into compatible code. Keep sources stable through exec acceptance if it must use
-that publication; the returned revision is not reserved. See [Agent State](agent-state.md).
+that publication; the returned revision is not reserved. See [Agent State](state.md).
 
 Use `state.sync()` / `state__sync({})` for publication receipts; handle operational
 errors and inspect `revision` and the scoped `files` manifest. There is no loaded
@@ -384,8 +384,8 @@ in the Tool Step. Use `id` with existing history/output tools to inspect progres
 and results. Spawn waits for no result and
 injects no completion message. Work survives the source Run, but executor shutdown
 cancels it. In a short-lived script host, returning from the script stops unfinished
-roots. See [spawn syntax](flow-syntax.md#spawn) and
-[record semantics](run-step-records.md#spawn-admission-and-handles).
+roots. See [spawn syntax](flow.md#spawn) and
+[record semantics](records.md#spawn-admission-and-handles).
 
 Only one pending/running independent root may occupy a thread. Busy admission
 returns an error without creating replacement work. Spawn admission and its source

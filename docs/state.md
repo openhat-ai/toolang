@@ -1,4 +1,4 @@
-# Agent State
+# State
 
 Agent State is the immutable runtime input derived from an agent's Programs,
 configuration, capabilities, and chore definitions. A module is a term for one

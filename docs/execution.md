@@ -1,9 +1,9 @@
-# Execution Model
+# Execution
 
 This document defines the ownership and lifecycle boundaries of
 `toolang.execution`. Detailed record shapes live in
-[run-step-records.md](./run-step-records.md), and runtime behavior lives in
-[executor.md](./executor.md).
+[Records](records.md), and runtime behavior lives in
+[executor.md](executor.md).
 
 
 ## Responsibilities
@@ -159,7 +159,7 @@ run(RunSpec, run_id?, request_id?, tracer?)         -> LocalRunHandle
 cancel(run_id, timing, request_id?, reason?, expected_control?) -> ControlRecord
 steer(run_id, message, timing, request_id?, expected_control?)   -> ControlRecord
 cancel_control(run_id, index)                        -> ControlRecord
-stop()                                               -> None
+await stop()                                         -> None
 ```
 
 `start()` is an idempotent lifecycle hook. `run()` accepts durable truth,
@@ -187,6 +187,13 @@ policy into `RunSpec.limits` before `run()`. Per-agic model and tool call
 limits reset on each agic invocation, while token, cost, and time limits are
 shared by all recursive runs. Effective limits are stored on the root run
 control.
+
+A configured zero limit is active; `None` disables it. Call limits are checked
+before invocation, while token and cost limits account for completed calls and
+fail once totals exceed the ceiling. A token limit requires reported usage.
+Unknown pricing does not prevent a call; missing/non-USD selected cost is omitted
+from the USD budget. Partial estimates can therefore enforce only known charges.
+A cost limit is not a guarantee that every provider charge is measured.
 
 `run()` requires an existing thread. Thread creation belongs to
 `ThreadManager` or to the package that owns a deterministic external thread id.
@@ -245,70 +252,10 @@ run/thread identity without adopting background progress.
 
 ## Run Events
 
-The canonical run trace is intentionally small:
-
-```text
-RunBegin
-StepBegin
-PartBegin
-PartDelta
-PartEnd
-StepEnd
-RunEnd
-```
-
-There are no waiting, starting, steering, or stopping events. Control acceptance
-is durable record truth. Events use scalar Run/Step IDs and explicit correlation:
-
-- `RunBegin.control` is the observed Run binding control index; `parent` is a Step ID or null.
-- `StepBegin` includes `run`, `parent`, `index` and applied controls as `{run, index}`.
-- `RunEnd.control` identifies an applied cancellation as `{run, index}`, including
-  ancestor-owned cancellation.
-
-Producers guarantee causal order: Parts close before their Step, nested Steps and
-synchronous child Runs close before their owning Step, and owned child Runs close
-before their owning Run. An asynchronous launch Step ends when admission commits;
-its explicit `spec.asynchronous` flag permits the target to outlive that Step.
-Sibling work may interleave. Live clients consume arrival order and reject a Run
-ending with an active child; they do not defer or reorder terminal notifications.
-Record-based replacement snapshots arrive in structural order from the server.
-
-`StepBegin.spec` is an event-owned discriminated payload: model identity, tool
-identity/summary/target, or the Flow operation's presentation fields. It contains
-no complete model/tool call, Flow AST, State reference or input pointers.
-`StepEnd.report` contains only completion facts and client usage/cost summaries.
-Its `usage` is `TokenUsage(input_tokens, output_tokens, cache_read_tokens,
-reasoning_tokens)`; `cost` (USD) and `cost_approximate` are separate summary
-fields. Events reuse the normalized usage directly. Provider continuation,
-pricing, meters and cost calculation lines remain in records.
-
-`PartEnd.data` uses event-owned `PartData`: text/reasoning content, media display
-fields, or tool identity and explicit receipts (`run`, `thread`,
-`control_applied`, `cwd`, and optional error). It excludes provider signatures,
-provider metadata, invocation arguments and arbitrary tool-result bodies. These
-execution details remain in records and model history.
-
-Event outputs use `{type, value}` with final JSON data and no local binding.
-Explicitly typed Part arrays, including nested arrays, use the same `PartData`.
-`event_projection.py` selects fields from available execution values before Event
-construction; `event_to_data()` only encodes the final Event once. Neither path
-loads values from the Store. `observation.py` owns structural normalization and
-snapshot budgets; record-based snapshot reads stay in `subscriptions.py`.
-Errors are text; optional `error_source` identifies the originating Run/Step for
-presentation deduplication without a data pointer. Live notifications use values
-already available during execution, including Await results. A stored output
-reference alone does not trigger value reconstruction for a notification.
-Providers stream display content and deltas when supported; text and media
-content is preserved. A tracer may ignore deltas and observe higher-level events.
-
-Explicit reconnect/replacement snapshots read records using the same small event
-shapes and existing budgets; they never rebuild model calls. Complete calls remain
-available through `too AGENT inspect STEP call --json`.
-
-This event schema requires HTTP subscribers and runtimes to upgrade together and
-reconnect. Record and inspection/query consumers must also adopt the renamed
-[canonical fields and Pointer paths](run-step-records.md).
-
+[Events](events.md) owns value-only subscriber payloads, post-commit delivery,
+stream cursors, structural replacement, and HTTP/Hub reconnection. Execution
+never consumes subscriber payloads to decide persistence or control effects.
+Full calls and durable provenance remain in [Records](records.md).
 
 ## Run Controls
 
@@ -393,7 +340,7 @@ records a closed range in a Thread control without modifying Runs or Steps.
 Logical history applies that Thread's controls; physical records remain readable.
 Forks capture the source view at its control head, so later source rewinds do not
 change the inherited prefix. Forks and rewinds are serialized across
-processes with an agent-local file lock. Anchor resolution, terminal checks,
+processes by SQLite write transactions; they use no separate thread file lock. Anchor resolution, terminal checks,
 the rewind idle check, and control insertion occur in one SQLite write
 transaction. The store keeps expected-head comparison as an internal defensive
 check; it is not part of the public manager API.
@@ -419,7 +366,9 @@ receiving filtered copies. A root starts from the State supplied in `RunSpec`.
 Each physical Step retains its executing Run's State reference. A newly accepted
 named child independently captures the latest published State and validates it
 against the caller's contract. Inline bodies retain their containing plan.
-Publication never rebinds accepted Runs. Invalid source is not published.
+Publication never rebinds accepted Runs. Invalid source units are excluded while
+valid siblings can publish; fatal preparation errors preserve the last accepted
+State. [State](state.md) owns those acceptance boundaries.
 
 ## Terminal usage and cost records
 
@@ -447,4 +396,4 @@ for both reads and writes; no migration or compatibility decoder is provided.
 Retain any required old runtime data separately, then use a fresh runtime database.
 Record/event consumers must adopt `spec`/`report` and matching `Spec`/`Report`
 types, then reconnect subscriptions. See the [canonical record fields and Pointer
-paths](run-step-records.md) for the complete contract.
+paths](records.md) for the complete contract.

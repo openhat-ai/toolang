@@ -1,4 +1,4 @@
-# Script Projects
+# Scripts
 
 `too init DIR` creates an executable `aid.too` and a comment-only `toolang.toml`.
 Both belong in version control. Initialization refuses to overwrite either file,
@@ -46,7 +46,7 @@ precedes `toolang.catalog.json`. A project file named `catalog.json` is ignored.
 Resident agents retain their root/home `catalog.json` convention.
 
 Generated state stays in `srcdir/.toolang/`. It can be deleted while the runtime
-is stopped; this removes local history, caches, and `lab` output. Roaming scripts
+is stopped; this removes local history, caches, and `.lab` output. Roaming scripts
 use process/container environment variables and do not load project `.env` files
 or settings from the resident `~/.toolang` root.
 
@@ -57,6 +57,10 @@ Script `run` accepts `-w` and `-d`. `serve` and `chat` accept them in all three
 placements without adding srcdir automatically, including for roaming agents.
 `start` reads workspace grants from agent configuration; use
 `too AGENT workspace add DIR` or edit `[workspaces]` before starting it.
+
+The following workspace examples assume the bundled `aid.too` from `too init`,
+existing `another_dir` and `../project` directories, and a `repo` grant containing
+a `src` subdirectory. The repository's own `aid.too` has a different runnable set.
 
 ```sh
 too aid.too whats_for
@@ -106,8 +110,9 @@ equivalent; choose the workdir in Chat or use `serve -d` for foreground hosting.
 
 ## File inputs
 
-Chat and script `@file` inputs use procdir even when workdir changes. Task/chore
-attachments remain relative to their authored files. Attachments supply content,
+Chat and script `@file` inputs use procdir even when workdir changes. Chore file
+attachments resolve relative to their Markdown file; inline chore includes use
+the agent home. Attachments supply content,
 not workspace access. Hosted calls send client-read content; they never reopen
 the same filename on the server. Prompt expansion, escaping, and fenced text keep
 their existing [Content syntax](input-syntax.md).

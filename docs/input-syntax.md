@@ -14,7 +14,7 @@ Code names follow these roles: `ChatCommand` is a parsed command,
 `CommandSpec` is its registry entry, and `CommandOutcome` is its result.
 `RunOverride` and `CallInput` are parsed execution values, not command categories.
 `PromptInvocation` records resolved prompt-call provenance. Parameter, argument,
-and primary-input terms follow [Call Input](./call-input.md#terminology).
+and primary-input terms follow [Call Input](call-input.md#terminology).
 
 ## Input Layers
 
@@ -29,7 +29,7 @@ ChatInput = ChatCommand | tuple[RunOverride, CallInput[str]]
 
 - `CallInput[str]` contains source text under `_` and argument names. Prompt,
   script, and runnable input share the same structure. The value specialization
-  holds evaluated input; see [Call Input](./call-input.md).
+  holds evaluated input; see [Call Input](call-input.md).
 - `SessionSetting` holds Chat defaults for subsequent runs: model, runnable,
   workdir, resource ceilings, and limits.
 - `RunOverride` supplies changes for one run; it never updates the session.
@@ -248,7 +248,7 @@ rejected before a run is accepted.
 Root runnable calls support line (`-- TEXT`), stream (`-`), and implicit
 following-body input. Line input must be nonempty; only whitespace may follow
 a root line-input call. Fenced input (`---`) belongs only to prompt calls.
-See [Call Input](./call-input.md) for boundaries and signature requirements.
+See [Call Input](call-input.md) for boundaries and signature requirements.
 Script CLI command headers keep their existing line and stdin forms.
 
 Bare `/review` leaves primary input absent; `/review -` supplies empty `_`.
@@ -286,20 +286,21 @@ $$review         -> $review
 
 ```text
 IncludeRef  = "@" ResourceRef
-ResourceRef = Path | QuotedPath | UploadRef
+ResourceRef = Path | QuotedPath
 ```
 
-Examples: `@README.md`, `@"path with spaces/image.png"`, and
-`@upload:abc123`. An include occupies its complete line and resolves to one
-`Part`. Leading whitespace makes it text. Each caller defines allowed
-resources; a UI file picker inserts the same syntax.
+Examples: `@README.md` and `@"path with spaces/image.png"`. An include occupies
+its complete line and resolves to one `Part`. Leading whitespace makes it text.
+The built-in resolver reads filesystem paths against the caller's explicit base;
+Chat/script clients may materialize attachments before HTTP submission. There
+is no built-in upload registry or file-picker contract. See [Scripts](scripts.md#file-inputs).
 
 ### Prompts
 
 Prompt arguments use `name=value`. A prompt call may omit primary input or use
 the shared line (`--`), stream (`-`), or fenced (`---`) Call Input forms. The
 complete syntax, boundaries, Script and Chat integration, and examples are in
-[call-input.md](./call-input.md).
+[call-input.md](call-input.md).
 
 Prompt templates expand to Text before the complete runnable input is parsed
 once as Content. A prompt result can therefore be one fragment of a larger

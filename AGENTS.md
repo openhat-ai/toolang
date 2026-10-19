@@ -44,16 +44,20 @@ applies, raise the ambiguity and ask the human before proceeding.
 - `src/toolang/lang`: `.too` parsing and authored-language semantics.
 - `src/toolang/base` and `src/toolang/common`: plugin contracts and
   package-neutral helpers, respectively.
-- `src/toolang/catalog`, `src/toolang/setup`, `src/toolang/state`, and
-  `src/toolang/work`: authored data, installed setup, prepared state, and
-  scheduling, respectively.
+- `src/toolang/catalog`, `src/toolang/setup`, and
+  `src/toolang/state`: authored data, installed setup, and prepared state,
+  respectively.
+- `src/toolang/driver`, `src/toolang/teaming`, and `src/toolang/stats`: execution
+  triggers, Hub/conversation coordination, and derived usage statistics.
 - `src/toolang/execution`: runs, threads, persistence, inspection, and control.
 - `src/toolang/plugin`: reusable tool, model, and sandbox plugins.
 - `src/toolang/up`, `src/toolang/api`, and `src/toolang/cli`: hosting, HTTP, and
   process orchestration, respectively.
-- `docs/`: potentially stale design context. Treat the implementation as the
-  source of truth and verify docs against it. `docs/plans/` contains feature
-  definitions.
+- Repository, authoring, testing, and audit standards live at the root; see
+  [CONTRIBUTING.md](CONTRIBUTING.md).
+- `docs/`: current implementation design. Treat the implementation as the source
+  of truth and verify docs against it. `docs/plans/` contains feature definitions
+  and plans, which may describe behavior not implemented yet.
 - `reference/`: generated code reference; `tests/`: automated tests.
 
 ## Conventions

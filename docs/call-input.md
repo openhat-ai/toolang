@@ -185,7 +185,7 @@ A root header followed by a body without a marker uses implicit stream input;
 separator blank lines before that body are structural. Plain input without an
 explicit call goes to the default runnable. `/review` alone leaves `_` absent;
 `/review -` supplies an empty `_`. Requiredness and types follow the
-[runnable signature](./program.md#runnable-signatures).
+[runnable signature](program.md#runnable-signatures).
 
 Leading `/model`, `/allow`, `/limit`, or `/workdir` overrides require at least
 one supplied primary or named input key; naming a runnable alone does not count.
@@ -205,7 +205,7 @@ Also check security.
 
 ## Authored Runnable Input
 
-`task`, `chore`, and `agic` bodies are runnable Content surfaces. They can call
+`chore` and `agic` bodies are runnable Content surfaces. They can call
 prompts with the same three forms. A runnable Call Input supplied through Chat
 or Script can do the same. These are prompt calls contained by runnable input,
 not prompt calls nested inside another prompt call.
@@ -278,7 +278,7 @@ Root and runnable help show the same common options, ordered as `-q` / `--quiet`
 input. Runnable-level scalar values override root values when explicitly set;
 repeated `--workspace`, `--allow`, and `--limit` values accumulate in command-line
 order. `--workdir` may be specified only once across both levels. See
-[Script Projects](script-projects.md) for workspace and path rules.
+[Scripts](scripts.md) for workspace and path rules.
 `--quiet` at either level enables quiet mode, and `--help` describes that level.
 
 Both line forms accept the same text:

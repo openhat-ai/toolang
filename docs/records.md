@@ -63,6 +63,7 @@ id
 kind
 payload
 request_id
+client_id
 status
 timing
 error
@@ -219,6 +220,8 @@ input
 spec
 state
 output
+preceded_by
+aborted_by
 occur
 report
 status
@@ -265,9 +268,9 @@ The `contents` table stores `(id, value)` only. `id` is the complete
 verify the digest, and identical bytes deduplicate. The referring field supplies
 the text, JSON, or file codec.
 
-Run and Step errors use exactly one of:
+Run and Step errors use one of the following alternatives (one JSON value each):
 
-```json
+```text
 null
 {"type": "message", "message": "model request timed out"}
 {"type": "ref", "ref": "run_ab12.0/error"}

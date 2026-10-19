@@ -1,4 +1,4 @@
-# Flow Statement Syntax
+# Flow
 
 This document defines the flow surface syntax in one place. It covers authored
 statements and their observable semantics; executor, trace, and lowering
@@ -47,7 +47,7 @@ runnable always comes last. Generate/map require lanes before their target.
 
 `BODY` never includes its introducing colon:
 
-```too
+```text
 KEYWORD ...: LINE
 
 KEYWORD ...:
@@ -55,7 +55,7 @@ KEYWORD ...:
 ```
 
 When a statement consumes authored content, its `BODY` is `Content` and
-follows [input-syntax.md](./input-syntax.md). A statement block uses `STMTS`
+follows [input-syntax.md](input-syntax.md). A statement block uses `STMTS`
 instead.
 
 
@@ -74,16 +74,16 @@ let NAME = spawn RUNNABLE     bind its runtime handle to `NAME`
 
 repeat ...                    update locals through its body
 
-let NAME = BODY         evaluate Content and assign one `Percept` to `NAME`
+let NAME = BODY         evaluate Content and assign one `Part[]` to `NAME`
 ```
 
 Flow signatures use the runnable parameter rules in
-[program.md](./program.md), including implicit `_ : Part[]`, explicit `()`, and
+[program.md](program.md), including implicit `_ : Part[]`, explicit `()`, and
 named parameters.
 
 Initial input and arguments share one flat local namespace: `_` holds input
 and each parameter name holds its argument. See
-[flat input mappings](./call-input.md#flat-input-mappings).
+[flat input mappings](call-input.md#flat-input-mappings).
 
 `_` is the primary local. A value statement reads a locals snapshot, computes
 one result, and applies its binding only after the complete statement succeeds.
@@ -95,6 +95,8 @@ body statements update the current flow locals normally as the loop proceeds.
 
 
 ## Async Run and Await
+
+This flow-body excerpt assumes declared `investigate` and `draft` helpers:
 
 ```too
 let research = async run investigate
@@ -150,7 +152,7 @@ handoff. Executor shutdown cancels it: embedded scripts stop their executor on
 exit, while AgentCore keeps its executor for the host lifetime. Closing Chat
 leaves the agent runtime and its background roots running.
 There is no automatic restart or completion message. Use its ID with existing
-inspection and host control commands. See [execution records](run-step-records.md)
+inspection and host control commands. See [execution records](records.md)
 for durable handles and retry behavior.
 
 ## Exec
@@ -313,8 +315,8 @@ returns one complete result per outer input item. Neither flattens array results
   Map/keep/drop/sort/reduce require `_` in the child's signature or inline
   body. Run/generate permit its omission.
 - `ask` evaluates its `Content` for the human owner and returns the owner's
-  canonical `Percept`, represented in the language as `Part[]`.
-- A direct `let NAME = BODY` evaluates its `Content` as one `Percept` local
+  canonical `Part[]`.
+- A direct `let NAME = BODY` evaluates its `Content` as one `Part[]` local
   with language type `Part[]`, without starting a child run.
 - Inline `keep`, `drop`, and `until` bodies default to `Boolean`; inline
   `sort` defaults to `Number`. An explicit incompatible return type is rejected.
@@ -457,6 +459,9 @@ sort -> direction -> lanes -> by -> named runnable or inline body
 
 
 ## Example
+
+This declaration excerpt assumes a `Report` struct and a `publish` helper with a
+compatible input/output contract:
 
 ```too
 flow research(_, topic) -> Report:

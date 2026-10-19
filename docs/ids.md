@@ -9,8 +9,8 @@ Generated suffixes use eight lowercase Base32 characters:
 | `run_` | Agent-keyed `run` allocation with the same bit budget. |
 | `talk_` | Permute the conversation suffix with an agent-specific key. |
 | `chore_` | Hash the exact name to 40 bits, then permute with an agent-specific key. |
-| `dm_` | Schema 3: permute `0 + pair_hash(39)`. |
-| `gc_` | Schema 3: permute `1 + hourly_tick(20) + sequence(19)`. |
+| `dm_` | Conversation codec v3: permute `0 + pair_hash(39)`. |
+| `gc_` | Conversation codec v3: permute `1 + hourly_tick(20) + sequence(19)`. |
 
 ## Chores
 
