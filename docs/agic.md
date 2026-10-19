@@ -202,9 +202,3 @@ a resource again is necessary when its current, non-retracted body is no longer
 visible. Basic Toolang concepts in the protocol are not a grammar or CLI
 reference; load the applicable authoring guidance before producing `.too` code
 or recommending Toolang commands.
-
-## Implementation evidence
-
-- [Agic execution](../src/toolang/execution/executor/runs/agic.py), [frame construction](../src/toolang/execution/executor/frame.py)
-- [Prompt assembly](../src/toolang/execution/assembly/prompting.py), [runtime protocol](../src/toolang/execution/assembly/prompts/protocol.md)
-- [Agic scenarios](../tests/integration/execution/test_agic_scenarios.py), [instruction boundaries](../tests/unit/execution/test_instruction_boundaries.py)

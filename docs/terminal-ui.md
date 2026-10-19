@@ -51,8 +51,3 @@ not consulted. Quiet Script and noninteractive/non-TTY paths do not probe.
 The shared resolver derives backgrounds with bounded contrast and cannot infer
 terminal opacity. Exact palette and contrast constants belong to the resolver,
 not separate client copies.
-
-## Implementation evidence
-
-- [Surface resolver](../src/toolang/cli/common/terminal_surfaces.py), [surface tests](../tests/unit/cli/test_terminal_surfaces.py)
-- [Markdown tests](../tests/unit/cli/test_markdown_rendering.py), [Chat TUI tests](../tests/unit/cli/test_chat_tui.py)

@@ -24,7 +24,6 @@ chapters below express design responsibilities rather than Python packages.
 ## Language commands
 
 - [Language commands](language-commands.md): offline `parse`, `fmt`, and `highlight`, their shared language pipeline and output/error boundaries.
-- [Diagnostic examples](source-diagnostics-examples.md): verified AST/CST/formatter evidence supporting those commands.
 
 ## Preparation and resources
 
@@ -73,6 +72,6 @@ chapters below express design responsibilities rather than Python packages.
 ## Historical records and reference
 
 [Plans](plans/) retain discussion and implementation records that may become
-outdated. They do not define current behavior; these guides link current owners
-and implementation evidence instead of individual plans.
+outdated. They do not define current behavior and are not referenced by
+individual current-design guides.
 [Generated reference](../reference/README.md) provides module-level details.

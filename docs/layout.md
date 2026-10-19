@@ -202,8 +202,7 @@ and database/log history. Successfully finalized temporary entries are removed.
 Existing isolated script databases/logs remain under `.runtime/instances/<id>/`;
 all their lifecycle entries share the agent's `status.json`. Interrupted entries
 and unreleased resource references remain recoverable. [Hosting](hosting.md#runtime-recovery-and-logs)
-owns restart and cleanup behavior; [instance.py](../src/toolang/up/instance.py)
-owns the status format and generation guards.
+owns restart and cleanup behavior.
 
 Docker mounts the target agent home read-write, necessary inputs/workspaces,
 and bootstrap materials read-only. Discovery references and entire roots are
@@ -219,8 +218,7 @@ drafts remain in memory and are not saved to draft files.
 
 Old `chat-input-history.jsonl`, `chat-history.jsonl`, `.runtime/talk-history/`,
 and `talk-v2/` data are neither read nor imported. Existing files remain
-untouched. See the [Chat path test](../tests/unit/cli/test_chat_command.py) and
-[Talk path tests](../tests/unit/cli/test_talk.py).
+untouched.
 
 ## File Locks
 

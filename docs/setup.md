@@ -79,9 +79,3 @@ the captured Setup. [Execution](execution.md#state-capture) owns these boundarie
 Setup revisions are provenance, not a durable resource replay store. Views stay
 in memory; no `.setup/` model cache or historical Setup table is maintained.
 Model Steps retain their actual normalized calls for inspection.
-
-## Implementation evidence
-
-- [Generation and lazy views](../src/toolang/setup/types.py), [watcher](../src/toolang/setup/watcher.py), [policy](../src/toolang/setup/config.py)
-- [Configuration origins](../src/toolang/common/config_sources.py), [tool materialization](../src/toolang/setup/tools.py)
-- [Generation tests](../tests/unit/setup/test_types.py), [watcher tests](../tests/unit/setup/test_setup_watcher.py)

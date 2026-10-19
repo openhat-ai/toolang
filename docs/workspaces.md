@@ -68,9 +68,3 @@ Configured inspection reads authored grants without preparing execution or
 starting a server. It excludes implicit `lab`, temporary grants, and workdir.
 Runtime inspection reports usable captured grants in that environment.
 The two views answer different questions; neither changes authority.
-
-## Implementation evidence
-
-- [State configuration](../src/toolang/state/config.py), [Setup grants/mount mapping](../src/toolang/setup/types.py)
-- [CLI capture](../src/toolang/cli/common/workspaces.py), [path resolution](../src/toolang/base/utils/workspace_paths.py)
-- [Workspace tests](../tests/unit/cli/test_workspace_options.py), [captured guest roots](../tests/unit/setup/test_types.py)

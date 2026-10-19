@@ -207,9 +207,3 @@ marker survive projection. Command prose, help, tables, and reopened outputs
 share the execution-output width. Chat adds the interaction separation after
 the complete result. [Terminal UI](terminal-ui.md) owns display-cell geometry,
 palette resolution, and terminal ownership.
-
-## Implementation evidence
-
-- [Chat client](../src/toolang/cli/toolang/commands/chat/), [RemoteRunClient](../src/toolang/execution/remote.py)
-- [Chat input](../tests/unit/cli/test_chat_input.py), [command behavior](../tests/unit/cli/test_chat_commands.py), [TUI](../tests/unit/cli/test_chat_tui.py)
-- [Remote recovery](../tests/unit/cli/test_chat_remote.py), [remote transport](../tests/unit/execution/test_remote_run_client.py)

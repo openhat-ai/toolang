@@ -42,16 +42,7 @@ override, its object belongs in `override`. Provider order and
 model order are significant and are preserved. Root, agent-home, environment,
 and CLI-selected catalog files must use this format. Toolang rejects nested
 models.dev provider maps and combined/raw models.dev catalogs; an external
-program must convert them before use. For example:
-
-```bash
-curl -fsSL https://models.dev/catalog.json -o /tmp/models.dev.catalog.json
-jq '{providers: [.providers[] | del(.models)],
-     models: [.providers[] as $p | $p.models[]
-       | (if has("provider") then .override = .provider else . end)
-       | .provider = $p.id]}' \
-  /tmp/models.dev.catalog.json -c > catalog.json
-```
+program must convert them before use.
 
 Toolang selects the catalog file in this order:
 
@@ -72,27 +63,9 @@ context; it does not read an implicit `agents/default`. In a Docker guest, an
 external `--catalog` source is mounted read-only and
 `TOOLANG_MODEL_CATALOG` is rewritten to its guest path.
 
-Use `too alice models` to inspect a resident agent's model context. It layers
-the agent's provider/plugin configuration and dotenv values over root inputs,
-and prefers its home catalog according to the precedence above. The agent does
-not need to be running. `--catalog`, `--all`, `--human`, and `--json` work in
-both root and resident forms. Only models accept `--query/-q`:
-
-```bash
-too models
-too alice providers --all
-too alice models --all --query '*[tags has no_env]'
-too --root /path/to/root agent:alice models --catalog /path/to/catalog.json --json
-```
-
-The target goes before `models` or `providers`; use `agent:<name>` when a name
-matches a command name. Both forms default to routable, allowed models.
-`--all` includes unready and allow-excluded records. Inspection queries run
-transiently over the selected records. `too models --json` emits an array of
-public model records; `too providers --json` emits an array of provider inspection records with
-`models` formatted as stored ready/total counts. Neither is the flat catalog input format.
-Availability reflects the invoking process's configuration and environment,
-not a running agent's session or sandbox.
+Inspection uses the selected root or agent configuration and process environment,
+not a running session or sandbox. It does not require the agent to be running.
+[Queries](queries.md) owns filtering and public record projections.
 
 The flat importer validates both arrays, unique provider/model identities,
 provider references, and known field types. It drops unknown additive fields,
@@ -166,9 +139,7 @@ or `too start alice --compact-model 'openai/gpt-5 effort=low'`. Model precedence
 CLI, environment, agent config, root config, then the thread model.
 `--compact-model` also applies to `serve` and `chat` when starting a runtime;
 it cannot reconfigure an already running agent. Accepted Runs retain their
-captured configuration. [Execution](execution.md#history-compaction) owns horizon adoption;
-the recorded batching and coverage loop lives in
-[runs/compact.py](../src/toolang/execution/executor/runs/compact.py).
+captured configuration.
 
 ## Catalog Plugins
 
@@ -365,8 +336,7 @@ and independent input limit `I`, the available input is:
 Subtract `max(1024, ceil(K / 20))`, where `K` is the smaller known capacity
 or the sole known capacity. A nonpositive result fails before dispatch.
 For `C=32000`, `I=10000`, and `O=8000`, the margin is 1024 and the input budget
-is 8976 tokens. [budget.py](../src/toolang/plugin/models/budget.py) and its
-[tests](../tests/unit/execution/test_model_budget.py) own these rules.
+is 8976 tokens.
 
 ### Adapter controls and routing
 
@@ -427,59 +397,23 @@ never rewritten, so it can deliberately select a service running inside the
 guest. Configure routes through the owning catalog plugin; core
 `[models.providers.<name>]` overrides are not supported.
 
-## Inspection and Export
+## Inspection and export
 
-The public resources are:
+Model/provider inspection reads one Setup generation. The effective view contains
+ready, allowed models and their providers. The diagnostic view includes unready
+and excluded entries plus empty providers, without granting execution access.
+Provider ready/total counts always cover all owned models.
 
-```text
-too models [--all] [--query QUERY] [--json]
-too providers [--all] [--json]
-too catalogs
-too adapters
-```
+Model records preserve catalog fields and add `ref`, tags, and safe route
+metadata. Provider inspection reports its default route and stored counts, not
+a nested model collection. Neither JSON projection is the flat catalog input
+format. Inspection skips default/compact-model validation so broken choices
+remain diagnosable.
 
-`too models` shows ready, allowed models. `too providers` lists providers with
-at least one such model. `--all` (or `-a`) includes unready and excluded entries,
-plus empty providers. It preserves scope and catalog precedence and grants no
-runtime access. Providers store no model collection; their setup-computed
-`ready_count` and `model_count` always cover all owned models.
-
-Model tags describe availability/blockers and `local`/`remote` origin. Provider
-inspection formats stored counts as `models: "3/5"` and exposes the default
-route as `adapter`, `api`, and `env`; providers have no tags. Models expose short
-inspection fields alongside the full canonical record. Human headers uppercase
-those keys, and `PRICE` formats per-million-token input/output prices together.
-See [Resource Queries](queries.md) for exact shapes and column order.
-
-Human summaries count displayed rows: `N models, M providers` (no provider count
-for zero or one model) or `N providers`. Empty human results print the zero count.
-JSON is an array without summaries; empty JSON is `[]`. `--human` explicitly
-selects the default table and cannot combine with `--json`.
-
-`too catalogs` and `too adapters` list locally installed catalog and
-adapter entry points with `NAME` and distribution `PACKAGE` columns. Plugin
-inventories have no `--json`, `--human`, or query options. They do not
-accept an agent name, construct setup, read catalog/configuration files, or
-invoke plugin factories. Installed entries remain visible even if they cannot
-be loaded. Runtime setup still owns the adapter instances used for execution.
-Use `too [AGENT] models` or `too [AGENT] providers` for effective model resources;
-these commands read one published setup version.
-
-`too models --query ... --json` emits an array of public model records from the
-same setup version used for selection. `too providers --json` emits provider
-inspection records with a formatted `models` count string. Both follow the default/`--all` visibility;
-the full provider view includes empty providers. These inspection records are
-not the flat runtime catalog input format. Inspection skips configured default
-and compact-model validation so that `--all` can diagnose unready choices.
-
-Models preserve supported models.dev fields and add `ref`, `tags`, and safe
-`_toolang` route metadata. Queries use native TQ over these JSON records,
-including nested fields such as `limit.context` and `cost.input`. Use
-`*[tags has ready]` for availability and `*[modalities.input has image]` for
-array membership. See [Resource Queries](queries.md) for fields, tags, ordering,
-and policy semantics. Setup does not retain query indexes or field registries.
-Model-call parameters such as reasoning effort are structured request fields,
-not query syntax.
+[Queries](queries.md) owns record fields, tags, ordering, and query semantics;
+[CLI](cli.md#resource-and-plugin-inspection) owns inventory commands. Installed
+catalog/adapter discovery reads metadata without constructing Setup or factories.
+Model-call controls are structured request fields, not query syntax.
 
 ## Runtime Configuration
 

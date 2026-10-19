@@ -300,9 +300,3 @@ execution. Lease-loss errors include the last accepted Chat run ID when known.
 Rerun observation failures report accepted run IDs without
 canceling; explicit interruption requests cancellation. Standalone scripts remain
 separate: inactive host execution is embedded and script-created guests stop on exit.
-
-## Implementation evidence
-
-- [Process orchestration](../src/toolang/up/process.py), [server composition](../src/toolang/up/server.py), [lifecycle](../src/toolang/up/lifecycle.py)
-- [Instance storage](../src/toolang/up/instance.py), [discovery](../src/toolang/up/discovery.py), [sandbox orchestration](../src/toolang/up/sandbox.py)
-- [Lifecycle tests](../tests/unit/up/test_server_lifecycle.py), [visiting servers](../tests/integration/cli/test_visiting_lifecycle.py)

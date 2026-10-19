@@ -190,10 +190,3 @@ while preserving OSC titles. `TOOLANG_TMUX_DEBUG=1` enables tmux diagnostics.
 Scripts using the old session/window marks must migrate to these pane options;
 `@toolang_pad` and `@toolang_talk` are retired. Users who need automatic placement
 can create their own tmux bindings using the pane metadata.
-
-
-## Implementation evidence
-
-- [Entry-point router](../src/toolang/cli/toolang/routing.py), [command registration](../src/toolang/cli/toolang/main.py)
-- [Agent server acquisition](../src/toolang/cli/common/agent_server.py), [terminal metadata](../src/toolang/cli/common/terminal_session.py)
-- [Routing tests](../tests/unit/cli/test_cli_routing.py), [help tests](../tests/unit/cli/test_cli_help.py), [inspection tests](../tests/unit/cli/test_inspect_subject_navigation.py)

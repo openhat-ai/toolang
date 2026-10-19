@@ -29,8 +29,8 @@ guide under `docs/`, even when those contracts impose rules on consumers.
 Discussion and implementation records belong under `docs/plans/`. They may
 become outdated as the product evolves and are not current specifications.
 Current `docs/*.md` guides must never reference individual documents under
-`docs/plans/`; link the current design owner, implementation, schema, or tests
-instead. Directory navigation may link to `docs/plans/` as historical context.
+`docs/plans/`; link the current design owner instead. Directory navigation may
+link to `docs/plans/` as historical context.
 Remove superseded drafts and empty pointer documents after preserving any
 still-current content in its owner. Use Git history to recover retired context.
 
@@ -71,7 +71,9 @@ Check every touched guide against these conditions:
 Organize the current-design index by responsibility. Explain ownership, data
 flow, capture/update boundaries, failure handling, and consequential tradeoffs.
 Omit self-evident usage and implementation inventories that source/help already
-provides; link exact schemas and constants instead of duplicating them.
+provides. Keep schemas linked when needed to explain a contract. Do not add
+implementation-evidence sections, test inventories, or verification appendices
+to design guides; record verification in the PR.
 
 Record the implementation revision, substantive findings, moved/deleted owners,
 and checks in the PR description. A guide can pass without an edit. Preserve

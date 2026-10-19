@@ -479,15 +479,3 @@ Its recall target is `{kind: "convo-rules", backend, conversation}`; revision `"
 retracts cleared guidance. Honor remains runtime-only.
 See [messaging](messaging.md#agent-messaging)
 for parameters, compact results, target resolution, and read/write semantics.
-
-## Migration
-
-Replace `me` with `state`, `_toolang` with `runtime`, and `msg` with `convo` in
-selections, plugin configuration, and calls. Split targets into team/list, replace
-resolve with list/peek, and rename send to write (`body` → `message`,
-`in_reply_to` → `reply_to`, `agent:alice` → `alice`). Management leaves become
-create/rename/join/leave. Human and pair destinations require a conversation ID.
-Restart hosts and prepare fresh Setup; do not resume pre-upgrade runs. Existing
-records, summaries, and plugin rooms remain untouched. Historical tool names are
-retained as recorded; runtime-specific interpretation uses current `runtime__*`
-names only.

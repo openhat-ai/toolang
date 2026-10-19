@@ -21,8 +21,7 @@ file.
 
 The [canonical documents](#canonical-documents-and-revisions) define parsed
 values, exact source/fetched file maps, pinned upstream versions, and revision
-creation times. [cache.py](../src/toolang/state/cache.py) owns their encoding and
-validation; [format.py](../src/toolang/state/format.py) owns the format version.
+creation times.
 
 ## Vocabulary
 

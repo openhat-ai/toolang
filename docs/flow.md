@@ -495,38 +495,4 @@ flow research(_, topic) -> Report:
 - Removed `rank`, `par`, `top`, and `bottom` forms are rejected at Flow
   statement boundaries; they are not compatibility aliases.
 
-The syntax of `think`, `use`, and `thunk` remains undefined. Future `think` and `use`
-statements must emit the same model and tool steps as calls requested
-dynamically by model output.
-
-
-## Migration From Rank
-
-Replace unbound `rank score top N` with `sort descending by score` followed
-by `keep first N`. Replace unbound `rank score bottom N` with the same
-descending sort followed by `keep last N` to preserve the final item order.
-
-Named or discarded legacy rank-with-selection has no general equivalent
-rewrite: an unbound sort updates `_`, while the old bound or discarded rank
-left `_` unchanged. Re-author those flows with explicit binding boundaries.
-A helper Flow can return the complete array type to preserve the same behavior.
-
-
-## Migration to Current Flow Statements
-
-Scatter/gather are removed; run retains its existing single-call behavior and
-input/output contracts. Existing programs can express those calls with `run R`
-in place of `scatter using R` or `gather using R`. For inline scatter,
-use `run -> Text[]: BODY` or retain its explicit array output type. Run accepts
-empty arrays; move any required nonempty validation into the callee.
-Rename `storm` to `generate` and `settle` to `reduce`. Remove `using` before
-inline generate/map/reduce bodies; retain it before named targets. Keep bindings,
-`from` initializers, explicit types, and lane counts.
-
-Output protocol and stored objects contain `type`, `value`, and `binding`;
-ordinary stored values use the self-describing value codec. There is no
-Local wrapper or `dim` field. Update output references to `output/value`.
-Execution-store versions and read/write compatibility follow
-[Durable Truth](execution.md#durable-truth); incompatible writable stores require
-a fresh runtime, without automatic migration. Old executable
-snapshots require source migration and a newly prepared state before rerun.
+The syntax of `think`, `use`, and `thunk` remains undefined.

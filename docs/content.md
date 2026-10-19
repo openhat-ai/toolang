@@ -89,8 +89,3 @@ Authored sources and prompt provenance remain available in Run controls, while
 resolved Parts drive recall and rerun. Model Steps retain the normalized
 ModelCall. Evaluating an attachment supplies content, not workspace authority;
 [file inputs](scripts.md#file-inputs) owns path origins and client capture.
-
-## Implementation evidence
-
-- [Content parsing and evaluation](../src/toolang/lang/input.py), [file includes](../src/toolang/lang/includes.py)
-- [Call Input](call-input.md) owns signature binding and invalid capture boundaries.

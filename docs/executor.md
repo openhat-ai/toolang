@@ -10,8 +10,7 @@ notifications after commit. [Execution](execution.md) owns the public lifecycle,
 The composition root gives RunExecutor and ThreadManager the same RunStore and
 IdIssuer. It supplies paired Setup/State callbacks for request resolution and
 concrete lifecycle/workspace inputs. The process owner closes the Store only
-after executor shutdown. Exact signatures live in
-[executor.py](../src/toolang/execution/executor/executor.py).
+after executor shutdown.
 
 | Operation | Responsibility |
 | --- | --- |
@@ -58,18 +57,11 @@ owns the persisted representation.
 
 ## Execution structure
 
-| Owner | Responsibility |
-| --- | --- |
-| [common.py](../src/toolang/execution/executor/common.py) | BoundRun and runtime local/value context |
-| [resources.py](../src/toolang/execution/executor/resources.py) | Effective resources, ceilings, and module-scoped selectors |
-| [frame.py](../src/toolang/execution/executor/frame.py) | Agic frame, model/adapter selection, templates, tools, and budgets |
-| [assembly](../src/toolang/execution/assembly/) | Provider-neutral instructions/messages, recall, tool replies, and run results |
-| [runs](../src/toolang/execution/executor/runs/) | Agic loop, Flow evaluation, and internal compaction Runs |
-| [stmts](../src/toolang/execution/executor/stmts/) | Dispatch/evaluation of individual authored Flow statements |
-| [steps](../src/toolang/execution/executor/steps/) | Model, tool, child Run, flow parallel/loop/value, agent, and human units |
-| [awaitables.py](../src/toolang/execution/executor/awaitables.py), [spawn.py](../src/toolang/execution/executor/spawn.py) | Async results and independent-root admission |
-| [limits.py](../src/toolang/execution/executor/limits.py) | Per-agic call limits and shared root budgets |
-| [live.py](../src/toolang/execution/live.py) | Resident live nodes and aggregate propagation |
+A bound Run carries its accepted plan and local context. Resource resolution
+selects effective models, tools, and ceilings; message assembly produces
+provider-neutral instructions and history. Agic and Flow evaluators dispatch
+Model, Tool, child Run, parallel, loop, and value Steps through the same durable
+lifecycle. Per-agic limits and root budgets constrain their execution.
 
 Accepted code, output contracts, Setup, and workspace grants stay bound. Named
 calls adopt a compatible latest State; inline bodies stay with their containing
@@ -117,10 +109,3 @@ subscription. Polling can miss short-lived Steps; use events for transitions and
 records for history. Terminal reports capture final aggregates before resident
 nodes are discarded. [Top](top.md) and [statistics](execution-statistics.md) consume
 their respective live and durable views.
-
-## Verification anchors
-
-- [Startup/admission](../tests/integration/execution/test_run_startup.py), [async work](../tests/integration/execution/test_async_run_scenarios.py)
-- [Spawn](../tests/integration/execution/test_spawn_scenarios.py), [controls](../tests/integration/execution/test_control_scenarios.py)
-- [LiveTree](../tests/integration/execution/test_live_tree.py), [resident state](../tests/unit/execution/test_live_tree_state.py)
-- [Store atomicity](../tests/integration/execution/test_store_atomicity_scenarios.py), [runtime control commits](../tests/integration/execution/test_runtime_control_commit.py)

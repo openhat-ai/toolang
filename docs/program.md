@@ -201,7 +201,9 @@ requires the `description` property and a body. `service` requires
 alias; its body is optional. Service transport is `http` or `stdio`. Optional
 `headers` is HTTP-only, while optional `env` is a comma-separated list of
 unique environment variable names. All properties are single-use and
-nonempty.
+nonempty. Both transport spellings lower to `transport`; HTTP targets are URLs,
+while stdio targets remain opaque command text at the language boundary.
+Markdown cap files use the [catalog format](caps.md#local-cap-frontmatter).
 
 Inline skill bodies are literal guidance: they do not expand `{{parameters}}`
 or execute flow statements. Select them with their qualified capability ref:
@@ -618,28 +620,6 @@ Prompt Call Input, include references, and escaping are defined in
 dollar prompt call invokes one reusable prompt template during content
 evaluation. Slash is reserved for terminal Chat commands and does not invoke
 prompts.
-
-
-## Service Caps
-
-Inline `service` caps declare properties directly. Required properties are
-`description`, exactly one of `transport` or `protocol`, and `target`;
-optional properties are `headers` and `env`.
-
-```too
-service github:
-  description = Use this service for GitHub access.
-  transport = http
-  target = https://mcp.github.com/mcp
-  headers = Authorization: Bearer $GITHUB_TOKEN
-  env = GITHUB_TOKEN
-```
-
-Both accepted transport spellings lower to the canonical `transport` metadata
-key. For `http`, `target` is the endpoint URL. For `stdio`, it remains opaque
-command text at the language boundary. Markdown cap files keep their
-catalog-owned frontmatter format.
-
 
 ## Invocation surfaces
 

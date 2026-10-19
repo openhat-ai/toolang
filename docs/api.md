@@ -541,9 +541,3 @@ POST submission and GET observation share the canonical SSE protocol in
 [Events](events.md). Observe an accepted Run through GET after a disconnect;
 never repeat a submission to reconnect. Accepted responses expose
 `X-Toolang-Run-ID`, including through CORS for allowed origins.
-
-## Implementation evidence
-
-- [Application and lifespan](../src/toolang/api/app.py), [composition](../src/toolang/up/server.py)
-- [Request schemas](../src/toolang/api/schemas.py), [run routes](../src/toolang/api/routers/runs.py), [thread routes](../src/toolang/api/routers/threads.py)
-- [API integration tests](../tests/integration/api/), [contract version tests](../tests/unit/api/test_contract_versions.py)

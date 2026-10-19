@@ -1,185 +1,88 @@
 # Language Commands
 
-The language commands `parse`, `fmt`, and `highlight` inspect and transform
-Toolang source offline. `too` and `toolang` expose the same commands, listed by
-`too more`. They use the installed Tree-sitter Python grammar and Rich without
-agent setup, model configuration, or network access.
+`parse`, `fmt`, and `highlight` operate offline on Toolang source through the
+installed Tree-sitter grammar. They require no agent Setup, model configuration,
+or network access. [AST](ast.md) owns semantic representation;
+[Program](program.md) owns declarations and [Flow](flow.md) owns evaluation.
 
 ## Parse
 
-```sh
-too parse work.too                    # Semantic AST, S-expression
-too parse work.too --ast --json       # Semantic AST, JSON
-too parse work.too --cst              # Raw CST, S-expression
-too parse work.too --cst --json       # Complete CST, JSON
-too parse scripts/ other.too --check  # Validate sources without printing trees
-```
+Parse exposes two views:
 
-`--ast` (default) and `--cst` select the tree; `--json` independently selects
-JSON instead of the default indented S-expression. The representation does not
-change between a terminal and a pipe. `--compact` implies compact JSON and can
-also accompany `--json`.
+| View | Boundary |
+| --- | --- |
+| AST, the default | Lower and validate a semantic `Program`; invalid source yields no partial AST. |
+| CST | Retain the original UTF-8 syntax tree, including incomplete source and recovery nodes. |
 
-**Migration:** `parse` previously emitted AST JSON by default. Add `--json` to
-existing scripts; `--compact` retains its previous behavior and AST JSON fields
-remain unchanged.
+Both views support S-expressions and JSON independently of terminal detection.
+JSON is the downstream scripting interface. AST serialization retains semantic
+nodes and documentation; CST JSON has schema version `1`, grammar/version,
+original source, complete nodes, and syntax diagnostics. CST node ranges are
+half-open byte offsets with zero-based rows and UTF-8 byte columns; AST source
+lines are one-based. Grammar node names are version-dependent and do not define
+a runtime storage schema.
 
-The AST is the lowered, validated Toolang `Program`. It includes declarations,
-flow statements, signatures, and module/runnable/parameter documentation.
-Validation checks source semantics without resolving installed capabilities or
-preparing execution. Invalid input produces an error and no partial AST.
+AST validation checks declarations, templates, types, and statically known
+Flow contracts without resolving installed resources. Unknown inherited context,
+dynamic values, conversions, and current resource readiness remain runtime checks.
+Validation does not infer signatures through calls. [AST](ast.md#validation-boundaries)
+owns this division.
 
-`--check` accepts multiple files/directories, recursively discovers `.too` files,
-and deduplicates resolved paths. It emits nothing on success, reports the first
-error per file as `path:line:column: message`, continues checking other files,
-and exits 1 if any source fails. It never rewrites files or requires canonical
-formatting. Stdin is supported as the sole source. `--cst`, `--json`, and
-`--compact` cannot accompany `--check`; explicit `--ast` is allowed.
+Raw CST inspection does not mask query-data hashes or append a missing final
+newline as the AST path can. The views can therefore expose different recovery
+regions. CST output remains complete on syntax failure, with diagnostics on
+stderr and exit status 1; semantic errors do not invalidate CST output.
 
-Both AST modes check template syntax, reserved references, declared inputs,
-known types, and operation contracts. Flow checks follow local bindings and
-complete types and outer-array lengths, detect definitely missing call inputs,
-and validate known repeat/reduce windows. Zero-call array operations, including
-empty reduce with an initializer and implicit-seed singleton reduce, validate
-inputs without checking unused child history templates. An empty reduce without
-an initializer is rejected.
-Unknown inherited context, dynamic values, and value conversions remain runtime
-checks; insufficient history within a valid window remains normal until warm-up.
-These checks do not infer signatures through calls. Source errors use
-`path:line:column: reason: 'excerpt'`. Locations are one-based lines and UTF-8
-byte columns (a tab counts as one byte). Unknown coordinates are omitted.
-I/O and highlighting failures do not receive a fictitious `1:1` source position.
-
-Syntax errors explain missing punctuation, missing types/values, or malformed
-statements when supported by the parser. Other failures use `Parse error` and
-retain the enclosing recovery range. A nested recovery node alone does not prove
-which token caused the error. Semantic errors use known declaration/statement
-anchors; previous declarations or conflicting properties appear on separate
-`path:line:column: note: reason` lines.
-
-Excerpts come from the original source, are escaped and bounded to 100 characters
-plus a truncation marker, and include block context for recovery errors. Error
-messages do not contain repair advice. Source order takes precedence over
-specificity. See the [diagnostic examples](source-diagnostics-examples.md) for
-verified outputs and differences between AST and raw CST inspection.
-
-Library source exceptions expose their structured diagnostic separately from
-`str(error)`, which includes known locations but no source excerpt.
-
-The CST parses the original UTF-8 bytes, including incomplete source. Unlike
-the AST path, it neither masks query-data hashes nor adds a final newline, so
-the two views can differ. Syntax errors still produce a complete CST, with
-diagnostics on stderr and exit status 1. Semantic errors do not invalidate CST
-output.
-
-CST S-expressions show named nodes, fields, and error/missing markers. JSON also
-includes anonymous tokens and preserves all whitespace through the original
-`source` field. Its envelope contains `schema_version: 1`, the grammar name and
-installed version, `source`, `root`, and `diagnostics`. Nodes contain:
-
-- `type`, `field` (parent field name or null), and ordered `children`;
-- `is_named`, `is_extra`, `is_error`, `is_missing`, and `has_error`;
-- `start_byte`/`end_byte` and `start_point`/`end_point`.
-
-Ranges are half-open. Points are `{row, column}` with zero-based rows and UTF-8
-byte columns. AST `span.line` remains one-based. Diagnostics distinguish native
-errors, missing nodes, and grammar-specific invalid nodes. Node names track the
-grammar version; this inspection format is not a runtime storage schema.
-Diagnostic `message` values contain only the reason, without a location or
-excerpt. They use the same syntax explanations as AST parsing and formatting. All native diagnostic entries and overlapping ranges are retained;
-human explanations do not change the raw node types or parser recovery markers.
-
-AST S-expressions use `(kind field: value ...)`, `(span line: N)`, `(list ...)`,
-and `(map ("key" value) ...)`. Strings/scalars use JSON escaping, and empty
-containers remain explicit. Both tree displays use two-space indentation;
-JSON is the supported interface for downstream scripts.
+`parse --check` recursively validates and deduplicates source files without
+printing trees, rewriting files, or requiring canonical formatting. It reports
+the first failure per file and continues across the batch.
 
 ## Format
 
-```sh
-too fmt work.too                      # Rewrite in place
-too fmt scripts/ other.too --check    # Check only; no writes
-too fmt work.too --stdout             # Plain formatted source
-too fmt work.too --highlight          # Highlighted formatted source
-too fmt work.too --highlight --html > formatted.html
-```
+Formatting transforms syntax-valid source, independently of semantic validation.
+It preserves source order, explicit types, literal text, and documentation
+bindings while normalizing structural whitespace and adjacent directive/import
+groups. [AUTHORING.md](../AUTHORING.md#automatic-formatting) owns the formatting
+conventions.
 
-In-place formatting and `--check` accept multiple files/directories, discover
-`.too` files recursively, and deduplicate resolved paths. `--check` returns 0
-when formatting is current and 1 when changes are needed. It checks formatting,
-not semantic validity. Syntax errors prevent formatting.
-Syntax failures use `path:line:column: message`, including stdin's diagnostic
-label, with the same location units as `parse`. Formatting retains only the
-first syntax error. If the formatter itself produces invalid syntax, the error
-explicitly identifies a generated line/column instead of attributing that
-position to the input file. The failing file is not written; files formatted
-successfully earlier in the same batch remain changed.
+In-place and check modes discover `.too` files recursively and deduplicate
+resolved paths. A failed file is never written; successful earlier writes in a
+batch remain. Check mode reports whether formatting changes are needed.
+Stdout/highlight modes accept one file or stdin without modifying source.
+Formatting precedes highlighting, so capture positions refer to formatted text.
 
-`--stdout` and `--highlight` accept exactly one file or stdin and never modify
-source files. `--highlight` implies stdout mode; `--stdout --highlight` is also
-valid. Both reject directories, multiple files, and `--check`. Formatting runs
-before highlighting, so capture positions refer to the formatted source.
-Output modes emit only code/HTML, without status messages.
-
-`--tab-size N` sets structural indentation (positive integer, default 2).
-Formatting preserves omitted types, compacts adjacent imports of the same cap
-kind and resource directives of the same key, and keeps adjacent inline role
-messages compact. Different import kinds are separated by a blank line;
-resource directive groups remain compact without blank lines. Source order,
-authored explicit types, literal text, and documentation bindings are preserved. See the
-[formatter conventions](../AUTHORING.md#automatic-formatting)
-for the boundary between mechanical rules and authoring decisions.
+Syntax failures report the first source diagnostic. Invalid formatter-generated
+syntax is attributed to generated coordinates rather than the input file.
+Rendering completes before code or HTML is emitted, preventing partial artifacts.
 
 ## Highlight
 
-```sh
-too highlight work.too
-too highlight work.too --color always > colored.txt
-too highlight work.too --html > source.html
-```
+Highlighting applies the grammar's packaged query without syntax or semantic
+validation. Incomplete source is rendered best-effort. Removing terminal colors
+leaves the original text, including tabs, line endings, trailing whitespace,
+and a missing final newline. HTML escapes source markup and embeds its assets.
 
-Highlighting uses the grammar's packaged query. Incomplete and semantic-invalid
-source is rendered best-effort without validation errors. With colors removed,
-terminal output retains the input exactly, including tabs, CRLF, trailing spaces,
-and a missing final newline. HTML escapes source markup and uses no remote assets.
-Rendering failures include the source label and underlying cause, without a
-fabricated source position. Both standalone highlighting and `fmt --highlight`
-finish rendering before emitting code or HTML, so failures emit no partial result.
+Explicit color mode wins. Auto mode respects `NO_COLOR`, then `FORCE_COLOR`,
+then terminal capability; pipes are plain unless forced. HTML uses the shared
+palette independently of terminal color settings. [Terminal UI](terminal-ui.md)
+owns that palette. Rendering failures retain the source label without fabricated
+source coordinates.
 
-Both `highlight` and `fmt --highlight` accept:
+## Stdin, paths, and errors
 
-- `--color auto|always|never`: default `auto`; explicit `always`/`never` wins.
-  In auto mode, nonempty `NO_COLOR` disables styling, otherwise nonempty
-  `FORCE_COLOR` other than `0` enables it, otherwise a capable terminal enables
-  it (`TERM=dumb` disables it). Pipes are plain unless color is forced.
-- `--html`: export standalone HTML, using the shared palette regardless of
-  terminal color settings. `--color` applies only to terminal output.
+Inputs are UTF-8 local `.too` files or explicit stdin (`-`), never remote refs or
+agent names. A stdin filepath supplies a diagnostic label without reading or
+writing that path. No-argument calls show help without scanning the working
+directory. AST/format paths normalize line endings; raw CST/highlight retain them.
 
-On `fmt`, rendering options require `--highlight`. Custom grammars, queries,
-themes, embedded-language highlighting, and arbitrary Tree-sitter query
-execution are outside this interface. Resource lists expose query fields through `--json`.
+Source diagnostics use one-based lines and UTF-8 byte columns, with escaped,
+bounded excerpts and optional notes for related declarations. Unknown coordinates
+are omitted. Parser recovery ranges identify observed syntax structure rather
+than proving the causal token. Syntax diagnostics and semantic errors remain
+distinct; library exceptions expose structured diagnostics separately from text.
 
-## Stdin, Paths, and Errors
-
-```sh
-cat work.too | too parse - --cst --json
-cat work.too | too fmt - --highlight
-cat work.too | too highlight - --stdin-filepath work.too
-too highlight -- -example.too
-```
-
-Use `-` as the sole source. `--stdin-filepath PATH` supplies a diagnostic label;
-it never reads or writes that path. The legacy `fmt --stdin-filepath PATH`
-shorthand also reads stdin without an explicit `-`. `fmt --check` rejects stdin.
-No-argument calls show help without scanning the working directory. Inputs must
-be UTF-8 local `.too` files; URLs and Agent Names are not accepted. Stdin is
-also decoded as UTF-8, independently of Python's stream encoding. AST parsing
-and all formatter modes accept LF, CRLF, and CR line endings through universal
-newline normalization; raw CST and original-source highlighting retain them.
-
-Successful output modes return 0 and write only their artifact to stdout.
-Syntax/validation, file/decode, and rendering failures return 1 with diagnostics
-on stderr; invalid option combinations return 2. Existing in-place formatter
-messages and legacy option error statuses are retained. JSON/S-expressions
-end with LF and contain no generated ANSI; source output retains its own ending
-except for formatter normalization.
+Successful output modes write only their artifact to stdout and return 0.
+Source, I/O, decode, and rendering failures return 1 on stderr; invalid option
+combinations normally return 2. JSON/S-expressions end with LF and contain no
+generated ANSI. Source highlighting retains its original ending; formatting
+applies its normalization.

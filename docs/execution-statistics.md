@@ -60,6 +60,4 @@ archive_after_seconds = 86400
 
 Keep the original `runs.db` records: exact partial-minute boundaries still read
 their fields. Replacing the source or changing archived records requires rebuilding
-the derived statistics database. [Projection](../src/toolang/stats/projection.py)
-owns archival facts, [query.py](../src/toolang/stats/query.py) owns window selection,
-and [_sql.py](../src/toolang/stats/_sql.py) owns the cache schema.
+the derived statistics database.

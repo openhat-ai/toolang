@@ -165,15 +165,3 @@ change, or an origin's recovery boundary requires structural replacement from
 its retained projection. This restores structure, not expired Part deltas or
 arbitrary historical executions. A root outside retained coverage is unavailable;
 use that agent's durable inspection API for historical records.
-
-[events.py](../src/toolang/teaming/events.py) and
-[records.py](../src/toolang/teaming/records.py) own budgets and projection trimming;
-[subscriptions.py](../src/toolang/teaming/subscriptions.py) owns replay and
-replacement, verified by [observation tests](../tests/unit/messaging/test_event_observation.py).
-
-
-## Implementation evidence
-
-- [Canonical stream](../src/toolang/execution/stream.py), [subscriptions](../src/toolang/execution/subscriptions.py), [normalization](../src/toolang/execution/observation.py)
-- [Client reducer](../src/toolang/execution/stream_client.py), [SSE transport](../src/toolang/api/common.py)
-- [Event tests](../tests/unit/execution/test_events.py), [stream tests](../tests/unit/execution/test_stream.py), [HTTP transport tests](../tests/unit/api/test_stream_transport.py)

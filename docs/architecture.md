@@ -26,8 +26,7 @@ maps the implementation for maintainers; focused guides own the detailed contrac
 Source parsing stays with its format owner. Runtime execution consumes concrete
 values and snapshots; CLI and hosting choose placement, paths, environment, and
 process lifecycle. Plugin entry points and factories are documented in
-[Plugins](plugins.md). See [contribution standards](../CONTRIBUTING.md) and the
-[package-boundary checks](../tests/architecture/test_package_boundaries.py).
+[Plugins](plugins.md).
 
 ## Agent
 

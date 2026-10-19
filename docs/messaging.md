@@ -1,10 +1,10 @@
 # Messaging
 
-Teaming connects agents through Hub HTTP APIs. Only Hub connects to an externally
-running Redis or Valkey server. Local execution needs neither Hub nor that server.
-`too` is an alias for `toolang`.
+Hub coordinates conversations, membership, presence, and event delivery through
+Redis/Valkey. Only Hub connects directly to the backend. Agents reconnect when
+Hub returns; local execution continues while it is unavailable. Uncertain sends are never automatically repeated.
 
-Root `<root>/config.toml` (normally `~/.toolang/config.toml`):
+Root configuration selects the human identity, backend, and Hub endpoint:
 
 ```toml
 [teaming]
@@ -17,84 +17,22 @@ url = "redis://localhost:6379/0"
 port = 7001
 ```
 
-Teaming is enabled by default. Agents reconnect when Hub becomes available;
-local execution and subscriptions work without it. To opt out, set
-`<agent-home>/config.toml` and restart the agent:
+Teaming is enabled by default. Home `[teaming] enabled = false` opts an agent
+out after restart; root settings are not accepted in home configuration.
+Membership lives only in the backend. [Hosting](hosting.md) owns process startup
+and port selection; [Layout](layout.md) owns private discovery records.
 
-```toml
-[teaming]
-enabled = false
-```
+Hub binds loopback and assumes trusted local clients. Its private discovery
+record publishes the actual endpoint and backend identity. `/info` reports the
+source version and `api_version: 0`; `HUB_API_VERSION` also versions publication,
+staging, and event wires. The one-shot Hub roster describes discovered instances
+and recorded launches, not delivery or live presence.
 
-Root settings cannot appear in home configuration; `enabled` is home-only.
-Membership is stored only in the backend, never in configuration.
-
-```sh
-too hub start                       # Background Hub; requires Redis/Valkey.
-too hub                             # Hub readiness and agent instance snapshot.
-too talk                            # List conversations, previews, and human membership.
-too convo list                      # The same conversation directory.
-too convo create dev                # Create a group containing the configured human.
-too convo join gc_rcpya1zw           # Join an ordinary GC; leave preserves rules/history.
-too talk alice                      # Empty human-agent DM until the first send.
-too talk alice hello                 # Send and exit after acknowledgment.
-too talk alice,bob                   # Observe an existing agent-agent DM.
-too talk dm_6x89kwxn                 # Open an existing DM by ID.
-too talk gc_rcpya1zw                 # Open an existing GC by ID.
-too talk alice -- hello -sdf         # Flags after target are literal message text.
-too hub stop                        # Leaves agents and Redis/Valkey running.
-```
-
-`too hub` prints one Hub and agent snapshot. It includes installed resident
-agents and discoverable active or unresolved visiting, roaming, and temporary
-instances; finished nonresident instances and history are excluded. The Hub
-endpoint is omitted. A ready Hub displays `hub <version>` (or `hub running` if
-its version is unknown); otherwise it displays `hub not running`. Agents appear
-in a headerless three-column tree: name, status, and Talk. A blank line and
-summary follow a nonempty list, counting instances, confirmed running instances,
-and running instances with the recorded `talk` driver. An empty list displays
-`no agents` instead of the counts. The tree is a roster, not a connectivity or
-message delivery indicator. Status and Talk use the inspected launch record,
-not edited configuration or current Hub presence. Negative agent states (`not
-running`, `disabled`, `-`) are dim; the Hub line, names, and positive states
-remain normal. Incomplete inspection marks a nonempty summary `partial` and
-prints diagnostics after the list, even when empty. Large rosters continue in
-terminal scrollback. The snapshot is one-shot and does not start Hub or agents.
-
-`too hub serve` runs in the foreground. Hub binds `127.0.0.1`; clients discover its
-actual endpoint and backend identity from the private root `hub/hub.json`
-file. Calls assume trusted local clients; security authentication is deferred.
-`GET /info` reports the Toolang source `version` and `api_version: 0`;
-`HUB_API_VERSION` also owns publication, staging and event wire versions.
-Start Hub before using Talk or `convo` tools. Agents use it for messages, presence,
-and event export. Stopping Hub leaves agents running; communication fails until
-Hub returns. Background communication resumes without an agent restart; uncertain
-message sends are never automatically repeated. Isolated guests without access to
-this local Hub report unavailability.
-
-Internally, a live Hub remains `starting`, `running`, or `unavailable` based on
-readiness; the snapshot shows a version only when ready, and `not running`
-otherwise. `too hub stop --force` can stop a stalled startup. Missing or corrupt initialized conversation data fails
-closed; Hub does not reset counters or rebuild it. Upgrade Hub and clients together
-and select a fresh Redis/Valkey dataset for hub store schema `4`, which owns both
-messaging and event storage. Older schemas are rejected without
-mutation. Preserve the old runtime/data before switching datasets. Old datasets
-remain untouched; history, drafts, and checkpoints are not migrated or imported.
-
-Hub `start`/`serve` ports resolve as `--port` > `TOOLANG_HUB_PORT` >
-`teaming.hub.port` > `7001`. Resident agent `start`/`serve` uses `--port` >
-`TOOLANG_AGENT_PORT` > home `[api] port` > recorded/available port. Automatic
-allocation scans `7002`–`7999`. A recorded agent port of `7001` is not reused
-without an explicit override; its next default start selects a new port.
-Explicit ports must be `1..65535`; an occupied explicit port fails. Overrides do
-not change configuration. Restart to apply configuration changes; reopen Talk
-if its endpoint, backend, or human changes. Temporary agents keep their existing
-port selection.
-
-When upgrading, stop an agent using `7001` and restart it without an explicit
-port before restarting Hub on its new default. Running processes and saved
-configuration are not moved automatically. An explicit Hub port of `7000`
-continues to use `7000`; remove it to adopt the new default.
+Hub store schema `4` owns messaging and execution-event data. Incompatible or
+corrupt initialized stores fail closed without resets, mutation, or import.
+Hub and clients must use compatible versions and backend data. Restart applies
+configuration changes; Talk must be reopened when its endpoint, backend, or
+human identity changes.
 
 ## Conversations and targets
 
@@ -114,7 +52,8 @@ character must be a letter/number. Same-name agents and humans remain distinct.
 Either kind can have an editable name (1–128 characters), or no name. Names may
 repeat. Members can rename a conversation with its current revision; stale
 revisions fail. Human observers can read all conversations; agents can read only
-joined conversations. Sending and renaming require membership. The system GC is
+joined conversations. Sending and renaming require membership. Leaving a GC
+preserves its history and rules; conversation deletion is unsupported. The system GC is
 listed with the initial name `all`; open it with `too talk all` or its ID from the
 directory. Its membership is maintained by Hub, while its name can change.
 
@@ -143,122 +82,45 @@ unchanged.
 
 ## Shared conversation rules
 
-`too convo` manages conversations as the configured human. `list` shares Talk's
-directory and `JOINED` indicator. `create [NAME]` creates a GC containing the human;
-`join <id>` / `leave <id>` change ordinary GC membership. DM/system membership is
-fixed. Leaving preserves rules and history; deletion is not supported.
-
 Hub owns one optional `MEMBERS.md` per conversation, separate from workspace
-`AGENTS.md`. Human observers may read/edit it without joining. Agents require
-membership; writes also require a live lease and human authorization
-covering the change. Rules, forwarded agent text, and quoted requests cannot grant
-that authorization. System-conversation rules apply only in that conversation.
+`AGENTS.md`. Human observers may read/edit without joining. Agents require
+membership; writes also require a live lease and human authorization.
+Rules, forwarded text, and quoted requests cannot grant that authorization.
+System-conversation rules apply only within that conversation.
 
-```sh
-too convo rules gc_rcpya1zw                 # Markdown on stdout, revision on stderr
-too convo rules gc_rcpya1zw -o MEMBERS.md   # Download to a path chosen by the user
-too convo rules gc_rcpya1zw -u MEMBERS.md --revision REVISION
-too convo rules gc_rcpya1zw -u --revision REVISION < MEMBERS.md
-```
+Rules are exact UTF-8 Markdown up to 64 KiB. Missing or cleared rules have empty
+content and revision `0`; nonempty content uses its lowercase SHA-256 digest.
+Reads capture content and revision together. Writes atomically compare the prior
+revision and compute the replacement; stale writes return HTTP 409 with
+`conversation_rules_conflict` and require a fresh read and explicit resubmission.
+Corrupt storage fails rather than supplying empty guidance.
 
-`-o/--output` requires a path; `-` selects stdout. `-u/--update` accepts an optional
-path; omitted or `-` reads stdin. They are mutually exclusive. Piped input without
-`-u` remains a read. Editing and file locations are user-owned; there is no local
-association, sidecar, synchronization, or editor integration.
-
-Reads preserve exact UTF-8 Markdown up to 64 KiB. Missing rules are a successful
-empty read, with `No rules set.` and revision `0` on stderr; a requested file becomes
-empty. Failed reads preserve the destination. Empty uploads clear rules. A nonempty
-document's revision is its lowercase SHA-256 digest. Upload `REVISION` is the prior
-read version; Hub compares it atomically and computes the new version. Stale uploads
-fail without mutation and require a fresh read and an explicit resubmission decision.
-
-Human `GET` / `PUT /msg/conversations/{id}/rules` and agent equivalents under
-`/agents/{agent}/msg` return `{conversation, filename, revision, content}`. PUT accepts
-`{content, revision}`; conflicts are HTTP 409 / `conversation_rules_conflict`. Content
-and revision are read together; corrupt storage is an error. Agent message sends
-may include transport-only `rules_revision`, checked atomically with append and
-first-DM creation; the runtime supplies it for `convo.write`. Human and diagnostic
-sends retain their existing contracts.
+Human and agent APIs expose the same `{conversation, filename, revision, content}`
+record. Agent message writes may carry transport-only `rules_revision`, checked
+atomically with append and first-DM creation; `convo.write` supplies it. Human and
+diagnostic sends retain their own contracts. CLI downloads/uploads are explicit
+file operations with no local association or synchronization; failed reads
+preserve the destination.
 
 ## Interactive Talk
 
-`too talk TARGET` resolves the canonical ID, loads conversation metadata, displays
-retained history, and follows new messages using a Stream-ID cursor. A member sees
-an input box with `Type a message`; an observer sees messages without a composer.
-Talk requests a blinking block cursor and resets the cursor shape to the
-terminal default on exit.
-The composer and focus update when GC membership changes, preserving unsent drafts.
-Enter sends, Ctrl+J inserts a newline, Ctrl+P/Ctrl+N browse sent input, and Ctrl+Q
-exits. Interactive input requires a TTY. Supplying message arguments sends once
-and exits with a receipt or error.
+Talk resolves the canonical conversation, loads retained history, then follows
+messages with a Stream-ID cursor. Members have a composer; observers are
+read-only. Membership updates preserve unsent drafts. Opening a missing
+human-agent DM stays local until the first accepted send.
 
-A startup panel appears once before messages, with the local `Talk <version>`
-as its caption and these rows:
+The startup snapshot identifies Hub, conversation, and human. The live footer
+shows conversation identity, permissions, and member presence. Presence lookup
+failure becomes unknown, not offline, and does not interrupt messaging. Human
+members count as online; agents require live leases. Display names and terminal
+titles never replace canonical identity.
 
-```text
-hub    v0.4.0a2
-convo  gc_rcpya1zw
-user   bryan
-```
-
-Only observers append ` · view only` to the user, in the same normal style.
-The Hub version comes from `GET /info`; unsupported, failed, or malformed
-inspection displays `unknown` after at most two seconds. The panel is an entry
-snapshot that scrolls away; reconnects and Ctrl+L do not reprint it. It shares
-Chat's responsive layout and uses the message width limit. Directory and
-one-shot sends do not show it or request version metadata.
-
-The footer has two-cell side insets: conversation on the left, complete canonical
-ID in the center, and the viewer's login on the right. Examples for login `brice`:
-
-| Conversation | Left | Center | Right | Sending |
-| --- | --- | --- | --- | --- |
-| Direct with `alice` | `@alice` | Its canonical `dm_...` | `brice` | Allowed |
-| Direct between `alice` and `bob` | `@alice,bob` | Its canonical `dm_...` | `brice` | Read-only; `@` is dim |
-| Group `dev`, one human and two agents, one agent online | `#dev(2/3)` | Its canonical `gc_...` | `brice` | Allowed |
-| The same group viewed by a nonmember | `#dev(2/3)` | Its canonical `gc_...` | The viewer's login | Read-only; `#` is dim |
-
-Only the permission marker dims; names and counts use normal foreground.
-Conversation metadata refreshes in the receive loop. GC presence refreshes
-independently, using Hub team deadlines and presence notifications with a
-half-second fallback and a one-second lookup timeout. Human members always count
-as online; an agent requires a live Hub lease. Only this conversation's members
-count. Agent presence starts unknown and becomes unknown after lookup failures,
-displayed as `#dev(?/3)`; message following and sends continue. Empty groups show
-`(0/0)` and human-only groups show `(m/m)`. The separate `too talk` directory
-lists conversations with CONVERSATION, NAME, MEMBERS, UPDATED, and MESSAGE
-columns, followed by a count. It runs once without requiring a TTY.
-On narrow terminals, the footer prioritizes the login and hides a canonical ID
-that cannot fit intact. Initial connection shows `Connecting…` on the right.
-
-Errors replace the entire footer with Chat's red `!` row and the actual detail.
-Failed sends preserve drafts and are not retried automatically. The user decides
-whether to retry or reopen. Transient read failures show `Reconnecting…` in the
-error row and resume from the committed cursor; terminal read errors stop the
-receive loop. Reopening resolves the current
-Hub configuration and conversation metadata.
-
-Messages use terminal scrollback. Agent messages share Chat's Markdown renderer.
-Their names and markers share a stable ANSI color and a header above the body;
-a faint dashed rule separates agent messages. Human messages are literal text.
-Messages use `TOOLANG_PROGRESS_MAX_WIDTH`, defaulting to 120 terminal cells.
-`TOOLANG_INPUTBOX_MAX_WIDTH` independently limits the input and footer; when
-unset, it falls back to the progress limit. Both settings accept positive
-integers and are capped by the terminal width. Empty or invalid values are
-configuration errors. The input-only setting does not affect the directory or
-one-shot sends. Ctrl+L preserves visible output in native scrollback and
-places the input box at the top without a leading blank row. Its usual gap
-returns when a new message or notice is displayed.
-
-## Terminal titles and tmux
-
-Interactive Talk stays in the invoking pane and publishes `@alice`, `@alice,bob`,
-or `#dev` through OSC 0, refreshing when the conversation label changes. The
-footer retains the canonical ID. Pane-local marks identify `kind=talk`, root,
-`convo`, and the connection `context`; no sessions or windows are created or
-renamed. Directory listings and send-only commands publish nothing. See
-[terminal configuration and marks](cli.md#terminal-titles-and-pane-marks).
+Failed sends preserve drafts and require a user retry decision. Transient reads
+reconnect from the committed cursor; terminal errors stop following. One-shot
+sends return a receipt or error. Agent messages use shared Markdown rendering;
+human messages remain literal text. [Terminal UI](terminal-ui.md) owns width,
+scrollback, and input mechanics; [CLI](cli.md#terminal-titles-and-pane-marks)
+owns pane marks and titles.
 
 ## Agent messaging
 
@@ -335,22 +197,18 @@ batch without the built-in fallback instructions. Private helpers and inline
 caps stay in the same file; required models and services come from the receiving
 environment. A public `talk` in `agent.too` conflicts with this export. Execution
 records retain handling diagnostics and tool results; batches do not carry previous
-messages, handling results, or reply receipts. Custom handlers using `previous`
-must switch to explicit history lookup.
+messages, handling results, or reply receipts.
 
 The default handling instructions belong to the runtime handler's `.too` Program;
 the driver supplies only the JSON batch. Run records capture the runtime source
 under a distinct qualified identity for inspection and restart. No global
 runnable configuration selects a different messaging entry.
 
-An independent heartbeat runs every 5 seconds. Agent presence is a ZSet deadline
-in backend Unix milliseconds, renewed to at least 15 seconds ahead. Expired
-leases grant no authority even before cleanup; graceful stop releases the lease.
-Hub owns a cancellable presence loop, reconciling up to 128 due agents per batch
-and checking every second. Heartbeats update only the score. Readers compare
-returned deadlines with their own clocks and correct their local view without
-writing to the backend. No last-seen timestamp is stored or displayed.
-Hub scans resident homes at startup and every 5 seconds. Two successful scans
+An independent heartbeat renews a backend presence deadline. Expired leases
+grant no authority even before cleanup; graceful stop releases the lease. Hub
+reconciles expiry independently of discovery. Readers compare deadlines with
+their own clocks without writing backend state; heartbeat renewal changes only
+the deadline. Hub scans resident homes at startup and periodically. Two successful scans
 confirming absence plus no live lease remove an agent from the roster and ordinary
 GCs. DM membership and all historical data remain. A live process with a missing home
 stays visible. A recreated name retains its DM identity and history.
@@ -378,11 +236,6 @@ Backend changes discard in-memory progress from the previous backend.
 Cursors have no TTL and survive shutdown and membership departure. Humans and
 ordinary message reads do not advance them.
 
-Agents no longer create `.runtime/channels/` cursor files. Existing local files
-are ignored without import or cleanup. Stop writers and reinitialize development
-backend data for the renamed team member key; old backend data is not migrated.
-Human Talk input history remains under `<root>/human/talk-input/`.
-
 Agent-only Hub routes `GET` and `PUT /agents/{agent}/talk/cursors/{convo_id}`
 read and advance talk progress using `{"cursor": "<stream-id>"}`. Both require an
 active agent lease and conversation membership. The existing
@@ -390,49 +243,26 @@ active agent lease and conversation membership. The existing
 
 ## Storage, events, and statistics
 
-With `P = too:teaming:v1`, the messaging key spaces are:
+The backend separates authoritative data by purpose:
 
-| Key | Type | Contents |
-| --- | --- | --- |
-| `P:team:members` | Hash | Typed member ID → display name, owner, creation time, private lease JSON |
-| `P:roster` | Hash | Agent ID → root ownership/discovery JSON (`root`, `managed`, `missing`) |
-| `P:team:presence` | ZSet | Agent ID → lease deadline in Unix milliseconds |
-| `P:team:events` | Stream | `data` → versioned team, conversation membership, or presence change JSON |
-| `P:convos` | Hash | Conversation ID → kind, name, creator, timestamps, revision JSON |
-| `P:convo:C:members` | Set | Authoritative typed participants |
-| `P:convo:C:messages` | Stream | `data` → message JSON |
-| `P:convo:C:rules` | Hash | `document` → validated MEMBERS.md content/revision JSON; absent means no rules |
-| `P:convo:name:N` | Set | IDs matching an exact name; `N` is unpadded base64url UTF-8 |
-| `P:convo:schema` | String | Hub store schema version `4` |
-| `P:convo:id:gc` | Hash | Last allocated hourly tick and sequence |
-| `P:convo:stats` | Hash | DM count, GC count, accepted message count |
-| `P:convo:system` | Hash | `all` → system GC ID |
-| `P:agent:N:talk` | Hash | Conversation ID → talk handler cursor; `N` is the agent name |
-| `P:events:meta` | Hash | Version, epoch, tail, retention floor, byte count, catalog revision; `pending` fences interrupted publication |
-| `P:events:stream` | Stream | `kind`, `agent`, `data` fields for execution events and recovery transitions |
-| `P:events:agents` | Hash | Agent ID → publication/recovery state, generation pointers, source cursor, last operation receipt |
-| `P:events:agent:N:G` | Hash | Encoded entity identity → versioned entity JSON; `["manifest"]` → generation bounds and baseline |
+| Data | Authority |
+| --- | --- |
+| Team directory | Typed identities, public metadata, and private leases |
+| Agent roster | Root ownership and discovery state; no duplicate presence or names |
+| Presence | Lease deadlines, independent of discovery |
+| Conversations | Metadata, membership, messages, rules, and nonunique name indexes |
+| Talk cursors | Persistent agent/conversation consumption progress |
+| Execution events | Retained feed, byte accounting, projections, and recovery generations |
 
-`P:team:members` is the global member directory. `P:roster` is an optional agent-only
-subset that records which root manages discovery. It does not duplicate names,
-owners, leases, or online state. Humans have no roster entry; unscoped agent
-registration may have only a team entry. A scoped transient registration has
-`managed: false, missing: 0`; resident discovery uses `managed: true` and counts
-successful absent scans. Root claims cannot be adopted by another root.
+Discovery atomically creates directory/roster entries. Two confirmed absent
+scans and no live lease remove an agent and its GC memberships, preserving DMs
+and history. Expiry alone changes presence. Another root cannot adopt a root
+claim. Raw leases remain private; responses expose metadata and deadlines.
 
-Discovery creates roster/team entries atomically. Cleanup after two absent scans
-and no live lease removes both entries and GC memberships, preserving DM
-membership and history. Expiry alone only changes presence. Execution
-`P:events:*` metadata retains its separate publication role.
-Raw leases stay private; team responses expose only public metadata and deadlines.
-
-Conversation names are nonunique secondary indexes; member pairs resolve DMs
-directly by ID. Membership sets and presence deadlines each have one authority.
-Global conversation/message counters change in the same transaction as their
-records; per-conversation message counts come from the Stream itself. Execution
-event metadata remains separate because its feed needs byte accounting and
-generation recovery. Active event generations persist, while staging generations
-expire after 60 seconds.
+Participant pairs resolve DMs directly. Conversation/message counters commit
+with their records. Active execution-event generations persist; staging
+generations expire. [Events](events.md#hub-subscriptions) owns their publication
+and recovery protocol.
 
 `GET /team/events` returns an initial checkpoint before snapshots are loaded, then
 changes and checkpoints. Resume using `?after=t1.<epoch>.<stream-id>`. A trimmed,
@@ -446,14 +276,6 @@ advancing past unread events; an expired or replaced lease uses
 events; clients refresh those snapshots themselves. The stream retains approximately 100,000
 entries. There is no separate event metadata key.
 
-Messaging routes use `/msg/conversations`, `/{id}`, and `/participants`,
-`/messages`, `/cursor`, `/stats` subresources. `GET /msg/stats` exposes human-only
-global totals. Python `HubClient` and `AgentClient` creation, lookup, and rename
-methods all return a validated `Conversation`; use attributes such as `.id`
-and `.participants`, or `dataclasses.asdict()` when a dictionary is needed.
-Creation and rename no longer return untyped dictionaries. HTTP JSON fields and
-`convo.create`, `convo.peek` metadata, and `convo.rename` retain this conversation record shape. Directory and message tools use the compact shapes above.
-
 Conversation statistics use native Stream `entries-added` for
 accepted appends and `length` for retained messages; trimming does not reduce
 lifetime totals. Empty message streams count as zero. Global conversation totals
@@ -465,26 +287,12 @@ mutation. A changed snapshot is reread within a fixed retry bound; uncertain
 transport failures never replay writes. A pending Talk DM is local state with no
 persisted creation time or revision.
 
-Storage interfaces live in `teaming/backend/protocol.py`; the factory selects
-`backend/valkey/`, which owns all keys, commands, Lua, and driver errors. Services
-use the `Backend` contract and its execution `events` capability, sharing one
-connection lifetime owned by Hub. Within Valkey, `keys.py` owns storage addresses;
-`scripts.py` and `event_scripts.py` own atomic operations, sharing lease guards
-and exact Stream-ID ordering through `lua.py`. Team record validation is shared
-across messaging and execution publication in Python; Lua rechecks the validated
-bytes and the current lease before mutation.
-The interface exposes explicit lease renewal/release
-and normalized message field maps, without raw driver commands.
+Services use a backend contract rather than raw driver commands. Hub owns the
+shared connection lifetime; the backend owns keys, atomic operations, and driver
+error normalization.
 
 Conversation lists read metadata, membership, and previews in batches of at most
 128 IDs. Each batch applies visibility atomically. Listing remains linear in the
 directory size; ID and participant-pair lookup are constant in directory size.
 GC allocation supports 524,288 reservations per backend per hour; this is
 capacity, not a measured throughput claim.
-
-## Implementation evidence
-
-- [Schemas](../src/toolang/teaming/schemas.py) own record JSON, validation, and API versions; [IDs](ids.md) owns identity rules and capacity.
-- [Backend keys](../src/toolang/teaming/backend/valkey/keys.py) and [atomic operations](../src/toolang/teaming/backend/valkey/scripts.py) own storage and mutations.
-- [Team events](../src/toolang/teaming/team_events.py) and [execution subscriptions](events.md#hub-subscriptions) own their separate cursor/recovery protocols.
-- [Protocol tests](../tests/unit/messaging/test_protocol.py), [record validation](../tests/unit/messaging/test_contract_records.py), and [conversation IDs](../tests/unit/messaging/test_conversation_ids.py) verify these contracts offline.

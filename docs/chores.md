@@ -33,42 +33,14 @@ a definition stops future dispatch but preserves its checkpoint and history.
 Restoring an unchanged completed, failed, or canceled one-off does not rerun it.
 Deleting a definition does not cancel an already running occurrence.
 
-## Commands
+## Activation and manual work
 
-`too` is an alias for `toolang`.
+The Chore driver must be enabled to dispatch definitions; standalone scripts
+have no persistent drivers. [Drivers](drivers.md#chore-scheduling) owns
+scheduling, admission, and recovery.
 
-```sh
-too alice chore list
-too alice chore new cleanup
-too alice chore edit cleanup
-too alice chore run chore/cleanup
-too alice chore cancel cleanup
-too alice chore delete cleanup
-```
-
-Selectors accept the name, ref, or ID. `new` generates `chore-<8 chars>.md` when
-the name is omitted. Generated and manually named files use the same ID rule.
-To copy a definition, use `new` or copy a home file under a different name;
-the new name creates independent progress and context. Authoring commands edit
-home files; `list` also shows effective inline definitions. Edit inline
-definitions in their `.too` source.
-`run` requests a manual occurrence, including retrying a failed or completed
-one-off. `cancel` cancels active or pending work without deleting the definition.
-Repeated chores keep their future schedule.
-
-The chore driver must be enabled to dispatch work:
-
-```sh
-too serve alice --enable chat,talk,chore
-```
-
-Standalone scripts enable no persistent drivers, even when their source contains
-inline chores. Use `serve` to activate them. See [execution drivers](drivers.md).
-
-## Transition from tasks and jobs
-
-The `task` command/declaration, `/tasks`, `/jobs`, authored IDs, and stage commands
-are removed. Use named chores in the flat directory and explicit schedules for
-repeated work. No old directories, IDs, or `jobs.db` checkpoints are migrated or
-imported. Existing files and databases are left untouched; a definition added
-to the new model receives a checkpoint under its chore ID.
+Authoring commands edit home files; inline definitions are edited in their
+`.too` source. A manual run requests another occurrence, including retrying a
+finished one-off. Cancel removes pending work or cancels the active occurrence
+without deleting its definition or future schedule. Copying a definition under
+a different name creates independent progress and context.

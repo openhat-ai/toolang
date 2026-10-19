@@ -5,13 +5,6 @@ protocols and canonical value types live in `toolang.base`. Plugins should
 raise `toolang.base.errors.ToolangError` for user-facing configuration, input,
 or runtime failures.
 
-The channel plugin family and bundled Telegram integration are removed. Plugin
-configuration only consumes supported families; unknown families, including
-former `[plugin.channel.*]` tables, are ignored. Unused top-level `[channels.*]`
-tables are also ignored. Remove imports of the former channel contracts or
-factory. There is no replacement channel plugin API; Hub/Talk messaging continues
-to use its own transport.
-
 ## Plugin Families
 
 The public plugin families are:
@@ -20,6 +13,8 @@ The public plugin families are:
 - `sandbox`;
 - `model_catalog`;
 - `model_adapter`.
+
+Only these configuration families are consumed; unknown families are ignored.
 
 Toolang core owns runtime lifecycle, scheduling, durable records, trace events,
 HTTP APIs, and response projection. Plugins own only their family-specific
@@ -104,9 +99,7 @@ callers cannot supply it, even through `**kwargs`.
 
 Hooks have exactly the Tool signatures. `summary` sees raw supplied arguments;
 `paths` sees bound supplied arguments, including during direct calls outside
-the executor. **Migration:** remove raw numeric/Boolean string parsing from
-paths hooks, remove undeclared inputs or declare `**kwargs`, and fix unsupported
-annotations and wrong-typed defaults. Explicit `@tool(parameters=...)` schemas
+the executor. Explicit `@tool(parameters=...)` schemas
 are preserved, including domain constraints, but do not replace Python binding
 or add JSON-Schema validation; domain checks still belong to the plugin. Return
 `ToolResult` directly, or let the adapter wrap a dict, None (empty output), or a
@@ -197,111 +190,27 @@ discover models, match providers, calculate availability, or own pricing.
 
 ## Loading
 
-Toolang loads plugins from Python entry points:
+Built-in and external plugins use the same Python entry-point groups:
+`toolang.toolset`, `toolang.sandbox`, `toolang.model_catalog`, and
+`toolang.model_adapter`. Each entry names a family factory; a distribution may
+register multiple entries. Loaders depend on base contracts and select concrete
+implementations through these factories.
 
-- `toolang.toolset`;
-- `toolang.sandbox`;
-- `toolang.model_catalog`;
-- `toolang.model_adapter`.
+Installed-plugin inspection reads entry-point and distribution metadata without
+calling factories or loading agent configuration. Resource inspection instead
+uses the selected Setup/State and allow policy. [CLI](cli.md#resource-and-plugin-inspection)
+and [Queries](queries.md) own these views.
 
-Built-in implementations are registered through the same entry-point mechanism
-as external packages. The implementation packages are:
+Toolset and leaf identities start with an ASCII letter and contain only ASCII
+letters and underscores; `__` is reserved. A plugin may return a bare leaf key
+or `<toolset>/<leaf>`. Queries use `<toolset>/<leaf>`, model APIs use
+`<toolset>__<leaf>`, and human labels use `<toolset>.<leaf>`.
 
-- `toolang.plugin.toolsets.*`;
-- `toolang.plugin.sandboxes.*`;
-- `toolang.plugin.catalogs.*`;
-- `toolang.plugin.adapters.*`.
-
-Each entry point names one factory such as `create_toolset`,
-`create_sandbox`, `create_model_catalog`, or `create_model_adapter`. A
-distribution may register multiple entries in one or more families.
-
-The distribution registers 17 built-in plugins. Each plugin has a module or
-package named after its entry-point identity:
-
-| Family | Registered plugins | Implementation parent |
-| --- | --- | --- |
-| Toolset | `fs`, `history`, `convo`, `service`, `shell`, `web` | `toolang.plugin.toolsets` |
-| Toolset | `runtime`, `state` | `toolang.execution.tools` |
-| Model catalog | `models_dev`, `ollama`, `llama_cpp` | `toolang.plugin.catalogs` |
-| Model adapter | `chat_completions`, `generate_content`, `messages`, `responses` | `toolang.plugin.adapters` |
-| Sandbox | `host`, `docker` | `toolang.plugin.sandboxes` |
-
-Runtime-owned toolsets stay under `execution.tools` because they depend on
-execution services. Shared loaders, collections, catalog parsing, and private
-helpers are support code, not additional plugins. Docker owns its CLI helpers
-and packaged guest bootstrap files inside `sandboxes/docker/`.
-
-Installed-plugin commands (`too toolsets`, `too catalogs`, `too adapters`,
-and `too sandboxes`) list entry-point `NAME` and distribution
-`PACKAGE`, with `-` for missing distribution metadata. They do not accept an agent name or read setup,
-configuration, or catalog files. No factory is invoked, so an installed plugin
-can be listed even if its runtime dependencies are unavailable.
-
-Resource commands have scope-specific semantics:
-
-| Command | No agent | Selected agent |
-| --- | --- | --- |
-| `too [AGENT] caps` | Root-shared, allowed caps | Root-shared plus agent-owned caps under effective allow and scope precedence |
-| `too [AGENT] tools` | Root-configured, allow-filtered tools | Tools after root/agent configuration and allow resolution |
-| `too [AGENT] models` / `providers` | Root-configured ready, allowed model resources | Ready, allowed resources under agent configuration and catalog precedence |
-
-No-agent inspection never reads an implicit default agent. Tools and model
-resources consume their published setup views; caps use capability state.
-See [tools](tools.md), [models](models.md), and [caps](caps.md) for their policies.
-
-`too tools` and `too toolsets` hide internal toolsets such as `runtime` by
-default. Use `--all` to include them. `state` is not internally hidden, but tool
-allow policy can exclude it from the default view. Resource `--all` shows the
-complete diagnostic view: caps include allow-excluded resources, tools include
-internal and allow-excluded leaves, and models/providers include unready and allow-excluded catalog entries, plus empty
-providers. It preserves the selected scope and configuration and never grants
-execution permissions. Queries use the selected view; provider counts always cover all owned models. An
-internal-only tool query needs `--all`. Tool-call inspection shows the
-recorded plugin identity, independently of its Python module location.
-
-Resource lists uppercase record keys for human headers. Models, tools, and caps
-expose `tags` for availability and blockers. Models/caps also carry origin;
-caps carry scope and form. Caps show actual content `LOCATION`; tools omit
-plugin/package provenance. Providers format setup's stored counts as `MODELS`
-and show their default route, without tags or nested model records.
-`--json` emits inspection arrays without summaries; `--human` explicitly selects
-the default tables. Plugin inventories instead use only default `NAME`, `PACKAGE`
-tables, without output-mode or query flags. Human summaries include zero counts
-and add group counts only when more than one row is displayed.
-See [Resource Queries](queries.md) for records, columns, and tag meanings.
-
-Models, tools, and caps accept native TQ queries. Providers support external TQ
-through JSON only. Plugin inventories have no query interface or agent allow
-policy. Every resource `--all` accepts
-`-a`.
-
-`toolang.plugin.loading` owns entry-point discovery, fresh factory configuration,
-and the typed sandbox, model-adapter, and model-catalog loading APIs.
-`toolang.plugin.types` owns shared plugin identity and provenance records.
-`toolang.plugin.toolsets.loading` adds toolset-specific identity validation,
-duplicate detection, leaf-tool wrapping, and selection. Loaders depend on base
-contracts, never concrete plugin implementations. Factory entry points remain
-the only mechanism for selecting built-in and external implementations.
-
-Naming reflects cardinality: `create_<singular>` returns one selected plugin,
-`load_<plural>` returns a collection, and `list_<plural>` discovers installed
-entry points. File parsing uses `read_*`, such as
-`read_model_catalog_snapshot`, rather than a plugin loader name.
-
-Toolset entry-point names, effective `Toolset.name` identities, public
-toolset names, and leaf names start with an ASCII letter and contain only ASCII
-letters and underscores. They cannot contain `__`, which is reserved as the
-provider-facing separator. A toolset plugin may return either a bare leaf key or
-an explicit `<toolset>/<leaf>` key. Collection queries identify tools as
-`<toolset>/<leaf>`, while model APIs receive `<toolset>__<leaf>`. Human labels use
-`<toolset>.<leaf>` through `ToolRef.display_name`.
-
-A toolset with exactly one leading underscore is internal to Toolang. Only
-entry points whose installed distribution metadata identifies the `toolang`
-distribution may register one; a `toolang.*` Python module target alone grants
-no authority. External plugins may register one or more public toolsets but
-cannot claim internal toolsets or the reserved `runtime` plugin/toolset name.
+A toolset with exactly one leading underscore is internal. Only entry points
+whose installed distribution metadata identifies `toolang` may register one;
+a Python module name grants no authority. External plugins cannot claim
+internal toolsets or the reserved `runtime` plugin/toolset name. Runtime-owned
+toolsets stay with execution because they depend on its services.
 
 ## Configuration Rule
 
