@@ -407,12 +407,17 @@ def runtime_inventory(root: Path, *, agent: str | None = None) -> RuntimeInvento
     inspected from those snapshots; Docker ownership is batched before at most
     eight independent agent probes run concurrently. Existing running_instances()
     semantics remain unchanged for activity and status callers.
-    A selected resident is discovered from its own status document, including
-    temporary instances, without enumerating peers or the temporary registry.
+    A selected resident uses its own status and matching registration references,
+    including stopped or unresolved temporary instances. Peers are not probed.
     """
     from toolang.up.process import AgentProcess, AgentStatus
 
     root = _resolved(root)
+    selected_status = (
+        _resolved(AgentLayout.resident(root, agent).runtime_status)
+        if agent is not None
+        else None
+    )
     diagnostics: list[str] = []
     candidates: dict[tuple[Path, str, str | None], _SnapshotCandidate] = {}
     documents: dict[Path, tuple[dict | None, str | None]] = {}
@@ -428,6 +433,15 @@ def runtime_inventory(root: Path, *, agent: str | None = None) -> RuntimeInvento
         return documents[resolved]
 
     def add(candidate: _SnapshotCandidate) -> None:
+        if (
+            agent is not None
+            and candidate.layout is not None
+            and (
+                candidate.layout.placement != "resident"
+                or candidate.layout.name != agent
+            )
+        ):
+            return
         status_path = _resolved(candidate.status_path)
         if candidate.launch_id is not None:
             placeholder_key = (status_path, candidate.instance_key, None)
@@ -523,29 +537,53 @@ def runtime_inventory(root: Path, *, agent: str | None = None) -> RuntimeInvento
             except (KeyError, OSError, RuntimeError, TypeError, ValueError) as exc:
                 diagnostics.append(f"{layout.name}: {str(exc)[:180]}")
 
-    reference_paths = []
-    if agent is None:
-        instance_dir = root / ".runtime" / "instances"
-        try:
-            reference_paths = sorted(
-                (
-                    path
-                    for path in instance_dir.iterdir()
-                    if path.is_file() and path.suffix == ".json"
-                ),
-                key=lambda path: path.name,
-            )
-        except FileNotFoundError:
-            pass
-        except OSError as exc:
-            diagnostics.append(
-                f"runtime registry: {str(exc).strip() or type(exc).__name__}"
-            )
+    instance_dir = root / ".runtime" / "instances"
+    try:
+        reference_paths = sorted(
+            (
+                path
+                for path in instance_dir.iterdir()
+                if path.suffix == ".json"
+                and (
+                    agent is None
+                    or path.stem == agent
+                    or path.stem.startswith(f"{agent}@")
+                )
+                and path.is_file()
+            ),
+            key=lambda path: path.name,
+        )
+    except FileNotFoundError:
+        reference_paths = []
+    except OSError as exc:
+        reference_paths = []
+        diagnostics.append(
+            f"runtime registry: {str(exc).strip() or type(exc).__name__}"
+        )
 
     for reference_path in reference_paths:
         fallback: AgentLayout | None = None
         try:
             reference = json.loads(reference_path.read_text(encoding="utf-8"))
+            raw_status_path = (
+                reference.get("status") if isinstance(reference, dict) else None
+            )
+            status_path = (
+                root / Path(raw_status_path).expanduser()
+                if isinstance(raw_status_path, str)
+                else None
+            )
+            if (
+                selected_status is not None
+                and status_path is not None
+                and _resolved(status_path) != selected_status
+            ):
+                name = _REFERENCE_NAME.fullmatch(reference_path.name)
+                if name is None or name.group("placement") is None:
+                    diagnostics.append(
+                        f"runtime registry {reference_path.name}: resident status does not match the selected agent"
+                    )
+                continue
             if (
                 not isinstance(reference, dict)
                 or type(reference.get("version")) is not int
@@ -555,16 +593,12 @@ def runtime_inventory(root: Path, *, agent: str | None = None) -> RuntimeInvento
                     f"runtime registry {reference_path.name}: invalid reference"
                 )
                 continue
-            raw_status_path = reference.get("status")
             launch_id = reference.get("launch_id")
-            if not isinstance(raw_status_path, str) or not isinstance(launch_id, str):
+            if status_path is None or not isinstance(launch_id, str):
                 diagnostics.append(
                     f"runtime registry {reference_path.name}: incomplete reference"
                 )
                 continue
-            status_path = Path(raw_status_path).expanduser()
-            if not status_path.is_absolute():
-                status_path = root / status_path
             fallback = _fallback_layout(reference_path, status_path, root)
             document, error = read_once(status_path)
             if error is not None:

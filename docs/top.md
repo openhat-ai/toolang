@@ -1,9 +1,10 @@
 # Current and recent activity
 
 `too top` observes the selected root's validated local resident, visiting and
-roaming inventory. `too alice top` reads only that resident's status document,
-including its temporary instances, without discovering peers or consulting the
-global runtime registry. Unrelated discovery errors cannot invalidate its totals.
+roaming inventory. `too alice top` scopes discovery to that resident's status and
+matching registration references, including its temporary instances. Unrelated
+agents and registry entries cannot invalidate its totals; stopped or unresolved
+instances still registered to that resident remain part of its scope.
 Observation neither starts agents nor acquires server leases. Discovery refreshes
 every five seconds; known source paths remain in memory for eight hours after
 their last discovery.

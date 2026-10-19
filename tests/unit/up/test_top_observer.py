@@ -1238,7 +1238,17 @@ def test_failed_docker_batch_keeps_membership_and_readable_history(
 
 
 @pytest.mark.parametrize("agent", [None, "alice"])
-@pytest.mark.parametrize("fault", ["peer", "registry", "enumeration", "own_metadata"])
+@pytest.mark.parametrize(
+    "fault",
+    [
+        "peer",
+        "registry",
+        "enumeration",
+        "own_metadata",
+        "own_reference",
+        "same_name_roaming",
+    ],
+)
 def test_agent_scope_isolates_discovery_but_preserves_its_own_failures(
     tmp_path, monkeypatch, agent, fault
 ):
@@ -1252,7 +1262,7 @@ def test_agent_scope_isolates_discovery_but_preserves_its_own_failures(
         alice = AgentLayout.resident(tmp_path, "alice")
         temporary = replace(alice, instance="one")
         stack.enter_context(closing(RunStore(temporary.run_store)))
-        stack.enter_context(
+        own_registration = stack.enter_context(
             RuntimeRegistration(temporary, toolang_root=tmp_path, drivers=frozenset())
         )
         bob = AgentLayout.resident(tmp_path, "bob")
@@ -1265,6 +1275,19 @@ def test_agent_scope_isolates_discovery_but_preserves_its_own_failures(
             bob.runtime_status.write_text(json.dumps(document))
         elif fault == "registry":
             (tmp_path / ".runtime" / "instances" / "broken.json").write_text("invalid")
+        elif fault == "own_reference":
+            reference = json.loads(own_registration.path.read_text())
+            reference["status"] = str(bob.runtime_status)
+            own_registration.path.write_text(json.dumps(reference))
+        elif fault == "same_name_roaming":
+            roaming = AgentLayout.roaming(tmp_path / "alice.too")
+            stack.enter_context(closing(RunStore(roaming.run_store)))
+            registration = stack.enter_context(
+                RuntimeRegistration(roaming, toolang_root=tmp_path, drivers=frozenset())
+            )
+            reference = json.loads(registration.path.read_text())
+            reference["version"] = -1
+            registration.path.write_text(json.dumps(reference))
         elif fault == "enumeration":
             original_iterdir = type(tmp_path).iterdir
 
@@ -1287,7 +1310,7 @@ def test_agent_scope_isolates_discovery_but_preserves_its_own_failures(
             top.TopObserver(tmp_path, agent=agent, period=3600, recent=300, refresh=60)
         ) as observer:
             snapshot = observer.once()
-        if agent is None or fault == "own_metadata":
+        if agent is None or fault in ("own_metadata", "own_reference"):
             assert snapshot.summary.total is None and snapshot.inventory.diagnostics
         else:
             assert not snapshot.inventory.diagnostics
@@ -1299,6 +1322,84 @@ def test_agent_scope_isolates_discovery_but_preserves_its_own_failures(
                 "alice",
                 "alice#one",
             }
+
+
+@pytest.mark.parametrize("agent", [None, "alice"])
+@pytest.mark.parametrize(
+    "state", ["stopped", "missing_document", "missing_entry", "linked_stopped"]
+)
+def test_scopes_agree_on_registered_residents_when_status_changes(
+    tmp_path, agent, state
+):
+    from toolang.up.instance import update_instance
+
+    layout = AgentLayout.resident(tmp_path, "alice")
+    layout.home.mkdir(parents=True)
+    instance = replace(layout, instance="one")
+    with (
+        closing(RunStore(layout.run_store)),
+        closing(RunStore(instance.run_store)),
+        RuntimeRegistration(instance, toolang_root=tmp_path, drivers=frozenset()),
+    ):
+        original = instance.runtime_status.read_bytes()
+        try:
+            if state in ("stopped", "linked_stopped"):
+                update_instance(
+                    instance.runtime_status,
+                    lambda entry: entry["workload"].update(status="stopped", pid=None),
+                    instance="one",
+                )
+                if state == "linked_stopped":
+                    target = instance.runtime_status.with_name("linked-status.json")
+                    instance.runtime_status.rename(target)
+                    instance.runtime_status.symlink_to(target)
+            elif state == "missing_document":
+                instance.runtime_status.unlink()
+            else:
+                document = json.loads(original)
+                document["instances"].pop("one")
+                instance.runtime_status.write_text(json.dumps(document))
+            with closing(
+                top.TopObserver(
+                    tmp_path, agent=agent, period=3600, recent=300, refresh=60
+                )
+            ) as observer:
+                snapshot = observer.once()
+            assert snapshot.summary.total == snapshot.summary.resident == 2
+            assert snapshot.summary.running == (
+                0 if state in ("stopped", "linked_stopped") else None
+            )
+            assert snapshot.summary.completed == CompletionCounts()
+            assert snapshot.summary.usage == Metrics()
+            assert {source.label for source in snapshot.sources} == {
+                "alice",
+                "alice#one",
+            }
+        finally:
+            instance.runtime_status.write_bytes(original)
+
+
+@pytest.mark.parametrize("agent", [None, "alice"])
+def test_resident_scope_excludes_roaming_instances_with_the_same_home(tmp_path, agent):
+    root = tmp_path / ".toolang"
+    resident = AgentLayout.resident(root, "alice")
+    resident.home.mkdir(parents=True)
+    roaming = replace(AgentLayout.roaming(tmp_path / "alice.too"), instance="inline")
+    assert resident.home == roaming.home
+    with (
+        closing(RunStore(resident.run_store)),
+        closing(RunStore(roaming.run_store)),
+        RuntimeRegistration(roaming, toolang_root=root, drivers=frozenset()),
+        closing(
+            top.TopObserver(root, agent=agent, period=3600, recent=300, refresh=60)
+        ) as observer,
+    ):
+        snapshot = observer.once()
+    assert snapshot.summary.total == (2 if agent is None else 1)
+    assert snapshot.summary.running == (1 if agent is None else 0)
+    assert {source.placement for source in snapshot.sources} == (
+        {"resident", "roaming"} if agent is None else {"resident"}
+    )
 
 
 @pytest.mark.parametrize("agent", [None, "alice"])
