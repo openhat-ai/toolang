@@ -8,10 +8,12 @@ psyche changelog:
   or commit diffs. Never read or restore historical changelogs.
   Preserve existing records; prepend missing changes. Correct only verified
   factual errors or necessary migration guidance, explaining each correction.
-  Summarize the range's final user impact; omit internal details and boilerplate.
+  Summarize final user impact; omit internal details, boilerplate, and unsourced claims.
   Link available PRs; each new entry uses one sentence of at most 30 words.
-  Mark breaking entries **Breaking:**; use at most two sentences and 50 words
-  naming the affected public interface and the required user action.
+  Group breaking changes by migration action, splitting a PR when actions differ.
+  Migration actions must include replacement fields, destination paths, or commands.
+  State shared migration steps once and reference them where needed.
+  Mark each **Breaking:**; use at most two sentences and 50 words.
   Never recurse, commit, push, create issues or PRs, tag, or publish.
 
 ## Update the changelog or prepare a release entry.
