@@ -208,6 +208,8 @@ values continue to support inline comments.
 - Normalize comment/tag spacing using the installed grammar. Preserve documentation
   attachment and deliberate detachment, exact parameter names, program boundaries,
   and the executable shebang.
+- Use two spaces before structural inline comments; preserve their punctuation
+  and internal spacing.
 - Accept either unit spelling and format by numeric value: `1 lane`, `2 lanes`,
   `1 time`, and `2 times`. Put lane clauses before `using`, `if`, or `by`.
 
