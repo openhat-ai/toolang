@@ -757,10 +757,9 @@ def runtime_inventory(root: Path) -> RuntimeInventory:
                 docker_owners.append((AgentProcess(layout), reference, entry))
     try:
         AgentProcess.cache_docker_states(docker_owners)
-    except Exception as exc:
-        diagnostics.append(
-            f"Docker inspection: {str(exc).strip() or type(exc).__name__}"
-        )
+    except Exception:
+        # Individual probes below report failures without invalidating membership.
+        pass
 
     def inspect(
         item: tuple[_SnapshotCandidate, AgentLayout, dict[str, Any]],

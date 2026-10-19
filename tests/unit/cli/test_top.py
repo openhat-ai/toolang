@@ -776,6 +776,33 @@ def test_viewport_reveals_earlier_rows_when_the_whole_table_fits(transition):
     assert all(row.root in text for row in view.rows)
 
 
+@pytest.mark.parametrize("width", [40, 80, 140])
+@pytest.mark.parametrize("height", [1, 2, 3, 8, 12])
+@pytest.mark.parametrize("panel", [None, "help", "details", "sort_menu"])
+def test_short_viewport_preserves_footer_selection_and_visible_mouse_targets(
+    width, height, panel
+):
+    snapshot = sorting_frame()
+    view = TopView()
+    view.project(snapshot)
+    view.selected = view.rows[-1].key
+    selected = view.selected
+    if panel:
+        setattr(view, panel, True)
+    lines = view.render(snapshot, width=width, height=height).plain.splitlines()
+    assert len(lines) == height
+    assert "F10" in lines[-1]
+    assert all(cell_len(line) == width for line in lines)
+    assert all(0 <= y < height - 1 for y in view._row_hits)
+    assert all(
+        0 <= y < height - 1 and lines[y].startswith("AGENT")
+        for y, _, _, _ in view._sort_hits
+    )
+    assert view.selected == selected
+    view.render(snapshot, width=140, height=35)
+    assert view.selected == selected and selected in view._row_hits.values()
+
+
 @pytest.mark.parametrize("choice, delta", [(0, -1), (len(SORT_FIELDS), 1)])
 def test_sort_picker_boundary_keeps_the_chosen_direction(choice, delta):
     view = TopView(sort_menu=True, sort_choice=choice, sort_choice_descending=False)

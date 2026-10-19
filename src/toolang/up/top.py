@@ -160,7 +160,14 @@ class _Source:
         previous: LiveSnapshot | None,
         cancelled: Callable[[], bool],
     ) -> ActivitySnapshot:
-        if self.empty_history(binding):
+        try:
+            empty = self.empty_history(binding)
+        except OSError:
+            # A published endpoint can observe history independently of local I/O.
+            if not binding.endpoint:
+                raise
+            empty = False
+        if empty:
             now = int(time.time())
             return ActivitySnapshot(
                 live=None,
@@ -172,7 +179,10 @@ class _Source:
                     roots=(),
                 ),
             )
-        return read_activity(binding, recent, previous=previous, cancelled=cancelled)
+        result = read_activity(binding, recent, previous=previous, cancelled=cancelled)
+        with self.history_lock:
+            self.history_seen = True
+        return result
 
     def read_usage(
         self, binding: RuntimeSource, period: int, cancelled: Callable[[], bool]

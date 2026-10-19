@@ -1120,3 +1120,120 @@ def test_unreadable_store_metadata_cannot_be_treated_as_new_history(
     monkeypatch.setattr(type(source.layout.run_store), "stat", denied)
     with pytest.raises(PermissionError):
         state.read_usage(source, 3600, lambda: False)
+
+
+def test_healthy_endpoint_does_not_require_readable_local_store_metadata(
+    tmp_path, monkeypatch
+):
+    source = binding(tmp_path)
+    state = top._Source(
+        source,
+        NOW,
+        SourceActivity(identity="source", label="alice", placement="resident"),
+    )
+    original = type(source.layout.run_store).stat
+
+    def denied(path, *args, **kwargs):
+        if path == source.layout.run_store:
+            raise PermissionError("permission denied")
+        return original(path, *args, **kwargs)
+
+    expected = ActivitySnapshot(
+        live=LiveSnapshot("epoch", timestamp(NOW), ()), completed=completed()
+    )
+    response = httpx.Response(
+        200,
+        json=expected.model_dump(mode="json"),
+        request=httpx.Request("GET", source.endpoint),
+    )
+    monkeypatch.setattr(type(source.layout.run_store), "stat", denied)
+    monkeypatch.setattr(top.httpx, "get", lambda *args, **kwargs: response)
+    assert (
+        state.read_activity(source, 300, previous=None, cancelled=lambda: False)
+        == expected
+    )
+
+
+def test_http_history_cannot_become_uninitialized_after_agent_stops(
+    tmp_path, monkeypatch
+):
+    source = binding(tmp_path)
+    state = top._Source(
+        source,
+        NOW,
+        SourceActivity(identity="source", label="alice", placement="resident"),
+    )
+    expected = ActivitySnapshot(
+        live=LiveSnapshot("epoch", timestamp(NOW), ()),
+        completed=completed().model_copy(
+            update={"counts": CompletionCounts(succeeded=3)}
+        ),
+    )
+    response = httpx.Response(
+        200,
+        json=expected.model_dump(mode="json"),
+        request=httpx.Request("GET", source.endpoint),
+    )
+    monkeypatch.setattr(top.httpx, "get", lambda *args, **kwargs: response)
+    assert (
+        state.read_activity(source, 300, previous=None, cancelled=lambda: False)
+        == expected
+    )
+    stopped = replace(
+        source, instance=replace(source.instance, state="not running"), endpoint=None
+    )
+    state.rebind(stopped)
+    with pytest.raises(StatsUnavailable):
+        state.read_activity(stopped, 300, previous=None, cancelled=lambda: False)
+    with pytest.raises(StatsUnavailable):
+        state.read_usage(stopped, 3600, lambda: False)
+    assert not source.layout.run_store.exists()
+
+
+@pytest.mark.parametrize("recovered", [False, True])
+def test_failed_docker_batch_keeps_membership_and_readable_history(
+    tmp_path, monkeypatch, recovered
+):
+    from toolang.base.types.sandbox import SandboxRef
+    from toolang.up.instance import SandboxState
+    from toolang.up.process import AgentProcess, AgentStatus
+
+    layout = AgentLayout.resident(tmp_path, "alice")
+    layout.home.mkdir(parents=True)
+    with (
+        closing(RunStore(layout.run_store)),
+        RuntimeRegistration(
+            layout, toolang_root=tmp_path, drivers=frozenset()
+        ) as registration,
+    ):
+        SandboxState(
+            "docker:image",
+            SandboxRef("container", "http://localhost:7001", runtime_kind="container"),
+            registration.token,
+        ).save(layout.runtime_status)
+
+        def failed_batch(cls, owners):
+            assert len(owners) == 1
+            raise OSError("Docker inspection failed")
+
+        def inspect(self, **kwargs):
+            if not recovered:
+                raise OSError("container inspection failed")
+            return AgentStatus(
+                self.layout.name, "running", None, None, None, "docker:image"
+            )
+
+        monkeypatch.setattr(
+            AgentProcess, "cache_docker_states", classmethod(failed_batch)
+        )
+        monkeypatch.setattr(AgentProcess, "status", inspect)
+        with closing(
+            top.TopObserver(tmp_path, agent=None, period=3600, recent=300, refresh=60)
+        ) as observer:
+            snapshot = observer.once()
+    assert snapshot.summary.total == snapshot.summary.resident == 1
+    assert snapshot.summary.running == (1 if recovered else None)
+    assert snapshot.summary.completed == CompletionCounts()
+    assert snapshot.summary.usage == Metrics()
+    assert not snapshot.inventory.diagnostics
+    assert bool(snapshot.inventory.instances[0].diagnostic) == (not recovered)

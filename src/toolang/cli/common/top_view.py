@@ -620,6 +620,10 @@ class TopView:
     ) -> Text:
         self.project(snapshot)
         lines = self.header(snapshot, width)
+        show_heading = height is None or height >= 3
+        if height is not None:
+            # Reserve the footer even when wrapped metrics exceed the screen.
+            lines = lines[: max(0, height - 1 - int(show_heading))]
         agent_width = max(
             [5, *(cell_len(instance_name(row.source)) for row in self.rows)]
         )
@@ -645,7 +649,7 @@ class TopView:
         self._sort_hits.clear()
         column = 0
         for name, size in zip(("AGENT", "RUN", *SORT_FIELDS), widths, strict=True):
-            if name in SORT_FIELDS:
+            if show_heading and name in SORT_FIELDS:
                 self._sort_hits.append((len(lines), column, column + size, name))
             column += size + 1
 
@@ -658,7 +662,8 @@ class TopView:
                 + " "
             )
 
-        lines.append(Text(prefix(headings) + "STATUS", style=TABLE_HEADER))
+        if show_heading:
+            lines.append(Text(prefix(headings) + "STATUS", style=TABLE_HEADER))
         panel = []
         if self.help:
             panel = [
@@ -697,15 +702,18 @@ class TopView:
                 ),
             ]
         if height is not None:
-            panel = panel[: max(1, (height - len(lines) - 1) // 2)]
-            self.page_size = max(1, height - len(lines) - len(panel) - 1)
-            index = next(
-                (i for i, row in enumerate(self.rows) if row.key == self.selected), 0
-            )
-            self.offset = min(
-                self.offset, index, max(0, len(self.rows) - self.page_size)
-            )
-            self.offset = max(self.offset, index - self.page_size + 1)
+            available = max(0, height - len(lines) - 1)
+            panel = panel[: available // 2]
+            self.page_size = available - len(panel)
+            if self.page_size:
+                index = next(
+                    (i for i, row in enumerate(self.rows) if row.key == self.selected),
+                    0,
+                )
+                self.offset = min(
+                    self.offset, index, max(0, len(self.rows) - self.page_size)
+                )
+                self.offset = max(self.offset, index - self.page_size + 1)
             displayed = self.rows[self.offset : self.offset + self.page_size]
         else:
             displayed = self.rows
