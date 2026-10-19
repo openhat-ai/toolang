@@ -186,6 +186,11 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   their punctuation instead of being rewritten as CSV values.
   ([#868](https://github.com/openhat-ai/toolang/pull/868))
 
+- Flow statement formatting keeps punctuation and internal spacing in inline
+  comments, including bound and asynchronous operations, and separates them with
+  the canonical two spaces.
+  ([#868](https://github.com/openhat-ai/toolang/pull/868))
+
 - Incomplete calls such as `generate 2 using` report malformed syntax instead
   of a speculative hint that an already-present `using` keyword is missing.
   ([#868](https://github.com/openhat-ai/toolang/pull/868))
