@@ -77,10 +77,12 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Fixed
 
-- `too AGENT top` reads only the selected resident's status document, including
-  its temporary instances, without discovering peers or consulting the global
-  runtime registry, so unrelated discovery errors no longer invalidate its
-  totals.
+- `too AGENT top` scopes discovery to the selected resident's status document
+  and its matching runtime registrations: stopped or unresolved temporary
+  instances still registered to that resident stay in its totals, while
+  unrelated agents and foreign placements, including roaming instances that
+  share the same home, are excluded so their discovery errors cannot invalidate
+  those totals.
 
 - `too top` pages completed roots on dedicated workers, so a slow page no longer
   occupies live polling, and a failed supplemental history lookup preserves the
