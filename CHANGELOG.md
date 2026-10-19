@@ -173,6 +173,23 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   help, run headers, and chat status in place of the previous `agic:_` and
   `_ agic` labels.
 
+- Formatting preserves template hashes such as `{{#flag}}` in program, item,
+  and parameter documentation.
+  ([#868](https://github.com/openhat-ai/toolang/pull/868))
+
+- Chore properties named `tools`, `models`, `skills`, `services`, `psyches`,
+  or `prompts` stop at structural `#` comments instead of including comment
+  text in AST property values.
+  ([#868](https://github.com/openhat-ai/toolang/pull/868))
+
+- Non-query directive comments such as `context=none# Keep,exact,comma,,` keep
+  their punctuation instead of being rewritten as CSV values.
+  ([#868](https://github.com/openhat-ai/toolang/pull/868))
+
+- Incomplete calls such as `generate 2 using` report malformed syntax instead
+  of a speculative hint that an already-present `using` keyword is missing.
+  ([#868](https://github.com/openhat-ai/toolang/pull/868))
+
 ## [0.4.0a9] - 2026-10-18
 
 ### Added
