@@ -125,8 +125,6 @@ The Tree-sitter grammar and parser packages for Python, JavaScript, and Rust are
 
 Below are some common commands. Run `too --help` for usage details, or `too more` for additional commands.
 
-Replace uppercase placeholders with your values; square brackets mark optional arguments.
-
 ```bash
 too new AGENT                # Create an agent
 too clone REF AGENT          # Clone an agent
