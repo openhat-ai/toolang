@@ -7,7 +7,14 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ## [Unreleased]
 
+## [0.4.0a10] - 2026-10-20
+
 ### Changed
+
+- `too AGENT info` lists enabled drivers below `Status`, showing `none` when
+  none are enabled, `-` when metadata is unavailable, and omitting the row for
+  stopped agents.
+  ([#878](https://github.com/openhat-ai/toolang/pull/878))
 
 - **Breaking:** `ThreadInfo` and `ThreadDetail` drop `channel`, and thread-list
   filters omit it, so derive classification from the Thread ID and filter by
@@ -145,8 +152,7 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   without an external catalog.
 
 - `too start` reports only the agent endpoint, without `drivers=` and
-  `lifetime=`, and `too AGENT info` omits the Drivers, Lifetime, and Launch
-  rows.
+  `lifetime=`, and `too AGENT info` omits the Lifetime and Launch rows.
 
 - **Breaking:** agent HTTP endpoints move from `/api/v1` to `/api/v0`,
   including execution, capabilities, chores, threads, and top routes. Lifecycle
@@ -2431,7 +2437,8 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 - The formatter normalizes `exec` statements consistently with other flow
   statements. (#676)
 
-[Unreleased]: https://github.com/openhat-ai/toolang/compare/v0.4.0a9...HEAD
+[Unreleased]: https://github.com/openhat-ai/toolang/compare/v0.4.0a10...HEAD
+[0.4.0a10]: https://github.com/openhat-ai/toolang/compare/v0.4.0a9...v0.4.0a10
 [0.4.0a9]: https://github.com/openhat-ai/toolang/compare/v0.4.0a8...v0.4.0a9
 [0.4.0a8]: https://github.com/openhat-ai/toolang/compare/v0.4.0a7...v0.4.0a8
 [0.4.0a7]: https://github.com/openhat-ai/toolang/compare/v0.4.0a6...v0.4.0a7
