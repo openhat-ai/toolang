@@ -83,17 +83,17 @@ agic:
   {{_}}
 ```
 
-Save it as `a.too` and run it with some text:
+Save it as `translate.too` and run it with some text:
 
 ```bash
-too a.too -- hello world
+too translate.too -- Toolang, a language and runtime for agents and humans
 ```
 
 Use `too init` to create a starter script that you can rename and customize:
 
 ```bash
-too init <project-dir>
-too <project-dir>/aid.too --help
+too init PROJECT_DIR
+too PROJECT_DIR/aid.too --help
 ```
 
 ## Language
@@ -126,35 +126,35 @@ The Tree-sitter grammar and parser packages for Python, JavaScript, and Rust are
 Below are some common commands. Run `too --help` for usage details, or `too more` for additional commands.
 
 ```bash
-too new <agent>                # Create an agent
-too clone <ref> <agent>        # Clone an agent
-too <agent> info               # Show agent information
-too <agent> home               # Open a shell in the agent home
-too <agent> start              # Start an agent in the background
-too <agent> stop               # Stop an agent
-too <agent> chat               # Chat directly with an agent
+too new AGENT                # Create an agent
+too clone REF AGENT          # Clone an agent
+too AGENT info               # Show agent information
+too AGENT home               # Open a shell in the agent home
+too AGENT start              # Start an agent in the background
+too AGENT stop               # Stop an agent
+too AGENT chat               # Chat directly with an agent
 
-too init <dir>                 # Initialize Toolang in a directory
-too run <file.too> [runnable]  # Execute a .too file
+too init PROJECT_DIR         # Initialize Toolang in a directory
+too run FILE.too [RUNNABLE]  # Execute a .too file
 
-too hub start                  # Start the hub in the background
-too talk                       # List conversations
-too talk <convo>               # Open a conversation by ID
-too talk <agent>               # Open a conversation with an agent
-too talk all                   # Open a conversation with the team
+too hub start                # Start the hub in the background
+too talk                     # List conversations
+too talk CONVO               # Open a conversation by ID
+too talk AGENT               # Open a conversation with an agent
+too talk all                 # Open a conversation with the team
 
-too caps                       # List available caps
-too tools                      # List available tools
-too models                     # List available models
-too providers                  # List available model providers
+too caps                     # List available caps
+too tools                    # List available tools
+too models                   # List available models
+too providers                # List available model providers
 
-too <agent> inspect            # Inspect runs in detail
-too [agent] top                # Monitor active runs
+too AGENT inspect            # Inspect agent runs
+too [AGENT] top              # Monitor active runs
 ```
 
 ## Links
 
 - Website: [toolang.ai](https://toolang.ai/)
 - Docs: [toolang.ai/docs](https://toolang.ai/docs)
-- Changelog: [CHANGELOG.md](CHANGELOG.md)
 - GitHub: [github.com/openhat-ai/toolang](https://github.com/openhat-ai/toolang)
+- Changelog: [CHANGELOG.md](https://github.com/openhat-ai/toolang/blob/main/CHANGELOG.md)
