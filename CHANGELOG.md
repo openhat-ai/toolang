@@ -9,6 +9,21 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Changed
 
+- **Breaking:** reducer initializers use `initial:` instead of `from:` in both
+  named and inline reducers. Replace each `from:` clause with `initial:`,
+  because an inline `from:` line is now literal text.
+
+- **Breaking:** a literal `initial` word now starts reducer syntax at a flow
+  statement boundary or an inline reducer's text baseline; write such prose
+  after `run:` in a flow or indent it deeper inside an inline reducer.
+
+- **Breaking:** raw CST consumers read `*_stmt` nodes and `stmt` member fields
+  instead of `*_statement` nodes and statement paths.
+
+- Syntax errors highlight native recovery fragments and retained diagnostics
+  in bold red in terminal and HTML output, while keyword and name captures
+  keep their semantic styles.
+
 - **Breaking:** the formatter preserves inline text literally, including `#`
   and `"`, and never extracts or moves comments from it; place intended
   comments on separate structural lines.
@@ -57,9 +72,10 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 - **Breaking:** raw CST punctuation, fixed operators, and keywords are anonymous
   terminals, so inspect terminal text instead of named nodes.
 
-- **Breaking:** invalid sources report `invalid_flow_statement` or
-  `invalid_run_target` instead of `invalid_flow_reserved_statement`, and
-  `invalid_agic_message` instead of `invalid_agic_reserved_message`, while any
+- **Breaking:** invalid sources surface malformed targets, directives,
+  messages, assignments, and annotation types as native `ERROR` and missing
+  terminals, retaining only `invalid_missing_body`, `invalid_missing_content`,
+  `invalid_missing_stmt`, `invalid_param`, and `invalid_flow_stmt`; every
   `invalid_*` node is an error even when `has_error` is false.
   ([#868](https://github.com/openhat-ai/toolang/pull/868))
 
