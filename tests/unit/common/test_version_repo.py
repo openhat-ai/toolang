@@ -35,7 +35,7 @@ def _commit(repository: Repo, content: str, timestamp: int) -> bytes:
 
 @pytest.fixture
 def repository(tmp_path: Path) -> Iterator[Repo]:
-    with Repo.init(tmp_path) as repo:
+    with Repo.init(tmp_path, default_branch=b"main") as repo:
         _commit(repo, "Initial commit.\n", 1_700_000_000)
         yield repo
 
@@ -100,6 +100,35 @@ def test_no_tag_uses_abbreviated_head_instead_of_a_branch_with_tags_in_its_name(
     )
 
 
+def test_reftable_uses_its_tags_and_conditional_configuration(repository: Repo) -> None:
+    root = Path(repository.path)
+    head = repository.head()
+    settings = root / "branch.config"
+    settings.write_text("[version-test]\nmarker = reftable\n")
+    config = repository.get_config()
+    config.set(b"core", b"repositoryformatversion", b"1")
+    config.set(b"extensions", b"refstorage", b"reftable")
+    config.set((b"includeIf", b"onbranch:review"), b"path", str(settings).encode())
+    config.write_to_path()
+    with Repo(root) as reftable:
+        reftable.refs[Ref(b"refs/heads/review")] = head
+        reftable.refs.set_symbolic_ref(Ref(b"HEAD"), Ref(b"refs/heads/review"))
+        porcelain.tag_create(reftable, "v0.3.0")
+        assert porcelain.describe(reftable, abbrev=8) == "v0.3.0"
+        assert (
+            reftable.get_config_stack().get(b"version-test", b"marker") == b"reftable"
+        )
+        reftable.refs[Ref(b"refs/tags-not-a-namespace/unrelated")] = head
+
+    with VersionRepo.discover(root) as snapshot:
+        assert (
+            snapshot.get_config_stack().get(b"version-test", b"marker") == b"reftable"
+        )
+    assert repository_source_version(root) == "v0.3.0"
+    (root / "tracked.txt").write_text("Modified.\n")
+    assert repository_source_version(root) == "v0.3.0*"
+
+
 def test_configuration_is_reused_only_for_one_repository_snapshot(
     repository: Repo,
 ) -> None:
@@ -120,6 +149,33 @@ def test_configuration_is_reused_only_for_one_repository_snapshot(
 
     with VersionRepo.discover(repository.path) as fresh:
         assert fresh.get_config().get(b"version-test", b"marker") == b"after"
+        assert fresh.get_config_stack().get(b"version-test", b"marker") == b"after"
+
+
+@pytest.mark.parametrize("source", ["global", "included", "worktree"])
+def test_configuration_layers_are_refreshed_for_each_snapshot(
+    repository: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source: str
+) -> None:
+    settings = tmp_path / "version.config"
+    config = repository.get_config()
+    if source == "global":
+        monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(settings))
+        monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    elif source == "included":
+        config.set(b"include", b"path", str(settings).encode())
+        config.write_to_path()
+    else:
+        config.set(b"extensions", b"worktreeconfig", True)
+        config.write_to_path()
+        settings = Path(repository.commondir()) / "config.worktree"
+    settings.write_text("[version-test]\nmarker = before\n")
+
+    with VersionRepo.discover(repository.path) as snapshot:
+        assert snapshot.get_config_stack().get(b"version-test", b"marker") == b"before"
+        settings.write_text("[version-test]\nmarker = after\n")
+        assert snapshot.get_config_stack().get(b"version-test", b"marker") == b"before"
+
+    with VersionRepo.discover(repository.path) as fresh:
         assert fresh.get_config_stack().get(b"version-test", b"marker") == b"after"
 
 
@@ -173,6 +229,21 @@ def test_deleted_tracked_files_still_mark_the_version_dirty(repository: Repo) ->
     assert repository_source_version(Path(repository.path)) == "v0.3.0*"
 
 
+def test_version_inspection_does_not_refresh_the_index(repository: Repo) -> None:
+    porcelain.tag_create(repository, "v0.3.0")
+    root = Path(repository.path)
+    index = Path(repository.index_path())
+    original_index = index.read_bytes()
+    original_mtime = index.stat().st_mtime_ns
+    tracked = root / "tracked.txt"
+    stat = tracked.stat()
+    os.utime(tracked, ns=(stat.st_atime_ns, stat.st_mtime_ns + 2_000_000_000))
+
+    assert repository_source_version(root) == "v0.3.0"
+    assert index.read_bytes() == original_index
+    assert index.stat().st_mtime_ns == original_mtime
+
+
 def test_missing_repository_and_unborn_head_keep_the_unknown_fallback(
     tmp_path: Path,
 ) -> None:
@@ -181,18 +252,29 @@ def test_missing_repository_and_unborn_head_keep_the_unknown_fallback(
         assert repository_source_version(tmp_path) is None
 
 
-def test_more_help_does_not_import_the_git_version_reader() -> None:
+@pytest.mark.parametrize(
+    "arguments", [["more"], ["parse", "--help"], ["fmt", "--help"], ["parse"]]
+)
+def test_commands_without_a_version_do_not_import_the_git_version_reader(
+    arguments: list[str], tmp_path: Path
+) -> None:
+    if arguments == ["parse"]:
+        source = tmp_path / "example.too"
+        source.write_text("prompt greeting:\n  Hello.\n")
+        arguments = ["parse", str(source), "--check"]
     result = subprocess.run(
         [
             sys.executable,
             "-c",
             "import sys; from toolang.cli.toolang.main import main; "
-            "assert main(['more']) == 0; assert 'dulwich' not in sys.modules; "
+            "assert main(sys.argv[1:]) == 0; assert 'dulwich' not in sys.modules; "
             "assert 'toolang.common._version_repo' not in sys.modules",
+            *arguments,
         ],
         capture_output=True,
         text=True,
         check=False,
+        timeout=10,
         env={
             **{
                 key: value
@@ -204,4 +286,3 @@ def test_more_help_does_not_import_the_git_version_reader() -> None:
     )
 
     assert result.returncode == 0, result.stderr
-    assert "Language commands:" in result.stdout

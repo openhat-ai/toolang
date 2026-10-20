@@ -84,7 +84,9 @@ def _repository_build_info(root: Path) -> tuple[str, str, bool] | None:
             if Path(repository.path).resolve() != root.resolve():
                 return None
             source_version = porcelain.describe(repository, abbrev=8)
-            status = porcelain.status(repository, untracked_files="no")
+            status = porcelain.status(
+                repository, untracked_files="no", optional_locks=False
+            )
             dirty = any(status.staged.values()) or bool(status.unstaged)
             if dirty:
                 source_version = f"{source_version}*"

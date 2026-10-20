@@ -1,13 +1,39 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any, cast
 
 import pytest
 from dulwich import porcelain
+from dulwich.repo import Repo
 
 import hatch_build
+
+
+def test_collect_build_info_does_not_refresh_the_index(tmp_path: Path) -> None:
+    with Repo.init(tmp_path) as repository:
+        tracked = tmp_path / "tracked.txt"
+        tracked.write_text("Unchanged.\n")
+        porcelain.add(repository, tracked.name)
+        porcelain.commit(
+            repository,
+            message=b"Initial commit",
+            author=b"Test Author <test@example.com>",
+            committer=b"Test Author <test@example.com>",
+            sign=False,
+            no_verify=True,
+        )
+        index = Path(repository.index_path())
+        original_index = index.read_bytes()
+        original_mtime = index.stat().st_mtime_ns
+        stat = tracked.stat()
+        os.utime(tracked, ns=(stat.st_atime_ns, stat.st_mtime_ns + 2_000_000_000))
+
+        assert hatch_build.collect_build_info(tmp_path)["dirty"] is False
+        assert index.read_bytes() == original_index
+        assert index.stat().st_mtime_ns == original_mtime
 
 
 def test_collect_build_info_captures_native_git_description(
