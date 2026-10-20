@@ -106,7 +106,7 @@ presence, outbound tools, and observation available. Flow `spawn` creates a new
 reuse an inspected idle local thread. Both record ancestry and an independent
 root; ordinary nested calls remain in their thread.
 Noninteractive CLI and HTTP API calls create `exec_` invocation contexts with
-origin `exec`. Every run has a `run_` ID.
+derived kind `exec`. Every run has a `run_` ID.
 
 Independent standalone invocations of the same `.too` source use separate
 runtime and sandbox instance directories. Restarting a durable agent reuses its

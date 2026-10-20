@@ -11,7 +11,7 @@ from tests.support.execution_harness import (
 )
 from toolang.base.types.message import Message, TextPart
 from toolang.base.types.run import ModelCallResult
-from toolang.execution.types import AwaitableHandle, ThreadPrefix
+from toolang.execution.types import AwaitableHandle, ThreadKind
 
 
 @pytest.mark.parametrize("nested", [False, True])
@@ -46,7 +46,7 @@ agic child(_: Text) -> Text:
         async with harness:
             parent = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="parent",
                     primary=(TextPart("input"),),
                 )
@@ -140,7 +140,7 @@ agic child() -> Text:
         async with harness:
             parent = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="parent",
                 )
             )
@@ -226,7 +226,7 @@ agic child() -> Text:
             tracer = RecordingRunTracer()
             parent = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="parent",
                 ),
                 tracer=tracer,

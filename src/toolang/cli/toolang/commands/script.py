@@ -1026,6 +1026,7 @@ async def _create_remote_script_thread(
     from pydantic import TypeAdapter, ValidationError
 
     from toolang.execution.schemas import ThreadInfo
+    from toolang.execution.types import ThreadKind
 
     try:
         response = await client.post(
@@ -1063,7 +1064,7 @@ async def _create_remote_script_thread(
         raise RuntimeError(
             "remote script thread creation returned invalid data"
         ) from exc
-    if thread.origin != "exec" or not thread.id.startswith("exec_"):
+    if thread.kind != ThreadKind.EXEC:
         raise RuntimeError("remote script thread creation returned invalid identity")
     return thread.id
 
@@ -1205,7 +1206,7 @@ async def _execute(
     from toolang.execution.calls import resolve_spec
     from toolang.execution.executor import RunExecutor
     from toolang.execution.threads import ThreadManager
-    from toolang.execution.types import ThreadPrefix
+    from toolang.execution.types import ThreadKind
     from toolang.lang.includes import resolve_file_include
     from toolang.setup import SetupWatcher
     from toolang.state.watcher import StateWatcher
@@ -1287,7 +1288,7 @@ async def _execute(
     )
     client_id = f"client_{uuid4().hex}"
     thread = ThreadManager(store, ids).create(
-        prefix=ThreadPrefix.EXEC,
+        kind=ThreadKind.EXEC,
         client_id=client_id,
         request_id=f"request_{uuid4().hex}",
     )

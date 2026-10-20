@@ -42,7 +42,7 @@ class History:
         self.reads = []
 
     def thread_view(self, thread, *, include_children):
-        assert thread == "term_test" and include_children is False
+        assert thread == "chat_test" and include_children is False
         return SimpleNamespace(
             roots=[
                 SimpleNamespace(
@@ -108,7 +108,7 @@ def run_compact(
             SimpleNamespace(ref=model_ref, limit={"context": context, "output": 4096}),
         )
         roots = experiment._select_runs(
-            cast(RunHistory, history), ThreadRef("term_test"), RunRef(from_), RunRef(to)
+            cast(RunHistory, history), ThreadRef("chat_test"), RunRef(from_), RunRef(to)
         )
         reducer = experiment.Compaction(
             [RunRef(r.id) for r in roots],
@@ -153,7 +153,7 @@ def test_inclusive_range_and_lazy_full_exchange_read() -> None:
     assert next_unit is not None and next_unit.run_id == RunRef("run_a")
     assert experiment._select_runs(
         cast(RunHistory, history),
-        ThreadRef.parse("term_test"),
+        ThreadRef.parse("chat_test"),
         RunRef("run_b"),
         RunRef("run_c"),
     ) == tuple(
@@ -166,7 +166,7 @@ def test_inclusive_range_and_lazy_full_exchange_read() -> None:
     with pytest.raises(ValueError, match="from must not"):
         experiment._select_runs(
             cast(RunHistory, history),
-            ThreadRef.parse("term_test"),
+            ThreadRef.parse("chat_test"),
             RunRef("run_c"),
             RunRef("run_a"),
         )

@@ -28,7 +28,7 @@ from toolang.execution.records import (
 )
 from toolang.execution.store import RunStore
 from toolang.execution.threads import ThreadManager
-from toolang.execution.types import ControlRef, RunRef, ThreadPrefix, ThreadRef
+from toolang.execution.types import ControlRef, RunRef, ThreadKind, ThreadRef
 from toolang.lang.input import resolve_input_parts
 
 _CHAT_SOURCE = """
@@ -63,8 +63,10 @@ class _FailingThreadListener(ThreadListener):
         raise RuntimeError(f"cannot deliver {event.type}")
 
 
+@pytest.mark.parametrize("kind", list(ThreadKind))
 def test_create_and_fork_controls_preserve_identity_and_anchor(
     tmp_path: Path,
+    kind: ThreadKind,
 ) -> None:
     harness = ExecutionHarness.create(
         tmp_path,
@@ -80,7 +82,7 @@ def test_create_and_fork_controls_preserve_identity_and_anchor(
     async def scenario() -> tuple[str, str, str, str]:
         async with harness:
             source = manager.create(
-                prefix=ThreadPrefix.CHAT,
+                kind=kind,
                 request_id="thread-create-1",
             )
             first = await harness.executor.run(
@@ -105,6 +107,7 @@ def test_create_and_fork_controls_preserve_identity_and_anchor(
             return source, forked, first.id, second.id
 
     source, forked, first_run, second_run = asyncio.run(scenario())
+    assert ThreadRef(forked).kind == kind
 
     assert [event.type for event in listener.events] == [
         "thread_created",
@@ -156,8 +159,10 @@ def test_create_and_fork_controls_preserve_identity_and_anchor(
         reopened.close()
 
 
+@pytest.mark.parametrize("kind", list(ThreadKind))
 def test_rewind_controls_form_a_monotonic_head_chain(
     tmp_path: Path,
+    kind: ThreadKind,
 ) -> None:
     harness = ExecutionHarness.create(
         tmp_path,
@@ -174,7 +179,7 @@ def test_rewind_controls_form_a_monotonic_head_chain(
 
     async def scenario() -> None:
         async with harness:
-            thread = manager.create(prefix=ThreadPrefix.CHAT)
+            thread = manager.create(kind=kind)
             runs = []
             for prompt in ("first", "second", "third"):
                 runs.append(
@@ -273,8 +278,10 @@ def test_rewind_controls_form_a_monotonic_head_chain(
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("kind", list(ThreadKind))
 def test_fork_accepts_an_earlier_terminal_anchor_while_source_runs(
     tmp_path: Path,
+    kind: ThreadKind,
 ) -> None:
     gate = AsyncGate()
     harness = ExecutionHarness.create(
@@ -293,7 +300,7 @@ def test_fork_accepts_an_earlier_terminal_anchor_while_source_runs(
 
     async def scenario() -> None:
         async with harness:
-            source = manager.create(prefix=ThreadPrefix.CHAT)
+            source = manager.create(kind=kind)
             terminal = await harness.executor.run(
                 harness.run_spec(
                     thread=source,
@@ -354,8 +361,10 @@ def test_fork_accepts_an_earlier_terminal_anchor_while_source_runs(
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("kind", list(ThreadKind))
 def test_rewind_rejects_a_running_thread_without_canceling_it(
     tmp_path: Path,
+    kind: ThreadKind,
 ) -> None:
     gate = AsyncGate()
     harness = ExecutionHarness.create(
@@ -374,7 +383,7 @@ def test_rewind_rejects_a_running_thread_without_canceling_it(
 
     async def scenario() -> None:
         async with harness:
-            thread = manager.create(prefix=ThreadPrefix.CHAT)
+            thread = manager.create(kind=kind)
             terminal = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
@@ -458,7 +467,7 @@ def test_failed_thread_controls_leave_no_record_or_event(
     async def scenario() -> None:
         async with harness:
             thread = manager.create(
-                prefix=ThreadPrefix.CHAT,
+                kind=ThreadKind.CHAT,
                 request_id="thread-request-1",
             )
             run = await harness.executor.run(
@@ -528,7 +537,7 @@ def test_listener_failure_does_not_roll_back_a_thread_control(
     async def scenario() -> None:
         async with harness:
             thread = manager.create(
-                prefix=ThreadPrefix.CHAT,
+                kind=ThreadKind.CHAT,
                 request_id="thread-create-with-failing-listener",
             )
 
@@ -577,7 +586,7 @@ def test_concurrent_process_forks_commit_one_request_without_sidecar(tmp_path):
 
     async def prepare():
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             await harness.executor.run(
                 harness.run_spec(
                     thread=thread, runnable="chat", primary=resolve_input_parts("hello")
@@ -657,7 +666,7 @@ def test_fork_listener_notifications_follow_commit_order(tmp_path):
 
     async def scenario():
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             await harness.executor.run(
                 harness.run_spec(
                     thread=thread, runnable="chat", primary=resolve_input_parts("hello")

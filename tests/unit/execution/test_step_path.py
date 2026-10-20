@@ -61,7 +61,7 @@ def test_step_ref_rejects_noncanonical_values(value: str) -> None:
 
 
 def test_every_reference_kind_round_trips_through_pointer() -> None:
-    thread = ThreadRef("term_root")
+    thread = ThreadRef("chat_root")
     run = RunRef("run_root")
     step = StepRef(run, StepPath((2, 3)))
     run_control = ControlRef(run, 4)
@@ -117,7 +117,7 @@ def test_concrete_references_reject_wrong_component_kinds() -> None:
     with pytest.raises(ValueError, match="invalid thread ref"):
         ThreadRef("sha256_custom")
     with pytest.raises(TypeError, match="RunRef"):
-        StepRef(ThreadRef("term_root"), StepPath((0,)))  # type: ignore[arg-type]
+        StepRef(ThreadRef("chat_root"), StepPath((0,)))  # type: ignore[arg-type]
     with pytest.raises(TypeError, match="ThreadRef or RunRef"):
         ControlRef(StepRef.parse("run_root.0"), 0)  # type: ignore[arg-type]
     with pytest.raises(TypeError, match="RecordRef"):

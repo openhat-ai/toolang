@@ -20,7 +20,7 @@ from tests.integration.messaging.test_valkey import (
 from tests.support.execution_harness import ExecutionHarness
 from toolang.base.types.message import TextPart
 from toolang.execution.schemas import StreamFrame
-from toolang.execution.types import ThreadPrefix
+from toolang.execution.types import ThreadKind
 from toolang.teaming.backend.valkey import ValkeyBackend
 from toolang.teaming.agent_client import AgentClient, AgentEventClient
 from toolang.teaming.client import HubClient
@@ -86,7 +86,7 @@ def test_recovery_keeps_active_snapshot_and_live_suffix_after_slow_history(
             await publisher.register("human:owner")
             active = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="slow",
                     primary=(TextPart("input"),),
                 )
@@ -356,7 +356,7 @@ def test_hub_event_fanout_and_recovery(valkey, running_hub, tmp_path, monkeypatc
             try:
                 await exporter.recover("initial")
                 initial, _ = await snapshot()
-                thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+                thread = harness.threads.create(kind=ThreadKind.CHAT)
                 record = await harness.executor.run(
                     harness.run_spec(
                         thread=thread, runnable="example", primary=(TextPart("input"),)

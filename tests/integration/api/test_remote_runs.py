@@ -29,7 +29,7 @@ from toolang.execution.records import (
     RunControlPayload,
 )
 from toolang.execution.schemas import RunDetail, RunRequest, RunnableRequest
-from toolang.execution.types import ThreadPrefix
+from toolang.execution.types import ThreadKind
 from toolang.lang.input import CallInput
 from toolang.lang.types import Array, Struct
 from toolang.up import AgentCore
@@ -554,7 +554,7 @@ agic selected(_: Part[], tone: Text) -> Part[]:
             missing_thread = client.post(
                 "/api/v0/runs/authored/stream",
                 json=_authored_request(
-                    "term_missing", "missing_request", source="missing"
+                    "chat_missing", "missing_request", source="missing"
                 ),
             )
 
@@ -628,7 +628,7 @@ agic selected(_: Part[], tone: Text) -> Part[]:
             "client attachment is missing: ~toolang_user_that_does_not_exist/file.txt"
         )
         assert missing_thread.status_code == 404
-        assert missing_thread.json()["detail"] == "thread not found: term_missing"
+        assert missing_thread.json()["detail"] == "thread not found: chat_missing"
         assert len(core.store.list_runs(thread_id=thread_id, limit=None)) == 2
     finally:
         asyncio.run(core.close())
@@ -719,7 +719,7 @@ agic chat(_: Part[]) -> Part[]:
     core.state = _Snapshot(harness.state)
 
     async def scenario() -> None:
-        thread = core.threads.create(prefix=ThreadPrefix.CHAT)
+        thread = core.threads.create(kind=ThreadKind.CHAT)
         request = _core_request(thread, "pending_request")
         handle = core.executor.run(
             resolve_run_request(
@@ -777,7 +777,7 @@ def test_http_controls_map_transaction_state_races_to_conflict(
     core = AgentCore(harness.setup.layout)
 
     async def scenario() -> None:
-        thread = core.threads.create(prefix=ThreadPrefix.CHAT)
+        thread = core.threads.create(kind=ThreadKind.CHAT)
         handle = core.executor.run(
             resolve_run_request(
                 _core_request(thread, "pending_race_request"),

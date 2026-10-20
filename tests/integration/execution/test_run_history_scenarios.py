@@ -20,7 +20,7 @@ from toolang.execution.threads import ThreadManager
 from toolang.execution.types import (
     ControlRef,
     FieldRef,
-    ThreadPrefix,
+    ThreadKind,
     Output,
     value_for_type,
 )
@@ -35,8 +35,7 @@ def test_run_history_batches_thread_and_run_summaries(
         run = project_run_start(
             store,
             run_id="run_history",
-            thread_id="term_history",
-            origin="chat",
+            thread_id="chat_history",
             input=Message.user("hello"),
         )
         project_run_end(store, run_id=run.id)
@@ -56,7 +55,7 @@ def test_run_history_batches_thread_and_run_summaries(
         runs = history.list_runs(limit=None)
         thread = history.get_thread(str(run.thread))
 
-        assert [(item.id, item.run_count) for item in threads] == [("term_history", 1)]
+        assert [(item.id, item.run_count) for item in threads] == [("chat_history", 1)]
         assert [item.id for item in runs] == ["run_history"]
         assert thread is not None
         assert [item.id for item in thread.runs] == ["run_history"]
@@ -71,12 +70,11 @@ def test_run_history_projects_fork_and_rewind_from_one_snapshot(
     ids = IdIssuer(tmp_path / "runs.db", agent_name="alice")
     manager = ThreadManager(store, ids)
     try:
-        source = manager.create(prefix=ThreadPrefix.CHAT)
+        source = manager.create(kind=ThreadKind.CHAT)
         first = project_run_start(
             store,
             run_id="run_first",
             thread_id=source,
-            origin="chat",
             input=Message.user("first"),
         )
         project_run_end(store, run_id=first.id)
@@ -84,7 +82,6 @@ def test_run_history_projects_fork_and_rewind_from_one_snapshot(
             store,
             run_id="run_second",
             thread_id=source,
-            origin="chat",
             input=Message.user("second"),
         )
         project_run_end(store, run_id=second.id)
@@ -114,8 +111,7 @@ def test_run_history_zero_detail_limit_returns_only_thread_summary(
         run = project_run_start(
             store,
             run_id="run_summary",
-            thread_id="term_summary",
-            origin="chat",
+            thread_id="chat_summary",
             input=Message.user("hello"),
         )
         project_run_end(store, run_id=run.id)
@@ -137,8 +133,7 @@ def test_run_history_resolves_run_output_for_run_and_thread_details(
         run = project_run_start(
             store,
             run_id="run_output",
-            thread_id="term_output",
-            origin="chat",
+            thread_id="chat_output",
             input=Message.user("hello"),
         )
         step = project_step(
@@ -190,8 +185,7 @@ def test_run_history_resolves_pass_through_control_output(
         run = project_run_start(
             store,
             run_id="run_passthrough",
-            thread_id="term_passthrough",
-            origin="chat",
+            thread_id="chat_passthrough",
             input=Message.user("unchanged"),
         )
         project_run_end(
@@ -240,8 +234,7 @@ def test_resolve_output_rejects_a_pointer_to_a_different_type(tmp_path: Path) ->
         run = project_run_start(
             store,
             run_id="run_mismatch",
-            thread_id="term_mismatch",
-            origin="chat",
+            thread_id="chat_mismatch",
             input=Message.user("not a number"),
         )
 
@@ -269,23 +262,21 @@ def test_run_history_keeps_rewound_records_outside_the_thread_view(
         first = project_run_start(
             store,
             run_id="run_first",
-            thread_id="term_thread",
-            origin="chat",
+            thread_id="chat_thread",
             input=Message.user("first"),
         )
         project_run_end(store, run_id=first.id)
         second = project_run_start(
             store,
             run_id="run_second",
-            thread_id="term_thread",
-            origin="chat",
+            thread_id="chat_thread",
             input=Message.user("second"),
         )
         project_run_end(store, run_id=second.id)
-        thread = store.get_thread(thread_id="term_thread")
+        thread = store.get_thread(thread_id="chat_thread")
         assert thread is not None
         store.rewind_thread(
-            thread_id="term_thread",
+            thread_id="chat_thread",
             anchor=first.id,
             request_id=None,
             expected_head=store.thread_view(thread.id).head,
@@ -295,6 +286,6 @@ def test_run_history_keeps_rewound_records_outside_the_thread_view(
         rewound = RunHistory(store).get_run(second.id)
         assert rewound is not None
         assert "ejected" not in {field.name for field in fields(rewound)}
-        assert RunHistory(store).list_runs(thread_id="term_thread") == []
+        assert RunHistory(store).list_runs(thread_id="chat_thread") == []
     finally:
         store.close()

@@ -33,7 +33,7 @@ def test_run_spec_defaults_are_immutable() -> None:
     first = RunSpec(
         setup=first_setup,
         state=_state(),
-        thread="term_first",
+        thread="chat_first",
         bindings=RunBindings(runnable="chat"),
         limits=first_setup.limits,
     )
@@ -41,7 +41,7 @@ def test_run_spec_defaults_are_immutable() -> None:
     second = RunSpec(
         setup=second_setup,
         state=_state(),
-        thread="term_second",
+        thread="chat_second",
         bindings=RunBindings(runnable="chat"),
         limits=second_setup.limits,
     )

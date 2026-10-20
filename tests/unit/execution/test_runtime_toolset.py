@@ -99,7 +99,7 @@ class _Runtime:
     async def spawn(self, runnable, input, *, thread=None):
         self.calls.append((runnable, dict(input)))
         return ToolResult(
-            {"id": self.marker, "thread": "spawn_test", "status": "pending"}
+            {"id": self.marker, "thread": "work_test", "status": "pending"}
         )
 
     async def steer(self, target, input, expected_control):
@@ -179,9 +179,9 @@ def test_shared_plugin_keeps_per_call_authority_isolated(
 @pytest.mark.parametrize(
     "name, arguments",
     [
-        ("compact", {"thread": "term_ab12"}),
-        ("compact", {"thread": "term_ab12", "end": 1}),
-        ("compact", {"thread": "term_ab12", "end": "run_ab12", "summary": "bad"}),
+        ("compact", {"thread": "chat_ab12"}),
+        ("compact", {"thread": "chat_ab12", "end": 1}),
+        ("compact", {"thread": "chat_ab12", "end": "run_ab12", "summary": "bad"}),
         ("run", {"runnable": "child", "step": "another"}),
         ("exec", {"runnable": "child", "input": []}),
         ("run", {"runnable": ""}),

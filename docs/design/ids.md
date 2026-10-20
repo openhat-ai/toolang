@@ -3,12 +3,17 @@
 Generated suffixes use eight lowercase Base32 characters:
 `0123456789abcdefghjkmnpqrstvwxyz`. External/provider IDs remain opaque.
 
+Thread IDs require one of `chat_`, `talk_`, `chore_`, `work_`, or `exec_` and a
+nonempty suffix. `ThreadKind` is derived from this prefix on references, records,
+and read schemas; classification is not stored separately. Creation selects
+`kind`. Unknown and obsolete Thread prefixes are rejected.
+
 | Identity | Rule |
 | --- | --- |
-| `chat_`, `work_`, `exec_` | Agent-keyed `local` allocation: hourly tick(20) + sequence(20). |
+| `chat_`, `work_`, `exec_`, and forked Threads | Agent-keyed `local` allocation: hourly tick(20) + sequence(20). |
 | `run_` | Agent-keyed `run` allocation with the same bit budget. |
-| `talk_` | Permute the conversation suffix with an agent-specific key. |
-| `chore_` | Hash the exact name to 40 bits, then permute with an agent-specific key. |
+| Conversation-bound `talk_` | Permute the conversation suffix with an agent-specific key. |
+| Chore-bound `chore_` | Hash the exact name to 40 bits, then permute with an agent-specific key. |
 | `dm_` | Conversation codec v3: permute `0 + pair_hash(39)`. |
 | `gc_` | Conversation codec v3: permute `1 + hourly_tick(20) + sequence(19)`. |
 

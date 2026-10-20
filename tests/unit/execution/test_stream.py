@@ -32,7 +32,7 @@ from toolang.execution.stream import CanonicalStream, StreamLimits
 from toolang.execution.types import ControlRef, EventCursor, ModelStepSpec
 
 
-def emit(source, event, *, root="run_a", thread="term_a"):
+def emit(source, event, *, root="run_a", thread="chat_a"):
     with source.publication() as publication:
         cursor = EventCursor.parse(publication.cursor)
         publication.append(event, root_run_id=root, thread_id=thread)
@@ -72,7 +72,7 @@ def test_large_model_context_does_not_overflow_live_observers():
 
 
 def begin(run="run_a"):
-    return run_begin(run=run, control=ControlRef.for_run(run, 0), thread_id="term_a")
+    return run_begin(run=run, control=ControlRef.for_run(run, 0), thread_id="chat_a")
 
 
 def progress():
@@ -106,11 +106,11 @@ def test_scope_filtering_advances_one_shared_order_and_close_is_independent():
         source = CanonicalStream()
         agent = source.subscribe()
         root = source.subscribe(root_run_id="run_a")
-        thread = source.subscribe(thread_id="term_a")
+        thread = source.subscribe(thread_id="chat_a")
         frames = (
-            (begin(), "run_a", "term_a"),
-            (begin("run_child"), "run_a", "term_a"),
-            (begin("run_other"), "run_other", "term_b"),
+            (begin(), "run_a", "chat_a"),
+            (begin("run_child"), "run_a", "chat_a"),
+            (begin("run_other"), "run_other", "chat_b"),
         )
         for event, run_id, thread_id in frames:
             emit(source, event, root=run_id, thread=thread_id)
@@ -133,10 +133,10 @@ def test_scope_filtering_advances_one_shared_order_and_close_is_independent():
 def test_fork_reaches_both_thread_scopes_once():
     async def scenario():
         source = CanonicalStream()
-        old = source.subscribe(thread_id="term_old")
-        new = source.subscribe(thread_id="term_new")
+        old = source.subscribe(thread_id="chat_old")
+        new = source.subscribe(thread_id="chat_new")
         event = ThreadForked(
-            "term_new", ControlRef.for_thread("term_new", 0), "term_old", "run_a", "now"
+            "chat_new", ControlRef.for_thread("chat_new", 0), "chat_old", "run_a", "now"
         )
         emit(source, event)
         assert (await old.receive()).events == (await new.receive()).events

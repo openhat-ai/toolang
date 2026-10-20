@@ -295,12 +295,12 @@ def test_messages_select_one_history_for_adapter_and_recording(recall, monkeypat
         return "Summary {{literal}}"
 
     history = MessageHistory(
-        "thread",
+        "chat_fixture",
         (RunRef("run_prior"), root),
         lambda roots: {r: literal_delta(near) for r in roots},
         resolve,
         lambda _: CompactionResult(
-            "thread", "run_prior", str(root), "Summary {{literal}}"
+            "chat_fixture", "run_prior", str(root), "Summary {{literal}}"
         ),
     )
     head = StepRef.parse("run_ef56.0")

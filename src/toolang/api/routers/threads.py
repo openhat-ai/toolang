@@ -17,7 +17,7 @@ from toolang.api.schemas import (
     ThreadRewindRequest,
 )
 from toolang.execution.schemas import RunDetail, ThreadDetail, ThreadInfo
-from toolang.execution.types import ThreadPrefix
+from toolang.execution.types import ThreadKind
 from toolang.execution.values import parts_from_value
 from toolang.up import AgentCore
 
@@ -46,7 +46,7 @@ async def _subscribe_thread(
 )
 def create_thread(core: AgentCoreDep, payload: ThreadCreateRequest) -> ThreadResult:
     thread_id = core.threads.create(
-        prefix=ThreadPrefix.CHAT,
+        kind=ThreadKind.CHAT,
         request_id=payload.request_id,
         client_id=payload.client_id,
     )
@@ -57,13 +57,13 @@ def create_thread(core: AgentCoreDep, payload: ThreadCreateRequest) -> ThreadRes
 def threads(
     core: AgentCoreDep,
     limit: int = Query(default=50),
-    origin: str | None = None,
+    kind: ThreadKind | None = None,
     channel: str | None = None,
     status: str | None = None,
 ) -> list[ThreadInfo]:
     return core.history.list_threads(
         limit=limit,
-        origin=origin,
+        kind=kind,
         channel=channel,
         status=status,
     )

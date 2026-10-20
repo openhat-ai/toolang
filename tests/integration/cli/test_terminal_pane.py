@@ -79,7 +79,7 @@ with prepare_terminal({kind!r}, root=root,
     layout=AgentLayout.resident(root, {agent!r}) if {agent!r} else None,
     label={label!r}, convo="gc_123" if {kind!r} == "talk" else "",
     context="context" if {kind!r} == "talk" or ({kind!r} == "top" and not {agent!r}) else "") as terminal:
-    if {kind!r} == "chat": terminal.set_thread("term_full")
+    if {kind!r} == "chat": terminal.set_thread("chat_full")
     if {kind!r} in {{"run", "retry", "rerun"}}: terminal.set_run("run_actual")
     Path({str(ready)!r}).touch()
     while not Path({str(release)!r}).exists(): time.sleep(.01)
@@ -116,7 +116,7 @@ time.sleep(60)
 
     wait_for(lambda: ready.exists() and option("kind") == kind)
     expected_identity = (
-        "term_full"
+        "chat_full"
         if kind == "chat"
         else "run_actual"
         if kind in {"run", "retry", "rerun"}

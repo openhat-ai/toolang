@@ -67,6 +67,7 @@ from .types import (
     StepRef,
     StepStatus,
     ThreadRef,
+    ThreadKind,
     Pointer,
     RunRef,
     RunCommand,
@@ -636,7 +637,6 @@ class ThreadInfo:
     title: str
     created_at: str
     updated_at: str
-    origin: str
     channel: str
     status: str
     created_by: ThreadControlRefData
@@ -644,6 +644,15 @@ class ThreadInfo:
     run_count: int
     latest_run: ThreadRunInfo | None
     active_run: ThreadRunInfo | None
+
+    def __post_init__(self) -> None:
+        ThreadRef(self.id)
+
+    @property
+    def kind(self) -> ThreadKind:
+        """Derive the context kind for internal selection and presentation."""
+
+        return ThreadRef(self.id).kind
 
     @classmethod
     def from_records(
@@ -657,13 +666,12 @@ class ThreadInfo:
         """Build one thread summary from durable records."""
 
         if not runs:
-            title = thread.origin
+            title = thread.kind.value
             return cls(
                 id=thread.id,
                 title=title,
                 created_at=thread.created_at,
-                origin=thread.origin,
-                channel=_thread_channel(thread.id, thread.origin),
+                channel=_thread_channel(thread.kind),
                 status="idle",
                 updated_at=thread.updated_at,
                 created_by=ThreadControlRefData(thread=thread.id, index=0),
@@ -677,10 +685,9 @@ class ThreadInfo:
         active = next((run for run in reversed(runs) if run.status == "running"), None)
         return cls(
             id=thread.id,
-            title=message_summary(input_parts) or thread.origin,
+            title=message_summary(input_parts) or thread.kind.value,
             created_at=thread.created_at,
-            origin=thread.origin,
-            channel=_thread_channel(thread.id, thread.origin),
+            channel=_thread_channel(thread.kind),
             status="running" if active is not None else "idle",
             updated_at=max(last.finished_at or last.started_at, thread.updated_at),
             created_by=ThreadControlRefData(thread=thread.id, index=0),
@@ -930,14 +937,8 @@ class ThreadDetail(ThreadInfo):
         )
 
 
-def _thread_channel(thread_id: str, origin: str) -> str:
-    if origin != "chat":
-        return ""
-    if thread_id.startswith("web_"):
-        return "web"
-    if thread_id.startswith("script_tg_"):
-        return "tg"
-    return "terminal"
+def _thread_channel(kind: ThreadKind) -> str:
+    return "terminal" if kind == ThreadKind.CHAT else ""
 
 
 def _output_parts(output: Output | None) -> tuple[Part, ...]:

@@ -30,8 +30,8 @@ from toolang.lang.input import CallInput
 def test_parse_authored_run_round_trips_every_request_field() -> None:
     payload = AuthoredRunRequest.model_validate(
         {
-            "thread_id": "term_example",
-            "request_id": "term_request",
+            "thread_id": "chat_example",
+            "request_id": "chat_request",
             "runnable": {
                 "ref": "agic:chat",
                 "input": {"_": "hello", "tone": "brief", "audience": "maintainers"},
@@ -59,8 +59,8 @@ def test_parse_authored_run_round_trips_every_request_field() -> None:
     )
 
     assert parse_authored_run(payload) == RunRequest(
-        thread_id="term_example",
-        request_id="term_request",
+        thread_id="chat_example",
+        request_id="chat_request",
         runnable=RunnableRequest(
             "agic:chat",
             CallInput({"_": "hello", "tone": "brief", "audience": "maintainers"}),
@@ -87,8 +87,8 @@ def test_parse_authored_run_round_trips_every_request_field() -> None:
 def test_parse_authored_run_accepts_canonical_reasoning_budget() -> None:
     payload = AuthoredRunRequest.model_validate(
         {
-            "thread_id": "term_example",
-            "request_id": "term_request",
+            "thread_id": "chat_example",
+            "request_id": "chat_request",
             "runnable": {"ref": "agic:chat", "input": {"_": "hello"}},
             "model": {
                 "ref": "anthropic/claude",
@@ -110,8 +110,8 @@ def test_authored_run_rejects_reasoning_effort_and_budget_together() -> None:
     with pytest.raises(ValidationError, match="either effort or budget_tokens"):
         AuthoredRunRequest.model_validate(
             {
-                "thread_id": "term_example",
-                "request_id": "term_request",
+                "thread_id": "chat_example",
+                "request_id": "chat_request",
                 "runnable": {"ref": "agic:chat", "input": {"_": "hello"}},
                 "model": {
                     "ref": "openai/gpt-5",
@@ -126,8 +126,8 @@ def test_authored_run_rejects_a_non_integer_reasoning_budget() -> None:
     with pytest.raises(ValidationError, match="Input should be a valid integer"):
         AuthoredRunRequest.model_validate(
             {
-                "thread_id": "term_example",
-                "request_id": "term_request",
+                "thread_id": "chat_example",
+                "request_id": "chat_request",
                 "runnable": {"ref": "agic:chat", "input": {"_": "hello"}},
                 "model": {
                     "ref": "anthropic/claude",
@@ -207,8 +207,8 @@ def test_authored_run_schema_rejects_extra_or_lossy_values(
     change: dict[str, object],
 ) -> None:
     source: dict[str, object] = {
-        "thread_id": "term_example",
-        "request_id": "term_request",
+        "thread_id": "chat_example",
+        "request_id": "chat_request",
         "runnable": {"ref": "agic:chat", "input": {}},
         "model": None,
         "policy": {"allow": [], "limits": {}},

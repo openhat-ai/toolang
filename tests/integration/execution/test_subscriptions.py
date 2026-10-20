@@ -14,7 +14,7 @@ from toolang.execution.events import RunSnapshot
 from toolang.execution.stream import StreamLimits
 from toolang.execution.stream_client import StreamClientState
 from toolang.execution.subscriptions import StreamScope, Subscriptions
-from toolang.execution.types import ThreadPrefix
+from toolang.execution.types import ThreadKind
 
 
 @pytest.mark.parametrize("scope_kind", ["run", "thread", "agent"])
@@ -33,7 +33,6 @@ def test_large_model_history_prefill_preserves_calls_without_expanding_them(
         store,
         run_id="run_large",
         thread_id="chat_large",
-        origin="chat",
         input=Message.user("question"),
     )
     refs = [StepRef.from_local(run.id, (index,)) for index in range(10)]
@@ -120,7 +119,7 @@ def test_completed_root_prefill_has_final_values_and_one_checkpoint(tmp_path):
 
     async def scenario():
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             run = await harness.executor.run(
                 harness.run_spec(
                     thread=thread, runnable="example", primary=(TextPart("input"),)
@@ -161,7 +160,7 @@ def test_resume_recovers_completed_trees_after_cache_loss(tmp_path, scope_kind):
 
     async def scenario():
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             before = str(source.tail)
             run = await harness.executor.run(
                 harness.run_spec(
@@ -210,7 +209,7 @@ def test_concurrent_roots_keep_scopes_and_client_lifetimes_independent(
     async def scenario():
         async with harness:
             one, two, three = [
-                harness.threads.create(prefix=ThreadPrefix.CHAT) for _ in range(3)
+                harness.threads.create(kind=ThreadKind.CHAT) for _ in range(3)
             ]
             handles = []
             try:
@@ -288,7 +287,7 @@ def test_snapshot_does_not_hold_main_store_or_publication_gate(tmp_path):
 
     async def scenario():
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             first = await harness.executor.run(
                 harness.run_spec(
                     thread=thread, runnable="example", primary=(TextPart("input"),)
@@ -344,7 +343,7 @@ def test_mid_step_attachment_fills_ancestors_and_ignores_partial_parts(
 
     async def scenario():
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             handle = harness.executor.run(
                 harness.run_spec(
                     thread=thread, runnable="example", primary=(TextPart("input"),)
@@ -400,7 +399,7 @@ def test_cached_replay_drops_finalized_parts_without_replacing_records(tmp_path)
 
     async def scenario():
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             before = str(harness.executor.stream.tail)
             run = await harness.executor.run(
                 harness.run_spec(
@@ -432,7 +431,7 @@ def test_agent_initialization_omits_history_but_epoch_reset_replaces_it(tmp_path
 
     async def scenario():
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             run = await harness.executor.run(
                 harness.run_spec(
                     thread=thread, runnable="example", primary=(TextPart("input"),)
@@ -472,7 +471,7 @@ def test_shutdown_wakes_idle_subscription_without_closing_canonical_source(tmp_p
             service.stop()
             with pytest.raises(StopAsyncIteration):
                 await asyncio.wait_for(waiting, 1)
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             run = await harness.executor.run(
                 harness.run_spec(
                     thread=thread, runnable="example", primary=(TextPart("input"),)
@@ -495,7 +494,7 @@ def test_overflow_wins_over_an_already_terminal_record(tmp_path):
 
     async def scenario():
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             run = await harness.executor.run(
                 harness.run_spec(
                     thread=thread, runnable="example", primary=(TextPart("input"),)
@@ -510,9 +509,8 @@ def test_overflow_wins_over_an_already_terminal_record(tmp_path):
                 with source.publication() as publication:
                     publication.append(
                         ThreadCreated(
-                            f"term_other{index}",
-                            ControlRef.for_thread(f"term_other{index}", 0),
-                            "chat",
+                            f"chat_other{index}",
+                            ControlRef.for_thread(f"chat_other{index}", 0),
                             "",
                         )
                     )
@@ -535,8 +533,7 @@ def test_root_snapshot_rejects_recorded_parent_end_with_active_child(tmp_path):
     project_run_start(
         store,
         run_id="run_root",
-        thread_id="term_tree",
-        origin="chat",
+        thread_id="chat_tree",
         input=Message.user("root"),
     )
     project_step(
@@ -553,8 +550,7 @@ def test_root_snapshot_rejects_recorded_parent_end_with_active_child(tmp_path):
     project_run_start(
         store,
         run_id="run_child",
-        thread_id="term_tree",
-        origin="chat",
+        thread_id="chat_tree",
         input=Message.user("child"),
         parent=StepRef.parse("run_root.0"),
         root_run_id="run_root",
@@ -591,7 +587,7 @@ def test_thread_prefill_recovers_fork_and_rewind_after_cache_loss(tmp_path):
         async with harness:
             source = harness.executor.stream
             threads = ThreadManager(harness.store, harness.ids, stream=source)
-            thread = threads.create(prefix=ThreadPrefix.CHAT)
+            thread = threads.create(kind=ThreadKind.CHAT)
             run = await harness.executor.run(
                 harness.run_spec(
                     thread=thread, runnable="example", primary=(TextPart("input"),)
@@ -638,7 +634,7 @@ def test_snapshot_byte_limit_fails_without_checkpoint_or_execution_failure(
 
     async def scenario():
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             spec = harness.run_spec(
                 thread=thread, runnable="example", primary=(TextPart("input"),)
             )

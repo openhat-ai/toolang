@@ -150,7 +150,6 @@ def test_conversation_metadata_results_persist_as_completed_tool_steps(
                     store,
                     run_id="run_metadata",
                     thread_id="chat_metadata",
-                    origin="chat",
                     input=RunMessage.user("Read metadata"),
                 )
                 ref = StepRef.from_local(run.id, (0,))

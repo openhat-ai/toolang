@@ -131,7 +131,7 @@ from .values import parts_from_value
 from . import talk
 from .errors import ThreadBusy
 
-RUN_STORE_SCHEMA = 61
+RUN_STORE_SCHEMA = 62
 
 
 class RunStore:
@@ -855,7 +855,6 @@ class RunStore:
             if requested_thread is None:
                 self.create_thread(
                     thread_id=handle.thread,
-                    origin="work",
                     created_at=created_at,
                     triggered_by=source,
                 )
@@ -1509,7 +1508,6 @@ class RunStore:
         self,
         *,
         thread_id: str,
-        origin: str = "chat",
         request_id: str | None = None,
         client_id: str | None = None,
         created_at: str | None = None,
@@ -1556,13 +1554,12 @@ class RunStore:
                 self._conn.execute(
                     """
                     INSERT INTO threads(
-                        id, origin,
+                        id,
                         created_at, updated_at
-                    ) VALUES (?, ?, ?, ?)
+                    ) VALUES (?, ?, ?)
                     """,
                     (
                         thread_id,
-                        origin,
                         now,
                         now,
                     ),
@@ -1663,13 +1660,12 @@ class RunStore:
                 self._conn.execute(
                     """
                     INSERT INTO threads(
-                        id, origin,
+                        id,
                         created_at, updated_at
-                    ) VALUES (?, ?, ?, ?)
+                    ) VALUES (?, ?, ?)
                     """,
                     (
                         thread_id,
-                        source_record.origin,
                         created_at,
                         created_at,
                     ),
@@ -3604,7 +3600,6 @@ class RunStore:
                 """
                 CREATE TABLE IF NOT EXISTS threads (
                     id TEXT PRIMARY KEY,
-                    origin TEXT NOT NULL,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
                     horizon TEXT
@@ -3930,7 +3925,6 @@ def _thread_from_row(row: sqlite3.Row) -> ThreadRecord:
     raw = dict(row)
     return ThreadRecord(
         id=str(raw["id"]),
-        origin=str(raw["origin"]),
         created_at=str(raw["created_at"]),
         updated_at=str(raw["updated_at"]),
         horizon=history_ref(str(raw["horizon"]))

@@ -15,8 +15,8 @@ from toolang.execution.types import ContentRef
     "schema_version",
     [
         pytest.param(28, id="historical"),
-        *[pytest.param(version, id=f"old-{version}") for version in range(51, 61)],
-        pytest.param(62, id="future"),
+        *[pytest.param(version, id=f"old-{version}") for version in range(51, 62)],
+        pytest.param(63, id="future"),
     ],
 )
 @pytest.mark.parametrize("read_only", (False, True))
@@ -40,7 +40,7 @@ def test_run_store_rejects_any_other_schema_without_modifying_it(
         store_type(path, read_only=read_only)
 
     assert raised.value.version == schema_version
-    assert raised.value.current == 61
+    assert raised.value.current == 62
     assert raised.value.read_only is read_only
     assert path.read_bytes() == before
     connection = sqlite3.connect(path)
@@ -95,7 +95,7 @@ def test_run_store_opens_the_current_schema(tmp_path: Path) -> None:
 
     connection = sqlite3.connect(path)
     try:
-        assert int(connection.execute("PRAGMA user_version").fetchone()[0]) == 61
+        assert int(connection.execute("PRAGMA user_version").fetchone()[0]) == 62
         columns = {
             table: {
                 str(row[1]) for row in connection.execute(f"PRAGMA table_info({table})")
@@ -106,7 +106,6 @@ def test_run_store_opens_the_current_schema(tmp_path: Path) -> None:
             "threads": {
                 "horizon",
                 "id",
-                "origin",
                 "created_at",
                 "updated_at",
             },
@@ -205,7 +204,7 @@ def test_missing_allocator_table_is_recreated_without_overwriting_records(
 
     def create_record(store: RunStore, identifier: str) -> None:
         if family_name == "local":
-            store.create_thread(thread_id=identifier, origin="chat")
+            store.create_thread(thread_id=identifier)
         else:
             accept_run(
                 store,
@@ -221,7 +220,7 @@ def test_missing_allocator_table_is_recreated_without_overwriting_records(
     store = RunStore(path)
     try:
         if family_name == "run":
-            store.create_thread(thread_id="chat_target", origin="chat")
+            store.create_thread(thread_id="chat_target")
         first = allocate_id(path, family=family, agent_name="alice", now=now)
         create_record(store, f"{prefix}_{first.value}")
         threads, runs, controls = (

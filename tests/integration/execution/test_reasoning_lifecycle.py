@@ -41,7 +41,7 @@ from toolang.execution.events import (
     run_event_from_data,
     run_event_to_data,
 )
-from toolang.execution.types import ThreadPrefix
+from toolang.execution.types import ThreadKind
 from toolang.execution.store import RunStore
 from toolang.lang.types import Array, Struct
 
@@ -99,7 +99,7 @@ def test_reasoning_survives_reopening_new_runs_and_fork_without_continuation(
 
     async def scenario():
         async with first:
-            thread = first.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = first.threads.create(kind=ThreadKind.CHAT)
             run = await first.executor.run(
                 first.run_spec(
                     thread=thread, runnable="chat", primary=(TextPart("start"),)
@@ -166,7 +166,7 @@ def test_interleaved_reasoning_events_match_durable_output(tmp_path: Path):
         async with harness:
             run = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="chat",
                     primary=(TextPart("start"),),
                 ),
@@ -223,7 +223,7 @@ def test_typed_output_ignores_reasoning_without_losing_durable_parts(
         async with harness:
             run = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="chat",
                     primary=(TextPart("start"),),
                 ),
@@ -276,7 +276,7 @@ def test_failed_stream_persists_reasoning_prefix_without_native_state(tmp_path: 
         async with harness:
             run = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="chat",
                     primary=(TextPart("start"),),
                 ),
@@ -329,7 +329,7 @@ def test_reasoning_and_empty_signed_text_cannot_satisfy_visible_output(
         async with harness:
             run = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="chat",
                     primary=(TextPart("start"),),
                 )

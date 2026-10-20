@@ -24,7 +24,7 @@ from toolang.base.types.run import ModelCallResult, ModelUsage, ToolCall
 from toolang.execution.events import StepEnd
 from toolang.execution.records import ExecControlPayload
 from toolang.plugin.toolsets.loading import load_tools
-from toolang.execution.types import ThreadPrefix
+from toolang.execution.types import ThreadKind
 from toolang.state.prepare import prepare_agent_state
 
 
@@ -76,7 +76,7 @@ agic evolve() -> Text:
         async with harness:
             root = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="grow",
                 ),
                 tracer=tracer,
@@ -137,7 +137,7 @@ def test_model_root_self_exec_keeps_one_run(tmp_path, changed, unnamed):
         async with harness:
             handle = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="<entry:1>" if unnamed else "grow",
                 ),
                 tracer=tracer,
@@ -204,7 +204,7 @@ agic grow(item: Item) -> Text:
         async with harness:
             handle = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="grow",
                     named={"item": {"text": "start"}},
                 )
@@ -247,7 +247,7 @@ def test_root_self_exec_still_requires_handoff_authorization(tmp_path):
         async with harness:
             root = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="grow",
                 )
             )
@@ -289,7 +289,7 @@ def test_unchanged_native_self_exec_remains_cancelable(tmp_path, monkeypatch, ti
         async with harness:
             handle = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="grow",
                 ),
                 tracer=tracer,
@@ -321,7 +321,7 @@ def test_self_exec_preserves_root_budget_and_authority(tmp_path):
         async with harness:
             root = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="grow",
                     limits=RunLimits(tokens=10, agic_model_calls=1),
                     ceilings=(AgentCeiling(tools=()),),
@@ -358,7 +358,7 @@ def test_root_self_exec_rejects_while_a_descendant_is_active(tmp_path):
         async with harness:
             handle = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="grow",
                 )
             )

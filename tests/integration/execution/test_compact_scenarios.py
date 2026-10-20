@@ -36,7 +36,7 @@ from toolang.execution.assembly.history import summary_message
 from toolang.execution.compaction import permit
 from toolang.execution.tokens import InputEstimate, message_tokens
 from toolang.execution.records import CompactControlPayload, RunControlPayload
-from toolang.execution.types import FieldRef, ThreadPrefix, ToolStepSpec
+from toolang.execution.types import FieldRef, ThreadKind, ToolStepSpec
 
 
 def compact_runs(harness, thread):
@@ -100,7 +100,7 @@ def test_compact_before_model_and_freeze_horizon_for_next_root(
 
     async def scenario():
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             old = await harness.executor.run(spec(harness, thread, "old input"))
             await harness.executor.run(spec(harness, thread, "middle input"))
             recent = await harness.executor.run(spec(harness, thread, "recent input"))
@@ -223,7 +223,7 @@ def test_compact_before_model_and_freeze_horizon_for_next_root(
 
 
 async def seed(harness):
-    thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+    thread = harness.threads.create(kind=ThreadKind.CHAT)
     for text in ("old", "middle", "recent"):
         run = await harness.executor.run(spec(harness, thread, text))
         assert run.status == "succeeded"
@@ -335,7 +335,7 @@ def test_unrecorded_flow_tails_remain_compactable(tmp_path):
 
     async def scenario():
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             roots = []
             for text in ("old", "middle", "recent"):
                 root = await harness.executor.run(
@@ -405,7 +405,7 @@ def test_irreducible_current_input_does_not_start_compact(tmp_path):
 
     async def scenario():
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             constrain(harness)
             current = await harness.executor.run(
                 spec(harness, thread, "large " * 15000)
@@ -783,7 +783,7 @@ def test_cancel_before_oversized_first_call_still_has_a_canceled_step(tmp_path):
 
     async def scenario():
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             constrain(harness)
             handle = harness.executor.run(spec(harness, thread, "large " * 15000))
             handle.cancel(timing="next_call")
@@ -1122,7 +1122,7 @@ def test_one_large_root_compacts_in_step_batches_and_keeps_latest_step(
 
     async def scenario():
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             original = await harness.executor.run(
                 spec(harness, thread, "original goal")
             )
@@ -1310,7 +1310,7 @@ def test_recall_none_does_not_bound_unused_history(tmp_path, monkeypatch):
 
     async def scenario():
         async with h:
-            thread = h.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = h.threads.create(kind=ThreadKind.CHAT)
             await h.executor.run(spec(h, thread, "first"))
             constrain(h)
 
@@ -1342,7 +1342,7 @@ def test_history_units_keep_step_outcome_when_root_fails(tmp_path):
 
     async def scenario():
         async with h:
-            thread = h.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = h.threads.create(kind=ThreadKind.CHAT)
             run = await h.executor.run(spec(h, thread, "work"))
             assert run.status == "failed"
             tool_step = next(
@@ -1400,7 +1400,7 @@ def test_provider_context_rejection_compacts_before_retry(tmp_path):
 
     async def scenario():
         async with h:
-            thread = h.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = h.threads.create(kind=ThreadKind.CHAT)
             await h.executor.run(spec(h, thread, "first"))
             await h.executor.run(spec(h, thread, "second"))
             constrain(h, context=30000)
@@ -1441,7 +1441,7 @@ def test_child_without_history_references_does_not_bound_history(tmp_path, monke
 
     async def scenario():
         async with h:
-            thread = h.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = h.threads.create(kind=ThreadKind.CHAT)
             await h.executor.run(spec(h, thread, "first"))
             constrain(h)
 
@@ -1474,7 +1474,7 @@ def test_batched_tool_replies_remain_in_their_own_step_units(tmp_path, skipped):
 
     async def scenario():
         async with h:
-            thread = h.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = h.threads.create(kind=ThreadKind.CHAT)
             run = await h.executor.run(spec(h, thread, "work"))
             assert run.status == "succeeded", run.error
             units = history_units(h.store, run)

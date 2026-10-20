@@ -247,9 +247,9 @@ def test_id_issuer_uses_explicit_canonical_prefixes(tmp_path: Path) -> None:
     ids = IdIssuer(_database(tmp_path / ".runtime" / "runs.db"), agent_name="alice")
 
     run_id = ids.issue_run()
-    thread_id = ids.issue_thread("term")
+    thread_id = ids.issue_thread("chat")
     assert run_id.startswith("run_")
-    assert thread_id.startswith("term_")
+    assert thread_id.startswith("chat_")
     assert decode_id(run_id[4:], family=RUN_ID_FAMILY, agent_name="alice").seq == 0
     assert decode_id(thread_id[5:], family=LOCAL_ID_FAMILY, agent_name="alice").seq == 0
     with pytest.raises(ValueError, match="invalid thread prefix"):
@@ -330,10 +330,10 @@ def test_reservation_survives_business_rollback_and_history_deletion(
         first = ids.issue_thread("chat")
         with pytest.raises(RuntimeError, match="creation failed"):
             with store.write_transaction():
-                store.create_thread(thread_id=first, origin="chat")
+                store.create_thread(thread_id=first)
                 raise RuntimeError("creation failed")
         assert store.get_thread(thread_id=first) is None
-        store.create_thread(thread_id=ids.issue_thread("work"), origin="spawn")
+        store.create_thread(thread_id=ids.issue_thread("work"))
     finally:
         store.close()
     with sqlite3.connect(path) as connection:

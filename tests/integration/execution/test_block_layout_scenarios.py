@@ -9,7 +9,7 @@ from tests.support.execution_assertions import without_runtime_snapshots
 from tests.support.execution_harness import ExecutionHarness
 from toolang.base.types.message import Message, message_text
 from toolang.base.types.run import ModelCallResult
-from toolang.execution.types import LoopStepReport, ThreadPrefix
+from toolang.execution.types import LoopStepReport, ThreadKind
 from toolang.lang.input import resolve_input_parts
 
 
@@ -56,7 +56,7 @@ def test_block_ownership_preserves_iteration_counts_and_prompt_boundaries(
 
     async def scenario() -> None:
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             root = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
@@ -110,7 +110,7 @@ def test_until_receives_locals_defined_in_its_body(
 
     async def scenario() -> None:
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             root = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,

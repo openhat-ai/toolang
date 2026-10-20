@@ -8,7 +8,7 @@ from tests.support.execution_harness import ExecutionHarness
 from toolang.base.types.message import Message, TextPart
 from toolang.base.types.run import ModelCallResult, ToolCall
 from toolang.common.layout import AgentLayout
-from toolang.execution.types import ThreadPrefix
+from toolang.execution.types import ThreadKind
 from toolang.state.prepare import prepare_agent_state
 
 
@@ -61,7 +61,7 @@ def test_root_flow_calls_export_with_private_helper(tmp_path, kind, named):
         async with harness:
             root = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="parent",
                     primary=(TextPart("input"),),
                 )

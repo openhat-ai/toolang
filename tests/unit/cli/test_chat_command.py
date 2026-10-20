@@ -67,40 +67,39 @@ def chat_layout(tmp_path: Path) -> AgentLayout:
 def _chat_history(layout: AgentLayout) -> None:
     with closing(RunStore(layout.run_store)) as store:
         store.create_thread(
-            thread_id="term_existing", created_at="2026-01-01T00:00:00Z"
+            thread_id="chat_existing", created_at="2026-01-01T00:00:00Z"
         )
-        store.create_thread(thread_id="term_new", created_at="2026-01-02T00:00:00Z")
+        store.create_thread(thread_id="work_new", created_at="2026-01-02T00:00:00Z")
         project_run_start(
             store,
             run_id="run_existing",
-            thread_id="term_existing",
-            origin="chat",
+            thread_id="chat_existing",
             input=Message.user("hello"),
             created_at="2026-01-01T00:00:00Z",
         )
         store.finish_run(run_id="run_existing", finished_at="2026-01-03T00:00:00Z")
-        assert store.list_threads()[0].id == "term_new"
+        assert store.list_threads()[0].id == "work_new"
 
 
 @pytest.mark.parametrize(
     ("args", "expected"),
     [
         ([], None),
-        (["--thread"], "term_existing"),
-        (["-t"], "term_existing"),
-        (["--thread", "term_new"], "term_new"),
-        (["-t", "term_new"], "term_new"),
-        (["--thread=term_new"], "term_new"),
-        (["-tterm_new"], "term_new"),
-        (["--thread", "run_existing"], "term_existing"),
-        (["-t", "run_existing"], "term_existing"),
-        (["-t", "--sandbox", "host"], "term_existing"),
-        (["--thread", "--default", "model=test/model"], "term_existing"),
-        (["--thread", "--"], "term_existing"),
-        (["--thread", "--dev"], "term_existing"),
-        (["--dev", "--thread"], "term_existing"),
-        (["-t", "term_new", "--thread"], "term_existing"),
-        (["--thread", "-t", "term_new"], "term_new"),
+        (["--thread"], "chat_existing"),
+        (["-t"], "chat_existing"),
+        (["--thread", "work_new"], "work_new"),
+        (["-t", "work_new"], "work_new"),
+        (["--thread=work_new"], "work_new"),
+        (["-twork_new"], "work_new"),
+        (["--thread", "run_existing"], "chat_existing"),
+        (["-t", "run_existing"], "chat_existing"),
+        (["-t", "--sandbox", "host"], "chat_existing"),
+        (["--thread", "--default", "model=test/model"], "chat_existing"),
+        (["--thread", "--"], "chat_existing"),
+        (["--thread", "--dev"], "chat_existing"),
+        (["--dev", "--thread"], "chat_existing"),
+        (["-t", "work_new", "--thread"], "chat_existing"),
+        (["--thread", "-t", "work_new"], "work_new"),
     ],
 )
 def test_chat_thread_option_resolves_through_the_lazy_entry_point(
@@ -156,11 +155,11 @@ def test_chat_latest_requires_history_without_starting_a_runtime(
 @pytest.mark.parametrize(
     ("args", "code", "message"),
     [
-        (["term_existing"], 2, "unexpected extra argument"),
+        (["chat_existing"], 2, "unexpected extra argument"),
         (["--thread="], 2, "thread id must not be empty"),
         (["-t", ""], 2, "thread id must not be empty"),
         (["--thread", "--unknown"], 2, "No such option"),
-        (["-t", "--", "term_existing"], 2, "unexpected extra argument"),
+        (["-t", "--", "chat_existing"], 2, "unexpected extra argument"),
         (["--thread", "run_missing"], 1, "run not found: run_missing"),
     ],
 )
@@ -175,11 +174,11 @@ def test_chat_thread_option_errors_preserve_existing_options(
     assert message in capsys.readouterr().err
 
 
-def test_chat_latest_preserves_history_ties_and_includes_nonterminal_threads(
+def test_chat_latest_preserves_history_ties_and_includes_other_thread_kinds(
     chat_layout, monkeypatch
 ):
     with closing(RunStore(chat_layout.run_store)) as store:
-        for thread in ("term_old", "web_new"):
+        for thread in ("chat_old", "work_new"):
             store.create_thread(thread_id=thread, created_at="2026-01-01T00:00:00Z")
         # Equal projected update times retain the history API's existing order.
         expected = chat.RunHistory(store).list_threads(limit=1)[0].id
@@ -192,9 +191,9 @@ def test_chat_latest_preserves_history_ties_and_includes_nonterminal_threads(
     assert too_main(["--root", str(chat_layout.root), "alice", "chat", "--thread"]) == 0
     assert selected == [expected]
     with closing(RunStore(chat_layout.run_store)) as store:
-        store.create_thread(thread_id="web_latest", created_at="2026-01-04T00:00:00Z")
+        store.create_thread(thread_id="work_latest", created_at="2026-01-04T00:00:00Z")
     assert too_main(["--root", str(chat_layout.root), "alice", "chat", "--thread"]) == 0
-    assert selected[-1] == "web_latest"
+    assert selected[-1] == "work_latest"
 
 
 @pytest.mark.parametrize("placement", ["resident", "roaming", "visiting"])
@@ -219,7 +218,7 @@ def test_chat_latest_uses_selected_history_for_agent_sessions(
     if placement != "resident":
         with closing(RunStore(chat_layout.run_store)) as store:
             store.create_thread(
-                thread_id="term_unrelated", created_at="2099-01-01T00:00:00Z"
+                thread_id="chat_unrelated", created_at="2099-01-01T00:00:00Z"
             )
     _chat_history(layout)
     captured = {}
@@ -253,7 +252,7 @@ def test_chat_latest_uses_selected_history_for_agent_sessions(
     assert captured == {
         "target": "http://localhost:7001",
         "layout": layout,
-        "thread": "term_existing",
+        "thread": "chat_existing",
         "closed": True,
     }
 
@@ -316,7 +315,7 @@ class _Client:
 
     def create_thread(self) -> str:
         self.created += 1
-        return "term_created"
+        return "chat_created"
 
     def initial_setting(self) -> SessionSetting:
         return SessionSetting(
@@ -579,8 +578,8 @@ def test_scripted_chat_creates_one_thread_for_the_first_submission(
 
     assert client.created == 1
     assert client.starts == [
-        ("term_created", "hello", ModelRequest("test/model")),
-        ("term_created", "again", ModelRequest("test/model")),
+        ("chat_created", "hello", ModelRequest("test/model")),
+        ("chat_created", "again", ModelRequest("test/model")),
     ]
 
 
@@ -629,7 +628,7 @@ def test_scripted_chat_reports_a_failed_run(
 
     chat._chat_interactive_scripted_local(
         client=client,
-        thread_id="term_existing",
+        thread_id="chat_existing",
         setting=client.initial_setting(),
     )
 
@@ -675,7 +674,7 @@ def test_scripted_snapshot_discards_an_invalidated_terminal_result() -> None:
     assert renderer.failure is None
 
 
-@pytest.mark.parametrize("thread_id", (None, "term_existing"))
+@pytest.mark.parametrize("thread_id", (None, "chat_existing"))
 def test_interactive_tty_passes_the_unmodified_thread_to_the_tui(
     thread_id: str | None,
     monkeypatch: Any,
@@ -807,7 +806,7 @@ def test_prompt_toolkit_resolves_surfaces_before_starting_the_tui(
 
     chat._chat_interactive_prompt_toolkit(
         object(),  # type: ignore[arg-type]
-        thread_id="term_existing",
+        thread_id="chat_existing",
         setting=setting,
         client=client,
     )
@@ -816,7 +815,7 @@ def test_prompt_toolkit_resolves_surfaces_before_starting_the_tui(
     assert captured["surfaces"] is surfaces
     assert captured["progress_max_width"] == 72
     assert captured["inputbox_max_width"] == int(inputbox_max_width or "72")
-    assert captured["thread_id"] == "term_existing"
+    assert captured["thread_id"] == "chat_existing"
     assert captured["setting"] is setting
     assert captured["client"] is client
 

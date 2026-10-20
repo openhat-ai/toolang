@@ -32,7 +32,7 @@ from toolang.execution.events import (
 from toolang.execution.store import RunStore
 from toolang.execution.types import (
     AwaitableHandle,
-    ThreadPrefix,
+    ThreadKind,
     TypedRef,
     value_to_protocol_data,
     StepRef,
@@ -93,7 +93,7 @@ agic gamma() -> Text:
         async with harness:
             parent = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="parent",
                 ),
                 tracer=tracer,
@@ -182,7 +182,7 @@ agic child() -> {result_type}:
         async with harness:
             root = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="parent",
                 ),
                 tracer=tracer,
@@ -268,7 +268,7 @@ agic side() -> Text:
         async with harness:
             parent = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="parent",
                 ),
                 tracer=tracer,

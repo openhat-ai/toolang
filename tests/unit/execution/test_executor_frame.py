@@ -321,7 +321,7 @@ def test_build_agic_frame_builds_one_complete_model_input(
         run_id="run_1",
         root_run_id="run_1",
         parent=StepRef.from_local("run_parent", (0,)) if thread_window else None,
-        thread="term_1",
+        thread="chat_1",
         bindings=RunBindings(model="test/model", runnable="agic:chat"),
         input=resolve_runnable_input(
             agic,
@@ -445,7 +445,7 @@ def test_build_agic_frame_keeps_declared_output_contract_out_of_instructions(
     run = BoundRun(
         run_id="run_1",
         root_run_id="run_1",
-        thread="term_1",
+        thread="chat_1",
         bindings=RunBindings(model="test/model", runnable="agic:queries"),
         input=resolve_runnable_input(
             agic,
@@ -535,7 +535,7 @@ def test_build_agic_frame_preserves_typed_multimodal_splices(tmp_path: Path) -> 
     run = BoundRun(
         run_id="run_1",
         root_run_id="run_1",
-        thread="term_1",
+        thread="chat_1",
         bindings=RunBindings(model="test/model", runnable="agic:review"),
         input=resolve_runnable_input(
             agic,
@@ -637,7 +637,7 @@ def test_run_executor_uses_prepared_model_input_end_to_end(tmp_path: Path) -> No
         ),
     )
     store = RunStore(home / ".runtime" / "runs.db")
-    store.create_thread(thread_id="term_1")
+    store.create_thread(thread_id="chat_1")
     executor = RunExecutor(
         store, IdIssuer(home / ".runtime" / "runs.db", agent_name="alice")
     )
@@ -653,7 +653,7 @@ def test_run_executor_uses_prepared_model_input_end_to_end(tmp_path: Path) -> No
                 RunSpec(
                     setup=setup,
                     state=state,
-                    thread="term_1",
+                    thread="chat_1",
                     bindings=RunBindings(model="test/model", runnable="chat"),
                     limits=setup.limits,
                     input=resolve_runnable_input(

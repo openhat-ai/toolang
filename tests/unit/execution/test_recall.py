@@ -33,11 +33,11 @@ def test_history_selection_shares_complete_root_caches_across_horizons():
         return {root: (MessageTemplate("user", (str(root),)),) for root in roots}
 
     history = MessageHistory(
-        "thread",
+        "chat_fixture",
         (first, second),
         load,
         lambda _: "earlier",
-        lambda _: CompactionResult("thread", str(first), str(second), "earlier"),
+        lambda _: CompactionResult("chat_fixture", str(first), str(second), "earlier"),
     )
     selected = history.select(None)
     compacted = history.select(horizon)
@@ -168,12 +168,12 @@ def test_history_recalls_share_cached_selection_and_ignore_far():
         return controls[ref.ref.record].payload.content
 
     history = MessageHistory(
-        "term_test",
+        "chat_test",
         roots,
         load,
         resolve,
         lambda _: CompactionResult(
-            "term_test",
+            "chat_test",
             str(roots[0]),
             str(roots[1]),
             '<skill ref="skill/testing">far is not recall</skill>',

@@ -137,7 +137,7 @@ def test_busy_chore_thread_keeps_its_source_trigger_until_admission(
     _create_chore(catalog, "review", "/agic:review focus=chore\n\nKeep queued.")
     scheduler = _scheduler(harness)
     thread = f"chore_{chore_id('review', agent_name=harness.setup.layout.name)}"
-    harness.store.create_thread(thread_id=thread, origin="chore")
+    harness.store.create_thread(thread_id=thread)
     rejected = threading.Event()
     run = harness.executor.run
 

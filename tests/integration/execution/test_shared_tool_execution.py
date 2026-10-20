@@ -30,7 +30,7 @@ from toolang.execution.executor.steps import tool as tool_step
 from toolang.execution.inspection.history import RunHistory
 from toolang.execution.store import RunStore
 from toolang.execution.types import (
-    ThreadPrefix,
+    ThreadKind,
     ToolStepSpec,
     ToolStepReport,
     CallCounters,
@@ -75,7 +75,7 @@ def test_tool_binding_precedes_paths_and_keeps_raw_records(tmp_path, value):
         async with harness:
             root = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="task",
                 ),
                 tracer=tracer,
@@ -145,7 +145,7 @@ def test_path_errors_and_result_failures_are_recorded(tmp_path, phase):
         async with harness:
             run = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="task",
                 ),
                 tracer=tracer,
@@ -215,7 +215,7 @@ agic task() -> Text:
 
     async def scenario():
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             handle = harness.executor.run(
                 harness.run_spec(thread=thread, runnable="task"), tracer=tracer
             )
@@ -351,7 +351,7 @@ flow blocked(_: Text) -> Text:
         async with harness:
             root = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="parent",
                 ),
                 tracer=tracer,

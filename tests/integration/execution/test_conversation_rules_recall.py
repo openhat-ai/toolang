@@ -28,7 +28,7 @@ from toolang.execution.records import RecallControlPayload, RunControlPayload
 from toolang.execution.types import (
     ConvoRulesRecallTarget,
     ConversationScope,
-    ThreadPrefix,
+    ThreadKind,
 )
 from toolang.execution.events import StepEnd
 
@@ -81,7 +81,7 @@ def test_interrupted_target_preflight_closes_the_original_tool_call(
             make_client(server, "human:owner") as human,
         ):
             await prepare(alice, human)
-            thread = harness.threads.create(prefix=ThreadPrefix.WORK)
+            thread = harness.threads.create(kind=ThreadKind.WORK)
             handle = harness.executor.run(
                 harness.run_spec(thread=thread, runnable="agic:operator"),
                 tracer=tracer,
@@ -153,7 +153,7 @@ def test_target_rules_load_before_effect_and_retry_is_explicit(
                     ModelCallResult(message=Message.assistant("Handled.")),
                 ]
             )
-            thread = harness.threads.create(prefix=ThreadPrefix.CHORE)
+            thread = harness.threads.create(kind=ThreadKind.CHORE)
             handle = harness.executor.run(
                 harness.run_spec(thread=thread, runnable="agic:operator")
             )
@@ -232,7 +232,7 @@ def test_get_rules_publishes_trusted_recall_without_requiring_prior_guidance(
             await human.set_rules("gc_00000001", "Current policy.", revision="0")
             run = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="agic:operator",
                 )
             )
@@ -289,7 +289,7 @@ def test_changed_or_cleared_target_rules_require_a_new_model_decision(
             )
             handle = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.WORK),
+                    thread=harness.threads.create(kind=ThreadKind.WORK),
                     runnable="agic:operator",
                 )
             )
@@ -424,7 +424,7 @@ def test_source_rules_are_recalled_before_the_first_model_call_after_compaction(
                 "gc_00000001", "Current source policy.", revision="0"
             )
             scope = ConversationScope(alice.config.identity, document.conversation)
-            thread = harness.threads.create(prefix=ThreadPrefix.TALK)
+            thread = harness.threads.create(kind=ThreadKind.TALK)
             spec = replace(
                 harness.run_spec(thread=thread, runnable="agic:operator"),
                 conversation=scope,

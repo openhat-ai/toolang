@@ -23,7 +23,7 @@ from toolang.execution.records import ExecControlPayload
 from toolang.execution.runnables import parse_runnable_ref, resolve_runnable
 from toolang.execution.store import RunStore
 from toolang.execution.threads import ThreadManager
-from toolang.execution.types import ThreadPrefix
+from toolang.execution.types import ThreadKind
 from toolang.lang.input import resolve_input_parts, resolve_runnable_input
 from toolang.state.state import AgentState
 from toolang.setup import AgentSetup
@@ -92,7 +92,7 @@ class _LiveExecution:
     async def run(
         self, runnable: str, marker: str, *, thread: str | None = None
     ) -> tuple[str, str]:
-        thread = thread or self.threads.create(prefix=ThreadPrefix.CHAT)
+        thread = thread or self.threads.create(kind=ThreadKind.CHAT)
         runnable_name, runnable_kind = parse_runnable_ref(runnable)
         declaration = resolve_runnable(
             self.state.modules["agent"],
@@ -161,7 +161,7 @@ def test_real_provider_executes_requested_agic_once_with_chat_history(
                 runtime.setup,
                 limits=replace(runtime.setup.limits, agic_model_calls=5, time=120),
             )
-            thread = runtime.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = runtime.threads.create(kind=ThreadKind.CHAT)
             await runtime.run(
                 "<entry:1>",
                 "run agic:test",

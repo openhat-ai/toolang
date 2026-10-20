@@ -30,7 +30,7 @@ from ..types import (
     AwaitableHandle,
     RunRef,
     StepRef,
-    ThreadPrefix,
+    ThreadKind,
     RunnableSettings,
 )
 from .common import BoundRun, Local, _RunRejected
@@ -114,7 +114,7 @@ async def accept(
                         )
             resources = bound.resources
             assert resources is not None
-            target_thread = thread or executor.ids.issue_thread(ThreadPrefix.WORK.value)
+            target_thread = thread or executor.ids.issue_thread(ThreadKind.WORK.value)
             if (
                 thread is not None
                 and executor.store.get_thread(thread_id=thread) is None
@@ -189,7 +189,6 @@ async def accept(
                         event = ThreadCreated(
                             thread=handle.thread,
                             control=ControlRef.for_thread(handle.thread, 0),
-                            origin="work",
                             created_at=bound.created_at,
                         )
                         executor.store.record_event_cursor(

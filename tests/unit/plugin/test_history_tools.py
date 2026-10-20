@@ -46,7 +46,7 @@ def test_history_is_an_ordinary_selectable_user_toolset():
         (
             "read_runs",
             {
-                "thread": "term_a",
+                "thread": "chat_a",
                 "begin": "run_a",
                 "end": "run_z",
                 "from_end": True,

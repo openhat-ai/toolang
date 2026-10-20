@@ -201,7 +201,7 @@ def test_independent_script_instances_share_status_and_keep_separate_execution_s
     assert one.chore_store != two.chore_store
     assert one.runtime_status == two.runtime_status
     store = RunStore(one.run_store)
-    store.create_thread(thread_id="talk_existing", origin="talk")
+    store.create_thread(thread_id="talk_existing")
     store.close()
     restarted = RunStore(replace(one).run_store)
     independent = RunStore(two.run_store)

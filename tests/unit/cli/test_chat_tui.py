@@ -177,7 +177,7 @@ async def _queue_test_app(
     output = _TerminalOutput()
     with create_app_session(input=DummyInput(), output=output):
         app = tui.ChatTuiApp(
-            thread_id="term_busy",
+            thread_id="chat_busy",
             setting=FakeClient().initial_setting(),
             input_history=None,
             client=FakeClient(),
@@ -275,7 +275,7 @@ def test_chat_run_begin_finalizes_local_submission_block() -> None:
 def test_chat_run_lifecycle_keeps_control_bar_without_script_header(status) -> None:
     app = FakeApp()
     request = RunRequest(
-        thread_id="term_1",
+        thread_id="chat_1",
         request_id="review",
         runnable=RunnableRequest("agic:review", CallInput({"_": "Review this."})),
         model=ModelRequest("test/model", reasoning=Reasoning(effort="high")),
@@ -3732,7 +3732,7 @@ def test_chat_status_resolves_absolute_and_default_session_workspaces() -> None:
 
     client = WorkspaceClient()
     app = tui.ChatTuiApp(
-        thread_id="term_workspace",
+        thread_id="chat_workspace",
         setting=replace(
             client.initial_setting(),
             workdir="/private/project",
@@ -3757,7 +3757,7 @@ def test_chat_tui_tracks_only_root_chdir_workspace_in_center(
     monkeypatch: Any,
 ) -> None:
     app = tui.ChatTuiApp(
-        thread_id="term_status",
+        thread_id="chat_status",
         setting=SessionSetting(
             model=ModelRequest("openai/gpt-5"),
             runnable="agic:chat",
@@ -4080,8 +4080,8 @@ def test_chat_tui_run_lifecycle_starts_and_stops_status_activity(
         QueuedCall(
             "hello",
             RunRequest(
-                thread_id="term_request",
-                request_id="term_request",
+                thread_id="chat_request",
+                request_id="chat_request",
                 runnable=RunnableRequest("agic:chat", CallInput({"_": "hello"})),
                 model=ModelRequest("openai/gpt-5"),
                 policy=RunPolicy(),
@@ -4324,7 +4324,7 @@ def test_chat_tui_keeps_session_runnable_when_run_events_arrive(
     monkeypatch: Any,
 ) -> None:
     app = tui.ChatTuiApp(
-        thread_id="term_status",
+        thread_id="chat_status",
         setting=SessionSetting(
             model=ModelRequest("openai/gpt-5"),
             runnable="flow:research",
@@ -4357,7 +4357,7 @@ def test_chat_tui_keeps_session_runnable_when_run_events_arrive(
 
 def test_chat_tui_applies_default_settings_while_a_run_is_active() -> None:
     app = tui.ChatTuiApp(
-        thread_id="term_status",
+        thread_id="chat_status",
         setting=FakeClient().initial_setting(),
         input_history=None,
         client=FakeClient(),
@@ -4444,7 +4444,7 @@ def test_chat_tui_creates_a_thread_only_for_the_first_submission(
 
         def create_thread(self) -> str:
             self.created += 1
-            return "term_lazy"
+            return "chat_lazy"
 
         def run(self, *args: object, **kwargs: object) -> None:
             del args, kwargs
@@ -4465,7 +4465,7 @@ def test_chat_tui_creates_a_thread_only_for_the_first_submission(
     app.handle_submit("hello")
     assert started.wait(timeout=1)
     assert client.created == 1
-    assert app.thread_id == "term_lazy"
+    assert app.thread_id == "chat_lazy"
 
 
 def test_chat_thread_creation_error_is_a_submission_error() -> None:
@@ -4508,7 +4508,7 @@ def test_chat_tui_submits_empty_runnable_call(
         ) -> RunRequest:
             return build_run_request(
                 thread_id=thread_id,
-                request_id="term_request",
+                request_id="chat_request",
                 input=input,
                 override=override,
                 setting=setting,
@@ -4519,7 +4519,7 @@ def test_chat_tui_submits_empty_runnable_call(
 
     setting = replace(FakeClient().initial_setting(), runnable="agic:session")
     app = tui.ChatTuiApp(
-        thread_id="term_test",
+        thread_id="chat_test",
         setting=setting,
         input_history=None,
         client=RunnableClient(),
@@ -4544,7 +4544,7 @@ def test_chat_tui_submits_empty_runnable_call(
 
 def test_chat_queue_captures_settings_at_submission_time() -> None:
     app = tui.ChatTuiApp(
-        thread_id="term_busy",
+        thread_id="chat_busy",
         setting=FakeClient().initial_setting(),
         input_history=None,
         client=FakeClient(),
@@ -4584,7 +4584,7 @@ def test_chat_tui_meta_enter_steers_literal_input_and_accepts_the_draft() -> Non
             steered.set()
 
     app = tui.ChatTuiApp(
-        thread_id="term_busy",
+        thread_id="chat_busy",
         setting=FakeClient().initial_setting(),
         input_history=None,
         client=RecordingClient(),
@@ -4626,7 +4626,7 @@ def test_chat_tui_meta_enter_without_an_active_run_preserves_the_draft() -> None
 
 def test_chat_tui_queue_panel_edit_refuses_to_overwrite_a_draft() -> None:
     app = tui.ChatTuiApp(
-        thread_id="term_busy",
+        thread_id="chat_busy",
         setting=FakeClient().initial_setting(),
         input_history=None,
         client=FakeClient(),
@@ -4667,7 +4667,7 @@ def test_chat_tui_queue_panel_steers_and_removes_only_after_local_acceptance() -
             steered.set()
 
     app = tui.ChatTuiApp(
-        thread_id="term_busy",
+        thread_id="chat_busy",
         setting=FakeClient().initial_setting(),
         input_history=None,
         client=RecordingClient(),
@@ -4684,7 +4684,7 @@ def test_chat_tui_queue_panel_steers_and_removes_only_after_local_acceptance() -
     assert app.app.layout.current_control.buffer is app.prompt.buffer
 
     rejected = tui.ChatTuiApp(
-        thread_id="term_busy",
+        thread_id="chat_busy",
         setting=FakeClient().initial_setting(),
         input_history=None,
         client=FakeClient(),
@@ -4693,7 +4693,7 @@ def test_chat_tui_queue_panel_steers_and_removes_only_after_local_acceptance() -
         QueuedCall(
             "queued without run",
             FakeClient().build_request(
-                "term_busy",
+                "chat_busy",
                 RunOverride(),
                 CallInput({"_": "queued without run"}),
                 FakeClient().initial_setting(),
@@ -4710,7 +4710,7 @@ def test_chat_tui_queue_panel_steers_and_removes_only_after_local_acceptance() -
 
 def test_chat_tui_queue_panel_delete_clamps_selection() -> None:
     app = tui.ChatTuiApp(
-        thread_id="term_busy",
+        thread_id="chat_busy",
         setting=FakeClient().initial_setting(),
         input_history=None,
         client=FakeClient(),
@@ -4734,7 +4734,7 @@ def test_chat_tui_queue_panel_delete_clamps_selection() -> None:
 
 def test_chat_tui_queue_shortcuts_switch_focus_and_move_selection() -> None:
     app = tui.ChatTuiApp(
-        thread_id="term_busy",
+        thread_id="chat_busy",
         setting=FakeClient().initial_setting(),
         input_history=None,
         client=FakeClient(),
@@ -4778,7 +4778,7 @@ def test_chat_tui_queue_shortcuts_switch_focus_and_move_selection() -> None:
 
 def test_chat_tui_space_toggles_queue_and_tab_only_switches_focus() -> None:
     app = tui.ChatTuiApp(
-        thread_id="term_busy",
+        thread_id="chat_busy",
         setting=FakeClient().initial_setting(),
         input_history=None,
         client=FakeClient(),
@@ -4874,7 +4874,7 @@ def test_chat_tui_namespace_input_does_not_interfere_with_queue_focus(
 
     client = NoCompletionClient()
     app = tui.ChatTuiApp(
-        thread_id="term_busy",
+        thread_id="chat_busy",
         setting=client.initial_setting(),
         input_history=None,
         client=client,
@@ -4930,7 +4930,7 @@ def test_chat_run_and_input_controls_require_input_focus(
     async def exercise() -> None:
         with create_app_session(input=DummyInput(), output=DummyOutput()):
             app = tui.ChatTuiApp(
-                thread_id="term_busy",
+                thread_id="chat_busy",
                 setting=FakeClient().initial_setting(),
                 input_history=None,
                 client=FakeClient(),
@@ -5075,7 +5075,7 @@ def test_chat_removed_queue_commands_preserve_queue_selection_and_draft(
     command: str,
 ) -> None:
     app = tui.ChatTuiApp(
-        thread_id="term_busy",
+        thread_id="chat_busy",
         setting=FakeClient().initial_setting(),
         input_history=None,
         client=FakeClient(),
@@ -5158,7 +5158,7 @@ def test_chat_shortcuts_use_lowercase_inline_hints_without_changing_full_help() 
 
 def test_chat_tui_queue_blocks_mutations_after_ambiguous_acceptance() -> None:
     app = tui.ChatTuiApp(
-        thread_id="term_busy",
+        thread_id="chat_busy",
         setting=FakeClient().initial_setting(),
         input_history=None,
         client=FakeClient(),
@@ -5179,7 +5179,7 @@ def test_chat_tui_queue_blocks_mutations_after_ambiguous_acceptance() -> None:
 
 def test_chat_tui_keeps_the_queue_paused_while_remote_stream_is_disconnected() -> None:
     app = tui.ChatTuiApp(
-        thread_id="term_remote",
+        thread_id="chat_remote",
         setting=FakeClient().initial_setting(),
         input_history=None,
         client=FakeClient(),
@@ -5213,7 +5213,7 @@ def test_chat_tui_recovers_from_durable_terminal_truth(
         ),
     )
     app = tui.ChatTuiApp(
-        thread_id="term_remote",
+        thread_id="chat_remote",
         setting=FakeClient().initial_setting(),
         input_history=None,
         client=FakeClient(),
@@ -5237,7 +5237,7 @@ def test_chat_tui_recovers_from_durable_terminal_truth(
     detail = RunDetail(
         id="run_remote",
         parent=None,
-        thread_id="term_remote",
+        thread_id="chat_remote",
         root_run_id="run_remote",
         runnable_kind="agic",
         runnable_name="chat",
@@ -5282,7 +5282,7 @@ def test_chat_tui_blocks_mutating_input_after_ambiguous_acceptance(
         ),
     )
     app = tui.ChatTuiApp(
-        thread_id="term_remote",
+        thread_id="chat_remote",
         setting=FakeClient().initial_setting(),
         input_history=None,
         client=FakeClient(),
@@ -5292,7 +5292,7 @@ def test_chat_tui_blocks_mutating_input_after_ambiguous_acceptance(
         QueuedCall(
             "already queued",
             FakeClient().build_request(
-                "term_remote",
+                "chat_remote",
                 RunOverride(),
                 CallInput({"_": "already queued"}),
                 FakeClient().initial_setting(),
@@ -5331,7 +5331,7 @@ def test_chat_tui_bare_model_command_does_not_open_or_load_a_picker(
 
     client = CountingRemoteClient()
     app = tui.ChatTuiApp(
-        thread_id="term_remote",
+        thread_id="chat_remote",
         setting=FakeClient().initial_setting(),
         input_history=None,
         client=client,
@@ -5360,7 +5360,7 @@ def test_chat_tui_routes_slash_shaped_parse_errors_to_scrollback(
     monkeypatch: Any,
 ) -> None:
     app = tui.ChatTuiApp(
-        thread_id="term_remote",
+        thread_id="chat_remote",
         setting=FakeClient().initial_setting(),
         input_history=None,
         client=FakeClient(),
@@ -5413,7 +5413,7 @@ def test_chat_tui_rejected_command_shaped_input_stays_editable_in_status(
         ),
     )
     app = tui.ChatTuiApp(
-        thread_id="term_remote",
+        thread_id="chat_remote",
         setting=FakeClient().initial_setting(),
         input_history=None,
         client=FakeClient(),
@@ -5487,7 +5487,7 @@ def test_chat_tui_request_build_failure_retains_input_and_active_run(
             raise ValueError("selected model is unavailable")
 
     app = tui.ChatTuiApp(
-        thread_id="term_remote",
+        thread_id="chat_remote",
         setting=FakeClient().initial_setting(),
         input_history=None,
         client=FailingRequestClient(),
@@ -5520,7 +5520,7 @@ def test_chat_tui_rejects_known_unsupported_run_effort_in_status() -> None:
             del override, setting
             return RunRequest(
                 thread_id=thread_id,
-                request_id="term_request",
+                request_id="chat_request",
                 runnable=RunnableRequest("agic:chat", input),
                 model=ModelRequest(
                     "openai/gpt-5",
@@ -5531,7 +5531,7 @@ def test_chat_tui_rejects_known_unsupported_run_effort_in_status() -> None:
 
     source = "/model effort=medium\nhello"
     app = tui.ChatTuiApp(
-        thread_id="term_remote",
+        thread_id="chat_remote",
         setting=FakeClient().initial_setting(),
         input_history=None,
         client=UnsupportedEffortClient(),
@@ -5553,7 +5553,7 @@ def test_chat_tui_rejects_known_unsupported_run_effort_in_status() -> None:
 
 def test_chat_tui_uses_queued_workspace_snapshot_for_the_next_active_status() -> None:
     app = tui.ChatTuiApp(
-        thread_id="term_busy",
+        thread_id="chat_busy",
         setting=SessionSetting(
             model=ModelRequest("openai/gpt-5"), runnable="agic:chat"
         ),
@@ -5568,8 +5568,8 @@ def test_chat_tui_uses_queued_workspace_snapshot_for_the_next_active_status() ->
         QueuedCall(
             "queued",
             RunRequest(
-                thread_id="term_busy",
-                request_id="term_queued",
+                thread_id="chat_busy",
+                request_id="chat_queued",
                 runnable=RunnableRequest("flow:research", CallInput({"_": "queued"})),
                 model=ModelRequest("openai/gpt-5"),
                 policy=RunPolicy(),
@@ -5630,7 +5630,7 @@ def test_chat_initial_input_and_first_control_share_the_live_origin(
         output.rows = rows
         with create_app_session(input=DummyInput(), output=output):
             app = tui.ChatTuiApp(
-                thread_id="term_new",
+                thread_id="chat_new",
                 setting=FakeClient().initial_setting(),
                 input_history=None,
                 client=FakeClient(),
@@ -6364,7 +6364,7 @@ class FakeClient(ChatClient):
         del override
         return RunRequest(
             thread_id=thread_id,
-            request_id="term_request",
+            request_id="chat_request",
             runnable=RunnableRequest("agic:chat", input),
             model=setting.model,
             policy=RunPolicy(),
@@ -6577,7 +6577,7 @@ def test_chat_recovered_controls_determine_terminal_corner(control_status: Any) 
     detail = RunDetail(
         id="run_1",
         parent=None,
-        thread_id="term_1",
+        thread_id="chat_1",
         root_run_id="run_1",
         runnable_kind="agic",
         runnable_name="chat",
@@ -6631,7 +6631,7 @@ def test_chat_root_context_uses_request_and_authoritative_runnable(
     module: str,
 ) -> None:
     request = RunRequest(
-        thread_id="term_1",
+        thread_id="chat_1",
         request_id="one",
         runnable=RunnableRequest(
             f"{module}agic:provisional", CallInput({"_": "hello"})
@@ -6661,7 +6661,7 @@ def test_chat_root_context_uses_request_and_authoritative_runnable(
 @pytest.mark.parametrize("width", [8, 20, 40, 80])
 def test_chat_context_and_steer_corners_fit_without_losing_padding(width: int) -> None:
     request = RunRequest(
-        thread_id="term_1",
+        thread_id="chat_1",
         request_id="one",
         runnable=RunnableRequest(
             "agic:研究研究研究研究研究", CallInput({"_": "hello"})
@@ -6816,7 +6816,7 @@ def test_chat_queued_root_context_survives_new_defaults_and_run_transition(
     queued_effort: Literal["auto", "high"],
 ) -> None:
     app = tui.ChatTuiApp(
-        thread_id="term_1",
+        thread_id="chat_1",
         setting=FakeClient().initial_setting(),
         input_history=None,
         client=FakeClient(),
@@ -6826,7 +6826,7 @@ def test_chat_queued_root_context_survives_new_defaults_and_run_transition(
         return QueuedCall(
             f"/model openai/gpt-5 effort={effort}\n/agic:{name} -- hello",
             RunRequest(
-                thread_id="term_1",
+                thread_id="chat_1",
                 request_id=name,
                 runnable=RunnableRequest(f"agic:{name}", CallInput({"_": "hello"})),
                 model=ModelRequest(
@@ -6950,7 +6950,7 @@ def test_chat_burst_steers_keep_each_draft_independent() -> None:
     async def exercise() -> None:
         with create_app_session(input=DummyInput(), output=DummyOutput()):
             app = tui.ChatTuiApp(
-                thread_id="term_busy",
+                thread_id="chat_busy",
                 setting=FakeClient().initial_setting(),
                 input_history=None,
                 client=FakeClient(),
@@ -7094,14 +7094,14 @@ def test_chat_terminal_publication_does_not_block_ui_events() -> None:
         stream=stream,
         marks=PaneMarks(
             environment={"TMUX": "test", "TMUX_PANE": "%3"},
-            fields={"kind": "chat", "thread": "term_x"},
+            fields={"kind": "chat", "thread": "chat_x"},
             pane_factory=Pane,
         ),
     )
 
     async def scenario() -> None:
         app = tui.ChatTuiApp(
-            thread_id="term_x",
+            thread_id="chat_x",
             setting=FakeClient().initial_setting(),
             input_history=None,
             client=FakeClient(),
@@ -7116,7 +7116,7 @@ def test_chat_terminal_publication_does_not_block_ui_events() -> None:
             on_result=results.put,
         )
         terminal.start(tui.chat_label("alice"))
-        app.title.start("term_x")
+        app.title.start("chat_x")
         try:
             app._handle_run_state(RunAccepted("run_1"))
             assert metadata_entered.wait(5) and title_entered.wait(5)
@@ -7198,7 +7198,7 @@ def test_terminal_focus_reports_preserve_chat_draft_and_status(
 
     async def exercise() -> None:
         app = tui.ChatTuiApp(
-            thread_id="term_x",
+            thread_id="chat_x",
             setting=FakeClient().initial_setting(),
             input_history=None,
             client=FakeClient(),
@@ -7235,7 +7235,7 @@ def test_chat_tui_keeps_run_workdir_overrides_out_of_session_settings(
         def build_request(self, thread_id, override, input, setting):
             return build_run_request(
                 thread_id=thread_id,
-                request_id="term_workdir",
+                request_id="chat_workdir",
                 input=input,
                 override=override,
                 setting=setting,
@@ -7246,7 +7246,7 @@ def test_chat_tui_keeps_run_workdir_overrides_out_of_session_settings(
 
     client = WorkdirClient()
     app = tui.ChatTuiApp(
-        thread_id="term_workdir",
+        thread_id="chat_workdir",
         setting=replace(client.initial_setting(), workdir="lab://session"),
         input_history=None,
         client=client,
@@ -7271,11 +7271,11 @@ def test_chat_tui_keeps_run_workdir_overrides_out_of_session_settings(
 def test_chat_tui_seeds_and_updates_session_workdir() -> None:
     class WorkdirClient(FakeClient):
         def initial_workdir(self, thread_id: str | None) -> str:
-            assert thread_id == "term_existing"
+            assert thread_id == "chat_existing"
             return "repo://from-history"
 
     app = tui.ChatTuiApp(
-        thread_id="term_existing",
+        thread_id="chat_existing",
         setting=WorkdirClient().initial_setting(),
         input_history=None,
         client=WorkdirClient(),
@@ -7580,7 +7580,7 @@ def test_snapshot_updates_tui_run_identity_and_completion_title(monkeypatch):
     from toolang.execution.events import RunSnapshot
 
     app = tui.ChatTuiApp(
-        thread_id="term_status",
+        thread_id="chat_status",
         setting=FakeClient().initial_setting(),
         input_history=None,
         client=FakeClient(),

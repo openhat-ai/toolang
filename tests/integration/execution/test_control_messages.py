@@ -32,7 +32,7 @@ from tests.support.execution_assertions import (
 )
 from toolang.base.types.message import Message, TextPart, ToolResultPart, message_text
 from toolang.base.types.run import ModelCallResult, ToolCall
-from toolang.execution.types import ThreadPrefix
+from toolang.execution.types import ThreadKind
 from toolang.execution.types import (
     RulesRecallTarget,
     SkillRecallTarget,
@@ -82,7 +82,7 @@ agic chat(_: Part[]) -> Part[]:
 
     async def scenario() -> None:
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             handle = harness.executor.run(
                 harness.run_spec(
                     thread=thread, runnable="chat", primary=(TextPart("sleep 10s"),)
@@ -181,7 +181,7 @@ def test_cancel_during_steer_skipped_batch_closes_all_calls(tmp_path: Path) -> N
         async with harness:
             handle = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="chat",
                 ),
                 tracer=tracer,
@@ -264,7 +264,7 @@ agic chat(_: Part[]) -> Part[]:
         async with harness:
             run = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="chat",
                     primary=(TextPart("start"),),
                 ),
@@ -348,7 +348,7 @@ agic chat(_: Part[]) -> Part[]:
 
     async def scenario() -> None:
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             handle = harness.executor.run(
                 harness.run_spec(
                     thread=thread, runnable="chat", primary=(TextPart("start"),)

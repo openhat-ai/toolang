@@ -37,8 +37,7 @@ def _compact_output(store: RunStore) -> RunRef:
         project_run_start(
             store,
             run_id=run_id,
-            thread_id="term_target",
-            origin="test",
+            thread_id="chat_target",
             input=Message.user(run_id),
         )
         project_run_end(store, run_id=run_id)
@@ -46,7 +45,7 @@ def _compact_output(store: RunStore) -> RunRef:
 
     return project_compaction(
         store,
-        thread="term_target",
+        thread="chat_target",
         begin="run_earlier",
         end="run_near",
         summary="Earlier facts.",
@@ -60,8 +59,7 @@ def test_initial_horizon_payload_roundtrip(tmp_path: Path) -> None:
         run = project_run_start(
             store,
             run_id="run_target",
-            thread_id="term_target",
-            origin="test",
+            thread_id="chat_target",
             input=Message.user("continue"),
         )
         control = store.get_run_control(run_id=run.id, index=0)
@@ -118,8 +116,7 @@ def test_compact_reference_survives_restart_before_and_after_adoption(
     run = project_run_start(
         store,
         run_id="run_target",
-        thread_id="term_target",
-        origin="test",
+        thread_id="chat_target",
         input=Message.user("continue"),
     )
     trigger = (
@@ -185,8 +182,7 @@ def test_compact_rejects_inactive_run_without_writing_a_control(tmp_path: Path) 
         run = project_run_start(
             store,
             run_id="run_target",
-            thread_id="term_target",
-            origin="test",
+            thread_id="chat_target",
             input=Message.user("continue"),
         )
         project_run_end(store, run_id=run.id)
@@ -207,11 +203,11 @@ def test_compact_rejects_inactive_run_without_writing_a_control(tmp_path: Path) 
 @pytest.mark.parametrize(
     ("reference", "output"),
     (
-        ("run_missing", Output({"thread": "term_target"}, None)),
+        ("run_missing", Output({"thread": "chat_target"}, None)),
         ("run_summary", None),
-        ("run_summary/control", Output({"thread": "term_target"}, None)),
-        ("term_target/id", Output({"thread": "term_target"}, None)),
-        ("run_summary", Output({"thread": "term_other"}, None)),
+        ("run_summary/control", Output({"thread": "chat_target"}, None)),
+        ("chat_target/id", Output({"thread": "chat_target"}, None)),
+        ("run_summary", Output({"thread": "chat_other"}, None)),
         ("run_summary", Output("not a compact result", None)),
         (
             "run_summary",
@@ -233,15 +229,13 @@ def test_invalid_horizon_is_rejected_before_any_records_change(
         run = project_run_start(
             store,
             run_id="run_target",
-            thread_id="term_target",
-            origin="test",
+            thread_id="chat_target",
             input=Message.user("continue"),
         )
         summary = project_run_start(
             store,
             run_id="run_summary",
-            thread_id="compact_term_target",
-            origin="test",
+            thread_id="chat_compact_target",
             input=Message.user("compact"),
         )
         project_run_end(store, run_id=summary.id, output=output)

@@ -47,7 +47,7 @@ records, optionally replays retained events, and then observes the live suffix.
 
 Persistence makes completed history available after process restart and for
 later model calls. Toolang does not resume an unfinished run after its owner
-process exits. The execution store reads and writes only schema 61. Older schemas
+process exits. The execution store reads and writes only schema 62. Older schemas
 are rejected without modification, including read-only opens; writable opens also
 reject adjacent legacy `ids.json` files. There is no migration or old-record
 compatibility path. Stop old writers, preserve any required old runtime data
@@ -264,6 +264,9 @@ specified thread in place and returns nothing. Fork and rewind accept an
 optional run id; omission selects the last visible top-level run. Recursive
 child runs are never thread anchors. An empty thread has no implicit anchor and
 cannot be forked or rewound. Every selected anchor must be terminal.
+All Thread kinds support these operations. Fork allocates a new ID with the
+source kind but creates no Talk conversation binding or chore definition.
+Rewind does not roll back message cursors or chore checkpoints.
 
 Every successful mutation has a durable `ControlRecord` and produces one
 success event:
@@ -386,7 +389,7 @@ per-call records and make the aggregate USD amount unknown. Unknown optional
 token/cost contributions remain unknown; known zero stays zero. These are captured
 values, not a historical statistics index.
 
-This format requires Store schema 61 and fresh storage. Older schemas are rejected
+This format requires Store schema 62 and fresh storage. Older schemas are rejected
 for both reads and writes; no migration or compatibility decoder is provided.
 Retain any required old runtime data separately, then use a fresh runtime database.
 Record/event consumers must adopt `spec`/`report` and matching `Spec`/`Report`

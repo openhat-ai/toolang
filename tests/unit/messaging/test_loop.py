@@ -205,7 +205,7 @@ def test_tool_reply_origin_and_backend_cursor_restart(tmp_path, custom):
             await restarted.poll()
             threads = harness.store.list_threads()
             assert len(threads) == 1
-            assert all(thread.origin == "talk" for thread in threads)
+            assert all(thread.kind == "talk" for thread in threads)
             assert len({thread.id for thread in threads}) == 1
             latest = next(
                 run for run in harness.store.list_runs() if run.parent is None
@@ -693,7 +693,7 @@ def test_hosted_lifespan_starts_and_stops_messaging(
 
 def test_spawned_worker_sends_with_its_own_run_origin(tmp_path):
     from toolang.base.types.message import TextPart
-    from toolang.execution.types import ThreadPrefix
+    from toolang.execution.types import ThreadKind
     from toolang.teaming.schemas import Message
 
     server = FakeServer(server_type="valkey")
@@ -725,7 +725,7 @@ def test_spawned_worker_sends_with_its_own_run_origin(tmp_path):
             await prepare(client, human)
             parent = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="flow:parent",
                     primary=(TextPart("Do work"),),
                 )
@@ -806,7 +806,7 @@ def test_all_convo_tools_use_the_context_identity(tmp_path):
             tmp_path / "alice",
             tmp_path / "room",
             run_id="run_test",
-            thread_id="term_test",
+            thread_id="chat_test",
         )
         tools = msg.tools()
         result = await tools["team"].invoke({}, context)

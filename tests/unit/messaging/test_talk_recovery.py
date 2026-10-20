@@ -200,7 +200,7 @@ def test_existing_unbound_talk_id_is_not_adopted(tmp_path, server):
         ):
             await prepare(alice, human)
             thread = talk_thread_id("gc_00000001", agent_name="alice")
-            harness.store.create_thread(thread_id=thread, origin="work")
+            harness.store.create_thread(thread_id=thread)
             before = harness.store.get_thread(thread_id=thread)
             await human.send("gc_00000001", body="Do not mix histories.")
             await make_loop(tmp_path, alice, harness).poll()

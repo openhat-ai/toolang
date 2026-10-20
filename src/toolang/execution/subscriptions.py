@@ -281,7 +281,7 @@ def record_controls(
             record = store.get_thread(thread_id=name)
             if record is None:
                 continue
-            event = ThreadCreated(name, control.ref, record.origin, record.created_at)
+            event = ThreadCreated(name, control.ref, record.created_at)
         elif isinstance(payload, ForkControlPayload):
             event = ThreadForked(
                 name,

@@ -16,7 +16,7 @@ from toolang.base.types.message import Message
 from toolang.base.types.run import ModelCallResult
 from toolang.execution.schemas import StepData
 from toolang.execution.store import RunStore
-from toolang.execution.types import ThreadPrefix, TypedRef
+from toolang.execution.types import ThreadKind, TypedRef
 from toolang.lang.ast import SortStmt
 from toolang.lang.input import resolve_input_parts
 from toolang.lang.types import Array
@@ -67,7 +67,7 @@ def test_sort_and_selection_commit_typed_results_without_extra_model_calls(
 
     async def scenario() -> None:
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             root = await harness.executor.run(
                 harness.run_spec(
                     thread=thread, runnable="work", primary=resolve_input_parts("items")
@@ -137,7 +137,7 @@ def test_sort_named_and_discarded_bindings_preserve_primary_collection(
 
     async def scenario() -> None:
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             root = await harness.executor.run(
                 harness.run_spec(
                     thread=thread, runnable="work", primary=resolve_input_parts("items")
@@ -162,7 +162,7 @@ def test_empty_sort_does_not_invoke_a_scorer(tmp_path: Path) -> None:
 
     async def scenario() -> None:
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             root = await harness.executor.run(
                 harness.run_spec(
                     thread=thread, runnable="work", primary=resolve_input_parts("items")
@@ -190,7 +190,7 @@ def test_sort_preserves_integer_score_precision(tmp_path: Path, order: str) -> N
 
     async def scenario() -> None:
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             root = await harness.executor.run(
                 harness.run_spec(
                     thread=thread, runnable="work", primary=resolve_input_parts("items")
@@ -215,7 +215,7 @@ def test_sort_lanes_and_ties_ignore_completion_order(tmp_path: Path) -> None:
 
     async def scenario() -> None:
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             handle = harness.executor.run(
                 harness.run_spec(
                     thread=thread, runnable="work", primary=resolve_input_parts("items")
@@ -253,7 +253,7 @@ def test_invalid_score_fails_before_sort_binding(tmp_path: Path, result: str) ->
 
     async def scenario() -> None:
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             root = await harness.executor.run(
                 harness.run_spec(
                     thread=thread, runnable="work", primary=resolve_input_parts("items")

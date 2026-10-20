@@ -101,7 +101,7 @@ def test_chat_result_filters_native_parts_before_structured_fallback(remote, run
 
         session = cast(RemoteChatSession, NS(_run_detail=detail))
         result = asyncio.run(
-            RemoteChatSession._get_result(session, run_id, thread_id="term_result")
+            RemoteChatSession._get_result(session, run_id, thread_id="chat_result")
         )
     else:
         session = cast(
@@ -118,7 +118,7 @@ def test_chat_result_filters_native_parts_before_structured_fallback(remote, run
                 store=NS(read_transaction=nullcontext),
             ),
         )
-        result = LocalChatSession.get_result(session, run_id, thread_id="term_result")
+        result = LocalChatSession.get_result(session, run_id, thread_id="chat_result")
     rendered = parts_response_text(result.output)
     assert json.loads(rendered) == {
         "nested": [{"$part": {"type": "text", "text": "answer"}}]

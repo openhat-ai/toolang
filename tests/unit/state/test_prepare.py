@@ -1289,7 +1289,7 @@ def test_runnable_module_names_reject_casefold_collisions(tmp_path) -> None:
             path=tmp_path / "agents/alice" / path,
             relative_path=f"agents/alice/{path}",
             category="program",
-            origin="agent",
+            layer="agent",
             content=content,
             digest=digest,
             size=len(content),

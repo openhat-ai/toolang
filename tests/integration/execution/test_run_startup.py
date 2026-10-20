@@ -16,7 +16,7 @@ from toolang.execution.executor import executor as executor_module
 from toolang.base.types.message import TextPart
 from toolang.execution.events import RunEnd
 from toolang.execution.store import RunStore
-from toolang.execution.types import ErrorMessage, RunReport, ThreadPrefix
+from toolang.execution.types import ErrorMessage, RunReport, ThreadKind
 
 
 @pytest.mark.parametrize("stage", ["task", "monitor", "observer"])
@@ -46,7 +46,7 @@ def test_failed_root_startup_is_durable_and_published_once(
 
     async def scenario():
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             tracer = RecordingRunTracer()
             with monkeypatch.context() as patch:
                 patch.setattr(asyncio, "create_task", fail_task)
@@ -121,7 +121,7 @@ def test_owned_initialization_failure_finishes_without_waiting_for_stop(
 
     async def scenario():
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             tracer = RecordingRunTracer()
             with monkeypatch.context() as patch:
                 patch.setattr(
@@ -163,7 +163,7 @@ def test_pre_entry_cancellation_applies_pending_cancel_and_preserves_reason(
             tracer = RecordingRunTracer()
             handle = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="root",
                 ),
                 tracer=tracer,
@@ -229,7 +229,7 @@ def test_startup_interruption_reads_ancestry_without_holding_registry(
                 patch.setattr(executor_module._Execution, "execute", interrupted)
                 record = await harness.executor.run(
                     harness.run_spec(
-                        thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                        thread=harness.threads.create(kind=ThreadKind.CHAT),
                         runnable="root",
                     )
                 )
@@ -280,7 +280,7 @@ agic child() -> Text:
             observer = TraceObserver(harness.executor.stream.subscribe(), tracer)
             parent = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="parent",
                 )
             )
@@ -340,7 +340,7 @@ def test_eager_task_factory_cannot_start_execution_before_ownership(tmp_path):
             try:
                 record = await harness.executor.run(
                     harness.run_spec(
-                        thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                        thread=harness.threads.create(kind=ThreadKind.CHAT),
                         runnable="root",
                         primary=(TextPart("ready"),),
                     )
@@ -386,7 +386,7 @@ def test_canceling_stop_still_finishes_runs_and_drains_terminal_events(
             tracer = Tracer()
             handle = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="root",
                     primary=(TextPart("ready"),),
                 ),
@@ -437,7 +437,7 @@ def test_stop_skips_a_finished_monitor_from_a_closed_owner_loop(tmp_path):
     async def run():
         return await harness.executor.run(
             harness.run_spec(
-                thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                thread=harness.threads.create(kind=ThreadKind.CHAT),
                 runnable="root",
                 primary=(TextPart("ready"),),
             )

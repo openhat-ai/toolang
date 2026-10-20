@@ -336,16 +336,20 @@ Authoring and inspection work with the chore driver disabled. Manual dispatch
 returns 409 with `{ "code": "driver_disabled", "driver": "chore" }`.
 Unknown definitions return 404. Refresh the collection after a mutation and
 poll it for background progress. Execution history is available through the run
-and thread APIs; chore threads cannot be forked or rewound.
+and thread APIs. Chore threads support fork/rewind under the same state checks
+as other threads; these operations do not change chore checkpoints.
 
 
 ## Run And Thread Endpoints
 
 Interactive clients submit, rerun, and steer under `/api/v0/chat/runs`;
 these write routes require the chat driver. Noninteractive scripts use the
-`/api/v0/runs` routes below and create `exec_` threads with origin `exec` at
+`/api/v0/runs` routes below and create `exec_` threads with derived kind `exec` at
 `POST /api/v0/runs/threads`.
 Interactive thread creation at `POST /api/v0/threads` creates `chat_` contexts.
+Thread responses omit classification fields; the ID prefix identifies the kind.
+Thread listing filters with `kind=chat|talk|chore|work|exec`; there is no Thread
+`origin` field or filter.
 All callers use `client_id` and `request_id` rather than a client-type enum.
 Management, cancellation, inspection, and script execution remain available
 when chat is disabled. See [driver selection](drivers.md).

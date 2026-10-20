@@ -20,7 +20,6 @@ def test_run_report_roundtrip_and_conflicting_terminal_values(tmp_path):
         store,
         run_id="run_totals",
         thread_id="chat_test",
-        origin="chat",
         input=Message.user("test"),
     )
     assert run.report is None

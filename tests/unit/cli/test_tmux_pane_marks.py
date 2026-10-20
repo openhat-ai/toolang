@@ -53,10 +53,10 @@ def test_complete_identity_is_committed_last_and_updates_are_deduplicated():
         ("@toolang_context", ""),
         ("@toolang_kind", "chat"),
     ]
-    marks.update("thread", "term_x")
-    marks.update("thread", "term_x")
+    marks.update("thread", "chat_x")
+    marks.update("thread", "chat_x")
     marks.update("run", "run_x")
-    assert events(pane, 2) == [("@toolang_thread", "term_x"), ("@toolang_run", "run_x")]
+    assert events(pane, 2) == [("@toolang_thread", "chat_x"), ("@toolang_run", "run_x")]
     marks.close()
     marks.close()
     marks.update("thread", "late")
@@ -148,7 +148,7 @@ def test_worker_start_failure_preserves_titles_and_cleanup(monkeypatch, capsys):
         pane_factory=lambda: pane,
     )
     with TerminalSession(label="alice", enabled=True, stream=output, marks=marks):
-        marks.update("thread", "term_x")
+        marks.update("thread", "chat_x")
     marks.close()
     assert pane.events.empty()
     assert output.getvalue() == "\x1b]0;alice\x07\x1b]0;\x07"

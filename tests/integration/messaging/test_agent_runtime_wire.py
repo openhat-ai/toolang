@@ -21,7 +21,7 @@ from tests.support.execution_harness import (
 from toolang.base.types.message import Message as ModelMessage, TextPart
 from toolang.base.types.run import ModelCallResult, ToolCall
 from toolang.execution.schemas import StreamFrame
-from toolang.execution.types import ThreadPrefix
+from toolang.execution.types import ThreadKind
 from toolang.plugin.toolsets.loading import tools_from_toolsets
 from toolang.plugin.toolsets.convo import ConvoToolset
 from toolang.plugin.types import LoadedPlugin
@@ -169,7 +169,7 @@ def test_inflight_message_survives_hub_restart_and_scoped_fanout(
                     )
                 local = await harness.executor.run(
                     harness.run_spec(
-                        thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                        thread=harness.threads.create(kind=ThreadKind.CHAT),
                         runnable="flow:local",
                         primary=(TextPart("local"),),
                     )

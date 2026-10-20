@@ -27,7 +27,7 @@ from toolang.execution.records import (
 )
 from toolang.execution.types import (
     AwaitableHandle,
-    ThreadPrefix,
+    ThreadKind,
     Output,
     ToolStepReport,
     StepRef,
@@ -79,7 +79,7 @@ flow child() -> Text:
             async with harness:
                 parent = await harness.executor.run(
                     harness.run_spec(
-                        thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                        thread=harness.threads.create(kind=ThreadKind.CHAT),
                         runnable="parent",
                     )
                 )
@@ -124,10 +124,10 @@ flow child() -> Text:
 @pytest.mark.parametrize("ending", ["", "run fail", "exec successor"])
 @pytest.mark.parametrize(
     "prefix",
-    [ThreadPrefix.CHAT, ThreadPrefix.TALK, ThreadPrefix.CHORE, ThreadPrefix.EXEC],
+    [ThreadKind.CHAT, ThreadKind.TALK, ThreadKind.CHORE, ThreadKind.EXEC],
 )
 def test_spawn_root_outlives_source_and_executor_drains_it(
-    tmp_path: Path, statement: str, ending: str, prefix: ThreadPrefix
+    tmp_path: Path, statement: str, ending: str, prefix: ThreadKind
 ):
     gate = AsyncGate()
     harness = ExecutionHarness.create(
@@ -155,7 +155,7 @@ agic child(_: Text) -> Text:
 
     async def scenario():
         async with harness:
-            thread = harness.threads.create(prefix=prefix)
+            thread = harness.threads.create(kind=prefix)
             tracer = RecordingRunTracer()
             parent = await harness.executor.run(
                 harness.run_spec(
@@ -186,7 +186,7 @@ agic child(_: Text) -> Text:
             }
             spawned_thread = harness.store.get_thread(thread_id=handle.thread)
             assert spawned_thread is not None
-            assert spawned_thread.origin == "work"
+            assert spawned_thread.kind == "work"
             with harness.executor.stream.boundary() as (_, _, frames):
                 created = next(
                     frame.event
@@ -194,7 +194,7 @@ agic child(_: Text) -> Text:
                     if isinstance(frame.event, ThreadCreated)
                     and frame.event.thread == handle.thread
                 )
-            assert created.origin == "work"
+            assert created.kind == "work"
             entry = harness.store.get_run_control(run_id=handle.id, index=0)
             assert entry is not None and entry.triggered_by == step.ref
             assert isinstance(entry.payload, RunControlPayload)
@@ -232,7 +232,7 @@ flow child(_: Text) -> Text:
 
     async def scenario():
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             parent = await harness.executor.run(
                 harness.run_spec(
                     thread=thread, runnable="flow:parent", primary=(TextPart("input"),)
@@ -257,10 +257,10 @@ flow child(_: Text) -> Text:
 
 @pytest.mark.parametrize(
     "prefix",
-    [ThreadPrefix.CHAT, ThreadPrefix.TALK, ThreadPrefix.CHORE, ThreadPrefix.EXEC],
+    [ThreadKind.CHAT, ThreadKind.TALK, ThreadKind.CHORE, ThreadKind.EXEC],
 )
 def test_agic_spawn_returns_snapshot_without_completion_injection(
-    tmp_path: Path, prefix: ThreadPrefix
+    tmp_path: Path, prefix: ThreadKind
 ):
     harness = ExecutionHarness.create(
         tmp_path,
@@ -289,7 +289,7 @@ flow child(_: Text) -> Text:
 
     async def scenario():
         async with harness:
-            thread = harness.threads.create(prefix=prefix)
+            thread = harness.threads.create(kind=prefix)
             parent = await harness.executor.run(
                 harness.run_spec(thread=thread, runnable="agic:parent")
             )
@@ -312,14 +312,14 @@ flow child(_: Text) -> Text:
 
 
 def test_handle_record_is_distinct_from_json():
-    handle = AwaitableHandle("run_test", "spawn_test")
+    handle = AwaitableHandle("run_test", "work_test")
     encoded = output_to_data(Output(handle, "job"))
     assert encoded == {
         "type": "_Awaitable",
         "value": {
             "kind": "run",
             "id": "run_test",
-            "thread": "spawn_test",
+            "thread": "work_test",
             "result_type": None,
         },
         "binding": "job",
@@ -327,7 +327,7 @@ def test_handle_record_is_distinct_from_json():
     plain = output_from_data(
         output_to_data(
             Output(
-                {"id": "run_test", "thread": "spawn_test", "status": "pending"}, "job"
+                {"id": "run_test", "thread": "work_test", "status": "pending"}, "job"
             )
         )
     )
@@ -358,7 +358,7 @@ agic child() -> Report[]:
 
     async def scenario():
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             parent = await harness.executor.run(
                 harness.run_spec(
                     thread=thread, runnable="flow:parent", primary=(TextPart("input"),)
@@ -488,7 +488,7 @@ flow child(_: Text):
 
     async def scenario():
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             tracer = RecordingRunTracer()
             parent = await harness.executor.run(
                 harness.run_spec(
@@ -599,7 +599,7 @@ agic child() -> Text:
 
     async def scenario():
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             baseline = harness.executor.stream.tail
             tracer = RecordingRunTracer()
             parent = await harness.executor.run(
@@ -717,7 +717,7 @@ flow child(_: Text):
         async with harness:
             record = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="driver" if caller == "agic" else "parent",
                     primary=(TextPart("input"),),
                 )
@@ -755,7 +755,7 @@ flow child(_: Text) -> Text:
 
     async def scenario():
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             parent = await harness.executor.run(
                 harness.run_spec(
                     thread=thread, runnable="flow:parent", primary=(TextPart("input"),)
@@ -824,7 +824,7 @@ flow child(_: Text) -> Text:
 
     async def scenario():
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             parent = await harness.executor.run(
                 harness.run_spec(thread=thread, runnable="agic:parent")
             )
@@ -875,7 +875,7 @@ flow parent(_: Text) -> Text:
 
     async def scenario():
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             parent = await harness.executor.run(
                 harness.run_spec(
                     thread=thread, runnable="flow:parent", primary=(TextPart("input"),)
@@ -908,7 +908,7 @@ flow child(_: Text) -> Text:
 
     async def scenario():
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             parent = await harness.executor.run(
                 harness.run_spec(
                     thread=thread, runnable="flow:parent", primary=(TextPart("input"),)

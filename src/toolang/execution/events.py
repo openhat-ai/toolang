@@ -21,6 +21,8 @@ from .types import (
     StepStatus,
     validate_occurrence,
     TokenUsage,
+    ThreadKind,
+    ThreadRef,
 )
 
 
@@ -354,9 +356,14 @@ class ThreadCreated:
 
     thread: str
     control: ControlRef
-    origin: str
     created_at: str
     type: Literal["thread_created"] = field(default="thread_created", init=False)
+
+    @property
+    def kind(self) -> ThreadKind:
+        """Return the context kind encoded by the created Thread ID."""
+
+        return ThreadRef(self.thread).kind
 
 
 @dataclass(frozen=True, slots=True)

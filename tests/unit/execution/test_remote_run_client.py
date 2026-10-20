@@ -88,8 +88,8 @@ class _Transport:
 
 def _request() -> RunRequest:
     return RunRequest(
-        thread_id="term_test",
-        request_id="term_request",
+        thread_id="chat_test",
+        request_id="chat_request",
         runnable=RunnableRequest(
             "agic:chat", CallInput({"_": "hello", "tone": "brief"})
         ),
@@ -122,7 +122,7 @@ def _detail(run_id: str = "run_remote") -> RunDetail:
     return RunDetail(
         id=run_id,
         parent=None,
-        thread_id="term_test",
+        thread_id="chat_test",
         root_run_id=run_id,
         runnable_kind="agic",
         runnable_name="chat",
@@ -231,8 +231,8 @@ def test_remote_client_runs_traces_and_waits_for_detail() -> None:
             "POST",
             "http://runtime.test/api/v0/runs/authored/stream",
             {
-                "thread_id": "term_test",
-                "request_id": "term_request",
+                "thread_id": "chat_test",
+                "request_id": "chat_request",
                 "client_id": "client_test",
                 "runnable": {
                     "ref": "agic:chat",

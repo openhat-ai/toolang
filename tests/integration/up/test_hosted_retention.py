@@ -15,7 +15,7 @@ from toolang.api.app import create_app
 from toolang.base.types.message import Message, TextPart
 from toolang.base.types.run import ModelCallResult
 from toolang.catalog import CapsManager, ChoresManager
-from toolang.execution.types import ThreadPrefix
+from toolang.execution.types import ThreadKind
 from toolang.execution.remote import RemoteRunClient
 from toolang.up.core import AgentCore
 from toolang.up.lifecycle import LAUNCH_HEADER, ServerLifecycle
@@ -49,7 +49,7 @@ def test_lost_clients_retain_pending_execution_and_stale_controls_fail(tmp_path)
     async def scenario():
         lifecycle.ready()
         lifecycle.lease("launch", "client")
-        thread = core.threads.create(prefix=ThreadPrefix.CHAT)
+        thread = core.threads.create(kind=ThreadKind.CHAT)
         handle = core.executor.run(
             harness.run_spec(thread=thread, runnable="agic:chat", named={"_": "hello"})
         )
@@ -123,7 +123,7 @@ agic child(_: Text) -> Text:
             lifecycle.lease("launch", "client")
             parent = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="flow:parent",
                     primary=(TextPart("input"),),
                 )
@@ -160,7 +160,7 @@ def test_finished_history_is_not_live_ownership_for_a_guarded_control(tmp_path):
             lifecycle.lease("launch", "client")
             handle = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="flow:ready",
                     primary=(TextPart("input"),),
                 )

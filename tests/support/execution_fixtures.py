@@ -126,7 +126,6 @@ def project_run_start(
     *,
     run_id: str,
     thread_id: str | ThreadRef,
-    origin: str,
     input: Message,
     root_run_id: str | None = None,
     runnable_kind: str = "agic",
@@ -150,7 +149,6 @@ def project_run_start(
     if store.get_thread(thread_id=thread_id) is None:
         store.create_thread(
             thread_id=thread_id,
-            origin=origin,
             created_at=created,
         )
     parent_path = StepRef.parse(parent) if parent is not None else None
@@ -453,9 +451,9 @@ def project_compaction(
     """Record an explicit summary Run without publishing a thread horizon."""
     from uuid import uuid4
 
-    owner = f"compact_{thread}"
+    owner = f"work_compact_{thread}"
     if store.get_thread(thread_id=owner) is None:
-        store.create_thread(thread_id=owner, origin="test", created_at=utc_now())
+        store.create_thread(thread_id=owner, created_at=utc_now())
     run, _ = accept_run(
         store,
         run_id=f"run_{uuid4().hex}",

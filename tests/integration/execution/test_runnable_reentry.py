@@ -21,7 +21,7 @@ from toolang.base.types.message import Message
 from toolang.base.types.run import ModelCallResult, ToolCall
 from toolang.common.layout import AgentLayout
 from toolang.execution.events import StepBegin
-from toolang.execution.types import ThreadPrefix
+from toolang.execution.types import ThreadKind
 from toolang.state.prepare import prepare_agent_state
 
 
@@ -80,7 +80,7 @@ def test_flow_statements_reject_active_targets_even_after_publication(
         async with harness:
             handle = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="outer",
                     named={"_": ["seed"] if input_type == "Text[]" else "seed"},
                 ),
@@ -176,7 +176,7 @@ flow outer() -> Text[]:
         async with harness:
             handle = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="outer",
                 ),
                 tracer=tracer,
@@ -271,7 +271,7 @@ flow() -> Text:
         async with harness:
             root = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="worker",
                 )
             )

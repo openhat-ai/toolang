@@ -84,7 +84,7 @@ class TalkStore:
                 return False
             if self.store.get_thread(thread_id=thread) is not None:
                 raise ValueError(f"Talk thread ID is already occupied: {thread}")
-            self.store.create_thread(thread_id=thread, origin="talk")
+            self.store.create_thread(thread_id=thread)
             self.store._conn.execute(
                 "INSERT INTO talk_bindings(backend, conversation, thread) VALUES (?, ?, ?)",
                 (scope.backend, scope.conversation, thread),

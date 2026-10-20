@@ -37,7 +37,7 @@ from toolang.execution.types import (
     ErrorMessage,
     ErrorRef,
     FieldRef,
-    ThreadPrefix,
+    ThreadKind,
     ToolStepSpec,
 )
 from toolang.lang.input import resolve_input_parts
@@ -136,7 +136,7 @@ flow target(_: {type_name}, note: Part[]) -> {type_name}:
         async with harness:
             root = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="caller",
                 ),
                 tracer=tracer,
@@ -224,7 +224,7 @@ flow target(_: Number, count: Number) -> Number:
         async with harness:
             root = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="caller",
                 )
             )
@@ -281,7 +281,7 @@ agic helper() -> Text:
 
     async def scenario() -> None:
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             root = await harness.executor.run(
                 harness.run_spec(thread=thread, runnable="agic:caller")
             )
@@ -357,7 +357,7 @@ agic child(_: Text) -> Text:
 
     async def scenario() -> None:
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             root = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
@@ -484,7 +484,7 @@ flow check(_: Part[]) -> Text:
 
     async def scenario() -> None:
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             root = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
@@ -545,7 +545,7 @@ flow check(_: Text, threshold: Number) -> Text:
 
     async def scenario() -> None:
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             root = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
@@ -636,7 +636,7 @@ flow check(_: Text, threshold: Number) -> Text:
 
     async def scenario() -> None:
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             root = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
@@ -703,7 +703,7 @@ agic helper() -> Text:
 
     async def scenario() -> None:
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             root = await harness.executor.run(
                 harness.run_spec(thread=thread, runnable="agic:default"),
                 tracer=tracer,
@@ -739,7 +739,7 @@ def test_unrestricted_routes_do_not_send_a_bounded_catalog(
 
     async def scenario() -> None:
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             root = await harness.executor.run(
                 harness.run_spec(thread=thread, runnable="agic:default")
             )
@@ -784,7 +784,7 @@ agic parent(_: Text, threshold: Number) -> Text:
 
     async def scenario() -> None:
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             root = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
@@ -851,7 +851,7 @@ flow outer(_: Text) -> Text:
 
     async def scenario() -> None:
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             root = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
@@ -956,7 +956,7 @@ flow -> Text:
             harness, {"publication-ancestor": await watcher.refresh()}
         )
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             root = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
@@ -1044,7 +1044,7 @@ agic parent(_: Text) -> Text:
 
     async def scenario() -> None:
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             root = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
@@ -1108,7 +1108,7 @@ agic child(_: Text) -> Text:
 
     async def scenario() -> None:
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             root = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
@@ -1202,7 +1202,7 @@ flow target(_: Text) -> Text:
         layout.program.write_text(published_source, encoding="utf-8")
         harness.published = await watcher.refresh()
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             root = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
@@ -1277,7 +1277,7 @@ agic parent(_: Text) -> Text:
         )
         harness.published = await watcher.refresh()
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             root = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
@@ -1339,7 +1339,7 @@ flow child(_: Text) -> Text:
 
     async def scenario() -> None:
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             root = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
@@ -1426,7 +1426,7 @@ flow research(brief: Brief, prefix?: Text) -> Text:
 
     async def scenario() -> None:
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             root = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
@@ -1506,7 +1506,7 @@ agic target(_: Text) -> Text:
 
     async def scenario() -> None:
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             root = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
@@ -1627,7 +1627,7 @@ agic target(_: Text) -> Boolean:
 
     async def scenario() -> None:
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             root = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
@@ -1683,7 +1683,7 @@ agic blocked -> Text:
 
     async def scenario() -> None:
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             root = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
@@ -1741,7 +1741,7 @@ agic caller() -> Text:
 
     async def scenario() -> None:
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             root = await harness.executor.run(
                 harness.run_spec(thread=thread, runnable="agic:caller")
             )
@@ -1814,7 +1814,7 @@ agic target() -> Text:
 
     async def scenario() -> None:
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             root = await harness.executor.run(
                 harness.run_spec(thread=thread, runnable="agic:caller")
             )
@@ -1892,7 +1892,7 @@ agic target() -> Text:
 
     async def scenario() -> None:
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             root = await harness.executor.run(
                 harness.run_spec(thread=thread, runnable="agic:caller")
             )
@@ -1975,7 +1975,7 @@ flow deliver(_: Text) -> Text:
 
     async def scenario() -> None:
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             root = await harness.executor.run(
                 harness.run_spec(thread=thread, runnable="agic:caller")
             )
@@ -2034,7 +2034,7 @@ agic inner() -> Text:
 
     async def scenario() -> None:
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             root = await harness.executor.run(
                 harness.run_spec(thread=thread, runnable="flow:outer")
             )
@@ -2087,7 +2087,7 @@ agic target() -> Text:
 
     async def scenario() -> None:
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             root = await harness.executor.run(
                 harness.run_spec(thread=thread, runnable="agic:caller")
             )
@@ -2135,7 +2135,7 @@ agic target() -> Text:
 
     async def scenario() -> None:
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             root = await harness.executor.run(
                 harness.run_spec(thread=thread, runnable="agic:caller")
             )
@@ -2229,7 +2229,7 @@ agic target(_: Text) -> Text:
         )
         harness.intercept_events(tracer)
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             root = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
@@ -2343,7 +2343,7 @@ agic other() -> Text:
 
     async def scenario() -> None:
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             root = await harness.executor.run(
                 harness.run_spec(thread=thread, runnable="agic:caller"), tracer=tracer
             )

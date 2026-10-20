@@ -22,7 +22,7 @@ from toolang.base.types.run import ModelCallResult, ToolCall
 from toolang.execution.events import StepEnd
 from toolang.execution.store import RunStore
 from toolang.execution.stream import TraceObserver
-from toolang.execution.types import ThreadPrefix
+from toolang.execution.types import ThreadKind
 
 
 @pytest.mark.parametrize("caller", ["flow", "agic"])
@@ -91,7 +91,7 @@ flow child(_: Text) -> Text:
             observer = TraceObserver(harness.executor.stream.subscribe(), tracer)
             parent = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable=f"{caller}:{caller}_parent",
                     primary=(TextPart("work"),) if caller == "flow" else None,
                 ),
@@ -174,7 +174,7 @@ flow child() -> Text:
         async with harness:
             root = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="agic:parent",
                 ),
                 tracer=tracer,
@@ -251,7 +251,7 @@ agic child() -> Text:
         async with harness:
             handle = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="agic:parent",
                 ),
                 tracer=tracer,

@@ -31,7 +31,7 @@ from toolang.execution.schemas import (
     RunRequest,
     RunnableRequest,
 )
-from toolang.execution.types import ErrorMessage, RunCommand, ThreadPrefix
+from toolang.execution.types import ErrorMessage, RunCommand, ThreadKind
 from toolang.lang.types import Array
 from toolang.lang.input import CallInput
 from toolang.setup import AgentSetup
@@ -108,10 +108,10 @@ def _request(
 
 
 def test_run_request_contains_only_materialized_caller_values() -> None:
-    request = _request("term_test")
+    request = _request("chat_test")
 
     assert request == RunRequest(
-        thread_id="term_test",
+        thread_id="chat_test",
         request_id="request_1",
         runnable=RunnableRequest("agic:chat", CallInput({"_": "hello"})),
         model=ModelRequest(TEST_MODEL_REF),
@@ -147,7 +147,7 @@ def test_run_request_rejects_invalid_field_shapes(
     error: type[Exception],
 ) -> None:
     values: dict[str, object] = {
-        "thread_id": "term_test",
+        "thread_id": "chat_test",
         "request_id": "request_1",
         "runnable": RunnableRequest("agic:chat", CallInput({"_": "hello"})),
         "model": ModelRequest(TEST_MODEL_REF),
@@ -235,7 +235,7 @@ def test_local_client_resolves_fallback_input_and_policy_precedence(
 
     async def scenario() -> None:
         await client.connect()
-        thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+        thread = harness.threads.create(kind=ThreadKind.CHAT)
         fallback_handle = await client.run(
             _request(
                 thread,
@@ -313,7 +313,7 @@ def test_local_client_rejects_preparation_without_persisting_a_run(
 
     async def scenario() -> None:
         await client.connect()
-        thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+        thread = harness.threads.create(kind=ThreadKind.CHAT)
         request = _request(
             thread,
             commands=(RunCommand("default", "runnable", "agic:not_found"),),
@@ -384,7 +384,7 @@ prompt rewrite:
 
     async def scenario() -> None:
         await client.connect()
-        thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+        thread = harness.threads.create(kind=ThreadKind.CHAT)
         source = await (
             await client.run(
                 _request(
@@ -489,7 +489,7 @@ flow chat(_: Part[]) -> Part[]:
 
     async def scenario() -> None:
         await client.connect()
-        thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+        thread = harness.threads.create(kind=ThreadKind.CHAT)
         handle = await client.run(
             _request(
                 thread,
@@ -526,7 +526,7 @@ def test_local_client_returns_caller_facing_steer_and_cancel_controls(
 
     async def scenario() -> None:
         await client.connect()
-        thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+        thread = harness.threads.create(kind=ThreadKind.CHAT)
         handle = await client.run(_request(thread))
         await asyncio.wait_for(gate.wait_until_entered(), timeout=1)
 
@@ -590,7 +590,7 @@ def test_local_client_disconnect_is_idempotent_without_stopping_executor(
     client = LocalRunClient(harness.executor)
 
     async def scenario() -> None:
-        thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+        thread = harness.threads.create(kind=ThreadKind.CHAT)
         with pytest.raises(RuntimeError, match="run client is disconnected"):
             await client.run(_request(thread, request_id="before_connect"))
 

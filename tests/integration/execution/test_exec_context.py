@@ -12,7 +12,7 @@ from tests.support.execution_assertions import (
 from tests.support.execution_harness import ExecutionHarness, RecordingRunTracer
 from toolang.base.types.message import Message, TextPart, message_text
 from toolang.base.types.run import ModelCallResult, ToolCall
-from toolang.execution.types import ThreadPrefix
+from toolang.execution.types import ThreadKind
 
 
 @pytest.mark.parametrize("unnamed", [False, True])
@@ -53,7 +53,7 @@ def test_exec_successor_declares_current_identity_with_chat_history(
 
     async def scenario():
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             previous = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,

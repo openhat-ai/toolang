@@ -18,7 +18,7 @@ from toolang.base.types.run import (
 from .chat_tui_runner import run_chat_tui
 from .setup import replace_materialized_setup
 from toolang.base.model_settings import parse_model_body
-from toolang.execution.types import ThreadPrefix
+from toolang.execution.types import ThreadKind
 from .execution_harness import AsyncGate, ExecutionHarness, ScriptedModelTurn
 
 
@@ -107,7 +107,7 @@ flow relay(_: Part[]) -> Part[]:
         ).start()
 
         async def seed_compact():
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             harness.adapter._responses.clear()
             harness.adapter._responses.extend(
                 [

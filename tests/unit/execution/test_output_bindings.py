@@ -91,8 +91,7 @@ def test_output_presence_bindings_and_references_survive_reopening(
         run = project_run_start(
             store,
             run_id="run_result",
-            thread_id="term_result",
-            origin="test",
+            thread_id="chat_result",
             input=Message.user("input"),
         )
         step = project_step(
@@ -169,7 +168,7 @@ def test_output_codecs_reject_removed_wrappers(data) -> None:
 def test_run_handle_has_one_protocol_and_event_shape(binding, result_type):
     from toolang.execution.types import AwaitableHandle
 
-    handle = AwaitableHandle("run_spawned", "spawn_thread", result_type)
+    handle = AwaitableHandle("run_spawned", "work_thread", result_type)
     output = Output(handle, binding)
     stored = output_to_data(output)
     assert stored == {
@@ -177,7 +176,7 @@ def test_run_handle_has_one_protocol_and_event_shape(binding, result_type):
         "value": {
             "kind": "run",
             "id": "run_spawned",
-            "thread": "spawn_thread",
+            "thread": "work_thread",
             "result_type": result_type,
         },
         "binding": binding,
@@ -199,7 +198,7 @@ def test_run_handle_has_one_protocol_and_event_shape(binding, result_type):
 
 
 def test_authored_run_struct_and_json_are_not_runtime_handles():
-    fields = {"id": "run_spawned", "thread": "spawn_thread"}
+    fields = {"id": "run_spawned", "thread": "work_thread"}
     for value, expected_type in ((Struct("Run", fields), "Run"), (fields, "Json")):
         output = Output(value, "job")
         assert output.type == expected_type
@@ -211,9 +210,9 @@ def test_authored_run_struct_and_json_are_not_runtime_handles():
     "value",
     [
         {"id": "run_spawned"},
-        {"id": "invalid/id", "thread": "spawn_thread"},
-        {"id": "run_spawned", "thread": "spawn_thread", "status": "pending"},
-        {"id": "run_spawned", "thread": "spawn_thread", "result": None},
+        {"id": "invalid/id", "thread": "work_thread"},
+        {"id": "run_spawned", "thread": "work_thread", "status": "pending"},
+        {"id": "run_spawned", "thread": "work_thread", "result": None},
     ],
 )
 def test_runtime_handle_output_requires_only_canonical_identity(value):
@@ -235,7 +234,7 @@ def test_runtime_handle_output_rejects_legacy_and_suffixed_types(type_name):
                     "value": {
                         "kind": "run",
                         "id": "run_spawned",
-                        "thread": "spawn_thread",
+                        "thread": "work_thread",
                         "result_type": "Text",
                     },
                     "binding": None,
@@ -253,7 +252,7 @@ def test_awaitable_rejects_invalid_result_contract(result_type):
                     "value": {
                         "kind": "run",
                         "id": "run_spawned",
-                        "thread": "spawn_thread",
+                        "thread": "work_thread",
                         "result_type": result_type,
                     },
                     "binding": None,

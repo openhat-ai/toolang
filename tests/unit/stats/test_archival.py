@@ -236,7 +236,7 @@ def test_canceled_root_without_start_has_receipt_but_no_contribution(fixture):
     from toolang.execution.types import RunReport
     from toolang.stats.types import timestamp
 
-    fixture.source.create_thread(thread_id="chat_pre_entry", origin="chat")
+    fixture.source.create_thread(thread_id="chat_pre_entry")
     root = "run_pre_entry"
     accept_run(
         fixture.source,

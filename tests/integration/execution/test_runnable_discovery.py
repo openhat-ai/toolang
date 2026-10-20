@@ -28,7 +28,7 @@ from toolang.base.types.run import ModelCallResult, ToolCall
 from toolang.common.errors import ToolangError
 from toolang.common.layout import AgentLayout
 from toolang.execution.events import StepBegin, StepEnd
-from toolang.execution.types import ThreadPrefix
+from toolang.execution.types import ThreadKind
 from toolang.state.prepare import prepare_agent_state
 
 
@@ -79,7 +79,7 @@ agic chat() -> Text:
         async with harness:
             run = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="chat",
                 ),
                 tracer=tracer,
@@ -202,7 +202,7 @@ def test_invalid_or_inaccessible_queries_fail_without_broadening(tmp_path, argum
         async with harness:
             run = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="chat",
                 )
             )
@@ -246,7 +246,7 @@ agic target():
         async with harness:
             run = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="outer",
                 ),
                 tracer=tracer,
@@ -287,7 +287,7 @@ def test_current_uses_bound_declaration_and_others_use_tool_step_state(
         async with harness:
             pending = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="chat",
                 ),
                 tracer=tracer,
@@ -349,7 +349,7 @@ def test_discovery_state_read_error_is_a_correlated_tool_failure(tmp_path):
         async with harness:
             run = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="chat",
                 ),
                 tracer=tracer,
@@ -398,7 +398,7 @@ def test_discovery_keeps_the_state_captured_before_tool_step_delivery(tmp_path):
         async with harness:
             run = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="chat",
                 ),
                 tracer=tracer,
@@ -450,7 +450,7 @@ def test_private_module_discovery_retains_aliases_and_hides_other_private_docs(
         async with harness:
             run = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="main",
                 )
             )
@@ -502,7 +502,7 @@ agic target():
         async with harness:
             run = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="chat",
                 ),
                 tracer=tracer,
@@ -543,7 +543,7 @@ def test_all_discovery_has_no_64_target_limit(tmp_path):
         async with harness:
             run = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="chat",
                 )
             )
@@ -569,7 +569,7 @@ def test_new_root_omits_routes_even_when_history_contains_restricted_batch(tmp_p
 
     async def scenario():
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             for runnable in ("chat", "target"):
                 run = await harness.executor.run(
                     harness.run_spec(

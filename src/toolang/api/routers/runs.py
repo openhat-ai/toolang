@@ -43,7 +43,7 @@ from toolang.execution.records import (
     RunRecord,
 )
 from toolang.execution.schemas import ControlInfo, RunDetail, RunInfo, LiveSnapshot
-from toolang.execution.types import RunStatus, ThreadPrefix
+from toolang.execution.types import RunStatus, ThreadKind
 from toolang.api.routers.threads import thread_info
 from toolang.lang.input import decode_runnable_input
 from toolang.lang.ast import AgicDecl
@@ -70,7 +70,7 @@ def create_exec_thread(
     core: AgentCoreDep, payload: ThreadCreateRequest
 ) -> ThreadResult:
     thread = core.threads.create(
-        prefix=ThreadPrefix.EXEC,
+        kind=ThreadKind.EXEC,
         client_id=payload.client_id,
         request_id=payload.request_id,
     )

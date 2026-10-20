@@ -321,7 +321,7 @@ def test_active_run_reads_and_repairs_latest_file_without_switching_revision(tmp
     )
     from toolang.base.types.message import Message, ToolResultPart
     from toolang.base.types.run import ModelCallResult, ToolCall
-    from toolang.execution.types import ThreadPrefix
+    from toolang.execution.types import ThreadKind
     from toolang.plugin.toolsets.loading import load_tools
 
     source = "agic inspect():\n  tools = state/*\n  Inspect.\n"
@@ -377,7 +377,7 @@ def test_active_run_reads_and_repairs_latest_file_without_switching_revision(tmp
 
     async def scenario():
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             running = harness.executor.run(
                 harness.run_spec(thread=thread, runnable="inspect")
             )

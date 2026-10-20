@@ -109,7 +109,7 @@ def test_remote_script_uses_an_exec_thread_and_native_progress(
         assert record.status == "succeeded"
         assert str(record.thread) == threads[0].id
         assert threads[0].id.startswith("exec_")
-        assert threads[0].origin == "exec"
+        assert threads[0].kind == "exec"
         assert core.store.run_output(run_id=record.id) == (TextPart("remote result"),)
         assert control is not None
         assert isinstance(control.payload, RunControlPayload)

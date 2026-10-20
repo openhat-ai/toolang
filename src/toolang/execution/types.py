@@ -386,6 +386,12 @@ class ThreadRef:
         if not valid_thread_id(self.id):
             raise ValueError(f"invalid thread ref: {self.id!r}")
 
+    @property
+    def kind(self) -> ThreadKind:
+        """Return the context kind encoded by this reference's ID."""
+
+        return ThreadKind(self.id.partition("_")[0])
+
     @classmethod
     def parse(cls, value: ThreadRef | str) -> ThreadRef:
         if isinstance(value, cls):
@@ -2075,14 +2081,13 @@ ControlKind = Literal[
 ]
 
 
-class ThreadPrefix(StrEnum):
-    """Prefixes for driver, work, and invocation contexts."""
+class ThreadKind(StrEnum):
+    """Context kinds encoded by canonical Thread ID prefixes."""
 
     CHAT = "chat"
     TALK = "talk"
     CHORE = "chore"
     WORK = "work"
-
     EXEC = "exec"
 
 
@@ -2099,13 +2104,18 @@ def valid_run_id(value: object) -> bool:
 
 
 def valid_thread_id(value: object) -> bool:
-    """Return whether a thread id is disjoint from the run namespace."""
+    """Return whether a Thread ID has a known kind and a nonempty suffix."""
 
-    return (
-        valid_execution_id(value)
-        and not cast(str, value).startswith("run_")
-        and not cast(str, value).startswith("sha256_")
-    )
+    if not valid_execution_id(value):
+        return False
+    prefix, separator, suffix = cast(str, value).partition("_")
+    if not separator or not suffix:
+        return False
+    try:
+        ThreadKind(prefix)
+    except ValueError:
+        return False
+    return True
 
 
 def validate_execution_id(value: object, *, label: str) -> str:

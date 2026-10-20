@@ -35,7 +35,7 @@ from toolang.execution.types import (
     ControlTiming,
     FieldRef,
     SkillRecallTarget,
-    ThreadPrefix,
+    ThreadKind,
     StepRef,
 )
 from toolang.state.prepare import prepare_agent_state
@@ -93,7 +93,7 @@ agic chat(_: Part[]) -> Part[]:
         async with harness:
             run = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="chat",
                     primary=Message.user("start").parts,
                 ),
@@ -145,7 +145,7 @@ def test_cancel_during_model_begin_records_one_canceled_step(
         async with harness:
             handle = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="chat",
                     limits=RunLimits(agic_model_calls=1),
                 ),
@@ -212,7 +212,7 @@ def test_controls_received_before_model_begin_enter_that_call(
         async with harness:
             handle = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="chat",
                     limits=RunLimits(agic_model_calls=1),
                 ),
@@ -322,7 +322,7 @@ def test_reprepared_tool_loop_preserves_messages_and_input_dependencies(
         async with harness:
             run = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="chat",
                 ),
                 tracer=tracer,
@@ -414,7 +414,7 @@ flow parent() -> Text:
         async with harness:
             handle = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="flow:parent" if child else "chat",
                 ),
                 tracer=tracer,
