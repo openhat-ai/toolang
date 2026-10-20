@@ -63,6 +63,60 @@ def test_run_history_batches_thread_and_run_summaries(
         store.close()
 
 
+def test_thread_order_uses_parent_completion_after_its_last_child(
+    tmp_path: Path,
+) -> None:
+    store = RunStore(tmp_path / "runs.db")
+    try:
+        thread = "chat_parent"
+        store.create_thread(thread_id=thread, created_at="2026-10-20T00:00:00Z")
+        parent = project_run_start(
+            store,
+            run_id="run_parent",
+            thread_id=thread,
+            input=Message.user("Parent"),
+            created_at="2026-10-20T01:00:00Z",
+        )
+        step = project_step(
+            store,
+            run_id=parent.id,
+            step_index=0,
+            kind="run",
+            status="running",
+            input=(),
+            output=None,
+            started_at="2026-10-20T02:00:00Z",
+            finished_at=None,
+        )
+        child = project_run_start(
+            store,
+            run_id="run_child",
+            thread_id=thread,
+            parent=step.ref,
+            input=Message.user("Child"),
+            created_at="2026-10-20T03:00:00Z",
+        )
+        project_run_end(store, run_id=child.id, finished_at="2026-10-20T04:00:00Z")
+        store.finish_step(
+            ref=step.ref,
+            kind="run",
+            status="succeeded",
+            output=None,
+            report=None,
+            error=None,
+            finished_at="2026-10-20T04:00:00Z",
+        )
+        project_run_end(store, run_id=parent.id, finished_at="2026-10-20T05:00:00Z")
+        store.create_thread(thread_id="chat_other", created_at="2026-10-20T04:30:00Z")
+
+        history = RunHistory(store)
+        detail = history.get_thread(thread)
+        assert detail is not None and detail.updated_at == "2026-10-20T05:00:00Z"
+        assert history.list_threads(limit=1)[0].id == thread
+    finally:
+        store.close()
+
+
 def test_run_history_projects_fork_and_rewind_from_one_snapshot(
     tmp_path: Path,
 ) -> None:

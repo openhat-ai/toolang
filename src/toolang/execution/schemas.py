@@ -625,7 +625,7 @@ class ThreadRunInfo:
             created_at=run.created_at,
             started_at=run.started_at,
             finished_at=run.finished_at,
-            updated_at=run.finished_at or run.started_at,
+            updated_at=run.finished_at or run.started_at or run.created_at,
         )
 
 
@@ -678,7 +678,6 @@ class ThreadInfo:
                 latest_run=None,
                 active_run=None,
             )
-        last = runs[-1]
         latest_root = next(run for run in reversed(runs) if run.parent is None)
         active = next(
             (run for run in reversed(runs) if run.status in {"pending", "running"}),
@@ -689,7 +688,12 @@ class ThreadInfo:
             title=message_summary(input_parts) or thread.kind.value,
             created_at=thread.created_at,
             status="running" if active is not None else "idle",
-            updated_at=max(last.finished_at or last.started_at, thread.updated_at),
+            updated_at=max(
+                thread.updated_at,
+                max(
+                    run.finished_at or run.started_at or run.created_at for run in runs
+                ),
+            ),
             created_by=ThreadControlRefData(thread=thread.id, index=0),
             head=ThreadControlRefData.from_ref(head),
             run_count=len(runs),
@@ -776,7 +780,7 @@ class RunInfo:
             created_at=run.created_at,
             started_at=run.started_at,
             finished_at=run.finished_at,
-            updated_at=run.finished_at or run.started_at,
+            updated_at=run.finished_at or run.started_at or run.created_at,
         )
 
 

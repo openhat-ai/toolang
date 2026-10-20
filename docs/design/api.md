@@ -353,6 +353,9 @@ Thread listing filters with `kind=chat|talk|chore|work|exec`; there is no Thread
 `origin` or `channel` filter. Status `running` includes pending and running Runs;
 `active_run.status` retains the actual Run state. CLI steer/cancel use the same
 active-state definition as HTTP controls.
+Run `updated_at` uses completion, start, or admission time, in that order.
+Thread `updated_at` is the latest visible Run timestamp or Thread mutation time;
+listing sorts by that value, including newly admitted pending work.
 All callers use `client_id` and `request_id` rather than a client-type enum.
 Management, cancellation, inspection, and script execution remain available
 when chat is disabled. See [driver selection](drivers.md).

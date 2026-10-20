@@ -21,6 +21,9 @@ other origin concepts unchanged, except the separately approved rename of
 - Both `pending` and `running` Runs make a Thread active. Its summary reports
   `running`, retains the actual active Run status, and lets CLI steer/cancel
   reach the existing ownership and invocation checks for either state.
+  Pending Run summaries use admission time for `updated_at`; Thread ordering
+  uses the latest visible Run update or Thread mutation, including a parent
+  that finishes after its last child.
 - Fork and rewind accept every Thread kind under the existing terminal-anchor,
   visibility, idle, and concurrent-head checks. Fork preserves the source kind
   without creating Talk bindings or chore definitions. Rewind changes history,
@@ -37,10 +40,10 @@ Verify all five kinds through persistence, events, HTTP reads, and filtering;
 reject invalid IDs before writes; verify branch state checks for all kinds; ensure
 neither `origin` nor `kind` is a Thread database column. Existing schema-version
 rejection tests cover the unsupported predecessor. Cover pending summaries,
-status filtering, and CLI control selection. Verify real Talk batches retain
-their binding, receipt, and cursor after fork/rewind and restart; verify a
-completed chore retains its checkpoint without creating another definition or
-replaying work. New messages and manual chores still use the original Thread.
+status filtering, CLI control selection, and timestamp-based ordering. Verify
+real Talk batches retain their binding, receipt, and cursor after fork/rewind
+and restart. Completed chores retain their checkpoints without another
+definition or replayed work; new messages and manual chores use the original Thread.
 Remove ignored `root_run_id` and `call_kind` test-helper parameters. Run the
 default checks.
 

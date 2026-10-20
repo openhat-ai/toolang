@@ -284,9 +284,10 @@ A fork stores its source thread and anchor run but does not copy run, step, or
 run-control rows. Its inherited history includes the anchor. It may select an
 earlier terminal anchor even when the source thread has a later active run. A
 rewind discards its anchor and the visible suffix after it, and is rejected
-while any visible top-level run is pending or running. The caller must cancel
-active runs before retrying; `ThreadManager` never writes run controls. Rewind
-records a closed range in a Thread control without modifying Runs or Steps.
+while any visible run, including an owned child, is pending or running. The
+caller must cancel active runs before retrying; `ThreadManager` never writes
+run controls. Rewind records a closed range in a Thread control without modifying
+Runs or Steps.
 Logical history applies that Thread's controls; physical records remain readable.
 Forks capture the source view at its control head, so later source rewinds do not
 change the inherited prefix. Forks and rewinds are serialized across

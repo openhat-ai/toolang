@@ -92,7 +92,7 @@ def test_unknown_or_empty_thread_kind_is_rejected_before_writes(tmp_path, identi
 def test_pending_run_keeps_thread_active_in_summaries_and_filters(tmp_path, kind):
     identity = f"{kind.value}_pending"
     with closing(RunStore(tmp_path / "runs.db")) as store:
-        store.create_thread(thread_id=identity)
+        store.create_thread(thread_id=identity, created_at="2026-10-19T00:00:00Z")
         run, _ = accept_run(
             store,
             run_id="run_pending",
@@ -110,10 +110,35 @@ def test_pending_run_keeps_thread_active_in_summaries_and_filters(tmp_path, kind
         assert detail.active_run is not None
         assert detail.active_run.id == run.id
         assert detail.active_run.status == "pending"
+        assert detail.active_run.updated_at == run.created_at
+        assert detail.latest_run is not None
+        assert detail.latest_run.updated_at == run.created_at
+        assert detail.updated_at == run.created_at
+        run_detail = history.get_run(run.id)
+        assert run_detail is not None and run_detail.updated_at == run.created_at
         assert [item.id for item in history.list_threads(status="running")] == [
             identity
         ]
         assert history.list_threads(status="idle") == []
+
+
+def test_pending_admission_updates_thread_list_order(tmp_path):
+    with closing(RunStore(tmp_path / "runs.db")) as store:
+        store.create_thread(thread_id="exec_pending", created_at="2026-10-20T01:00:00Z")
+        store.create_thread(thread_id="chat_idle", created_at="2026-10-20T02:00:00Z")
+        accept_run(
+            store,
+            run_id="run_pending",
+            parent=None,
+            thread="exec_pending",
+            input=Message.user("Waiting to start"),
+            context={},
+            request_id=None,
+            created_at="2026-10-20T03:00:00Z",
+        )
+        history = RunHistory(store)
+        assert [item.id for item in history.list_threads(limit=1)] == ["exec_pending"]
+        assert history.list_runs()[0].updated_at == "2026-10-20T03:00:00Z"
 
 
 def test_thread_api_filters_by_kind_without_repeating_it_in_responses(tmp_path):
