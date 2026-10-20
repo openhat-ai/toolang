@@ -1044,6 +1044,87 @@ def test_published_endpoint_failure_is_distinct_from_an_embedded_runtime(
     assert result.live is not None and result.live_error is None
 
 
+@pytest.mark.parametrize("endpoint", [None, "http://localhost:7001"])
+@pytest.mark.parametrize("unfinished", [False, True])
+def test_embedded_completed_work_proves_zero_active_roots(
+    tmp_path, monkeypatch, endpoint, unfinished
+):
+    from toolang.cli.common.top_view import TopView
+
+    source = replace(binding(tmp_path), endpoint=endpoint)
+    with closing(RunStore(source.layout.run_store)) as store:
+        project_run_start(
+            store,
+            run_id="run_embedded",
+            thread_id="script_top",
+            origin="script",
+            input=Message.user("fixture"),
+            started_at=timestamp(NOW - 1000),
+        )
+        if not unfinished:
+            store.finish_run(run_id="run_embedded", finished_at=timestamp(NOW))
+
+    def offline(*args, **kwargs):
+        raise httpx.ConnectError("connection refused")
+
+    monkeypatch.setattr(top.httpx, "get", offline)
+    monkeypatch.setattr(top.time, "time", lambda: NOW)
+    monkeypatch.setattr(
+        top,
+        "runtime_inventory",
+        lambda *args, **kwargs: RuntimeInventory(
+            RuntimeInstanceSnapshot((source.instance,)), (source,)
+        ),
+    )
+    with closing(
+        top.TopObserver(tmp_path, agent=None, period=3600, recent=300, refresh=1)
+    ) as observer:
+        snapshot = observer.once()
+        expected = 0 if not unfinished and endpoint is None else None
+        assert snapshot.summary.running == 1
+        assert snapshot.summary.active == expected
+        text = TopView().render(snapshot, width=160).plain
+        assert ("0 active" if expected == 0 else "- active") in text
+        assert ("live unavailable" in text) == (endpoint is not None)
+        if expected == 0:
+            source.layout.run_store.unlink()
+            state = observer.sources[source.instance.identity]
+            state.activity = observer.live_pool.submit(
+                state.read_activity,
+                source,
+                300,
+                previous=state.value.live,
+                cancelled=lambda: False,
+            )
+            with pytest.raises(StatsUnavailable):
+                state.activity.result(timeout=1)
+            assert observer.tick().summary.active is None
+
+
+def test_obsolete_idle_proof_does_not_clear_current_live_rows(tmp_path):
+    source = replace(binding(tmp_path), endpoint=None)
+    root = RunNode("run_live", None, "agic:work", "running", timestamp(NOW))
+    live = LiveSnapshot(
+        "epoch", timestamp(NOW), (LiveTreeSnapshot(root.id, "chat_top", (root,)),)
+    )
+    state = top._Source(
+        source,
+        NOW,
+        SourceActivity(
+            identity="source", label="alice", placement="resident", live=live
+        ),
+        activity=resolved(
+            ActivitySnapshot(live=None, completed=completed(), idle=True)
+        ),
+        activity_obsolete=True,
+    )
+    with closing(
+        top.TopObserver(tmp_path, agent=None, period=3600, recent=300, refresh=1)
+    ) as observer:
+        observer._collect(state, NOW)
+    assert state.value.live == live and state.value.live_stale
+
+
 def test_once_reports_initial_discovery_failure_without_fabricating_zero(
     tmp_path, monkeypatch
 ):

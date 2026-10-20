@@ -649,9 +649,14 @@ class TopView:
             "TIME+",
         ]
         for index, name in enumerate(headings):
-            if name == self.sort_field:
-                headings[index] += "↓" if self.sort_descending else "↑"
-                widths[index] = max(widths[index], cell_len(headings[index]))
+            if name in SORT_FIELDS:
+                widths[index] = max(widths[index], cell_len(name) + 1)
+                marker = (
+                    ("▿" if self.sort_descending else "▵")
+                    if name == self.sort_field
+                    else " "
+                )
+                headings[index] = marker + name
         self._row_hits.clear()
         self._sort_hits.clear()
         column = 0

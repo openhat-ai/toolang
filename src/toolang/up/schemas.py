@@ -15,6 +15,7 @@ class ActivitySnapshot(BaseModel):
     live: LiveSnapshot | None
     completed: CompletedRoots
     retired: tuple[RunNode, ...] = ()
+    idle: bool = False
     live_error: str | None = None
     page_error: str | None = None
 

@@ -86,6 +86,7 @@ def read_activity(
         known_roots=tuple(tree.root_run_id for tree in previous.trees)
         if previous
         else (),
+        check_idle=not source.endpoint and source.instance.needs_live_observation,
         cancelled=cancelled,
     )
     result.live_error = live_error
@@ -362,6 +363,11 @@ class TopObserver:
         if source.activity is not None and source.activity.done():
             try:
                 result = source.activity.result()
+                idle = (
+                    result.idle
+                    and not source.binding.endpoint
+                    and result.live_error is None
+                )
                 # Live samples have no Recent filter. Never discard a fresh live
                 # baseline just because the completion window changed in flight.
                 if result.live is not None and not source.activity_obsolete:
@@ -374,8 +380,14 @@ class TopObserver:
                         source.request_page = False
                         source.value.page_error = None
                     source.value.live = result.live
-                source.value.live_stale = (
-                    result.live is None or source.activity_obsolete
+                elif (
+                    idle
+                    and not source.activity_obsolete
+                    and source.value.live is not None
+                ):
+                    source.value.live = replace(source.value.live, trees=())
+                source.value.live_stale = source.activity_obsolete or (
+                    result.live is None and not idle
                 )
                 if not source.activity_obsolete:
                     source.value.live_error = result.live_error

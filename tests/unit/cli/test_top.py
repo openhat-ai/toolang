@@ -734,7 +734,7 @@ def test_numeric_sorting_keeps_partitions_subtrees_unknowns_and_selection(
         if row.parent is not None:
             assert rows[index - 1].root == row.root
     text = view.render(snapshot, width=160).plain
-    assert sort_field + ("↓" if descending else "↑") in text
+    assert ("▿" if descending else "▵") + sort_field in text
 
 
 def test_default_order_tracks_tree_changes_without_clock_or_fold_reordering():
@@ -800,6 +800,27 @@ def test_sort_picker_and_mouse_hit_targets_follow_rendered_rows_and_columns():
     view.move(-100)
     view.sort()
     assert view.sort_field is None
+
+
+@pytest.mark.parametrize("sort_field", SORT_FIELDS)
+@pytest.mark.parametrize("descending", [False, True])
+def test_sort_prefix_keeps_headings_values_and_mouse_targets_fixed(
+    sort_field, descending
+):
+    snapshot = frame((root(),))
+    view = TopView()
+    baseline = view.render(snapshot, width=200).plain.splitlines()
+    y = next(i for i, line in enumerate(baseline) if line.startswith("AGENT "))
+    names = ("AGENT", "THREAD", "RUN", *SORT_FIELDS, "STATUS")
+    positions = {name: baseline[y].index(name) for name in names}
+    row = next(line for line in baseline if ROOT in line)
+    view.sort_field, view.sort_descending = sort_field, descending
+    lines = view.render(snapshot, width=200).plain.splitlines()
+    assert {name: lines[y].index(name) for name in names} == positions
+    assert next(line for line in lines if ROOT in line) == row
+    assert ("▿" if descending else "▵") + sort_field in lines[y]
+    view.click(positions[sort_field] - 1, y)
+    assert view.sort_field == sort_field and view.sort_descending != descending
 
 
 @pytest.mark.parametrize("transition", ["resize", "close_sort", "remove_rows"])

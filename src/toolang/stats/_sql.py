@@ -45,6 +45,11 @@ PIN_SOURCE = """
 SELECT id FROM src.runs LIMIT 1;
 """
 
+UNFINISHED_ROOT = """
+SELECT 1 FROM src.runs
+WHERE parent IS NULL AND status IN ('pending','running') LIMIT 1;
+"""
+
 RECENT_ROOT_COUNTS = """
 SELECT status,COUNT(*) AS count FROM src.runs
 WHERE parent IS NULL AND status IN ('succeeded','failed','canceled')

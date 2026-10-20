@@ -20,6 +20,10 @@ history twice. Instances confirmed `not running` contribute zero active roots
 without live diagnostics; their durable completions and usage remain visible.
 Live diagnostics distinguish failed published endpoints from pending or
 unsupported observation.
+For an embedded instance without an HTTP endpoint, a pinned local source with
+no pending or running physical roots proves zero active roots. Unfinished roots
+of any age keep live coverage unknown; failed endpoints and unreadable stores
+also remain unknown.
 Instance departure or shutdown never implies a Run's terminal status.
 
 ```sh
@@ -126,8 +130,9 @@ order; clock ticks and folds do not change that order. F6 opens the sort picker
 for Default, MODEL, TOOL, INPUT, CACHED, OUTPUT, SPEND and TIME+. Up/Down chooses
 a field, Left/Right chooses ascending/descending, F6/Enter applies, and Esc
 cancels. Click a table heading to sort descending, then click again to reverse;
-an arrow marks the chosen direction. Sorting uses root lifetime values within
-each partition, with unknowns last. Subtrees retain execution order, selection
+a fixed cell before each sortable heading shows `▵` for ascending or `▿` for
+descending, keeping field names and data columns stationary. Sorting uses root
+lifetime values within each partition, with unknowns last. Subtrees retain execution order, selection
 follows its identity, and finished roots always stay below active roots. Only
 loaded roots participate; paging inserts additional completions in sort order.
 Click any visible row to select it.

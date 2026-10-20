@@ -5,6 +5,8 @@ from unittest.mock import Mock
 
 import pytest
 
+from tests.support.execution_fixtures import accept_run
+from toolang.base.types.message import Message
 from toolang.base.types.run import ModelCall
 from toolang.execution.store import RunStore
 from toolang.execution.types import (
@@ -142,6 +144,35 @@ def test_pinned_source_is_stable_across_completion(source):
     with recent_source(source.source.db_path) as reader:
         reader.pin()
         assert [row.id for row in reader.completed(now=NOW, recent=300).roots] == [run]
+
+
+@pytest.mark.parametrize("pending", [False, True])
+def test_idle_detection_is_pinned_and_includes_unfinished_roots_of_any_age(
+    source, pending
+):
+    done = source.root("done", NOW - 40000)
+    source.finish(done, NOW - 1000)
+    with recent_source(source.source.db_path) as reader:
+        reader.pin()
+        assert not reader.has_unfinished_roots()
+        if pending:
+            source.source.create_thread(thread_id="chat_pending", origin="chat")
+            accept_run(
+                source.source,
+                run_id="run_pending",
+                parent=None,
+                thread="chat_pending",
+                input=Message.user("fixture"),
+                context={},
+                request_id=None,
+                created_at=timestamp(NOW - 40000),
+            )
+        else:
+            source.root("running", NOW - 40000)
+        assert not reader.has_unfinished_roots()
+    with recent_source(source.source.db_path) as reader:
+        reader.pin()
+        assert reader.has_unfinished_roots()
 
 
 def test_archived_source_contributions_are_read_once(fixture):
