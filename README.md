@@ -83,10 +83,10 @@ agic:
   {{_}}
 ```
 
-Save it as `a.too` and run it with some text:
+Save it as `translate.too` and run it with some text:
 
 ```bash
-too a.too -- hello world
+too translate.too -- Toolang, a language and runtime for agents and humans
 ```
 
 Use `too init` to create a starter script that you can rename and customize:
