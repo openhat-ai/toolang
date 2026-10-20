@@ -35,6 +35,10 @@ def test_normalized_bindings_reuse_and_report_only_changed_field_names(tmp_path)
         replace(
             spec,
             serve=replace(spec.serve, lifetime="foreground", launch_id="replacement"),
+            environ={
+                **spec.environ,
+                "TOOLANG_HOST_LAUNCH": "private-parent-generation",
+            },
         ),
     )
     with pytest.raises(ValueError, match="startup parameters differ: drivers"):
@@ -69,3 +73,18 @@ def test_missing_startup_bindings_are_not_adopted(tmp_path):
     )
     with pytest.raises(ValueError, match="unverifiable"):
         require_compatible(layout, spec)
+
+
+def test_effective_environment_is_independent_of_overridden_dotenv_defaults(tmp_path):
+    layout = AgentLayout.resident(tmp_path, "aid")
+    spec = asyncio.run(
+        resolve_launch(
+            layout=layout,
+            sandbox="host",
+            port=8123,
+            environ={"PROVIDER_API_KEY": "effective"},
+        )
+    )
+    assert startup_contract(spec) == startup_contract(
+        replace(spec, dotenv_envs={"PROVIDER_API_KEY": "overridden"})
+    )

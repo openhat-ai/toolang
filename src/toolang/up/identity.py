@@ -40,6 +40,7 @@ def select_roaming(source: Path, instance_id: str | None = None) -> AgentLayout:
             if instance_id is not None:
                 raise ValueError("instance belongs to a different source")
             continue
+        _validate_retained_identity(layout, entry["control"])
         return layout
     raise FileNotFoundError(f"no retained instance for {source}")
 
@@ -64,6 +65,16 @@ def allocate_roaming(source: Path, *, toolang_root: Path) -> AgentLayout:
                 )
                 if entry is None or entry["control"].get("instance_id") != token:
                     raise ValueError(f"invalid retained instance: {root}")
+                recorded_source = entry["control"].get("source_path")
+                if (
+                    not isinstance(recorded_source, str)
+                    or not Path(recorded_source).is_absolute()
+                ):
+                    raise ValueError(f"invalid retained source identity: {root}")
+                previous = AgentLayout.roaming(Path(recorded_source), instance_id=token)
+                if previous.root != root.resolve():
+                    raise ValueError(f"invalid retained root identity: {root}")
+                _validate_retained_identity(previous, entry["control"])
                 highest = max(highest, int(token[1:17], 16))
         order = max(time.time_ns(), highest + 1)
         token = (
@@ -103,6 +114,16 @@ def allocate_roaming(source: Path, *, toolang_root: Path) -> AgentLayout:
         return layout
 
 
+def _validate_retained_identity(layout: AgentLayout, control: dict) -> None:
+    expected = identity_bindings(layout)
+    if any(
+        control.get(key) != value
+        for key, value in expected.items()
+        if key != "toolang_root"
+    ):
+        raise ValueError(f"inconsistent retained instance identity: {layout.root}")
+
+
 def identity_bindings(layout: AgentLayout) -> dict:
     return {
         "root": str(layout.root),
@@ -117,6 +138,7 @@ def identity_bindings(layout: AgentLayout) -> dict:
         "source_path": str(layout.source_path)
         if layout.source_path is not None
         else None,
+        "source_ref": layout.source_ref,
         "request_order_ns": layout.request_order_ns,
         "source_edit_lock": str(layout.root_edit_lock),
         "toolang_root": str(layout.toolang_root)
@@ -125,6 +147,16 @@ def identity_bindings(layout: AgentLayout) -> dict:
         "project_inputs": bool(layout.project_inputs),
         "managed_membership": bool(layout.managed_membership),
     }
+
+
+def finish_preparation(layout: AgentLayout, message: str) -> None:
+    """Finalize an owned command that returned without starting its workload."""
+    entry = read_instance(layout.runtime_status)
+    if entry is not None and entry["workload"].get("status") in {
+        "preparing",
+        "starting",
+    }:
+        fail_preparation(layout, RuntimeError(message))
 
 
 def fail_preparation(layout: AgentLayout, error: BaseException) -> None:

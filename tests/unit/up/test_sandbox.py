@@ -1453,6 +1453,9 @@ def test_local_prepare_failure_never_creates_a_workload_and_allows_retry(
     )
     failure = next(e for e in events if e.subject == "state" and e.status == "failed")
     assert failure.label == "Failed to prepare agent state"
+    assert not (
+        spec.serve.layout.root / ".runtime" / "instances" / "alice.json"
+    ).exists()
     monkeypatch.setattr(sandbox, "prepare_agent_state", original)
 
     async def ready(*_args, **_kwargs):
@@ -1467,3 +1470,107 @@ def test_local_prepare_failure_never_creates_a_workload_and_allows_retry(
         )
         == 1
     )
+
+
+def test_failed_workload_stays_registered_until_its_resources_are_released(
+    tmp_path, monkeypatch
+):
+    from toolang.up.instance import patch_workload
+    from toolang.up.observation import runtime_inventory, instance_filename
+
+    implementation = FakeSandbox()
+    monkeypatch.setattr(
+        sandbox, "create_sandbox", lambda *_args, **_kwargs: implementation
+    )
+
+    async def ready(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(sandbox, "_wait_ready", ready)
+    spec = _launch_spec(tmp_path)
+    handle = asyncio.run(sandbox.launch(spec))
+    patch_workload(
+        spec.serve.layout.runtime_status,
+        handle.state.launch_id,
+        {"status": "failed", "pid": None},
+    )
+    reference = (
+        tmp_path / ".runtime" / "instances" / instance_filename(spec.serve.layout)
+    )
+    inventory = runtime_inventory(tmp_path)
+    assert reference.exists()
+    assert inventory.snapshot.instances[0].state == "unknown"
+    assert inventory.snapshot.instances[0].diagnostic
+    assert asyncio.run(sandbox.stop(spec.serve.layout))
+    assert not reference.exists()
+    assert spec.serve.layout.runtime_status.exists()
+
+
+def test_automatic_retry_preserves_a_child_bind_failure_and_renews_generation(
+    tmp_path, monkeypatch
+):
+    from toolang.up.instance import read_instance, patch_workload
+
+    implementation = FakeSandbox()
+    implementation.location = "host"
+    generations = []
+    monkeypatch.setattr(
+        sandbox, "create_sandbox", lambda *_args, **_kwargs: implementation
+    )
+    spec = _launch_spec(tmp_path)
+    spec = replace(spec, serve=replace(spec.serve, automatic_port=True))
+    original = implementation.launch
+
+    async def launch(plan):
+        implementation.alive = True
+        entry = read_instance(spec.serve.layout.runtime_status)
+        assert entry is not None
+        generations.append(entry["launch_id"])
+        return await original(plan)
+
+    async def ready(*_args, **_kwargs):
+        if len(generations) == 1:
+            patch_workload(
+                spec.serve.layout.runtime_status,
+                generations[0],
+                {
+                    "status": "failed",
+                    "pid": None,
+                    "message": "[Errno 98] Address already in use",
+                },
+            )
+            raise RuntimeError("agent server exited before becoming ready")
+
+    monkeypatch.setattr(implementation, "launch", launch)
+    monkeypatch.setattr(sandbox, "_wait_ready", ready)
+    handle = asyncio.run(sandbox.launch(spec))
+    assert len(generations) == 2 and len(set(generations)) == 2
+    assert handle.state.launch_id == generations[-1]
+    assert asyncio.run(sandbox.stop(spec.serve.layout))
+
+
+def test_adapter_assigned_port_is_the_compatible_effective_port(tmp_path, monkeypatch):
+    from toolang.up.contract import require_compatible
+
+    implementation = FakeSandbox()
+    monkeypatch.setattr(
+        sandbox, "create_sandbox", lambda *_args, **_kwargs: implementation
+    )
+    spec = _launch_spec(tmp_path)
+    spec = replace(spec, serve=replace(spec.serve, automatic_port=True))
+
+    async def launch(_plan):
+        return SandboxRef("assigned-port", "http://localhost:9184")
+
+    async def ready(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(implementation, "launch", launch)
+    monkeypatch.setattr(sandbox, "_wait_ready", ready)
+    asyncio.run(sandbox.launch(spec))
+    try:
+        require_compatible(
+            spec.serve.layout, replace(spec, serve=replace(spec.serve, port=9184))
+        )
+    finally:
+        asyncio.run(sandbox.stop(spec.serve.layout))

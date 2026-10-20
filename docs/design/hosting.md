@@ -2,7 +2,7 @@
 
 | Command | Resident name | Local `.too` | Remote Source Ref |
 | --- | --- | --- | --- |
-| `too serve` | yes | yes | yes |
+| `too serve` | yes | no | yes |
 | `too start` | yes | no | yes |
 | `too stop` | yes | no | yes |
 
@@ -22,6 +22,10 @@ controller. Detached and guest workloads use hidden `too _serve`, receiving
 explicit agent paths, placement, instance ID, source policy, sandbox, location,
 launch ID, and required store schema; guests do not recompute host identities. The execution core is shared across sandboxes.
 
+Embedded host scripts expose the full Agent API, including activity and Stats,
+through that script's executor and event loop. The caller owns its shutdown.
+Roaming does not support `serve`, `start`, or `stop`.
+
 The CLI preserves the interpreter's process name and command-line arguments.
 Terminal conversation titles continue to use OSC independently of process names.
 
@@ -32,6 +36,8 @@ container references use adapter-owned instance IDs. `info` shows the referenced
 PID or instance even during startup and ignores status reports from another
 workload. Missing or unverifiable control state produces a diagnostic instead of
 adopting a process by name. Stop unregistered legacy servers before upgrading.
+References are removed only after resource release, including failed workloads;
+agent roots and history remain available afterward.
 
 Control-side launches report ordered operational work on stderr: preparing the
 sandbox, creating the runtime, and connecting to the Agent API. Host foreground
@@ -62,6 +68,8 @@ belongs to [Drivers](drivers.md#handler-selection).
 Resident/visiting attachment compares all normalized effective executor startup
 bindings, including inferred environment/config/defaults, before preparation.
 Mismatches and unverifiable legacy contracts reject without changing the owner.
+Visiting source fetch/materialization occurs only after this check; help and
+read-only history commands do not fetch sources or allocate roaming instances.
 Align `--enable` explicitly when command defaults differ. Run inputs/request model
 options may differ; attachment preserves lifetime. Controls use saved bindings.
 
@@ -267,6 +275,7 @@ Only active global registrations reserve peer ports. Hold host listener sockets
 through serving; sandbox adapters publish actual endpoints. Automatic bind
 failures retry at most three times, releasing failed resources and renewing
 `launch_id` while retaining the instance ID. Explicit conflicts fail.
+Adapter-assigned endpoints supply the effective port used for attachment.
 
 An agent recorded on `7001` receives a new port on its next default start.
 Explicit CLI, environment, or home configuration port overrides still take
@@ -279,8 +288,8 @@ source identity, and startup settings. Resident implicit servers remain running;
 visiting implicit servers exit once no client leases or accepted work remain.
 Fresh implicit resident/visiting servers enable chat only. Fresh start/serve
 keep placement defaults: resident chat,talk,chore; visiting chat,talk. Roaming
-Chat servers remain running after exit. Standalone scripts use embedded host
-execution or stop the guest server they created when the command exits.
+Chat owns a fresh server and stops it on exit. Standalone scripts use embedded
+host execution or stop the guest server they created when the command exits.
 
 Use `too start <agent-or-ref>` for unattended availability. It promotes an
 automatic visiting server in place or reuses a persistent server, reports actual
@@ -302,8 +311,9 @@ remain on host mounts. Host staging cleanup may wait for a later management call
 Generation checks reject delayed requests to replacement servers. Steer/cancel
 attach only to a healthy live owner and pin the target invocation; stale history
 cannot start a replacement or redirect a control to another invocation. Fork/rewind --chat
-retains one acquisition through both phases. Legacy servers stay unmanaged and
-retained; stop/restart them to use lifecycle promotion and guarded controls.
+retains one acquisition for resident/visiting; roaming commits the edit before
+continuing in a fresh instance. Stop/restart legacy owners to establish verifiable
+startup contracts and use lifecycle promotion and guarded controls.
 
 Chat checks health/profile before use. It retains session defaults locally and
 uses HTTP for runtime/model/runnable inspection, thread creation, and result

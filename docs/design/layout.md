@@ -33,7 +33,7 @@ ${TOOLANG_ROOT}/
     instances/
       gus.json                       # Resident
       lex@v<source-hash>.json         # Visiting
-      aid@r<source-hash>.json         # Roaming server
+      aid@<instance_id>.json         # Roaming
       register.lock
   hub/
   human/

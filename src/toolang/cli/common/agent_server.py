@@ -367,12 +367,15 @@ def _prepare_agent_server(
                 require_compatible(layout, requested)
             except ValueError as exc:
                 raise AgentServerAcquisitionError(str(exc)) from exc
+            _prepare_visiting_source(layout, progress)
         return attached
 
     if attach_only:
         raise AgentServerAcquisitionError(
             "run has no healthy live execution owner; no server was started"
         )
+
+    layout = _prepare_visiting_source(layout, progress)
 
     effective_drivers: ExecutionDrivers = (
         drivers
@@ -434,6 +437,27 @@ def _prepare_agent_server(
             )
         ) from exc
     return handle
+
+
+def _prepare_visiting_source(layout: AgentLayout, progress: CliProgress) -> AgentLayout:
+    if layout.placement == "visiting" and layout.source_ref is not None:
+        from toolang.up.source import resolve_visiting_layout, visiting_layout
+
+        toolang_root = layout.toolang_root or resolve_root(None)
+        if (
+            visiting_layout(layout.source_ref, toolang_root=toolang_root).root
+            != layout.root
+        ):
+            raise AgentServerAcquisitionError("visiting source identity changed")
+        try:
+            return resolve_visiting_layout(
+                layout.source_ref,
+                toolang_root=toolang_root,
+                progress=progress.sink,
+            )
+        except (OSError, RuntimeError, ToolangError, TypeError, ValueError) as exc:
+            raise AgentServerAcquisitionError(progress.failure_message(exc)) from exc
+    return layout
 
 
 def sandbox_matches(requested: str, running: str) -> bool:

@@ -46,6 +46,68 @@ def test_server_initializes_setup_and_state_once_concurrently() -> None:
     assert state.calls == 1
 
 
+@pytest.mark.parametrize("automatic", [True, False])
+def test_foreground_host_bind_conflict_retries_only_automatic_ports(
+    tmp_path, monkeypatch, automatic
+):
+    import errno
+    from unittest.mock import AsyncMock
+    from tests.support.execution_harness import ExecutionHarness
+    from toolang.up.core import AgentCore
+    from toolang.up.instance import read_instance, SandboxState
+
+    harness = ExecutionHarness.create(
+        tmp_path, source="flow main():\n  pass\n", responses=[]
+    )
+    layout = AgentLayout.resident(tmp_path, "alice")
+    attempts = []
+
+    def construct(layout, **kwargs):
+        core = AgentCore(
+            layout,
+            store=harness.store,
+            ids=harness.ids,
+            initial_state=harness.state,
+            **kwargs,
+        )
+        monkeypatch.setattr(core.setup, "current", lambda: harness.setup)
+        monkeypatch.setattr(core.state, "current", lambda: harness.state)
+        return core
+
+    monkeypatch.setattr(server, "AgentCore", construct)
+    monkeypatch.setattr(server, "_refresh_core", AsyncMock())
+    monkeypatch.setattr(server, "configure_logging", lambda **_kwargs: None)
+
+    def bind(_app, **kwargs):
+        entry = read_instance(layout.runtime_status)
+        assert entry is not None
+        attempts.append((kwargs["port"], entry["launch_id"]))
+        if len(attempts) == 1:
+            raise OSError(errno.EADDRINUSE, "Address already in use")
+        kwargs["on_running"]()
+
+    monkeypatch.setattr(server, "_run_uvicorn_app", bind)
+    spec = server.ServeSpec(
+        layout=layout,
+        host="127.0.0.1",
+        endpoint_host="localhost",
+        port=8123,
+        automatic_port=automatic,
+    )
+    try:
+        if automatic:
+            assert server.serve(spec, environ={}, sandbox="host") == 0
+            assert len(attempts) == 2 and attempts[0][0] != attempts[1][0]
+            assert attempts[0][1] != attempts[1][1]
+        else:
+            with pytest.raises(OSError, match="Address already in use"):
+                server.serve(spec, environ={}, sandbox="host")
+            assert len(attempts) == 1
+        assert SandboxState.load(layout.runtime_status) is None
+    finally:
+        asyncio.run(harness.close())
+
+
 def test_resident_default_port_reuses_free_record_or_selects_available(
     tmp_path, monkeypatch
 ):

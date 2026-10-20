@@ -1069,23 +1069,18 @@ def test_cli_routes_chat_development_artifact_to_the_exact_layout(
     }
 
 
-def test_cli_routes_visiting_chat_through_materialization(
+def test_cli_defers_visiting_chat_materialization_until_acquisition(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     selector = "gh:brice/researcher"
-    layout = AgentLayout(
-        root=tmp_path / "visiting",
-        name="researcher",
-        placement="visiting",
-    )
+    layout = agent_sources.visiting_layout(selector, toolang_root=tmp_path)
     captured: dict[str, object] = {}
 
     def resolve(
         source: str, *, progress: object, toolang_root: Path | None = None
     ) -> AgentLayout:
-        captured.update(source=source, progress=progress)
-        return layout
+        pytest.fail("routing must not materialize a visiting source")
 
     def run_app(args: list[str], selected: AgentLayout) -> int:
         captured.update(args=args, layout=selected)
@@ -1094,13 +1089,12 @@ def test_cli_routes_visiting_chat_through_materialization(
     monkeypatch.setattr(agent_sources, "resolve_visiting_layout", resolve)
 
     result = dispatch_visiting(
-        [selector, "chat", "--thread", "chat_1"],
+        ["--root", str(tmp_path), selector, "chat", "--thread", "chat_1"],
         run_app=run_app,
     )
 
     assert result == 12
-    assert captured["source"] == selector
-    assert captured["args"] == ["chat", "--thread", "chat_1"]
+    assert captured["args"] == ["--root", str(tmp_path), "chat", "--thread", "chat_1"]
     assert captured["layout"] == layout
 
 
@@ -1125,10 +1119,7 @@ def test_cli_visiting_failure_uses_the_operational_failure_block(
 
     monkeypatch.setattr(agent_sources, "resolve_visiting_layout", fail)
 
-    result = dispatch_visiting(
-        ["gh:missing/agent", "chat"],
-        run_app=lambda _args, _layout: pytest.fail("failed resolution must not run"),
-    )
+    result = cli.main(["gh:missing/agent", "chat"])
 
     assert result == 1
     error = capsys.readouterr().err
@@ -1268,11 +1259,7 @@ def test_cli_opens_visiting_chat_with_its_exact_layout(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     selector = "gh:brice/researcher"
-    layout = AgentLayout(
-        root=tmp_path / "visiting",
-        name="researcher",
-        placement="visiting",
-    )
+    layout = agent_sources.visiting_layout(selector, toolang_root=tmp_path)
     captured: dict[str, object] = {}
 
     class Session:
@@ -1305,7 +1292,7 @@ def test_cli_opens_visiting_chat_with_its_exact_layout(
     monkeypatch.setattr("builtins.input", end_input)
     monkeypatch.setattr(chat_commands.sys.stdin, "isatty", lambda: False)
 
-    assert cli.main([selector, "chat"]) == 0
+    assert cli.main(["--root", str(tmp_path), selector, "chat"]) == 0
     assert captured == {
         "layout": layout,
         "closed": True,
@@ -1406,15 +1393,65 @@ def test_cli_bare_dev_keeps_unknown_option_errors(command, tmp_path, capsys):
     assert "No such option: --unknown" in strip_ansi(capsys.readouterr().err)
 
 
-def test_remote_agent_parse_failure_is_reported_before_command_execution(
+def test_remote_agent_parse_failure_is_reported_before_runtime_execution(
     tmp_path, monkeypatch, capsys
 ):
-    from toolang.cli.toolang.routing import dispatch_visiting
-
     monkeypatch.setattr(agent_sources, "_fetch_http_text", lambda *_: "flow broken(:\n")
-    result = dispatch_visiting(
-        ["--root", str(tmp_path), "https://example.test/broken.too", "serve"],
-        run_app=lambda *_: pytest.fail("command ran before agent parsed"),
+    monkeypatch.setattr(
+        "toolang.up.server.serve",
+        lambda *_args, **_kwargs: pytest.fail("runtime ran before agent parsed"),
+    )
+    result = cli.main(
+        ["--root", str(tmp_path), "https://example.test/broken.too", "serve"]
     )
     assert result == 1
     assert "Failed to parse agent" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("command", ["chat", "rerun", "serve"])
+def test_visiting_runtime_routing_defers_source_preparation(
+    tmp_path, monkeypatch, command
+):
+    from toolang.cli.toolang.routing import dispatch_visiting
+
+    monkeypatch.setattr(
+        agent_sources,
+        "resolve_visiting_layout",
+        lambda *_args, **_kwargs: pytest.fail(
+            "routing fetched source before startup validation"
+        ),
+    )
+    layouts = []
+
+    def run(_argv, layout):
+        layouts.append(layout)
+        return 0
+
+    assert (
+        dispatch_visiting(
+            ["--root", str(tmp_path), "https://example.test/deferred.too", command],
+            run_app=run,
+        )
+        == 0
+    )
+    assert layouts[0].source_ref == "https://example.test/deferred.too"
+
+
+def test_visiting_serve_prepares_with_the_acquired_source_receipt(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(
+        agent_sources, "_fetch_http_text", lambda *_: "flow main():\n  pass\n"
+    )
+    acquired = []
+    monkeypatch.setattr(
+        "toolang.up.sandbox.prepare_launch_state",
+        lambda spec, **_kwargs: acquired.append(spec.serve.layout.program_acquisition),
+    )
+    monkeypatch.setattr("toolang.up.server.serve", lambda *_args, **_kwargs: 0)
+    assert (
+        cli.main(["--root", str(tmp_path), "https://example.test/receipt.too", "serve"])
+        == 0
+    )
+    assert len(acquired) == 1 and acquired[0] is not None
+    assert acquired[0].acquisition.resolved_ref == "https://example.test/receipt.too"

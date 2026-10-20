@@ -7,6 +7,8 @@ import asyncio
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass, field
+from dataclasses import replace
+import errno
 import logging
 import json
 import os
@@ -255,6 +257,54 @@ def serve(
     sandbox: str,
     launch_id: str | None = None,
     location: str = "host",
+) -> int:
+    """Retry automatic host binds only after releasing each failed generation."""
+    owns_control = location == "host" and not (launch_id or spec.launch_id)
+    for attempt in range(3):
+        try:
+            return _serve_once(
+                spec,
+                environ=environ,
+                sandbox=sandbox,
+                launch_id=launch_id,
+                location=location,
+            )
+        except OSError as exc:
+            if not owns_control or exc.errno != errno.EADDRINUSE:
+                raise
+            from .instance import SandboxState
+            from .sandbox import _clear_state
+
+            owner = SandboxState.load(
+                spec.layout.runtime_status, instance=spec.layout.instance
+            )
+            if (
+                owner is not None
+                and owner.ref.runtime_kind == "process"
+                and owner.ref.runtime_id == str(os.getpid())
+            ):
+                _clear_state(spec.layout, expected=owner)
+            if not spec.automatic_port or attempt == 2:
+                raise
+            spec = replace(
+                spec,
+                port=resolve_runtime_port(
+                    host=spec.host,
+                    explicit_port=None,
+                    layout=spec.layout,
+                    temporary=spec.layout.placement != "resident",
+                ),
+            )
+    raise RuntimeError("automatic host bind attempts exhausted")
+
+
+def _serve_once(
+    spec: ServeSpec,
+    *,
+    environ: Mapping[str, str],
+    sandbox: str,
+    launch_id: str | None,
+    location: str,
 ) -> int:
     """Run one AgentServer as the current process's primary workload."""
 

@@ -36,6 +36,11 @@ def snapshot_history(
                 from .inspection.history import RunHistory
 
                 if source_run is not None:
+                    if not source_run.startswith("run_"):
+                        thread = RunHistory(seed).get_thread(source_run, run_limit=0)
+                        if thread is None or thread.latest_run is None:
+                            raise ValueError("rerun source thread has no visible run")
+                        source_run = thread.latest_run.id
                     run = seed.get_run(run_id=source_run)
                     if run is None or run.status not in {
                         "succeeded",

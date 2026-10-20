@@ -70,6 +70,8 @@ def test_shared_foreground_api_observes_and_cancels_the_owning_executor(
                     async with httpx.AsyncClient(base_url=endpoint) as http:
                         response = await http.get("/api/v0/top/snapshot")
                         assert response.status_code == 200
+                        statistics = await http.get("/api/v0/stats/summary")
+                        assert statistics.status_code == 200, statistics.text
                         snapshot = response.json()
                         assert (
                             snapshot["live"]["trees"][0]["root_run_id"] == handle.run_id

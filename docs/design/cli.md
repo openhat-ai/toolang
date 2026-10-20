@@ -62,8 +62,9 @@ requests a file or `-` for stdout. Quiet mode suppresses preparation/execution
 progress. Non-TTY progress is plain append-only text. [Execution presentation](execution-presentation.md)
 owns rendering and [Scripts](scripts.md) owns temporary grants and path origins.
 
-Each roaming script, Chat, or serve launch creates a fresh root/executor. Host
-scripts expose the shared Agent API on the workload's event loop; guest workloads
+Each roaming script or Chat launch creates a fresh root/executor. Roaming does
+not support `serve`, `start`, or `stop`. Host scripts expose the shared Agent API
+on the workload's event loop; guest workloads
 use existing sandbox serving. Resources close when the owning foreground caller
 exits. [Hosting](hosting.md) owns startup compatibility and recovery.
 

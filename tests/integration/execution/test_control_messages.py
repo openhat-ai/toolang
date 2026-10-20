@@ -92,7 +92,8 @@ agic chat(_: Part[]) -> Part[]:
             pid_file = harness.setup.layout.home / "started"
             pid = None
             try:
-                async with asyncio.timeout(2):
+                # Process startup can be delayed by parallel suite scheduling.
+                async with asyncio.timeout(10):
                     while not pid_file.exists() or not pid_file.read_text().strip():
                         await asyncio.sleep(0.01)
                 pid = int(pid_file.read_text())

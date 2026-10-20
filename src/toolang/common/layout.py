@@ -55,6 +55,7 @@ class AgentLayout:
     source_id: str | None = None
     instance_id: str | None = None
     source_path: Path | None = field(default=None, compare=False)
+    source_ref: str | None = field(default=None, compare=False)
     source_edit_lock: Path | None = field(default=None, compare=False)
     request_order_ns: int | None = field(default=None, compare=False)
     program_acquisition: AcquiredSource | None = field(
@@ -116,6 +117,7 @@ class AgentLayout:
             toolang_root=toolang_root,
             source_id=digest,
             instance_id=f"v{digest}",
+            source_ref=source,
         )
 
     @classmethod

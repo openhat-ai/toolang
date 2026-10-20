@@ -48,16 +48,14 @@ def startup_contract(spec: LaunchSpec) -> dict[str, str]:
         source_edit_lock=str(spec.serve.layout.root_edit_lock),
         environ={
             key: value
-            for key, value in spec.environ.items()
+            for key, value in {**spec.dotenv_envs, **spec.environ}.items()
             if key
             not in {
                 "TOOLANG_LOG_PATH",
                 "TOOLANG_PROGRESS_MAX_WIDTH",
                 "TOOLANG_UI_BASE_URL",
+                "TOOLANG_HOST_LAUNCH",
             }
-        },
-        dotenv={
-            key: spec.environ.get(key, value) for key, value in spec.dotenv_envs.items()
         },
         development=str(spec.dev_artifact) if spec.dev_artifact else None,
     )

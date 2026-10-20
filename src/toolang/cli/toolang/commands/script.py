@@ -806,6 +806,13 @@ def _run(
                 )
                 run_id = accepted[0] if accepted else None
     except KeyboardInterrupt:
+        if layout is not None:
+            from toolang.up.identity import fail_preparation
+            from toolang.up.instance import read_instance
+
+            entry = read_instance(layout.runtime_status)
+            if entry is not None and entry["workload"].get("status") == "preparing":
+                fail_preparation(layout, RuntimeError("script interrupted"))
         if run_id is None and accepted:
             run_id = accepted[0]
         progress.close()

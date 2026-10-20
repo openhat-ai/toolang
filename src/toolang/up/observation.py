@@ -45,6 +45,7 @@ def _registered_layout(control: dict) -> AgentLayout:
         source_path=Path(control["source_path"])
         if control.get("source_path")
         else None,
+        source_ref=control.get("source_ref"),
         request_order_ns=control.get("request_order_ns"),
         source_edit_lock=Path(control["source_edit_lock"])
         if control.get("source_edit_lock")
@@ -252,6 +253,7 @@ def running_instances(root: Path) -> tuple[dict, ...]:
                     "agent": agent,
                     "instance": instance_identity(layout),
                     "drivers": control.get("drivers", []),
+                    "endpoint": status.endpoint,
                 }
             )
         except (OSError, ValueError, KeyError, TypeError):
@@ -638,26 +640,9 @@ def runtime_inventory(root: Path, *, agent: str | None = None) -> RuntimeInvento
             and state in {"stopped", "failed"}
             and workload.get("pid") is None
             and entry["control"].get("operation") is None
+            and entry["control"].get("ref") is None
         ):
             remove_registration(candidate.layout, entry["launch_id"])
-            continue
-        if (
-            isinstance(state, str)
-            and state in {"stopped", "failed"}
-            and workload.get("pid") is None
-            and entry["control"].get("operation") is None
-        ):
-            result.append(
-                RuntimeInstance(
-                    candidate.layout.name,
-                    candidate.layout.placement,
-                    candidate.layout.instance,
-                    instance_identity(candidate.layout),
-                    "not running",
-                    None,
-                    str(state),
-                )
-            )
             continue
         probes.append((candidate, candidate.layout, entry))
 
@@ -750,8 +735,11 @@ def runtime_inventory(root: Path, *, agent: str | None = None) -> RuntimeInvento
             detail = status.message or f"observed {observed}"
             diagnostic = f"{detail[:180]}"
         if normalized_state == "not running":
-            remove_registration(layout, entry["launch_id"])
-            continue
+            if entry["control"].get("ref") is None:
+                remove_registration(layout, entry["launch_id"])
+                continue
+            normalized_state = "unknown"
+            diagnostic = "runtime resources have not been released"
         if diagnostic is not None:
             observed_state = str(workload_state or reported_state)
         else:

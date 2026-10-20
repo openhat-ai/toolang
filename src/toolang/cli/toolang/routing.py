@@ -90,7 +90,7 @@ COMMAND_SPECS: Mapping[str, CommandSpec] = {
             "serve",
             "before",
             "after",
-            placements=_ALL_PLACEMENTS,
+            placements=_HOSTED,
             prepare="program",
             preparation_owner="command",
         ),
@@ -276,6 +276,8 @@ def dispatch_roaming(
         spec = command_spec(command)
         if not spec.accepts(position, "roaming"):
             return _unsupported_target(command, "roaming", position)
+        layout = None
+        owns_preparation = False
         try:
             prepare = _preparation(spec, body, position)
             if command == "workspace" and (
@@ -294,7 +296,6 @@ def dispatch_roaming(
                 "fork",
                 "rewind",
                 "rerun",
-                "stop",
             }:
                 from toolang.up.identity import select_roaming
 
@@ -306,7 +307,11 @@ def dispatch_roaming(
                     from toolang.up import source as agent_sources
 
                     layout = agent_sources.roaming_layout(source)
-            elif command in {"chat", "serve"}:
+            elif command == "chat" and {"--help", "-h"}.intersection(body):
+                from toolang.up import source as agent_sources
+
+                layout = agent_sources.roaming_layout(source)
+            elif command == "chat":
                 from toolang.up.identity import allocate_roaming
                 from ..common.context import resolve_root
                 from toolang.up import source as agent_sources
@@ -342,8 +347,10 @@ def dispatch_roaming(
                         toolang_root=resolve_root(None),
                         source_thread=thread_selector,
                     )
+                    owns_preparation = True
                 else:
                     layout = allocate_roaming(source, toolang_root=resolve_root(None))
+                    owns_preparation = True
                     agent_sources.materialize_roaming_program(source, layout=layout)
             else:
                 if instance_id is not None:
@@ -352,16 +359,35 @@ def dispatch_roaming(
                     )
                 layout = _roaming_layout(source, prepare)
         except (OSError, ValueError, ToolangError, RuntimeError) as exc:
+            if owns_preparation:
+                _finish_roaming_preparation(layout, str(exc))
             echo_error(str(exc))
             return 1
-        return run_app(
-            _selected_command_args(body, position, target=layout.name),
-            layout,
-            source,
-        )
+        except KeyboardInterrupt:
+            if owns_preparation:
+                _finish_roaming_preparation(layout, "preparation interrupted")
+            return 130
+        try:
+            return run_app(
+                _selected_command_args(body, position, target=layout.name),
+                layout,
+                source,
+            )
+        finally:
+            if owns_preparation:
+                _finish_roaming_preparation(
+                    layout, "command ended before runtime startup"
+                )
     from .commands import script
 
     return script.dispatch(global_args, body, prog_name=prog_name)
+
+
+def _finish_roaming_preparation(layout: AgentLayout | None, message: str) -> None:
+    from toolang.up.identity import finish_preparation
+
+    if layout is not None:
+        finish_preparation(layout, message)
 
 
 def dispatch_visiting(
@@ -392,7 +418,18 @@ def dispatch_visiting(
         return 1
     prepare = (
         "layout"
-        if command in {"info", "inspect", "steer", "cancel", "fork", "rewind"}
+        if command
+        in {
+            "info",
+            "inspect",
+            "steer",
+            "cancel",
+            "fork",
+            "rewind",
+            "chat",
+            "rerun",
+            "serve",
+        }
         else _preparation(spec, body, position)
     )
     progress = make_cli_progress(

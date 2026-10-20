@@ -174,30 +174,25 @@ def rerun_command(
     """Start a new root run from one terminal source invocation."""
 
     layout = context_layout(ctx)
+    show_progress = sys.stderr.isatty()
+    model_override = user_call(_rerun_model_override, model_body=model)
+    commands = user_call(_restart_commands, allow_options=allows, limit_options=limit)
+    selected_catalog = resolve_model_catalog_option(model_catalog)
+    if layout.placement == "roaming":
+        layout = _continue_roaming(ctx, source_run=run)
     with open_execution(ctx, required=True) as resources:
         if resources is None:  # pragma: no cover
             raise RuntimeError("execution resources were not opened")
         _thread_id, source = _anchor(RunHistory(resources.store), run)
-    show_progress = sys.stderr.isatty()
-    model_override = user_call(
-        _rerun_model_override,
-        model_body=model,
-    )
-    if layout.placement == "roaming":
-        layout = _continue_roaming(ctx, source_run=source)
     result = _run_rerun(
         layout=layout,
         source=source,
         sandbox=sandbox,
         dev=dev,
-        commands=user_call(
-            _restart_commands,
-            allow_options=allows,
-            limit_options=limit,
-        ),
+        commands=commands,
         model_override=model_override,
         show_progress=show_progress,
-        model_catalog=resolve_model_catalog_option(model_catalog),
+        model_catalog=selected_catalog,
     )
     status = _display_status(result.status)
     if not show_progress:
@@ -375,9 +370,18 @@ def _open_chat(
     from .chat import chat_command
 
     if server is None:
-        if context_layout(ctx).placement == "roaming":
+        roaming = context_layout(ctx).placement == "roaming"
+        if roaming:
             _continue_roaming(ctx, thread_id=thread_id)
-        chat_command(ctx, thread=thread_id)
+        try:
+            chat_command(ctx, thread=thread_id)
+        finally:
+            if roaming:
+                from toolang.up.identity import finish_preparation
+
+                finish_preparation(
+                    context_layout(ctx), "Chat ended before runtime startup"
+                )
     else:
         from .chat.main import chat_command as continue_chat
 
@@ -429,6 +433,11 @@ def _run_rerun(
         raise ClickException(str(exc)) from exc
     except (OSError, ToolangError, ValueError, RuntimeError) as exc:
         raise ClickException(str(exc)) from exc
+    finally:
+        if layout.placement == "roaming":
+            from toolang.up.identity import finish_preparation
+
+            finish_preparation(layout, "rerun ended before runtime startup")
 
 
 def _restart_commands(

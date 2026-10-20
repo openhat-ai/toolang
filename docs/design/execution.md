@@ -58,12 +58,14 @@ for captured Report fields.
 
 - Roaming rerun seeds a fresh instance through a complete SQLite backup, preserving
   typed/content references, thread views, allocator high-water marks, and immutable
-  State. Current project inputs/grants govern new execution.
+  State. Run/thread selectors and control heads resolve within the sealed snapshot.
+  Current project inputs/grants govern new execution.
 - Imported Runs retain original ownership across repeated replay. They remain
   inspectable, but supply no destination live activity, controls, events, usage,
   completions, or archive totals. Mutable workspaces/tools and `stats.db` are not copied.
 - Replay provenance and accepted destination Run are linked atomically by request ID.
-  Partial seeds never execute; failure retains source and destination roots.
+  Incomplete seeds cannot execute or seed another instance; failure retains source
+  and destination roots for inspection.
 - Offline fork/rewind uses guarded `ThreadManager` transactions after native/sandbox
   death checks; missing global registration alone is insufficient.
 - `fork --chat` / `rewind --chat` commits the edit before fresh roaming continuation;

@@ -190,3 +190,83 @@ def test_imported_failed_talk_receipts_cannot_send_failure_notices(tmp_path):
     finally:
         copied.close()
         store.close()
+
+
+def test_rerun_thread_selector_is_resolved_inside_the_snapshot(tmp_path):
+    source = tmp_path / "source.db"
+    store = RunStore(source)
+    ids = IdIssuer(source, agent_name="aid")
+    thread = ids.issue_thread("exec")
+    first = project_run_start(
+        store,
+        run_id=ids.issue_run(),
+        thread_id=thread,
+        input=Message.user("first"),
+        created_at="2026-10-20T00:00:00Z",
+    )
+    project_run_end(store, run_id=first.id)
+    latest = project_run_start(
+        store,
+        run_id=ids.issue_run(),
+        thread_id=thread,
+        input=Message.user("latest"),
+        created_at="2026-10-20T00:01:00Z",
+    )
+    project_run_end(store, run_id=latest.id)
+    destination = tmp_path / "destination.db"
+    snapshot_history(
+        source,
+        destination,
+        source_owner="old",
+        source_root=tmp_path,
+        request_id="seed",
+        source_run=str(thread),
+    )
+    store.close()
+    with sqlite3.connect(destination) as copied:
+        assert (
+            copied.execute("SELECT source_run FROM replay_provenance").fetchone()[0]
+            == latest.id
+        )
+
+
+def test_partial_state_seed_cannot_be_used_as_a_replay_source(tmp_path, monkeypatch):
+    from toolang.up import replay
+    from toolang.up.identity import allocate_roaming, select_roaming
+
+    source = tmp_path / "aid.too"
+    source.write_text("flow main():\n  pass\n")
+    layout = allocate_roaming(source, toolang_root=tmp_path / "global")
+    state = layout.home / ".state"
+    state.mkdir()
+    (state / "captured").write_text("immutable state")
+    store = RunStore(layout.run_store)
+    ids = IdIssuer(layout.run_store, agent_name="aid")
+    run = project_run_start(
+        store,
+        run_id=ids.issue_run(),
+        thread_id=ids.issue_thread("exec"),
+        input=Message.user("first"),
+    )
+    project_run_end(store, run_id=run.id)
+    store.close()
+    with monkeypatch.context() as patch:
+
+        def fail(*_args, **_kwargs):
+            raise OSError("state copy failed")
+
+        patch.setattr(replay.shutil, "copytree", fail)
+        with pytest.raises(OSError, match="state copy failed"):
+            replay.prepare_continuation(
+                layout, toolang_root=tmp_path / "global", source_run=run.id
+            )
+    incomplete = select_roaming(source)
+    assert incomplete.run_store.is_file()
+    from toolang.up.core import AgentCore
+
+    with pytest.raises(ValueError, match="incomplete replay seed"):
+        AgentCore(incomplete)
+    with pytest.raises(ValueError, match="incomplete replay seed"):
+        replay.prepare_continuation(
+            incomplete, toolang_root=tmp_path / "global", source_run=run.id
+        )

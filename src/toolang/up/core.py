@@ -55,7 +55,9 @@ class AgentCore:
         start_executor: bool = True,
     ) -> None:
         from .source import restore_program_acquisition
+        from .replay import require_complete_seed
 
+        require_complete_seed(layout)
         layout = restore_program_acquisition(layout)
         self.layout = layout
         self.lifecycle = lifecycle

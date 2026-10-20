@@ -131,6 +131,41 @@ def _set_status(
     monkeypatch.setattr(agent_server.agents, "AgentProcess", Process)
 
 
+def test_visiting_reuse_validates_effective_parameters_before_fetch(
+    tmp_path, monkeypatch
+):
+    layout = AgentLayout.visiting(
+        "https://example.test/strict.too", "strict", toolang_root=tmp_path
+    )
+    _set_status(
+        monkeypatch,
+        layout,
+        _status(value="running", endpoint="http://localhost:8123", sandbox="host"),
+    )
+    prepared = []
+    monkeypatch.setattr(
+        "toolang.up.source.resolve_visiting_layout",
+        lambda *_args, **_kwargs: prepared.append(layout) or layout,
+    )
+    with pytest.raises(
+        agent_server.AgentServerAcquisitionError, match="startup parameters differ"
+    ):
+        with agent_server.acquire_agent_server(
+            layout,
+            sandbox=None,
+            ui_base_url="https://ui.test",
+            compact_override=ModelOverride(identity="test/different"),
+            show_progress=False,
+        ):
+            pytest.fail("mismatched attachment was accepted")
+    assert not prepared
+    with agent_server.acquire_agent_server(
+        layout, sandbox=None, ui_base_url="https://ui.test", show_progress=False
+    ) as ref:
+        assert ref is not None
+    assert prepared == [layout]
+
+
 @pytest.mark.parametrize(
     "override",
     [

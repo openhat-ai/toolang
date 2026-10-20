@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import errno
 import json
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager, suppress
@@ -14,6 +15,7 @@ import time
 from dataclasses import replace
 from typing import Literal, Protocol, runtime_checkable
 from urllib.error import URLError
+from urllib.parse import urlsplit
 from urllib.request import urlopen
 from uuid import uuid4
 from weakref import WeakKeyDictionary
@@ -446,6 +448,17 @@ async def _launch_locked(
                 },
                 instance=spec.serve.layout.instance,
             )
+            entry = read_instance(
+                spec.serve.layout.runtime_status, spec.serve.layout.instance
+            )
+            if (
+                entry is not None
+                and entry["launch_id"] == spec.serve.launch_id
+                and not entry["control"].get("ref")
+            ):
+                from .observation import remove_registration
+
+                remove_registration(spec.serve.layout, spec.serve.launch_id)
         _startup_progress(
             progress,
             spec,
@@ -570,7 +583,7 @@ async def _launch_locked(
             detail=ref.endpoint,
         )
         await ready_task
-        _remember_success(spec.serve.layout, state, selector=spec.sandbox)
+        _remember_success(spec, state, selector=spec.sandbox)
         _startup_progress(
             progress,
             spec,
@@ -583,6 +596,14 @@ async def _launch_locked(
             await implementation.detach_output(ref)
         return SandboxHandle(implementation, state, progress_id=spec.progress_id)
     except BaseException as exc:
+        entry = read_instance(
+            spec.serve.layout.runtime_status, spec.serve.layout.instance
+        )
+        bind_error = None
+        if entry is not None and entry["launch_id"] == launch_id:
+            message = entry["workload"].get("message")
+            if isinstance(message, str) and "address already in use" in message.lower():
+                bind_error = OSError(errno.EADDRINUSE, message)
         if not attach_failure_observed:
             _startup_progress(
                 progress,
@@ -600,6 +621,8 @@ async def _launch_locked(
                 state=state,
             )
         )
+        if bind_error is not None:
+            raise bind_error from exc
         raise
 
 
@@ -1326,14 +1349,27 @@ def _begin_launch(spec: LaunchSpec) -> None:
     ).__enter__()
 
 
-def _remember_success(
-    layout: AgentLayout, state: SandboxState, *, selector: str
-) -> None:
+def _remember_success(spec: LaunchSpec, state: SandboxState, *, selector: str) -> None:
+    layout = spec.serve.layout
+    effective_port = urlsplit(state.ref.endpoint).port
+    contract = None
+    if spec.serve.automatic_port and effective_port is not None:
+        from .contract import startup_contract
+
+        contract = startup_contract(
+            replace(spec, serve=replace(spec.serve, port=effective_port))
+        )
+
+    def remember(entry):
+        entry["control"].update(
+            last_successful={"endpoint": state.ref.endpoint, "sandbox": selector}
+        )
+        if contract is not None:
+            entry["control"]["startup_contract"] = contract
+
     update_instance(
         layout.runtime_status,
-        lambda entry: entry["control"].update(
-            last_successful={"endpoint": state.ref.endpoint, "sandbox": selector}
-        ),
+        remember,
         instance=layout.instance,
         launch_id=state.launch_id,
     )

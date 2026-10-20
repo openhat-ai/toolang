@@ -43,7 +43,7 @@ instance_id = "r" + hex16(request_order_ns) + SHA256(canonical_source_path_utf8 
 - Default roaming selection: maximum validated local ID for that canonical source, including failed/exited instances. Latest means startup request; completion/mtime never reorder. Corrupt/ambiguous metadata fails.
 - Pin root/identity/generation once per command. `steer`/`cancel` require that live owner; never launch a replacement.
 - `fork`/`rewind`: existing live API; offline `ThreadManager` transactions only after guarded native/sandbox death checks. Preserve idle/head/anchor rules; unknown/starting/stopping owners reject writes.
-- New roaming script/Chat/serve always creates a fresh instance; `-i` cannot revive retained roots.
+- New roaming script/Chat always creates a fresh instance; `-i` cannot revive retained roots. Roaming has no `serve`/`start`/`stop`; the caller owns shutdown.
 
 ```sh
 too /work/demo/aid.too inspect -i r18e0b5f817d00000e2c7a0f23d51a9c6 runs

@@ -89,3 +89,21 @@ def test_instance_identity_uses_canonical_path_even_with_the_same_clock_and_nonc
     alias = tmp_path / "alias.too"
     alias.symlink_to(first.source_path)
     assert select_roaming(alias, first.instance_id).root == first.root
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("root", "/other"), ("placement", "resident"), ("request_order_ns", -1)],
+)
+def test_retained_selection_rejects_inconsistent_identity_bindings(
+    tmp_path, field, value
+):
+    from toolang.up.instance import update_instance
+
+    source = tmp_path / "aid.too"
+    layout = allocate_roaming(source, toolang_root=tmp_path / "global")
+    update_instance(
+        layout.runtime_status, lambda entry: entry["control"].update({field: value})
+    )
+    with pytest.raises(ValueError, match="identity"):
+        select_roaming(source, layout.instance_id)

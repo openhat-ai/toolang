@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import ExitStack
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import os
 import sys
 import json
@@ -45,6 +45,7 @@ from toolang.cli.common.agent_server import (
 
 import httpx
 
+from toolang.base.errors import ToolangError
 from toolang.plugin.catalogs.models_dev.path import MODEL_CATALOG_ENV
 from toolang.cli.common.policy import (
     resolve_default_overrides,
@@ -177,12 +178,30 @@ def run(
                 workspace_options=workspace,
                 workdir=single_workdir(workdir),
             )
+            if target.placement == "visiting" and target.source_ref is not None:
+                expected = agent_sources.visiting_layout(
+                    target.source_ref, toolang_root=context_root(ctx)
+                )
+                if expected.root != target.root:
+                    raise ClickException("visiting source identity changed")
+                prepared = agent_sources.resolve_visiting_layout(
+                    target.source_ref,
+                    toolang_root=context_root(ctx),
+                    progress=progress.sink,
+                )
+                launch = replace(
+                    launch,
+                    target=prepared,
+                    startup=replace(
+                        launch.startup,
+                        serve=replace(launch.startup.serve, layout=prepared),
+                    ),
+                )
             with progress.suspended():
                 warn_development_package_source(launch.startup)
             launch_started = True
             if launch.startup.sandbox == "host":
                 from toolang.up.server import serve as serve_agent
-                from dataclasses import replace
                 from toolang.plugin.sandboxes.host import (
                     host_sandbox_description,
                     HOST_SANDBOX_DESCRIPTION_ENV,
@@ -220,9 +239,12 @@ def run(
         FileNotFoundError,
         OSError,
         RuntimeError,
+        ToolangError,
         ValueError,
         ClickException,
     ) as exc:
+        if not launch_started and progress.failure_stage is not None:
+            raise ClickException(progress.failure_message(exc)) from exc
         if isinstance(exc, ClickException) and not launch_started:
             raise
         if launch_started and launch is not None:
@@ -480,6 +502,12 @@ def stop(
     agent_name = require_runtime_agent(ctx, agent)
     root = context_root(ctx)
     layout = cli_context(ctx).layout or AgentLayout.resident(root, agent_name)
+    from toolang.up.instance import read_instance
+
+    entry = read_instance(layout.runtime_status)
+    expected_launch_id = cli_context(ctx).launch_id or (
+        entry["launch_id"] if entry else None
+    )
     progress = make_cli_progress()
     try:
         with progress:
@@ -489,8 +517,8 @@ def stop(
                     force=force,
                     progress=progress.sink,
                     **(
-                        {"expected_launch_id": cli_context(ctx).launch_id}
-                        if cli_context(ctx).launch_id is not None
+                        {"expected_launch_id": expected_launch_id}
+                        if expected_launch_id is not None
                         else {}
                     ),
                 ),

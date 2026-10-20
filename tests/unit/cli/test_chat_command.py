@@ -210,10 +210,8 @@ def test_chat_latest_uses_selected_history_for_agent_sessions(
         layout = allocate_roaming(source, toolang_root=chat_layout.root)
         selector = str(source)
     elif placement == "visiting":
-        layout = AgentLayout(
-            root=tmp_path / "visiting", name="alice", placement="visiting"
-        )
         selector = "gh:owner/alice"
+        layout = agent_sources.visiting_layout(selector, toolang_root=chat_layout.root)
         monkeypatch.setattr(
             agent_sources, "resolve_visiting_layout", lambda *_args, **_kwargs: layout
         )
