@@ -35,7 +35,7 @@ def read_activity(
     previous: LiveSnapshot | None = None,
     cancelled: Callable[[], bool] | None = None,
 ) -> ActivitySnapshot:
-    live_error = None
+    live_error = source.observation_error
     if source.endpoint:
         try:
             response = httpx.get(
@@ -86,7 +86,9 @@ def read_activity(
         known_roots=tuple(tree.root_run_id for tree in previous.trees)
         if previous
         else (),
-        check_idle=not source.endpoint and source.instance.needs_live_observation,
+        check_idle=not source.endpoint
+        and live_error is None
+        and source.instance.needs_live_observation,
         cancelled=cancelled,
     )
     result.live_error = live_error

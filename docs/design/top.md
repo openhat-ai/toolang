@@ -24,6 +24,15 @@ For an embedded instance without an HTTP endpoint, a pinned local source with
 no pending or running physical roots proves zero active roots. Unfinished roots
 of any age keep live coverage unknown; failed endpoints and unreadable stores
 also remain unknown.
+Host scripts publish a separate read-only observation listener for their existing
+executor on an OS-assigned `127.0.0.1` port. It serves only the versioned Top
+snapshot route, including during `--quiet` and `--out` execution. Its endpoint is
+published after readiness and guarded by the registration's launch token; it is
+not a management endpoint. Discovery validates the loopback URL before using it.
+The listener remains available while owned execution drains, then closes before
+storage. Startup or serving failures leave execution unchanged, preserve durable
+reads, and report unknown live coverage through the existing live diagnostics.
+Older scripts without observation metadata retain the endpoint-free behavior above.
 Instance departure or shutdown never implies a Run's terminal status.
 
 ```sh
@@ -92,8 +101,9 @@ completions and usage without creating a database. A previously observed store
 that disappears, or an existing unreadable/corrupt store, remains unavailable.
 
 Loading, window switches, samples older than five seconds, normal paging and
-missing provider usage/pricing do not produce error notices. Embedded execution
-without an HTTP endpoint may have unknown live coverage without an error.
+missing provider usage/pricing do not produce error notices. Older embedded
+execution without an observation endpoint may have unknown live coverage without
+an error.
 Only actual observation failures produce compact yellow notices between the
 scope and clock; raw source errors remain in JSON diagnostics. Metric sentences
 have no `partial`, `updating` or `unavailable` suffixes. Paging errors preserve

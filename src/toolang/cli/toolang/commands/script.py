@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from contextlib import ExitStack
+from contextlib import AsyncExitStack, ExitStack
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import replace
 import json
@@ -73,6 +73,7 @@ if TYPE_CHECKING:
     from toolang.execution.store import RunStore
     from toolang.execution.types import RunOverride, SessionSetting
     from toolang.state.state import AgentState
+    from toolang.up.observation import RuntimeRegistration
     from ...common.progress import CliProgress
 
 Runnable = AgicDecl | FlowDecl
@@ -744,7 +745,7 @@ def _run(
                 terminal.set_run(run)
 
             if server is None:
-                runtime_scope.enter_context(
+                registration = runtime_scope.enter_context(
                     RuntimeRegistration(
                         layout,
                         toolang_root=layout.toolang_root or resolve_root(None),
@@ -783,6 +784,7 @@ def _run(
                             session_override=session_override,
                             quiet=quiet,
                             progress=progress,
+                            registration=registration,
                         )
                     )
             else:
@@ -1201,6 +1203,7 @@ async def _execute(
     session_override: RunOverride,
     quiet: bool,
     progress: CliProgress | None = None,
+    registration: RuntimeRegistration | None = None,
 ) -> RunRecord:
     from toolang.base.types.policy import RunBindings
     from toolang.execution.calls import resolve_spec
@@ -1308,25 +1311,32 @@ async def _execute(
     executor.start()
     stop_watching = asyncio.Event()
     watching = asyncio.create_task(state_watcher.run(stop_signal=stop_watching))
-    try:
-        handle = executor.run(
-            spec,
-            run_id=run_id,
-            tracer=tracer,
-            client_id=client_id,
-            request_id=f"request_{uuid4().hex}",
-        )
-        return await await_script_run(handle)
-    finally:
+    async with AsyncExitStack() as observation:
         try:
-            await executor.stop()
+            if registration is not None:
+                from toolang.up.embedded import observe_embedded
+
+                await observation.enter_async_context(
+                    observe_embedded(executor, registration)
+                )
+            handle = executor.run(
+                spec,
+                run_id=run_id,
+                tracer=tracer,
+                client_id=client_id,
+                request_id=f"request_{uuid4().hex}",
+            )
+            return await await_script_run(handle)
         finally:
-            stop_watching.set()
             try:
-                await watching
+                await executor.stop()
             finally:
-                if tracer is not None:
-                    tracer.close()
+                stop_watching.set()
+                try:
+                    await watching
+                finally:
+                    if tracer is not None:
+                        tracer.close()
 
 
 async def await_script_run(handle: LocalRunHandle) -> RunRecord:

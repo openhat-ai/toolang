@@ -10,6 +10,7 @@ import os
 import re
 from pathlib import Path
 from uuid import uuid4
+from urllib.parse import urlsplit
 from typing import Any, TypeGuard, cast
 
 import psutil
@@ -120,6 +121,8 @@ class RuntimeRegistration:
                     source_id=self.layout.source_id,
                     sandbox="host",
                     endpoint=self.endpoint,
+                    observation_endpoint=None,
+                    observation_error=None,
                 )
                 if self.layout.instance is not None:
                     entry["control"]["owner"] = control_owner()
@@ -140,6 +143,28 @@ class RuntimeRegistration:
             self.close()
             raise
         return self
+
+    def publish_observation(
+        self, endpoint: str | None, *, error: str | None = None
+    ) -> bool:
+        """Publish observation metadata only for this embedded launch."""
+        if not self.embedded:
+            raise ValueError("only embedded registrations publish observation")
+        if endpoint is not None:
+            validate_observation_endpoint(endpoint)
+
+        def publish(entry):
+            entry["control"].update(
+                observation_endpoint=endpoint, observation_error=error
+            )
+
+        return update_instance(
+            self.layout.runtime_status,
+            publish,
+            instance=self.layout.instance,
+            launch_id=self.token,
+            blocking=False,
+        )
 
     def close(self) -> None:
         if self.embedded:
@@ -275,6 +300,25 @@ class RuntimeSource:
     instance: RuntimeInstance
     layout: AgentLayout
     endpoint: str | None
+    observation_error: str | None = None
+
+
+def validate_observation_endpoint(value: str) -> str:
+    """Accept only an explicitly bound IPv4 loopback observation listener."""
+    parsed = urlsplit(value)
+    if (
+        parsed.scheme != "http"
+        or parsed.hostname != "127.0.0.1"
+        or not parsed.port
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path
+        or parsed.query
+        or parsed.fragment
+        or value != f"http://127.0.0.1:{parsed.port}"
+    ):
+        raise ValueError("invalid embedded observation endpoint")
+    return value
 
 
 @dataclass(frozen=True, slots=True)
@@ -910,10 +954,38 @@ def runtime_inventory(root: Path, *, agent: str | None = None) -> RuntimeInvento
         for _, layout, _, status, _ in inspected
         if status is not None and status.status == "running"
     }
+    observation_errors = {}
+    for _, layout, entry, status, _ in inspected:
+        if (
+            status is None
+            or status.status != "running"
+            or status.endpoint
+            or entry["control"].get("sandbox") != "host"
+            or entry["control"].get("ref") is not None
+        ):
+            continue
+        identity = instance_identity(layout)
+        control = entry["control"]
+        error = control.get("observation_error")
+        if isinstance(error, str) and error:
+            observation_errors[identity] = error
+        endpoint = control.get("observation_endpoint")
+        if endpoint is not None:
+            try:
+                if not isinstance(endpoint, str):
+                    raise ValueError("invalid embedded observation endpoint")
+                endpoints[identity] = validate_observation_endpoint(endpoint)
+            except ValueError:
+                observation_errors[identity] = "invalid embedded observation endpoint"
     return RuntimeInventory(
         RuntimeInstanceSnapshot(tuple(result), tuple(diagnostics)),
         tuple(
-            RuntimeSource(item, layouts[item.identity], endpoints.get(item.identity))
+            RuntimeSource(
+                item,
+                layouts[item.identity],
+                endpoints.get(item.identity),
+                observation_errors.get(item.identity),
+            )
             for item in result
         ),
     )

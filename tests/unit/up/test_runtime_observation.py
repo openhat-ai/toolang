@@ -13,6 +13,7 @@ from toolang.up.observation import (
     instance_filename,
     running_instances,
     runtime_snapshot,
+    runtime_inventory,
 )
 
 
@@ -42,6 +43,62 @@ def test_reference_names_use_stable_host_source_identity(tmp_path):
     assert instance_filename(
         AgentLayout.visiting("https://other.example/lex.too", "lex", toolang_root=root)
     ) != instance_filename(visiting)
+
+
+@pytest.mark.parametrize(
+    "endpoint",
+    [
+        "http://127.0.0.1:43210",
+        "http://example.com:43210",
+        "https://127.0.0.1:43210",
+        "http://user@127.0.0.1:43210",
+        "http://127.0.0.1:43210/",
+        "http://127.0.0.1:43210?query",
+        "http://127.0.0.1:43210#fragment",
+        "http://127.0.0.1:99999",
+        "http://127.0.0.1:0",
+        "",
+        123,
+    ],
+)
+def test_embedded_observation_discovery_validates_without_changing_liveness(
+    tmp_path, endpoint
+):
+    from toolang.up.instance import update_instance
+    from toolang.up.process import AgentProcess
+
+    layout = AgentLayout.resident(tmp_path, "alice")
+    with RuntimeRegistration(layout, toolang_root=tmp_path, drivers=frozenset()):
+        update_instance(
+            layout.runtime_status,
+            lambda entry: entry["control"].update(observation_endpoint=endpoint),
+        )
+        binding = runtime_inventory(tmp_path).sources[0]
+        assert binding.instance.state == "running"
+        status = AgentProcess(layout).status(ui_base_url="")
+        assert status is not None and status.endpoint is None
+        valid = endpoint == "http://127.0.0.1:43210"
+        assert binding.endpoint == (endpoint if valid else None)
+        assert binding.observation_error == (
+            None if valid else "invalid embedded observation endpoint"
+        )
+
+
+def test_obsolete_launch_cannot_publish_or_clear_current_observation(tmp_path):
+    from toolang.up.instance import read_instance
+
+    layout = AgentLayout.resident(tmp_path, "alice")
+    old = RuntimeRegistration(layout, toolang_root=tmp_path, drivers=frozenset())
+    current = RuntimeRegistration(layout, toolang_root=tmp_path, drivers=frozenset())
+    with old, current:
+        assert current.publish_observation("http://127.0.0.1:43210")
+        assert not old.publish_observation("http://127.0.0.1:43211")
+        assert not old.publish_observation(None, error="old failure")
+        entry = read_instance(layout.runtime_status)
+        assert entry is not None
+        assert entry["control"]["observation_endpoint"] == "http://127.0.0.1:43210"
+        assert entry["control"]["observation_error"] is None
+        assert entry["control"]["endpoint"] == ""
 
 
 def test_source_path_aliases_preserve_reference_identity(tmp_path):

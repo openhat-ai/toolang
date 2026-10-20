@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from contextlib import AbstractAsyncContextManager, ExitStack
 from typing import Annotated, Any, cast
+from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -13,6 +14,7 @@ from starlette.types import ASGIApp, Scope, Receive, Send, Message
 
 from toolang.api.common import RUN_ID_HEADER, SSESendDeadline
 from toolang.execution.subscriptions import Subscriptions
+from toolang.execution.executor import RunExecutor
 from toolang.stats.schemas import STATS_API_VERSION
 from toolang.catalog import CapsManager, ChoresManager
 from toolang.catalog.errors import CatalogConflictError, CatalogNotFoundError
@@ -109,6 +111,18 @@ def require_chat_driver(core: AgentCoreDep) -> None:
         raise HTTPException(
             status_code=409, detail={"code": "driver_disabled", "driver": "chat"}
         )
+
+
+def create_observation_app(source: Path, executor: RunExecutor) -> FastAPI:
+    """Expose only Top's read-only snapshot for an existing embedded executor."""
+    from toolang.api.version import AGENT_API_VERSION
+    from toolang.api.routers.top import get_top_executor, get_top_source, router
+
+    app = FastAPI(openapi_url=None, docs_url=None, redoc_url=None)
+    app.dependency_overrides[get_top_executor] = lambda: executor
+    app.dependency_overrides[get_top_source] = lambda: source
+    app.include_router(router, prefix=f"/api/v{AGENT_API_VERSION}")
+    return app
 
 
 def create_app(

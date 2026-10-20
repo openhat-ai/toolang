@@ -2351,6 +2351,134 @@ def test_embedded_script_forwards_progress_to_its_final_state_check(
     assert observed == [progress.sink]
 
 
+@pytest.mark.parametrize(
+    "mode,outcome",
+    [
+        ("normal", "success"),
+        ("quiet", "success"),
+        ("out", "success"),
+        ("quiet", "failure"),
+        ("quiet", "cancel"),
+    ],
+)
+def test_embedded_script_publishes_live_work_and_cleans_up(
+    tmp_path, monkeypatch, capsys, mode, outcome
+):
+    import httpx
+    import socket
+    from contextlib import closing
+
+    from tests.support.execution_harness import AsyncGate, ScriptedModelTurn
+    from toolang.base.types.message import Message
+    from toolang.base.types.run import ModelCallResult
+    from toolang.up.observation import RuntimeRegistration, runtime_inventory
+    from toolang.up.top import TopObserver
+
+    gate = AsyncGate()
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="agic demo(_: Text) -> Text:\n  user: {{_}}\n",
+        responses=[
+            ScriptedModelTurn(
+                ModelCallResult(message=Message.assistant("fixture result")), gate=gate
+            )
+        ],
+    )
+
+    async def current_setup(_watcher, *, progress=None):
+        return harness.setup
+
+    async def current_state(_watcher, *, progress=None):
+        return harness.state
+
+    monkeypatch.setattr("toolang.setup.SetupWatcher.refresh", current_setup)
+    monkeypatch.setattr("toolang.state.watcher.StateWatcher.refresh", current_state)
+
+    async def scenario():
+        async with harness:
+            with RuntimeRegistration(
+                harness.setup.layout, toolang_root=tmp_path, drivers=frozenset()
+            ) as registration:
+                task = asyncio.create_task(
+                    script._execute(
+                        layout=harness.setup.layout,
+                        state=harness.state,
+                        store=harness.store,
+                        ids=harness.ids,
+                        run_id="run_observed",
+                        sandbox="host",
+                        runnable="agic:demo",
+                        override=RunOverride(),
+                        input=CallInput({"_": "fixture"}),
+                        raw_named=CallInput({}),
+                        session_override=RunOverride(),
+                        quiet=mode == "quiet",
+                        registration=registration,
+                    )
+                )
+                try:
+                    await asyncio.wait_for(gate.wait_until_entered(), 5)
+                    binding = runtime_inventory(tmp_path).sources[0]
+                    assert binding.endpoint is not None
+                    port = httpx.URL(binding.endpoint).port
+                    with closing(
+                        TopObserver(
+                            tmp_path, agent=None, period=3600, recent=300, refresh=1
+                        )
+                    ) as observer:
+                        snapshot = await asyncio.to_thread(observer.once)
+                        assert snapshot.summary.active == 1
+                        assert snapshot.sources[0].live is not None
+                        assert (
+                            snapshot.sources[0].live.trees[0].root_run_id
+                            == "run_observed"
+                        )
+                    if outcome == "cancel":
+                        task.cancel()
+                        with pytest.raises(asyncio.CancelledError):
+                            await task
+                        result = harness.store.get_run(run_id="run_observed")
+                        assert result is not None and result.status == "canceled"
+                    else:
+                        if outcome == "failure":
+                            gate.fail(ValueError("execution fixture failed"))
+                        else:
+                            gate.release()
+                        result = await task
+                        assert result.status == (
+                            "succeeded" if outcome == "success" else "failed"
+                        )
+                        if mode == "out":
+                            destination = tmp_path / "result.txt"
+                            assert (
+                                script._emit_result(
+                                    result,
+                                    store_path=harness.store.db_path,
+                                    log_path=None,
+                                    save=str(destination),
+                                )
+                                == 0
+                            )
+                            assert destination.read_text() == "fixture result"
+                    with socket.socket() as probe:
+                        assert probe.connect_ex(("127.0.0.1", port)) != 0
+                    assert runtime_inventory(tmp_path).sources[0].endpoint is None
+                    assert not any(
+                        task.get_name() == "embedded-observation"
+                        for task in asyncio.all_tasks()
+                    )
+                finally:
+                    if not task.done():
+                        task.cancel()
+                        await asyncio.gather(task, return_exceptions=True)
+
+    asyncio.run(scenario())
+    captured = capsys.readouterr()
+    assert "Uvicorn" not in captured.err and "Started server" not in captured.err
+    if mode == "quiet":
+        assert captured == ("", "")
+
+
 @pytest.mark.parametrize("explicit_run", [False, True])
 @pytest.mark.parametrize("child", [False, True])
 def test_script_help_omits_title_prefix_option(

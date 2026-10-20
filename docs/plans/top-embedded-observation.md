@@ -1,6 +1,6 @@
 # Embedded script observation in Top
 
-Status: proposed; human approval is required before implementation.
+Status: approved by the human and implemented on October 20, 2026.
 
 ## Goal and evidence
 
@@ -117,5 +117,4 @@ exposes the existing bounded Top snapshot to other local processes, consistent
 with current local AgentServer access. Launch-token fencing and strict endpoint
 validation prevent discovery from adopting stale or arbitrary remote targets.
 
-Open questions: none for implementation. Human approval of the proposed scope
-and local listener is pending.
+Open questions: none for implementation.
