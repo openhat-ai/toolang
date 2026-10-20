@@ -129,7 +129,7 @@ def test_reduction_size_controls_seed_and_child_call_count(
     else:
         statement = "reduce:\n    {{_}} {{_1._}}"
         if operation == "reduce-from":
-            statement += "\n    from: seed"
+            statement += "\n    initial: seed"
         calls = size if operation == "reduce-from" else max(0, size - 1)
         answers = [f"merged-{index}" for index in range(1, calls + 1)]
     expected = answers[-1] if answers else "a" if size else "seed"

@@ -23,6 +23,11 @@ lines. Program is not a lossless formatting tree and contains no installed
 resources, mutable execution state, or runtime services. Formatting works from
 syntax-valid source rather than serializing Program.
 
+Raw CST inspection uses `program`, `*_stmt` nodes, and `stmt` member fields;
+reducer initializers are direct `reduce_stmt.initial: content` values. Syntax
+validation rejects native `ERROR`, missing terminals, and every `invalid_*`
+descendant, including those that do not set the root's `has_error` flag.
+
 Static validation checks names, types, templates, and statically known call
 contracts without preparing resources or executing work. Dynamic values,
 actual inputs, resource readiness/authority, and compatibility with newly

@@ -181,7 +181,7 @@ flow main():
     # Reducer instructions
     ## Preserve this heading
     Combine {{_}} with {{_1._}}.
-    from: Initial.
+    initial: Initial.
 """,
         responses=['["item"]', "combined"],
     )
@@ -222,7 +222,8 @@ flow main() -> {output}:
 """
     if initial is not None:
         source = source.replace(
-            "  reduce using reduce\n", f"  reduce using reduce:\n    from: {initial}\n"
+            "  reduce using reduce\n",
+            f"  reduce using reduce:\n    initial: {initial}\n",
         )
     if initial is None and output != "Text":
         with pytest.raises(
@@ -256,7 +257,8 @@ flow main():
 """
     if initial is not None:
         source = source.replace(
-            "  reduce using reduce\n", f"  reduce using reduce:\n    from: {initial}\n"
+            "  reduce using reduce\n",
+            f"  reduce using reduce:\n    initial: {initial}\n",
         )
     harness = _create(
         tmp_path,
@@ -786,7 +788,7 @@ flow main():
     run seed
     reduce:
       current={{_}}; seed={{_1._}}
-      from: {{#_1}}{{_1._}}{{/_1}}{{^_1}}start{{/_1}}
+      initial: {{#_1}}{{_1._}}{{/_1}}{{^_1}}start{{/_1}}
 """
     harness = _create(
         tmp_path,
@@ -809,7 +811,7 @@ agic fold -> Number[]:
 flow main() -> Number[]:
   run seed
   reduce using fold:
-    from: [1,2]
+    initial: [1,2]
 """
     harness = _create(tmp_path, source=source, responses=['["a"]', "[1,2,3]"])
     run, output, error = _run(harness)

@@ -432,8 +432,6 @@ class _Lowerer:
                     self._lower_message(child, doc=self.docs.for_node(child))
                 )
                 continue
-            if child.type == "pass_statement":
-                continue
             raise RuntimeError(
                 f"Unsupported agic CST node {child.type!r} at line {self._line(child)}."
             )
@@ -511,8 +509,6 @@ class _Lowerer:
                 else:
                     directives.append(directive)
                 continue
-            if child.type == "pass_statement":
-                continue
             with source_location(self._line(child), child.start_point.column + 1):
                 stmts.append(self._lower_stmt(child, doc=self.docs.for_node(child)))
         return ast.FlowDecl(
@@ -529,17 +525,15 @@ class _Lowerer:
             doc=doc,
         )
 
-    def _lower_statements(self, node: CstNode) -> list[ast.FlowStmt]:
+    def _lower_stmts(self, node: CstNode) -> list[ast.FlowStmt]:
         stmts: list[ast.FlowStmt] = []
-        for child in node.children_by_field_name("statement"):
-            if child.type == "pass_statement":
-                continue
+        for child in node.children_by_field_name("stmt"):
             with source_location(self._line(child), child.start_point.column + 1):
                 stmts.append(self._lower_stmt(child, doc=self.docs.for_node(child)))
         return stmts
 
     def _lower_stmt(self, node: CstNode, *, doc: str | None) -> ast.FlowStmt:
-        if node.type == "let_statement":
+        if node.type == "let_stmt":
             if value := node.child_by_field_name("value"):
                 binding = self._required_text(node, "local").strip()
                 return ast.LetStmt(
@@ -548,8 +542,8 @@ class _Lowerer:
                     span=self._span(node),
                     doc=doc,
                 )
-            nested = self._required(node, "statement")
-            if nested.type == "repeat_statement":
+            nested = self._required(node, "stmt")
+            if nested.type == "repeat_stmt":
                 raise ToolangValidationError(
                     "Repeat cannot have a let binding", line=self._line(node)
                 )
@@ -558,20 +552,20 @@ class _Lowerer:
             return replace(stmt, binding=binding)
 
         span = self._span(node)
-        if node.type == "implicit_run_statement":
+        if node.type == "implicit_run_stmt":
             runnable = self._generated_agic(
                 node,
                 body=self._block_text(self._required(node, "content")),
                 output=None,
             )
             return ast.RunStmt(runnable=runnable, span=span, doc=doc)
-        if node.type == "exec_statement":
+        if node.type == "exec_stmt":
             return ast.ExecStmt(runnable=self._runnable(node), span=span, doc=doc)
-        if node.type == "await_statement":
+        if node.type == "await_stmt":
             return ast.AwaitStmt(
                 handle=self._required_text(node, "handle"), span=span, doc=doc
             )
-        if node.type == "run_statement":
+        if node.type == "run_stmt":
             asynchronous = node.child_by_field_name("async") is not None
             return ast.RunStmt(
                 runnable=self._runnable(node),
@@ -580,22 +574,22 @@ class _Lowerer:
                 span=span,
                 doc=doc,
             )
-        if node.type == "spawn_statement":
+        if node.type == "spawn_stmt":
             return ast.SpawnStmt(runnable=self._runnable(node), span=span, doc=doc)
-        if node.type == "seek_statement":
+        if node.type == "seek_stmt":
             return ast.SeekStmt(
                 name=self._required_text(node, "agent").strip(),
                 runnable=self._runnable(node),
                 span=span,
                 doc=doc,
             )
-        if node.type == "ask_statement":
+        if node.type == "ask_stmt":
             return ast.AskStmt(
                 request=self._block_text(self._required(node, "content")),
                 span=span,
                 doc=doc,
             )
-        if node.type == "generate_statement":
+        if node.type == "generate_stmt":
             return ast.GenerateStmt(
                 count=self._required_int(node, "count"),
                 runnable=self._runnable(node, default_output="Text"),
@@ -603,24 +597,24 @@ class _Lowerer:
                 span=span,
                 doc=doc,
             )
-        if node.type == "reduce_statement":
-            initial = node.child_by_field_name("from")
+        if node.type == "reduce_stmt":
+            initial = node.child_by_field_name("initial")
             return ast.ReduceStmt(
                 runnable=self._runnable(node),
                 initial=self._block_text(initial) if initial is not None else None,
                 span=span,
                 doc=doc,
             )
-        if node.type == "map_statement":
+        if node.type == "map_stmt":
             return ast.MapStmt(
                 runnable=self._runnable(node, default_output="Text"),
                 lanes=self._optional_int(node.child_by_field_name("lanes")),
                 span=span,
                 doc=doc,
             )
-        if node.type in {"keep_statement", "drop_statement"}:
+        if node.type in {"keep_stmt", "drop_stmt"}:
             position = node.child_by_field_name("selection")
-            statement = ast.KeepStmt if node.type == "keep_statement" else ast.DropStmt
+            statement = ast.KeepStmt if node.type == "keep_stmt" else ast.DropStmt
             return statement(
                 position=(
                     cast(ast.Position, self._required_text(position, "side").strip())
@@ -637,7 +631,7 @@ class _Lowerer:
                 span=span,
                 doc=doc,
             )
-        if node.type == "sort_statement":
+        if node.type == "sort_stmt":
             return ast.SortStmt(
                 runnable=self._runnable(node, output="Number", evaluator=True),
                 order=cast(ast.Order, self._required_text(node, "order").strip()),
@@ -645,10 +639,10 @@ class _Lowerer:
                 span=span,
                 doc=doc,
             )
-        if node.type == "repeat_statement":
+        if node.type == "repeat_stmt":
             statements = self._required(node, "body")
-            statement_nodes = statements.children_by_field_name("statement")
-            body = tuple(self._lower_statements(statements))
+            statement_nodes = statements.children_by_field_name("stmt")
+            body = tuple(self._lower_stmts(statements))
             window = self._optional_int(node.child_by_field_name("window"))
             until_node = statements.child_by_field_name("until")
             runnable = None
@@ -689,7 +683,7 @@ class _Lowerer:
         declared_output = self._optional_text(agic.child_by_field_name("return"))
         if output is not None and declared_output not in {None, output}:
             raise ToolangValidationError(
-                f"{node.type.removesuffix('_statement').capitalize()} requires {output} output, got {declared_output}",
+                f"{node.type.removesuffix('_stmt').capitalize()} requires {output} output, got {declared_output}",
                 line=self._line(node),
             )
         declared_output = declared_output or output or default_output

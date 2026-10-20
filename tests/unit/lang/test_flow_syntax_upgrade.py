@@ -64,7 +64,7 @@ flow work(_):
     run -> Text[]:
       Split {{{{_}}}}.
     {head}
-      from:
+      initial:
         Initial content.
     until: Compare {{{{_}}}} and {{{{_2._}}}}.
 """
@@ -102,7 +102,7 @@ def test_settle_comments_keep_their_authored_scope(named, tab_size):
         "flow work(_):\n  repeat 2 times:\n    run -> Text[]: Items\n"
         f"    reduce{' using merge' if named else ''}:\n"
         "      # Reducer or initializer comment.\n"
-        f"{reducer}      from: Initial content.\n"
+        f"{reducer}      initial: Initial content.\n"
         "    # Next statement comment.\n"
         "    run: Continue {{_}}.\n"
     )

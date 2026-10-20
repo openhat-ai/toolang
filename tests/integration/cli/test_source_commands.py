@@ -49,7 +49,7 @@ def test_tree_and_representation_are_independent(tree, representation):
 @pytest.mark.parametrize(
     "bad,kind,line",
     [
-        ("flow broken:\n  run\n", "invalid", 2),
+        ("flow broken:\n  run\n", "error", 1),
         ("struct X:\n  field:\n", "missing", 2),
         ("@", "error", 1),
     ],
@@ -68,6 +68,78 @@ def test_default_ast_and_invalid_tree_behavior(bad, kind, line):
     assert kind in {item["kind"] for item in json.loads(cst.stdout)["diagnostics"]}
     assert f"work.too:{line}:" in cst.stderr
     assert runner.invoke(app, ["highlight", "-"], input=bad).exit_code == 0
+
+
+def test_alpha6_initializer_across_language_commands(tmp_path):
+    source = (
+        "agic combine(_: Text) -> Text:\n  user: {{_}} {{_1._}}\n"
+        "flow work(_: Text[]) -> Text:\n  reduce using combine:\n"
+        '    initial: Seed # literal "quotes"\n'
+    )
+    parsed = runner.invoke(app, ["parse", "-", "--json"], input=source)
+    assert parsed.exit_code == 0, parsed.stderr
+    statement = json.loads(parsed.stdout)["flows"][0]["stmts"][0]
+    assert statement["kind"] == "reduce"
+    assert statement["initial"] == 'Seed # literal "quotes"'
+
+    raw = runner.invoke(app, ["parse", "-", "--cst", "--json"], input=source)
+    assert raw.exit_code == 0, raw.stderr
+    tree = json.loads(raw.stdout)
+    assert tree["grammar"]["version"] == "0.4.0a6"
+    flow = next(node for node in tree["root"]["children"] if node["type"] == "flow")
+    body = next(node for node in flow["children"] if node["field"] == "body")
+    reducer = next(node for node in body["children"] if node["field"] == "stmt")
+    assert reducer["type"] == "reduce_stmt"
+    assert (
+        next(node for node in reducer["children"] if node["field"] == "initial")["type"]
+        == "content"
+    )
+
+    for command in (
+        ["parse", "--check"],
+        ["fmt", "--stdout"],
+        ["fmt", "--highlight", "--html"],
+        ["highlight", "--html"],
+    ):
+        result = runner.invoke(app, [*command, "-"], input=source)
+        assert result.exit_code == 0, result.stderr
+    highlighted = runner.invoke(
+        app, ["highlight", "-", "--color", "never"], input=source
+    )
+    assert highlighted.exit_code == 0 and highlighted.stdout == source
+    path = tmp_path / "work.too"
+    path.write_text(source)
+    assert runner.invoke(app, ["fmt", str(path)]).exit_code == 0
+    assert 'initial: Seed # literal "quotes"' in path.read_text()
+    assert runner.invoke(app, ["fmt", str(path), "--check"]).exit_code == 0
+    assert runner.invoke(app, ["parse", str(path), "--check"]).exit_code == 0
+
+
+@pytest.mark.parametrize(
+    "source,fragment",
+    [
+        ("flow work:\n  run worker extra\n", "extra"),
+        ("flow work:\n  let result = exec worker\n", "worker"),
+    ],
+)
+def test_native_and_custom_error_captures_have_terminal_and_html_styles(
+    source, fragment
+):
+    terminal = runner.invoke(app, ["highlight", "-", "--color", "always"], input=source)
+    assert terminal.exit_code == 0 and not terminal.stderr
+    assert any(
+        fragment in segment
+        for segment in re.findall(r"\x1b\[1;31m([^\x1b]*)\x1b\[0m", terminal.stdout)
+    )
+    assert strip_ansi(terminal.stdout) == source
+    html = runner.invoke(app, ["highlight", "-", "--html"], input=source)
+    assert html.exit_code == 0 and not html.stderr
+    assert any(
+        "color: #800000" in style and "font-weight: bold" in style and fragment in text
+        for style, text in re.findall(
+            r'<span style="([^"]*)">([^<]*)</span>', html.stdout
+        )
+    )
 
 
 def test_ast_displays_cover_declarations_and_every_flow_statement_family():

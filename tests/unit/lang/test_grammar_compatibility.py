@@ -1,4 +1,4 @@
-"""Compatibility with the published alpha.5 grammar and its concrete tree."""
+"""Compatibility with the published grammar and its concrete tree."""
 
 from importlib.metadata import version
 
@@ -27,7 +27,7 @@ from toolang.lang.highlight import captures, resolve
     ],
 )
 @pytest.mark.parametrize(
-    "entry", ["let", "run", "message", "context", "prompt", "from"]
+    "entry", ["let", "run", "message", "context", "prompt", "initial"]
 )
 def test_explicit_text_preserves_hashes_and_ordinary_quotes(newline, eof, text, entry):
     sources = {
@@ -36,7 +36,7 @@ def test_explicit_text_preserves_hashes_and_ordinary_quotes(newline, eof, text, 
         "message": f"agic work():\n  user: {text}",
         "context": f"context notes: {text}",
         "prompt": f"prompt notes:\n  Begin.\n  {text}",
-        "from": f"flow work():\n  run -> Text[]: Items.\n  reduce:\n    Merge {{{{_}}}}.\n    from: {text}",
+        "initial": f"flow work():\n  run -> Text[]: Items.\n  reduce:\n    Merge {{{{_}}}}.\n    initial: {text}",
     }
     source = (sources[entry] + eof).replace("\n", newline)
     formatted = format_source(source)
@@ -165,7 +165,7 @@ def test_inactive_words_remain_prose_and_contextual_names(word, position):
 def test_program_documentation_and_first_member_ownership():
     source = "#@ Program.\n## Work.\n## @param sort Input.\nflow work(sort: Text):\n  ## First.\n  run: {{sort}}\n  ## Second.\n  run: Done.\n"
     tree = cst.parse(source.encode())
-    assert version("tree-sitter-toolang") == "0.4.0a5"
+    assert version("tree-sitter-toolang") == "0.4.0a6"
     assert tree.root_node.type == "program"
     assert [child.type for child in tree.root_node.named_children[:3]] == [
         "program_doc",
@@ -267,18 +267,20 @@ def test_formatter_handles_large_numeric_spelling_without_semantic_conversion():
 @pytest.mark.parametrize(
     "source,diagnostic",
     [
-        ("flow broken(x: ):\n  pass\n", "invalid_param"),
-        ("agic broken:\n  recall += near\n  user: Work.\n", "invalid_directive"),
-        ("flow broken:\n  async run worker extra\n", "invalid_run_target"),
-        ("flow broken:\n  run\n", "invalid_flow_statement"),
-        ("agic broken:\n  user, broken\n", "invalid_agic_message"),
+        ("flow broken(: Text):\n  pass\n", "invalid_param"),
+        ("flow broken(x: ):\n  pass\n", "ERROR"),
+        ("flow broken:\n  let result = exec worker\n", "invalid_flow_stmt"),
+        ("agic broken:\n  recall += near\n  user: Work.\n", "ERROR"),
+        ("flow broken:\n  async run worker extra\n", "ERROR"),
+        ("flow broken:\n  run\n", "ERROR"),
+        ("agic broken:\n  user, broken\n", "ERROR"),
         ("flow broken:\n", "invalid_missing_body"),
         ("flow broken:\n  run:\n", "invalid_missing_content"),
-        ("flow broken:\n  repeat:\n    until: Done.\n", "invalid_missing_statement"),
-        ("flow broken -> :\n  pass\n", "invalid_missing_type"),
+        ("flow broken:\n  repeat:\n    until: Done.\n", "invalid_missing_stmt"),
+        ("flow broken -> :\n  pass\n", "ERROR"),
     ],
 )
-def test_all_public_invalid_nodes_reject_source_without_losing_next_item(
+def test_native_and_retained_diagnostics_reject_source_without_losing_next_item(
     source, diagnostic
 ):
     source += "agic intact:\n  user: Keep.\n"
@@ -333,7 +335,7 @@ def test_named_call_targets_are_direct_role_leaves(operation):
     assert list(cst.error_nodes(root)) == []
     body = root.named_children[0].child_by_field_name("body")
     assert body is not None
-    statement = body.children_by_field_name("statement")[0]
+    statement = body.children_by_field_name("stmt")[0]
     target = statement.child_by_field_name("target")
     assert (
         target is not None

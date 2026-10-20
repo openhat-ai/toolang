@@ -55,6 +55,6 @@ flow delivery(_: Text, constraints?):
   run review_lenses
   map in 3 lanes using review_plan
   reduce using apply_review:
-    from: {{draft}}
+    initial: {{draft}}
   repeat 2 times:
     run improve_plan

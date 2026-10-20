@@ -16,26 +16,22 @@ _CONTEXTS = {
     "flow": "flow block",
     "agic": "agic block",
     "struct": "struct declaration",
-    "repeat_statement": "repeat block",
-    "reduce_statement": "reduce block",
+    "repeat_stmt": "repeat block",
+    "reduce_stmt": "reduce block",
     "skill": "skill declaration",
     "service": "service declaration",
     "psyche": "psyche declaration",
     "prompt": "prompt declaration",
 }
 _INVALID_CONSTRUCTS = {
-    "invalid_flow_statement": "flow statement",
-    "invalid_run_target": "run target",
+    "invalid_flow_stmt": "flow statement",
     "invalid_param": "parameter",
-    "invalid_directive": "directive",
-    "invalid_agic_message": "message header",
 }
 
 _MISSING_CONSTRUCTS = {
     "invalid_missing_body": "an indented body",
     "invalid_missing_content": "text content",
-    "invalid_missing_statement": "a statement",
-    "invalid_missing_type": "a type",
+    "invalid_missing_stmt": "a statement",
 }
 
 

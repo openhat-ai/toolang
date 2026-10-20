@@ -25,7 +25,7 @@ def _prompt(invocation):
     ).split("</toolang:context>\n\n", 1)[-1]
 
 
-@pytest.mark.parametrize("entry", ["let", "inline", "message", "prompt", "from"])
+@pytest.mark.parametrize("entry", ["let", "inline", "message", "prompt", "initial"])
 @pytest.mark.parametrize("ending", ["\n", "\r\n"])
 @pytest.mark.parametrize("formatted", [False, True])
 def test_literal_hashes_and_quotes_reach_outputs_and_prompts(
@@ -38,13 +38,13 @@ def test_literal_hashes_and_quotes_reach_outputs_and_prompts(
         "inline": f"flow main():\n  run: {literal}\n",
         "message": f"agic main():\n  user: {literal}\n",
         "prompt": f"prompt note:\n  {literal}\nagic main():\n  user: $note\n",
-        "from": f"flow main(_: Text[]) -> Text:\n  reduce using combine:\n    from: {literal}\n"
+        "initial": f"flow main(_: Text[]) -> Text:\n  reduce using combine:\n    initial: {literal}\n"
         "agic combine(_: Text) -> Text:\n  {{_}} {{_1._}}\n",
     }
     source = sources[entry].replace("\n", ending)
     if formatted:
         source = format_source(source)
-    calls = entry != "from"
+    calls = entry != "initial"
     harness = ExecutionHarness.create(
         tmp_path,
         source=source,
@@ -58,7 +58,7 @@ def test_literal_hashes_and_quotes_reach_outputs_and_prompts(
                 harness.run_spec(
                     thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
                     runnable="main",
-                    named={"_": []} if entry == "from" else {},
+                    named={"_": []} if entry == "initial" else {},
                 )
             )
             assert root.status == "succeeded", (

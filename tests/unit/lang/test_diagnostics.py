@@ -27,12 +27,12 @@ def rendered(error, source):
         ("flow work(value: Text:\n  pass\n", "Expected ')'", 1, 22),
         ("struct X:\n  field:\n", "Expected a field type", 2, 9),
         ("flow work:\n  sort these items\n", "Parse error in flow block", 2, 1),
-        ("agic review:\n  user, broken\n", "Malformed message header 'user'", 2, 3),
+        ("agic review:\n  user, broken\n", "Parse error in agic block", 2, 1),
         (
             "flow work(value: ):\n  run\n  repeat:\n",
-            "Malformed parameter 'value'",
+            "Parse error in parameter list",
             1,
-            11,
+            16,
         ),
     ],
 )
@@ -88,7 +88,7 @@ def test_incomplete_operations_do_not_guess_a_missing_using_clause(header):
             parse(source)
         assert "requires 'using'" not in str(caught.value)
         assert "omit 'using'" not in str(caught.value)
-        assert caught.value.line == 2
+        assert (caught.value.line, caught.value.column) == (1, 1)
 
 
 def test_recovery_error_does_not_blame_valid_run_syntax_for_missing_block():
@@ -185,8 +185,8 @@ def test_cst_keeps_overlapping_error_entries_and_native_ranges():
         (item["kind"], item["node_type"], item["start_byte"], item["end_byte"])
         for item in data["diagnostics"]
     ] == [
-        ("invalid", "invalid_param", 10, 16),
-        ("invalid", "invalid_flow_statement", 22, 26),
+        ("error", "ERROR", 15, 16),
+        ("error", "ERROR", 20, 26),
         ("invalid", "invalid_missing_body", 36, 36),
     ]
 
@@ -233,11 +233,13 @@ def test_cst_diagnostic_positions_do_not_repeatedly_scan_source_prefixes():
             self.scanned_bytes += len(self[start:end])
             return super().count(sub, start, end)
 
-    source = MeasuredSource(b"\xef\xbb\xbf" + b"flow broken:\r\n\trun\r\n" * 256)
+    source = MeasuredSource(
+        b"\xef\xbb\xbf" + b"flow broken:\r\n\tlet result = exec worker\r\n" * 256
+    )
     errors = cst.diagnostics(cst.parse(source).root_node, source)
     assert len(errors) == 256
     assert errors[-1]["start_point"] == {"row": 511, "column": 1}
-    assert errors[-1]["message"] == "Malformed flow statement 'run'"
+    assert errors[-1]["message"] == "Malformed flow statement 'let'"
     # Allow a single indexing pass, but not one scan per diagnostic.
     assert source.scanned_bytes <= len(source)
 

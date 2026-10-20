@@ -38,20 +38,20 @@ _COMMENT_SPLIT_KINDS = {
     "block_body",
 }
 _FLOW_STATEMENT_TYPES = {
-    "let_statement",
-    "run_statement",
-    "spawn_statement",
-    "exec_statement",
-    "await_statement",
-    "seek_statement",
-    "ask_statement",
-    "generate_statement",
-    "reduce_statement",
-    "map_statement",
-    "keep_statement",
-    "drop_statement",
-    "sort_statement",
-    "repeat_statement",
+    "let_stmt",
+    "run_stmt",
+    "spawn_stmt",
+    "exec_stmt",
+    "await_stmt",
+    "seek_stmt",
+    "ask_stmt",
+    "generate_stmt",
+    "reduce_stmt",
+    "map_stmt",
+    "keep_stmt",
+    "drop_stmt",
+    "sort_stmt",
+    "repeat_stmt",
     "until_clause",
 }
 _DECLARATION_TYPES = {
@@ -265,7 +265,7 @@ def _format_source_lines(lines: list[str], *, root: Node, tab_size: int) -> list
             depth = 1 + sum(
                 1
                 for item in ancestors
-                if item.type in {"repeat_statement", "reduce_statement"}
+                if item.type in {"repeat_stmt", "reduce_stmt"}
                 and text_indent_width(lines[item.start_point.row])
                 < text_indent_width(line)
             )
@@ -335,7 +335,7 @@ def _flow_ancestry(ancestors: tuple[Node, ...]) -> tuple[tuple[int, str], ...]:
     return tuple(
         (node.id, node.type)
         for node in reversed(ancestors)
-        if node.type == "implicit_run_statement"
+        if node.type == "implicit_run_stmt"
         or (node.type in _FLOW_STATEMENT_TYPES and node.type != "until_clause")
     )
 
@@ -489,17 +489,17 @@ def _indent_depth(node: Node) -> int:
                 1
                 for current in chain
                 if (
-                    current.type == "repeat_statement"
+                    current.type == "repeat_stmt"
                     and current.start_point.row < node.start_point.row
                 )
                 or (
-                    current.type == "reduce_statement"
+                    current.type == "reduce_stmt"
                     and (
                         marker := next(
                             (
                                 child
                                 for child in current.children
-                                if child.type == "from"
+                                if child.type == "initial"
                             ),
                             None,
                         )
@@ -517,12 +517,9 @@ def _indent_depth(node: Node) -> int:
 def _content_header_row(content: Node) -> int:
     owner = content.parent
     assert owner is not None
-    if (
-        owner.type == "reduce_statement"
-        and owner.child_by_field_name("from") == content
-    ):
+    if owner.type == "reduce_stmt" and owner.child_by_field_name("initial") == content:
         return next(
-            child.start_point.row for child in owner.children if child.type == "from"
+            child.start_point.row for child in owner.children if child.type == "initial"
         )
     return owner.start_point.row
 
@@ -673,7 +670,7 @@ def _format_message_header_line(match: re.Match[str]) -> str:
 
 def _format_flow_statement_line(stripped_line: str, *, node: Node) -> str:
     binding = next(
-        (parent for parent in _ancestors(node) if parent.type == "let_statement"),
+        (parent for parent in _ancestors(node) if parent.type == "let_stmt"),
         None,
     )
     if binding is not None and binding.child_by_field_name("value") is not None:
@@ -681,11 +678,11 @@ def _format_flow_statement_line(stripped_line: str, *, node: Node) -> str:
         return f"{_collapse_syntax_space(before)} = {content.strip()}".rstrip()
     before, separator, after = stripped_line.partition(":")
     rendered = _collapse_syntax_space(before)
-    nested = binding.child_by_field_name("statement") if binding is not None else None
+    nested = binding.child_by_field_name("stmt") if binding is not None else None
     if (
         binding is not None
         and nested is not None
-        and nested.type == "spawn_statement"
+        and nested.type == "spawn_stmt"
         and binding.child_by_field_name("local") is None
         and rendered.startswith("let spawn")
     ):
@@ -783,8 +780,8 @@ def _normalize_blank_lines(lines: list[_Line]) -> list[str]:
             # or the last nested child with the following outer statement.
             boundary = next(
                 (
-                    (before[1] == "implicit_run_statement")
-                    != (after[1] == "implicit_run_statement")
+                    (before[1] == "implicit_run_stmt")
+                    != (after[1] == "implicit_run_stmt")
                     for before, after in zip(previous.flow_ancestry, line.flow_ancestry)
                     if before[0] != after[0]
                 ),

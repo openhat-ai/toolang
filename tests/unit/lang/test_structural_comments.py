@@ -64,7 +64,7 @@ def test_structural_comment_bytes_survive_formatting(source, comment, newline):
         "flow work():\n  run: {text}\n",
         "flow work():\n  ask: {text}\n",
         "flow work():\n  repeat 1 time:\n    let value = Body.\n    until: {text}\n",
-        "flow work():\n  run -> Text[]: Items.\n  reduce:\n    Merge {{_}}.\n    from: {text}\n",
+        "flow work():\n  run -> Text[]: Items.\n  reduce:\n    Merge {{_}}.\n    initial: {text}\n",
         "agic work():\n  user: {text}\n",
         "context notes: {text}\n",
         "instruct notes: {text}\n",

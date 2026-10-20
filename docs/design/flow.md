@@ -200,11 +200,11 @@ reduce using REDUCER
 reduce [-> T]: BODY
 
 reduce using REDUCER:
-  from: BODY
+  initial: BODY
 
 reduce [-> T]:
   TEXT
-  [from: BODY]
+  [initial: BODY]
 
 # Transform every outer array item
 map [in P lanes] using MAPPER
@@ -352,7 +352,10 @@ returns one complete result per outer input item. Neither flattens array results
 | `reduce` without an initializer | A nonempty outer array | Rejects empty input; one item is returned as the seed | N - 1 |
 | `reduce` with an initializer | An outer array | Returns the initializer coerced to the reducer output type | N |
 
-The source clause is `from:`; the AST stores its Content as `initial`.
+Source and AST both use `initial` for the optional initializer. Replace authored
+`from:` initializer clauses with `initial:`. `from` is ordinary text: it remains
+part of an inline reducer's body and is invalid in a named reducer's initializer
+scope, just like any other unrecognized line there.
 
 Here `U` is the child output type. Zero-call generation, mapping, predicate
 selection, sorting, and initialized reduction still validate the target, its
@@ -384,11 +387,12 @@ are clipped: keep retains everything and drop removes everything.
   complete output type.
 - `generate` starts `N` independent child runs and preserves result order.
 - `map`, filter-based `keep/drop`, and `sort` start one child run per item.
-- Reduce accepts an optional trailing `from:` initializer, evaluated once in the
+- Reduce accepts an optional trailing `initial:` initializer, evaluated once in the
   outer frame before entering its own iteration scope. The initializer introduces
-  no local. In an adhoc multiline body, only baseline `from:` ends reducer text;
-  deeper occurrences remain literal. A named reducer's colon block contains only
-  the `from:` clause. Reduce retains one prior frame and has no window clause.
+  no local. In an adhoc multiline body, the complete word `initial` at the text
+  baseline selects initializer syntax; indent literal text beginning with that
+  word more deeply. A named reducer's colon block contains only the `initial:`
+  clause. Reduce retains one prior frame and has no window clause.
 - Reduce without an initializer uses the first element as the cumulative seed
   and invokes the reducer N-1 times. Each call receives the current element as
   `_` and the previous result as `_1._`; output must match the source element

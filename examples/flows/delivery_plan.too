@@ -168,7 +168,7 @@ flow(_: Text, constraints?):
   map in 3 lanes using review_plan
   ## Apply the independent reviews sequentially to one evolving plan
   reduce using apply_review:
-    from: {{draft}}
+    initial: {{draft}}
 
   ## Make two bounded improvements to the reviewed plan
   repeat 2 times:

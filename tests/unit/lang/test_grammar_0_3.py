@@ -61,7 +61,7 @@ def test_lane_clause_precedes_target(first: str, second: str) -> None:
         ("run -> Number[]: Work with {{_}}.", "Number[]"),
         ("reduce: Work with {{_}} and {{_1._}}.", "Text"),
         (
-            "reduce -> Number[]:\n    Work with {{_}}.\n    from: [0]",
+            "reduce -> Number[]:\n    Work with {{_}}.\n    initial: [0]",
             "Number[]",
         ),
         ("map: Work with {{_}}.", "Text"),
@@ -333,8 +333,6 @@ def test_syntax_errors_include_source_context_for_keyword_led_lines(
         format_source(source)
     for error in (parsed.value, formatted.value):
         assert header not in str(error)
-        assert f"line 2:{1 if header.startswith('sort') else 3}:" in str(error)
+        assert "line 2:1:" in str(error)
         assert "Toolang 0.3 syntax" not in str(error)
-        assert (
-            "Parse error" if header.startswith("sort") else "Malformed flow statement"
-        ) in str(error)
+        assert "Parse error in flow block" in str(error)

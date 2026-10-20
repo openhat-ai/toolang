@@ -53,12 +53,12 @@ def test_complete_tree_matches_parser_and_original_bytes(source):
 
 
 def test_invalid_grammar_nodes_are_diagnosed_without_native_error_flag():
-    source = b"flow broken:\n  run\n"
+    source = b"flow broken:\n  let result = exec worker\n"
     tree = cst.parse(source)
     assert not tree.root_node.has_error
     errors = cst.diagnostics(tree.root_node, source)
     assert errors[0]["kind"] == "invalid"
-    assert errors[0]["node_type"] == "invalid_flow_statement"
+    assert errors[0]["node_type"] == "invalid_flow_stmt"
 
 
 def test_raw_parse_does_not_append_final_newline():
