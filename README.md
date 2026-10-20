@@ -148,7 +148,7 @@ too tools                    # List available tools
 too models                   # List available models
 too providers                # List available model providers
 
-too AGENT inspect            # Inspect runs in detail
+too AGENT inspect            # Inspect agent runs
 too [AGENT] top              # Monitor active runs
 ```
 
