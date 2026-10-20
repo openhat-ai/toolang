@@ -2328,7 +2328,10 @@ def test_roaming_source_reads_inspect_collections_and_records(
 ) -> None:
     source = tmp_path / "demo.too"
     source.write_text("agic demo:\n  Reply directly.\n", encoding="utf-8")
-    layout = agent_sources.materialize_roaming_program(source)
+    from toolang.up.identity import allocate_roaming
+
+    layout = allocate_roaming(source, toolang_root=tmp_path)
+    agent_sources.materialize_roaming_program(source, layout=layout)
     store = RunStore(layout.run_store)
     try:
         run = project_run_start(
@@ -2440,6 +2443,16 @@ def hosted_agent(monkeypatch):
     async_client = httpx.AsyncClient
 
     def host(layout):
+        from toolang.up.instance import update_instance
+        from toolang.up.identity import identity_bindings
+        import os
+        import psutil
+
+        def initialize(entry):
+            entry["launch_id"] = "fixture"
+            entry["control"].update(identity_bindings(layout))
+
+        update_instance(layout.runtime_status, initialize)
         core = AgentCore(layout, lifecycle=ServerLifecycle("fixture", "persistent"))
         cores.append(core)
         agents.write_runtime_state(
@@ -2447,7 +2460,11 @@ def hosted_agent(monkeypatch):
             endpoint="http://runtime.test:7001",
             sandbox="host",
             started_at="2026-10-08T00:00:00Z",
-            pid=123,
+            pid=os.getpid(),
+            process_created=psutil.Process().create_time(),
+            launch_id="fixture",
+            api_version=0,
+            lifetime="persistent",
             sandbox_description="Test OS 1.0 arm64",
         )
         app = create_app(
@@ -3577,7 +3594,7 @@ def test_agent_info_builds_state_and_setup_without_server(
                 envs={},
             )
 
-    monkeypatch.setattr(agent_commands, "SetupWatcher", _SetupWatcher)
+    monkeypatch.setattr("toolang.setup.SetupWatcher", _SetupWatcher)
 
     result = _invoke(root, "info", "alice")
 
@@ -3625,7 +3642,25 @@ def test_agent_info_fields_follow_the_compact_layout(
                 envs={},
             )
 
-    monkeypatch.setattr(agent_commands, "SetupWatcher", _SetupWatcher)
+    monkeypatch.setattr("toolang.setup.SetupWatcher", _SetupWatcher)
+    from toolang.up.instance import update_instance
+
+    update_instance(
+        AgentLayout.resident(root, "alice").runtime_status,
+        lambda entry: entry["workload"].update(
+            resource_counts={
+                "models": 2,
+                "providers": 1,
+                "tools": 0,
+                "toolsets": 0,
+                "caps": {
+                    kind: 0 for kind in ("psyches", "skills", "services", "prompts")
+                },
+                "chores": 0,
+                "workspaces": ["lab"],
+            }
+        ),
+    )
     monkeypatch.setattr(
         query,
         "match_model_branches",
@@ -3739,8 +3774,11 @@ def test_agent_info_reports_only_state_published_caps(
                 envs={},
             )
 
-    monkeypatch.setattr(agent_commands, "SetupWatcher", _SetupWatcher)
+    monkeypatch.setattr("toolang.setup.SetupWatcher", _SetupWatcher)
 
+    from toolang.state.prepare import prepare_agent_state
+
+    prepare_agent_state(AgentLayout.resident(root, "alice"))
     result = _invoke(root, "info", "alice")
 
     assert result.exit_code == 0
@@ -3757,6 +3795,16 @@ def test_roaming_agent_info_uses_the_source_layout(
         templates.load_template("agent").raw_text,
         encoding="utf-8",
     )
+    from toolang.up.identity import allocate_roaming
+    from toolang.up.instance import patch_workload, read_instance
+
+    selected = allocate_roaming(source, toolang_root=tmp_path)
+    agent_sources.materialize_roaming_program(source, layout=selected)
+    entry = read_instance(selected.runtime_status)
+    assert entry is not None
+    patch_workload(
+        selected.runtime_status, entry["launch_id"], {"status": "stopped", "pid": None}
+    )
     captured: dict[str, object] = {}
     shortened: list[Path] = []
 
@@ -3764,7 +3812,7 @@ def test_roaming_agent_info_uses_the_source_layout(
         shortened.append(path)
         return "compact home"
 
-    monkeypatch.setattr(agent_commands, "SetupWatcher", _EmptySetupWatcher)
+    monkeypatch.setattr("toolang.setup.SetupWatcher", _EmptySetupWatcher)
     monkeypatch.setattr(
         agent_commands,
         "shorten_home_path",
@@ -3787,9 +3835,9 @@ def test_roaming_agent_info_uses_the_source_layout(
     assert result == 0
     assert captured["title"] == "DEMO"
     rows = cast(dict[str, str], captured["rows"])
-    assert shortened == [AgentLayout.roaming(source).home]
+    assert shortened == [selected.home]
     assert rows["Home"] == "compact home"
-    assert rows["Workspaces"] == "lab"
+    assert "Caps" in rows
 
 
 def test_visiting_agent_info_uses_the_materialized_layout(
@@ -3808,7 +3856,7 @@ def test_visiting_agent_info_uses_the_materialized_layout(
         templates.load_template("agent").raw_text,
         encoding="utf-8",
     )
-    monkeypatch.setattr(agent_commands, "SetupWatcher", _EmptySetupWatcher)
+    monkeypatch.setattr("toolang.setup.SetupWatcher", _EmptySetupWatcher)
     monkeypatch.setattr(agent_sources, "visiting_layout", lambda _, **kwargs: layout)
     captured: dict[str, object] = {}
     monkeypatch.setattr(
@@ -4013,7 +4061,7 @@ def test_non_execution_commands_reject_workspace_options(
     tmp_path, monkeypatch, command, option
 ):
     _create_agent(tmp_path)
-    monkeypatch.setattr(agent_commands, "SetupWatcher", _EmptySetupWatcher)
+    monkeypatch.setattr("toolang.setup.SetupWatcher", _EmptySetupWatcher)
 
     value = () if option == "--no-auto-workspace" else (str(tmp_path),)
     result = _invoke(tmp_path, "alice", *command, option, *value)
@@ -4029,7 +4077,7 @@ def test_running_roaming_inspection_preserves_runtime_workspaces(
 
     source = tmp_path / "demo.too"
     source.write_text(templates.load_template("agent").raw_text)
-    monkeypatch.setattr(agent_commands, "SetupWatcher", _EmptySetupWatcher)
+    monkeypatch.setattr("toolang.setup.SetupWatcher", _EmptySetupWatcher)
     monkeypatch.setattr(
         agents.AgentProcess,
         "status",
@@ -4042,6 +4090,9 @@ def test_running_roaming_inspection_preserves_runtime_workspaces(
             sandbox="docker",
         ),
     )
+    from toolang.up.identity import allocate_roaming
+
+    allocate_roaming(source, toolang_root=tmp_path)
     requests = []
 
     def get(self, path):

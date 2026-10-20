@@ -92,7 +92,8 @@ def test_script_publishes_basename_and_actual_allocated_run(
         return SimpleNamespace(id=run_id)
 
     monkeypatch.setattr(
-        "toolang.up.source.materialize_roaming_program", lambda _: layout
+        "toolang.up.source.materialize_roaming_program",
+        lambda _, **kwargs: kwargs["layout"],
     )
     monkeypatch.setattr("toolang.cli.common.agent_server.acquire_agent_server", acquire)
     monkeypatch.setattr(

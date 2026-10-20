@@ -92,6 +92,7 @@ class ServeSpec:
     log_spec: str | None = None
     workspace_additions: Mapping[str, str] = field(default_factory=dict)
     workdir: str | None = None
+    automatic_port: bool = False
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -149,6 +150,7 @@ def resolve_serve(
         toolang_root=toolang_root or layout.toolang_root or layout.root,
         launch_id=launch_id,
         lifetime=lifetime,
+        automatic_port=port is None,
         drivers=default_drivers(layout.placement) if drivers is None else drivers,
         workspace_additions=dict(workspace_additions or {}),
         workdir=workdir,
@@ -177,6 +179,7 @@ def build_serve_argv(
     host: str | None = None,
     sandbox: str = "host",
     location: str = "host",
+    source_edit_lock: Path | None = None,
 ) -> tuple[str, ...]:
     """Build explicit argv for the hidden AgentServer entrypoint."""
 
@@ -205,8 +208,18 @@ def build_serve_argv(
         format_drivers(spec.drivers),
     ]
     command.extend(["--lifetime", spec.lifetime])
-    if spec.layout.instance is not None:
-        command.extend(["--runtime-instance", spec.layout.instance])
+    command.extend(["--placement", spec.layout.placement, "--store-schema", "63"])
+    if spec.layout.instance_id is not None:
+        command.extend(["--instance-id", spec.layout.instance_id])
+    if spec.layout.source_path is not None:
+        command.extend(
+            [
+                "--source-path",
+                str(spec.layout.source_path),
+                "--source-edit-lock",
+                str(source_edit_lock or spec.layout.root_edit_lock),
+            ]
+        )
     if spec.launch_id is not None:
         command.extend(["--launch-id", spec.launch_id])
     if spec.workspace_additions:
@@ -255,7 +268,11 @@ def serve(
     host_ref = (
         asyncio.run(
             register_host_server(
-                spec.layout, endpoint=spec.endpoint, launch_id=launch_id, spec=spec
+                spec.layout,
+                endpoint=spec.endpoint,
+                launch_id=launch_id,
+                spec=spec,
+                environ=environ,
             )
         )
         if location == "host"
@@ -394,6 +411,7 @@ def serve(
                     lifetime=spec.lifetime,
                     api_version=AGENT_API_VERSION,
                     workspace_additions=spec.workspace_additions,
+                    resource_counts=core.resource_counts(),
                     process_created=psutil.Process().create_time(),
                     sandbox_description=environ.get(HOST_SANDBOX_DESCRIPTION_ENV),
                     sandbox_instance=environ.get("TOOLANG_SANDBOX_INSTANCE"),
@@ -704,7 +722,11 @@ def _run_uvicorn_app(
     if on_starting is not None:
         on_starting()
     try:
-        server.run()
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+            listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            listener.bind((host, port))
+            listener.listen()
+            server.run(sockets=[listener])
     except KeyboardInterrupt:
         pass
     if not server.started:
@@ -769,12 +791,12 @@ def resolve_runtime_port(
         if explicit_port < 1 or explicit_port > 65535:
             raise ValueError(f"invalid runtime port: {explicit_port}")
         return explicit_port
-    if temporary:
+    if temporary or layout.placement == "roaming":
         return _pick_temporary_runtime_port(host)
     preferred = agents.preferred_runtime_port(layout)
     assigned = agents.assigned_runtime_ports(
-        layout.root,
-        exclude_agent=layout.name,
+        layout.toolang_root or layout.root,
+        exclude_agent=layout.instance_name,
     )
     # Reassign pre-upgrade agent records on the default Hub port.
     if (
@@ -784,6 +806,8 @@ def resolve_runtime_port(
         and _port_is_available(host, preferred)
     ):
         return preferred
+    if layout.placement == "visiting":
+        return _pick_temporary_runtime_port(host)
     for port in range(AUTO_RUNTIME_PORT_MIN, AUTO_RUNTIME_PORT_MAX + 1):
         if port not in assigned and _port_is_available(host, port):
             return port

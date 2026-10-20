@@ -120,7 +120,25 @@ def test_chat_reuse_preserves_running_selection(
     layout = AgentLayout.resident(tmp_path, "alice")
     state = {"drivers": running}
     status = SimpleNamespace(
-        status="running", sandbox="host", endpoint="http://127.0.0.1:7001"
+        status="running", sandbox="host", endpoint="http://127.0.0.1:7001", port=7001
+    )
+    from toolang.up.contract import startup_contract
+    from toolang.up.instance import update_instance
+
+    spec = agent_server._resolve_inactive_launch(
+        layout,
+        sandbox="host",
+        dev=None,
+        model_catalog=None,
+        base_environ={},
+        drivers=frozenset(running),
+        active_port=7001,
+    )
+    update_instance(
+        layout.runtime_status,
+        lambda entry: entry["control"].update(
+            startup_contract=startup_contract(spec), drivers=running
+        ),
     )
     monkeypatch.setattr(
         agent_server.agents,

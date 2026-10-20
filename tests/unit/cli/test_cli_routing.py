@@ -946,6 +946,9 @@ def test_cli_routes_roaming_agent_command_to_its_exact_layout(
 ) -> None:
     source = tmp_path / "demo.too"
     source.write_text("agic demo:\n  Reply directly.\n", encoding="utf-8")
+    from toolang.up.identity import allocate_roaming, select_roaming
+
+    previous = allocate_roaming(source, toolang_root=tmp_path)
     captured: dict[str, object] = {}
 
     def fake_run_app(
@@ -961,11 +964,18 @@ def test_cli_routes_roaming_agent_command_to_its_exact_layout(
     )
 
     assert result == 9
-    assert captured == {
-        "args": ["info", source.stem] if arguments == ["info"] else arguments,
-        "layout": AgentLayout.roaming(source),
-        "source": source,
-    }
+    assert captured["source"] == source
+    assert captured["args"] == (
+        ["info", source.stem] if arguments == ["info"] else arguments
+    )
+    selected = captured["layout"]
+    assert isinstance(selected, AgentLayout)
+    if arguments[0] == "chat":
+        assert selected.root != previous.root
+        assert selected.root == select_roaming(source).root
+    else:
+        assert selected.root == previous.root
+    assert selected.source_path == source.resolve()
 
 
 def test_cli_opens_roaming_chat_with_its_exact_layout(
@@ -1004,7 +1014,7 @@ def test_cli_opens_roaming_chat_with_its_exact_layout(
 
     assert cli.main([str(source), "chat"]) == 0
     assert captured == {
-        "layout": AgentLayout.roaming(source),
+        "layout": captured["layout"],
         "closed": True,
     }
 
@@ -1051,7 +1061,7 @@ def test_cli_routes_chat_development_artifact_to_the_exact_layout(
         == 0
     )
     assert captured == {
-        "layout": AgentLayout.roaming(source),
+        "layout": captured["layout"],
         "thread": None,
         "selectors": None,
         "sandbox": "docker",

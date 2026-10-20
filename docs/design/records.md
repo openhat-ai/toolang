@@ -55,8 +55,8 @@ horizon
 the current control head are derived from Thread controls for caller-facing
 schemas; they are not duplicated in the canonical Thread record.
 `kind` is a property derived from the [Thread ID prefix](ids.md); neither `kind`
-nor `origin` is a persisted Thread field. Execution store schema 62 rejects older
-databases without migration.
+nor `origin` is a persisted Thread field. Execution stores older than schema 62
+are rejected without migration.
 
 ### ControlRecord
 
@@ -101,10 +101,11 @@ text. Rerun creates a new Run entry. Each persisted
 value retains its self-describing codec, without a Local/name/dim wrapper.
 References address `payload/input/_` or `payload/input/argumentName`.
 
-RunStore reads and writes only schema 62. Older stores, including those with
-retired Activity indexes or retry records, are rejected without mutation. No
-upgrade, Activity cleanup, backfill or compatibility read is performed. Preserve
-required old runtime data separately and use fresh storage for new execution.
+RunStore writes schema 63, atomically migrating schema 62 with imported ownership
+and replay provenance tables. Read-only inspection supports both versions. Older
+stores, including those with retired Activity indexes or retry records, are
+rejected without mutation; preserve required history separately. Stop old writers
+before upgrading; older writers cannot open schema 63.
 Control kinds `execute` and `cwd` are renamed to `exec` and `chdir`, with no
 old-name aliases. The working-directory payload field remains `cwd`. Update
 control filters and consumers to the new kinds; use a fresh store for new runs.

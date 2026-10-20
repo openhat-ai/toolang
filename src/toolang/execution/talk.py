@@ -123,6 +123,8 @@ class TalkStore:
 
     def attempt_notice(self, run: str) -> bool:
         with self.store.write_transaction():
+            if self.store.is_imported(run):
+                return False
             return bool(
                 self.store._conn.execute(
                     "UPDATE talk_batches SET notice_attempted = 1 WHERE run = ? AND notice_attempted = 0",

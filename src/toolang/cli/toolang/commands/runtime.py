@@ -23,8 +23,8 @@ from toolang.cli.common.terminal_title import agent_label
 
 import typer
 from typer._click.exceptions import ClickException
-from typer._click.core import ParameterSource
 
+from toolang.cli.common.parameters import InstanceOption
 from toolang.cli.common.parameters import (
     AllowOptions,
     CompactModelOption,
@@ -326,6 +326,7 @@ def start(
                 limits=limits,
                 port=port,
                 endpoint_host=endpoint_host,
+                host=host,
             ):
                 return
             if target.placement == "visiting":
@@ -399,6 +400,7 @@ def _retain_started(
     limits: list[str] | None,
     port: int | None,
     endpoint_host: str | None,
+    host: str = "127.0.0.1",
 ) -> bool:
     from toolang.up import sandbox as sandbox_runtime
 
@@ -409,20 +411,26 @@ def _retain_started(
             status = process.wait_ready(status, ui_base_url=ui_base_url(), timeout=30)
         if status is None or status.status != "running":
             return False
-        if (
-            allows
-            or defaults
-            or limits
-            or endpoint_host is not None
-            or ctx.get_parameter_source("host") == ParameterSource.COMMANDLINE
-        ):
-            raise ClickException(
-                "startup options cannot be verified on attachment; stop and restart the agent"
-            )
-        if port is not None and port != status.port:
-            raise ClickException(
-                "--port differs from the running agent; stop and restart it"
-            )
+        from toolang.up.contract import require_compatible
+
+        requested = resolve_startup(
+            layout,
+            toolang_root=context_root(ctx),
+            model_catalog=model_catalog,
+            sandbox=sandbox,
+            allows=allows,
+            defaults=defaults,
+            limits=limits,
+            port=port,
+            host=host,
+            endpoint_host=endpoint_host,
+            dev=dev,
+            background=True,
+            compact_model=compact_model,
+            driver=driver,
+            allow_live=True,
+        )
+        require_compatible(layout, requested.startup)
         try:
             with acquire_agent_server(
                 layout,
@@ -465,6 +473,7 @@ def stop(
         bool,
         typer.Option(help="Force-stop when graceful shutdown does not complete"),
     ] = False,
+    instance: InstanceOption = None,
 ) -> None:
     from ...common.progress import make_cli_progress
 
@@ -479,6 +488,11 @@ def stop(
                 agents.AgentProcess(layout).stop(
                     force=force,
                     progress=progress.sink,
+                    **(
+                        {"expected_launch_id": cli_context(ctx).launch_id}
+                        if cli_context(ctx).launch_id is not None
+                        else {}
+                    ),
                 ),
             )
     except (OSError, RuntimeError, ClickException) as exc:
@@ -536,6 +550,17 @@ def serve(
     runtime_instance: Annotated[
         str | None, typer.Option("--runtime-instance", hidden=True)
     ] = None,
+    instance_id: Annotated[
+        str | None, typer.Option("--instance-id", hidden=True)
+    ] = None,
+    placement: Annotated[str, typer.Option("--placement", hidden=True)] = "resident",
+    source_path: Annotated[
+        Path | None, typer.Option("--source-path", hidden=True)
+    ] = None,
+    store_schema: Annotated[int, typer.Option("--store-schema", hidden=True)] = 63,
+    source_edit_lock: Annotated[
+        Path | None, typer.Option("--source-edit-lock", hidden=True)
+    ] = None,
     workspace_bindings: Annotated[
         str, typer.Option("--workspace-bindings", hidden=True)
     ] = "{}",
@@ -558,11 +583,27 @@ def serve(
         or lifetime not in {"persistent", "foreground", "automatic"}
     ):
         raise ClickException("invalid workload startup inputs")
+    from toolang.execution.store import RUN_STORE_SCHEMA
+    from typing import cast
+    from toolang.common.layout import AgentPlacement
+
+    if store_schema != RUN_STORE_SCHEMA or placement not in {
+        "resident",
+        "visiting",
+        "roaming",
+    }:
+        raise ClickException(
+            "workload requires a compatible Toolang runtime/store schema"
+        )
+    if runtime_instance is not None:
+        raise ClickException("legacy runtime instances cannot be resumed")
     layout = AgentLayout(
         agent_root or context_root(ctx),
         agent,
-        "resident",
-        instance=runtime_instance,
+        cast(AgentPlacement, placement),
+        instance_id=instance_id,
+        source_path=source_path,
+        source_edit_lock=source_edit_lock,
         project_inputs=source_policy == "project",
         managed_membership=membership == "managed",
     )
@@ -618,6 +659,7 @@ def resolve_startup(
     driver: str | None = None,
     workspace_options: list[str] | None = None,
     workdir: str | None = None,
+    allow_live: bool = False,
 ) -> RuntimeLaunch:
     from toolang.up import sandbox as sandbox_runtime
     from toolang.cli.common.ports import agent_port
@@ -636,7 +678,11 @@ def resolve_startup(
     if target.placement == "resident" and not target.home.is_dir():
         raise ClickException(f"Agent {agent} not found")
     existing = agents.AgentProcess(target).status(ui_base_url=ui_base_url())
-    if existing is not None and existing.status in {"running", "preparing", "starting"}:
+    if (
+        not allow_live
+        and existing is not None
+        and existing.status in {"running", "preparing", "starting"}
+    ):
         raise ClickException(active_agent_error(existing))
     environ = load_runtime_environ(target, base_environ=os.environ)
     toolang_root = (
@@ -646,6 +692,8 @@ def resolve_startup(
     )
     environ["TOOLANG_ROOT"] = str(toolang_root)
     port = user_call(agent_port, target, port, environ=environ)
+    if port is None and allow_live and existing is not None:
+        port = existing.port
     if model_catalog := resolve_model_catalog_option(model_catalog):
         environ[MODEL_CATALOG_ENV] = str(model_catalog)
     log_plan = resolve_agent_logging(

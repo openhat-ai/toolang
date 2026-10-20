@@ -198,7 +198,34 @@ async def launch(
     lock_path = file_lock_path(spec.serve.layout.runtime_status)
     async with _task_lock(lock_path, instance=spec.serve.layout.instance):
         with management_lock(spec.serve.layout, progress=progress):
-            return await _launch_locked(spec, progress=progress)
+            for attempt in range(3):
+                try:
+                    return await _launch_locked(spec, progress=progress)
+                except (OSError, RuntimeError, ValueError) as exc:
+                    bind_failure = "address already in use" in str(
+                        exc
+                    ).lower() or getattr(exc, "errno", None) in {48, 98}
+                    if (
+                        not spec.serve.automatic_port
+                        or attempt == 2
+                        or not bind_failure
+                    ):
+                        raise
+                    from .server import resolve_runtime_port
+
+                    spec = replace(
+                        spec,
+                        serve=replace(
+                            spec.serve,
+                            port=resolve_runtime_port(
+                                host=spec.serve.host,
+                                explicit_port=None,
+                                layout=spec.serve.layout,
+                                temporary=spec.serve.layout.placement != "resident",
+                            ),
+                        ),
+                    )
+            raise RuntimeError("automatic bind attempts exhausted")
 
 
 @contextmanager
@@ -336,6 +363,14 @@ async def _launch_locked(
                 ),
             )
             catalog_env[MODEL_CATALOG_ENV] = str(guest_catalog)
+        edit_lock_mounts: tuple[SandboxMount, ...] = ()
+        guest_edit_lock = None
+        if not on_host and spec.serve.layout.source_path is not None:
+            local_guard = spec.serve.layout.root_edit_lock
+            local_guard.parent.mkdir(parents=True, exist_ok=True)
+            local_guard.touch(exist_ok=True)
+            guest_edit_lock = hosted_root / ".state" / "root" / "edit.lock"
+            edit_lock_mounts = (SandboxMount(local_guard, guest_edit_lock),)
         request = SandboxRequest(
             local_root=spec.serve.layout.root,
             local_home=spec.serve.layout.home,
@@ -354,6 +389,7 @@ async def _launch_locked(
                     sandbox=spec.sandbox,
                     location=implementation.location,
                     host=spec.serve.host if on_host else "0.0.0.0",
+                    source_edit_lock=guest_edit_lock,
                 ),
             ),
             working_directory=spec.serve.layout.home if on_host else hosted_home,
@@ -380,6 +416,7 @@ async def _launch_locked(
                         spec.serve.layout.name,
                         hosted_root,
                     ),
+                    *edit_lock_mounts,
                 )
             ),
             local_dev_artifact=spec.dev_artifact,
@@ -710,12 +747,17 @@ async def stop(
     *,
     force: bool = False,
     progress: ProgressSink | None = None,
+    expected_launch_id: str | None = None,
 ) -> bool:
     """Stop and release the currently hosted AgentServer."""
 
     lock_path = file_lock_path(layout.runtime_status)
     async with _task_lock(lock_path, instance=layout.instance):
         with management_lock(layout, stage="stop", progress=progress):
+            if expected_launch_id is not None:
+                entry = read_instance(layout.runtime_status, layout.instance)
+                if entry is None or entry["launch_id"] != expected_launch_id:
+                    raise ValueError("selected execution owner was replaced")
             _reject_legacy_state(layout)
             await _release_abandoned_temporary(layout)
             state = SandboxState.load(layout.runtime_status, instance=layout.instance)
@@ -980,6 +1022,7 @@ async def register_host_server(
     endpoint: str,
     launch_id: str | None,
     spec: ServeSpec | None = None,
+    environ: Mapping[str, str] | None = None,
 ) -> SandboxRef:
     """Confirm a managed launch, or register a direct server before preparation."""
 
@@ -1002,8 +1045,12 @@ async def register_host_server(
             launch_spec = LaunchSpec(
                 resolve_serve(layout=layout, port=int(endpoint.rsplit(":", 1)[1])),
                 "host",
-                {},
-                {},
+                _select_sandbox_configs(
+                    tuple(source.config for source in config_sources(layout)),
+                    explicit="host",
+                )[1],
+                dict(environ or {}),
+                dotenv_envs=load_setup_dotenvs(layout),
             )
             _begin_launch(
                 replace(
@@ -1012,7 +1059,11 @@ async def register_host_server(
                 )
             )
             return await register_host_server(
-                layout, endpoint=endpoint, launch_id=launch_id, spec=spec
+                layout,
+                endpoint=endpoint,
+                launch_id=launch_id,
+                spec=spec,
+                environ=environ,
             )
     # Publish identity before execution; recovery must not depend on parent acknowledgement.
     entry = read_instance(layout.runtime_status, layout.instance)
@@ -1068,6 +1119,15 @@ async def release_stopped(layout: AgentLayout) -> None:
 
 
 async def _release_stopped_locked(layout: AgentLayout) -> None:
+    allocated = read_instance(layout.runtime_status)
+    if (
+        layout.placement == "roaming"
+        and layout.instance_id is not None
+        and allocated is not None
+        and "startup_contract" not in allocated["control"]
+        and allocated["control"].get("ref") is None
+    ):
+        return
     _reject_legacy_state(layout)
     await _release_abandoned_temporary(layout)
     state = SandboxState.load(layout.runtime_status, instance=layout.instance)
@@ -1231,6 +1291,12 @@ def _begin_launch(spec: LaunchSpec) -> None:
     layout = spec.serve.layout
 
     def begin(entry):
+        from .identity import identity_bindings
+
+        from .contract import startup_contract
+
+        entry["control"].update(identity_bindings(layout))
+        entry["control"]["startup_contract"] = startup_contract(spec)
         entry["launch_id"] = spec.serve.launch_id
         entry["workload"] = {"status": "preparing", "pid": None, "updated_at": _now()}
         entry["control"].update(

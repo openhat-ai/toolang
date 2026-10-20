@@ -131,7 +131,7 @@ from .values import parts_from_value
 from . import talk
 from .errors import ThreadBusy
 
-RUN_STORE_SCHEMA = 62
+RUN_STORE_SCHEMA = 63
 
 
 class RunStore:
@@ -280,6 +280,13 @@ class RunStore:
                     AND c.target = r.id AND c._event_cursor > :after
                     AND c._event_cursor <= :ceiling)))
         """
+        imported_filter = (
+            "AND NOT EXISTS (SELECT 1 FROM imported_runs i WHERE i.run=runs.id)"
+            if self._conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE name='imported_runs'"
+            ).fetchone()
+            else ""
+        )
         # Materialize parent run IDs once so SQLite can index recursive lookups
         # instead of scanning all historical runs for every node in the forest.
         query = f"""
@@ -287,7 +294,7 @@ class RunStore:
                 SELECT id, substr(parent, 1, instr(parent, '.') - 1)
                 FROM runs WHERE parent IS NOT NULL
             ), tree(id, root) AS (
-                SELECT id, id FROM runs WHERE parent IS NULL
+                SELECT id, id FROM runs WHERE parent IS NULL {imported_filter}
                     AND (:root IS NULL OR id = :root)
                     AND (:thread IS NULL OR thread = :thread)
                 UNION ALL
@@ -578,8 +585,15 @@ class RunStore:
 
     def require_idle_thread(self, thread: str) -> None:
         """Check within the caller's write transaction before root mutation."""
+        imported = (
+            "AND id NOT IN (SELECT run FROM imported_runs)"
+            if self._conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE name='imported_runs'"
+            ).fetchone()
+            else ""
+        )
         active = self._conn.execute(
-            "SELECT id FROM runs WHERE thread = ? AND parent IS NULL AND status IN ('pending', 'running') LIMIT 1",
+            f"SELECT id FROM runs WHERE thread = ? AND parent IS NULL AND status IN ('pending', 'running') {imported} LIMIT 1",
             (thread,),
         ).fetchone()
         if active is not None:
@@ -747,6 +761,15 @@ class RunStore:
                     claimed=True,
                     triggered_by=triggered_by or parent,
                 )
+                if request_id is not None:
+                    self._conn.execute(
+                        "UPDATE replay_provenance SET destination_run=? WHERE request_id=? AND destination_run IS NULL",
+                        (run_id, request_id),
+                    )
+                    self._conn.execute(
+                        "UPDATE replay_provenance SET request_id=?, destination_run=? WHERE destination_run IS NULL AND source_run IS NULL AND (source_thread IS NULL OR source_thread=?)",
+                        (request_id, run_id, thread),
+                    )
                 if talk_batch is not None:
                     if parent is not None or conversation != talk_batch.scope:
                         raise ValueError(
@@ -3545,6 +3568,20 @@ class RunStore:
         ).fetchone()
         return int(row["revision"]) if row is not None else 1
 
+    def is_imported(self, run_id: str) -> bool:
+        """Imported history is never work owned by this executor."""
+        with self._lock:
+            if not self._conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE name='imported_runs'"
+            ).fetchone():
+                return False
+            return (
+                self._conn.execute(
+                    "SELECT 1 FROM imported_runs WHERE run=?", (run_id,)
+                ).fetchone()
+                is not None
+            )
+
     def _init_schema(self) -> None:
         with self._lock:
             self._conn.execute("PRAGMA busy_timeout=30000;")
@@ -3560,7 +3597,9 @@ class RunStore:
                     supported=(RUN_STORE_SCHEMA,),
                     read_only=False,
                 )
-            allowed = (RUN_STORE_SCHEMA,) if self.read_only else (0, RUN_STORE_SCHEMA)
+            allowed = (
+                (62, RUN_STORE_SCHEMA) if self.read_only else (0, 62, RUN_STORE_SCHEMA)
+            )
             if version not in allowed:
                 raise RunStoreSchemaError(
                     version,
@@ -3576,7 +3615,7 @@ class RunStore:
             self._conn.execute("PRAGMA foreign_keys=ON;")
             self._conn.execute("BEGIN IMMEDIATE")
             version = int(self._conn.execute("PRAGMA user_version").fetchone()[0])
-            if version not in (0, RUN_STORE_SCHEMA) or (
+            if version not in (0, 62, RUN_STORE_SCHEMA) or (
                 version == 0 and _database_has_user_schema(self._conn)
             ):
                 self._conn.rollback()
@@ -3708,6 +3747,12 @@ class RunStore:
                     self._conn.execute(
                         f"CREATE INDEX IF NOT EXISTS idx_{table}_{name} ON {table}({name})"
                     )
+            self._conn.execute(
+                "CREATE TABLE IF NOT EXISTS imported_runs (run TEXT PRIMARY KEY, owner TEXT NOT NULL)"
+            )
+            self._conn.execute(
+                "CREATE TABLE IF NOT EXISTS replay_provenance (request_id TEXT PRIMARY KEY, source_root TEXT NOT NULL, source_owner TEXT NOT NULL, source_run TEXT, source_thread TEXT, source_head TEXT, destination_run TEXT)"
+            )
             talk.initialize(self._conn)
             self._conn.execute(f"PRAGMA user_version={RUN_STORE_SCHEMA}")
             self._conn.commit()

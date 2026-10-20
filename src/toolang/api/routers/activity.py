@@ -9,7 +9,7 @@ from toolang.stats.errors import StatsUnavailable
 from toolang.up.activity import activity_snapshot
 from toolang.up.schemas import ActivitySnapshot
 
-router = APIRouter(prefix="/top", tags=["top"])
+router = APIRouter(prefix="/top", tags=["activity"])
 
 
 @router.get("/snapshot")

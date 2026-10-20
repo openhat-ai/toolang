@@ -26,13 +26,12 @@ from toolang.up.instance import read_instance
 from toolang.up import sandbox as sandbox_runtime
 from toolang.up.logging import resolve_agent_logging
 from toolang.up.types import (
-    ALL_DRIVERS,
     AgentServerRef,
     DriverName,
     ExecutionDrivers,
     ServerLifetime,
 )
-from toolang.up.config import default_drivers, format_drivers, parse_drivers
+from toolang.up.config import default_drivers
 
 from .context import load_runtime_environ, resolve_root
 from .server_lease import ServerLease
@@ -78,6 +77,7 @@ def acquire_agent_server(
     drivers: ExecutionDrivers | None = None,
     required_driver: DriverName | None = None,
     attach_only: bool = False,
+    expected_launch_id: str | None = None,
 ) -> Iterator[AgentServerRef | None]:
     """Acquire a shared server; temporary scripts retain their existing lifecycle."""
 
@@ -88,6 +88,12 @@ def acquire_agent_server(
             make_cli_progress(enabled=show_progress, preparation=True) as progress,
             sandbox_runtime.management_lock(layout, progress=progress.sink),
         ):
+            if expected_launch_id is not None:
+                current = read_instance(layout.runtime_status)
+                if current is None or current["launch_id"] != expected_launch_id:
+                    raise AgentServerAcquisitionError(
+                        "selected execution owner was replaced"
+                    )
             deadline = time.monotonic() + AGENT_READY_TIMEOUT_SEC
             while True:
                 acquired = _prepare_agent_server(
@@ -179,7 +185,7 @@ def acquire_agent_server(
             lease.close()
             if body_error is None or isinstance(body_error, KeyboardInterrupt):
                 lease.check()
-        if temporary or server is None:
+        if temporary or layout.placement == "roaming" or server is None:
             shutdown_progress = make_cli_progress(
                 enabled=show_progress,
                 leading_gap=True,
@@ -213,7 +219,7 @@ def _managed_lifecycle(layout: AgentLayout, state: Mapping[str, object]) -> bool
         raise AgentServerAcquisitionError(
             f"server API version {version!r} is unsupported; stop and restart it with this Toolang version"
         )
-    return layout.placement in {"resident", "visiting"} and version == AGENT_API_VERSION
+    return version == AGENT_API_VERSION
 
 
 def _server_reference(
@@ -312,6 +318,13 @@ def _prepare_agent_server(
         ui_base_url=ui_base_url,
         check_health=not temporary and not managed,
     )
+    if (
+        layout.placement == "roaming"
+        and layout.instance_id is not None
+        and "startup_contract" not in entry.get("control", {})
+        and entry.get("control", {}).get("ref") is None
+    ):
+        status = None  # Published identity, before the first workload is launched.
     if status is not None and status.status in {"preparing", "starting"}:
         if temporary:
             raise AgentServerAcquisitionError(
@@ -324,42 +337,39 @@ def _prepare_agent_server(
             progress=progress.sink,
         )
     if status is not None and status.status == "running":
-        if drivers is not None or required_driver is not None:
-            state = agents.AgentProcess(layout).state() or {}
-            raw_drivers = state.get("drivers")
-            running = (
-                parse_drivers(",".join(str(item) for item in raw_drivers) or "none")
-                if isinstance(raw_drivers, list)
-                else ALL_DRIVERS
-            )
-            if drivers is not None and drivers != running:
-                raise AgentServerAcquisitionError(
-                    f"--enable {format_drivers(drivers)} differs from the running agent ({format_drivers(running)}); stop and restart it to change drivers"
-                )
-            if required_driver is not None and required_driver not in running:
-                raise AgentServerAcquisitionError(
-                    f"{required_driver} driver is disabled; restart the agent with it enabled"
-                )
-        if workspace_additions is not None:
-            captured = agents.AgentProcess(layout).state() or {}
-            if captured.get("workspace_additions", {}) != dict(workspace_additions):
-                raise AgentServerAcquisitionError(
-                    "workspace bindings differ from the running server; stop it before adding local directories"
-                )
-        if compact_override is not None:
+        attached = _attached_server(layout, status, requested=sandbox)
+        if not attach_only and not isinstance(
+            entry.get("control", {}).get("startup_contract"), dict
+        ):
             raise AgentServerAcquisitionError(
-                "--compact-model only applies when starting a runtime; stop the agent first"
+                "running startup parameters are unverifiable; stop and restart the agent"
             )
-        if model_catalog is not None:
-            raise AgentServerAcquisitionError(
-                "--catalog only applies when starting a runtime; stop the agent first"
+        raw = entry.get("control", {}).get("drivers", [])
+        if drivers is not None and isinstance(raw, list) and set(raw) != set(drivers):
+            raise AgentServerAcquisitionError("--enable differs from the running agent")
+        if required_driver is not None and (
+            not isinstance(raw, (list, tuple)) or required_driver not in raw
+        ):
+            raise AgentServerAcquisitionError(f"{required_driver} driver is disabled")
+        if not attach_only:
+            from toolang.up.contract import require_compatible
+
+            requested = _resolve_inactive_launch(
+                layout,
+                sandbox=sandbox,
+                dev=dev,
+                model_catalog=model_catalog,
+                base_environ=base_environ,
+                compact_override=compact_override,
+                workspace_additions=workspace_additions,
+                drivers=drivers if drivers is not None else frozenset({"chat"}),
+                active_port=status.port,
             )
-        if dev is not None:
-            raise AgentServerAcquisitionError(
-                f"--dev only applies when starting a new guest; agent {layout.name} "
-                "is already running. Stop it first or omit --dev."
-            )
-        return _attached_server(layout, status, requested=sandbox)
+            try:
+                require_compatible(layout, requested)
+            except ValueError as exc:
+                raise AgentServerAcquisitionError(str(exc)) from exc
+        return attached
 
     if attach_only:
         raise AgentServerAcquisitionError(
@@ -496,6 +506,7 @@ def _resolve_inactive_launch(
     temporary_port: bool = False,
     automatic: bool = False,
     drivers: ExecutionDrivers | None = None,
+    active_port: int | None = None,
 ) -> sandbox_runtime.LaunchSpec:
     try:
         environ = load_runtime_environ(
@@ -520,11 +531,15 @@ def _resolve_inactive_launch(
                 layout=layout,
                 toolang_root=toolang_root,
                 drivers=drivers,
-                lifetime="automatic" if automatic else "persistent",
+                lifetime="foreground"
+                if layout.placement == "roaming"
+                else "automatic"
+                if automatic
+                else "persistent",
                 sandbox=sandbox,
                 port=None
                 if temporary_port
-                else agent_port(layout, None, environ=environ),
+                else agent_port(layout, None, environ=environ) or active_port,
                 dev=dev,
                 output="file",
                 log_path=log_plan.path,

@@ -62,12 +62,24 @@ requests a file or `-` for stdout. Quiet mode suppresses preparation/execution
 progress. Non-TTY progress is plain append-only text. [Execution presentation](execution-presentation.md)
 owns rendering and [Scripts](scripts.md) owns temporary grants and path origins.
 
-Host scripts use embedded execution when no server is active. A compatible
-running AgentServer is reused; a new non-host script server is temporary and
-released on exit. An explicit sandbox mismatch fails before thread/Run creation.
-`--dev [PATH]` selects a built wheel only for a new guest; it cannot modify an
-attached server. [Hosting](hosting.md) owns sandbox selection, installation,
-logging, recovery, environment capture, and process cleanup.
+Each roaming script, Chat, or serve launch creates a fresh root/executor. Host
+scripts expose the shared Agent API on the workload's event loop; guest workloads
+use existing sandbox serving. Resources close when the owning foreground caller
+exits. [Hosting](hosting.md) owns startup compatibility and recovery.
+
+### Instance selection
+
+- Existing targets accept `--instance` / `-i` on history/control commands.
+- Values include the complete `v…` or `r…` prefix; residents need no extra ID.
+- Default roaming selection is the latest startup request, including failure/exit,
+  derived from retained local metadata. Completion time and mtime never reorder it.
+- `info`/`inspect` calculate agent roots without global references or preparation;
+  `info` uses saved resource summaries/State. Source contents may be unavailable.
+- A command pins its root/identity/generation once; controls attach only to that
+  live owner. Offline fork/rewind edit history under verified stopped ownership.
+- Roaming rerun and explicit Chat continuation snapshot into fresh instances;
+  `-i` cannot revive a retained root. See [Execution](execution.md#isolated-replay).
+
 
 ## Resource and plugin inspection
 

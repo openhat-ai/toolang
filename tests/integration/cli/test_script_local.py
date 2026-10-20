@@ -9,6 +9,7 @@ import pytest
 from watchfiles import Change
 
 from toolang.up import source as agent_sources
+from toolang.up.identity import select_roaming
 
 from toolang.base.types.message import Message, TextPart, message_text
 from toolang.catalog.templates import load_template
@@ -85,8 +86,8 @@ def test_local_script_saves_only_to_an_explicit_destination(
 
     class _SetupWatcher:
         def __init__(self, actual_layout, **kwargs) -> None:
-            assert replace(actual_layout, instance=None) == layout
-            assert actual_layout.instance is not None
+            assert actual_layout.source_path == source.resolve()
+            assert actual_layout.instance_id is not None
             assert kwargs["sandbox"] == "host"
 
         def current(self):
@@ -99,13 +100,13 @@ def test_local_script_saves_only_to_an_explicit_destination(
             with setup_progress(progress, target=layout.name, resource="setup"):
                 return setup
 
-    monkeypatch.setattr("toolang.setup.SetupWatcher", _SetupWatcher)
+    monkeypatch.setattr("toolang.up.core.SetupWatcher", _SetupWatcher)
     publication = harness.state
 
     class _StateWatcher:
         def __init__(self, actual_layout, *, initial_state, **_kwargs) -> None:
-            assert replace(actual_layout, instance=None) == layout
-            assert actual_layout.instance is not None
+            assert actual_layout.source_path == source.resolve()
+            assert actual_layout.instance_id is not None
             assert initial_state is harness.state
 
         def load(self, revision):
@@ -127,12 +128,12 @@ def test_local_script_saves_only_to_an_explicit_destination(
         async def run(self, *, stop_signal):
             await stop_signal.wait()
 
-    monkeypatch.setattr("toolang.state.watcher.StateWatcher", _StateWatcher)
+    monkeypatch.setattr("toolang.up.core.StateWatcher", _StateWatcher)
     quiet = save_mode in {"stdout", "file"}
 
     def prepare_state(actual_layout, **kwargs):
-        assert replace(actual_layout, instance=None) == layout
-        assert actual_layout.instance is not None
+        assert actual_layout.source_path == source.resolve()
+        assert actual_layout.instance_id is not None
         assert (kwargs["progress"] is None) is quiet
         return harness.state
 
@@ -162,6 +163,7 @@ def test_local_script_saves_only_to_an_explicit_destination(
     assert output.out == expected_stdout
     from toolang.up.instance import read_document
 
+    layout = select_roaming(source)
     runtime = read_document(layout.runtime_status)
     assert runtime is not None
     assert all(
@@ -194,7 +196,7 @@ def test_local_script_saves_only_to_an_explicit_destination(
         assert destination.read_bytes() == b"done"
     else:
         assert not destination.exists()
-    store = RunStore(next((layout.runtime / "instances").glob("*/runs.db")))
+    store = RunStore(layout.run_store)
     try:
         threads = store.list_threads()
         runs = store.list_runs(thread_id=threads[0].id, limit=None)
@@ -258,8 +260,8 @@ def test_template_helpers_bind_arguments(
 
     class _SetupWatcher:
         def __init__(self, actual_layout, **_kwargs) -> None:
-            assert replace(actual_layout, instance=None) == layout
-            assert actual_layout.instance is not None
+            assert actual_layout.source_path == source.resolve()
+            assert actual_layout.instance_id is not None
 
         def current(self):
             return setup
@@ -267,12 +269,12 @@ def test_template_helpers_bind_arguments(
         async def refresh(self, *, progress=None):
             return setup
 
-    monkeypatch.setattr("toolang.setup.SetupWatcher", _SetupWatcher)
+    monkeypatch.setattr("toolang.up.core.SetupWatcher", _SetupWatcher)
     monkeypatch.setattr(
         "toolang.state.prepare.prepare_agent_state",
         lambda actual_layout, **_kwargs: (
             harness.state
-            if replace(actual_layout, instance=None) == layout
+            if actual_layout.source_path == source.resolve()
             else pytest.fail("unexpected layout")
         ),
     )
@@ -328,8 +330,8 @@ def test_local_script_renders_composite_flow_progress(
 
     class _SetupWatcher:
         def __init__(self, actual_layout, **_kwargs) -> None:
-            assert replace(actual_layout, instance=None) == layout
-            assert actual_layout.instance is not None
+            assert actual_layout.source_path == source.resolve()
+            assert actual_layout.instance_id is not None
 
         def current(self):
             return setup
@@ -337,12 +339,12 @@ def test_local_script_renders_composite_flow_progress(
         async def refresh(self, *, progress=None):
             return setup
 
-    monkeypatch.setattr("toolang.setup.SetupWatcher", _SetupWatcher)
+    monkeypatch.setattr("toolang.up.core.SetupWatcher", _SetupWatcher)
     monkeypatch.setattr(
         "toolang.state.prepare.prepare_agent_state",
         lambda actual_layout, **_kwargs: (
             harness.state
-            if replace(actual_layout, instance=None) == layout
+            if actual_layout.source_path == source.resolve()
             else pytest.fail("unexpected layout")
         ),
     )

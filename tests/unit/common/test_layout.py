@@ -66,7 +66,7 @@ def test_visiting_layout_is_stable_and_root_and_source_specific(tmp_path: Path) 
     assert first.placement == "visiting"
     assert first.root.parent == Path("/tmp").resolve()
     assert first.source_id is not None and len(first.source_id) == 16
-    assert first.root.name == f"toolang-researcher-{first.source_id}"
+    assert first.root.name == f"researcher@v{first.source_id}"
     assert first.root != other.root
     assert first.root != other_root.root
 
@@ -83,7 +83,7 @@ def test_visiting_root_preserves_bounded_agent_names(
     (tmp_path / layout.root.name).mkdir()
 
     assert layout.name == name
-    assert layout.root.name.endswith(f"-{layout.source_id}")
+    assert layout.root.name.endswith(f"@v{layout.source_id}")
     assert layout.source_id is not None and len(layout.source_id) == 16
 
 

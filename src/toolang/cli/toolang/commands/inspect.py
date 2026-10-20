@@ -16,6 +16,7 @@ import typer
 from typer._click import Context
 from typer._click.exceptions import ClickException, UsageError
 
+from toolang.cli.common.parameters import InstanceOption
 from toolang.cli.common.parameters import TextType
 from toolang.common.typer.ui import HelpFormatter
 
@@ -761,6 +762,7 @@ def inspect_command(
     json_view: Annotated[
         bool, typer.Option("--json", help="Output JSON (resolved value for run output)")
     ] = False,
+    instance: InstanceOption = None,
 ) -> None:
     """Inspect execution subjects."""
 

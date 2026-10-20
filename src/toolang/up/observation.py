@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-import hashlib
 import json
 import os
 import re
@@ -16,7 +15,6 @@ import psutil
 
 from toolang.common.files import atomic_write_text, file_write_lock
 from toolang.common.layout import AgentLayout
-from toolang.up.discovery import agent_layouts
 from toolang.up.instance import (
     AGENT_INSTANCE_FORMAT,
     read_document,
@@ -43,33 +41,23 @@ def _registered_layout(control: dict) -> AgentLayout:
         project_inputs=control.get("project_inputs"),
         managed_membership=control.get("managed_membership"),
         source_id=control.get("source_id"),
+        instance_id=control.get("instance_id"),
+        source_path=Path(control["source_path"])
+        if control.get("source_path")
+        else None,
+        request_order_ns=control.get("request_order_ns"),
+        source_edit_lock=Path(control["source_edit_lock"])
+        if control.get("source_edit_lock")
+        else None,
     )
 
 
 def instance_identity(layout: AgentLayout) -> str:
-    identity = _source_identity(layout)
-    if layout.instance is not None:
-        identity = hashlib.sha256(
-            f"{identity}\0{layout.instance}".encode("utf-8")
-        ).hexdigest()[:16]
-    return identity
-
-
-def _source_identity(layout: AgentLayout) -> str:
-    return (
-        layout.source_id
-        or hashlib.sha256(str(layout.program).encode("utf-8")).hexdigest()[:16]
-    )
+    return layout.instance_name
 
 
 def instance_filename(layout: AgentLayout) -> str:
-    """Name a host-resolved source, retaining distinct temporary executions."""
-    name = layout.name
-    if layout.placement != "resident":
-        name += f"@{layout.placement[0]}{_source_identity(layout)}"
-    if layout.instance is not None:
-        name += f"@{layout.instance}"
-    return f"{name}.json"
+    return f"{layout.instance_name}.json"
 
 
 def _register_lock(path: Path) -> Path:
@@ -105,6 +93,9 @@ class RuntimeRegistration:
         if self.embedded:
 
             def begin(entry):
+                from .identity import identity_bindings
+
+                entry["control"].update(identity_bindings(self.layout))
                 entry["launch_id"] = self.token
                 entry["control"].update(
                     root=str(self.layout.root),
@@ -254,7 +245,7 @@ def running_instances(root: Path) -> tuple[dict, ...]:
                 or layout.instance is not None
                 or root != layout.root
             ):
-                agent += f"@{instance_identity(layout)[:8]}"
+                agent = f"agent:{layout.instance_name}"
             instances.append(
                 {
                     **control,
@@ -294,9 +285,7 @@ class _SnapshotCandidate:
 
 
 _REFERENCE_NAME = re.compile(
-    r"(?P<name>[a-z][a-z0-9_]{0,63})"
-    r"(?:@(?P<placement>[vr])(?P<source>[0-9a-f]{16}))?"
-    r"(?:@(?P<instance>[A-Za-z0-9]+))?\.json\Z"
+    r"(?P<name>[a-z][a-z0-9_]{0,63})(?:@(?P<instance>[vr][0-9a-f]+))?\.json\Z"
 )
 
 
@@ -316,44 +305,24 @@ def _fallback_layout(
     if match is None or len(status_path.parents) < 4:
         return None
     name = match.group("name")
-    placement = match.group("placement")
-    source_id = match.group("source")
-    instance = match.group("instance")
-    root = status_path.parents[3]
-    try:
-        if placement == "v":
-            layout = AgentLayout(
-                root,
-                name,
-                "visiting",
-                instance=instance,
-                toolang_root=toolang_root,
-                source_id=source_id,
-            )
-        elif placement == "r":
-            layout = AgentLayout(
-                root,
-                name,
-                "roaming",
-                instance=instance,
-                source_id=source_id,
-            )
-        else:
-            layout = AgentLayout(root, name, "resident", instance=instance)
-        if _resolved(layout.runtime_status) != _resolved(status_path):
-            return None
-        if placement is None and _resolved(layout.root) != _resolved(toolang_root):
-            return None
-        if placement == "v" and (
-            _resolved(layout.root.parent) != _resolved(Path("/tmp"))
-            or layout.root.name != f"toolang-{name}-{source_id}"
-        ):
-            return None
-        if placement == "r" and layout.root.name != ".toolang":
-            return None
-        return layout
-    except (OSError, RuntimeError, TypeError, ValueError):
-        return None
+    instance_id = match.group("instance")
+    placement = (
+        "resident"
+        if instance_id is None
+        else "visiting"
+        if instance_id.startswith("v")
+        else "roaming"
+    )
+    layout = AgentLayout(
+        status_path.parents[3],
+        name,
+        placement,
+        toolang_root=toolang_root,
+        instance_id=instance_id,
+    )
+    return (
+        layout if _resolved(layout.runtime_status) == _resolved(status_path) else None
+    )
 
 
 def _snapshot_entry(value: object) -> TypeGuard[dict[str, Any]]:
@@ -387,10 +356,10 @@ def _runtime_layout(
         raise ValueError("resident runtime is outside the selected Toolang root")
     if layout.placement == "visiting" and (
         _resolved(layout.root.parent) != _resolved(Path("/tmp"))
-        or layout.root.name != f"toolang-{layout.name}-{layout.source_id}"
+        or layout.root.name != layout.instance_name
     ):
         raise ValueError("visiting runtime path does not match its source identity")
-    if layout.placement == "roaming" and layout.root.name != ".toolang":
+    if layout.placement == "roaming" and layout.root.name != layout.instance_name:
         raise ValueError("roaming runtime path is invalid")
     return layout
 
@@ -401,15 +370,7 @@ def runtime_snapshot(root: Path) -> RuntimeInstanceSnapshot:
 
 
 def runtime_inventory(root: Path, *, agent: str | None = None) -> RuntimeInventory:
-    """Discover installed residents and registered runtime instances safely.
-
-    Status documents are cached by path and read once for discovery. Liveness is
-    inspected from those snapshots; Docker ownership is batched before at most
-    eight independent agent probes run concurrently. Existing running_instances()
-    semantics remain unchanged for activity and status callers.
-    A selected resident uses its own status and matching registration references,
-    including stopped or unresolved temporary instances. Peers are not probed.
-    """
+    """Discover active registrations only; retain bounded unknown diagnostics."""
     from toolang.up.process import AgentProcess, AgentStatus
 
     root = _resolved(root)
@@ -465,78 +426,6 @@ def runtime_inventory(root: Path, *, agent: str | None = None) -> RuntimeInvento
         if previous.diagnostic is None:
             previous.diagnostic = candidate.diagnostic
 
-    def add_resident(
-        layout: AgentLayout, entry: object, error: str | None = None
-    ) -> None:
-        entry_dict = cast(dict[str, Any], entry) if isinstance(entry, dict) else {}
-        launch_id = entry_dict.get("launch_id")
-        if not isinstance(launch_id, str):
-            launch_id = None
-        add(
-            _SnapshotCandidate(
-                layout.runtime_status,
-                layout.instance or "default",
-                launch_id if isinstance(launch_id, str) else None,
-                layout,
-                entry if _snapshot_entry(entry) else None,
-                error,
-            )
-        )
-
-    try:
-        residents = agent_layouts(root, agent=agent)
-    except OSError as exc:
-        residents = ()
-        diagnostics.append(
-            f"resident discovery: {str(exc).strip() or type(exc).__name__}"
-        )
-
-    for layout in residents:
-        document, error = read_once(layout.runtime_status)
-        if error is not None:
-            add_resident(layout, None, f"runtime status could not be read: {error}")
-            continue
-        if document is None:
-            add_resident(layout, None)
-            continue
-        entries = document["instances"]
-        default_entry = entries.get("default")
-        if default_entry is None:
-            add_resident(layout, None)
-        elif _snapshot_entry(default_entry):
-            add_resident(layout, default_entry)
-        else:
-            add_resident(layout, None, "default runtime entry is invalid")
-        for key, value in entries.items():
-            if key == "default":
-                continue
-            if not isinstance(key, str) or not _snapshot_entry(value):
-                diagnostics.append(f"{layout.name}: runtime instance entry is invalid")
-                continue
-            control = value["control"]
-            workload = value["workload"]
-            state = workload.get("status")
-            if (
-                not isinstance(state, str)
-                or state not in {"preparing", "starting", "running"}
-            ) and not control.get("operation"):
-                continue
-            try:
-                instance_layout = _runtime_layout(control, layout.runtime_status, root)
-                if instance_layout.instance != key:
-                    raise ValueError("runtime instance key does not match its identity")
-                add(
-                    _SnapshotCandidate(
-                        layout.runtime_status,
-                        key,
-                        value["launch_id"],
-                        instance_layout,
-                        value,
-                    )
-                )
-            except (KeyError, OSError, RuntimeError, TypeError, ValueError) as exc:
-                diagnostics.append(f"{layout.name}: {str(exc)[:180]}")
-
     instance_dir = root / ".runtime" / "instances"
     try:
         reference_paths = sorted(
@@ -544,11 +433,7 @@ def runtime_inventory(root: Path, *, agent: str | None = None) -> RuntimeInvento
                 path
                 for path in instance_dir.iterdir()
                 if path.suffix == ".json"
-                and (
-                    agent is None
-                    or path.stem == agent
-                    or path.stem.startswith(f"{agent}@")
-                )
+                and (agent is None or path.stem == agent)
                 and path.is_file()
             ),
             key=lambda path: path.name,
@@ -579,7 +464,7 @@ def runtime_inventory(root: Path, *, agent: str | None = None) -> RuntimeInvento
                 and _resolved(status_path) != selected_status
             ):
                 name = _REFERENCE_NAME.fullmatch(reference_path.name)
-                if name is None or name.group("placement") is None:
+                if name is None or name.group("instance") is None:
                     diagnostics.append(
                         f"runtime registry {reference_path.name}: resident status does not match the selected agent"
                     )
@@ -749,12 +634,12 @@ def runtime_inventory(root: Path, *, agent: str | None = None) -> RuntimeInvento
         workload = entry["workload"]
         state = workload.get("status")
         if (
-            candidate.layout.placement != "resident"
-            and isinstance(state, str)
+            isinstance(state, str)
             and state in {"stopped", "failed"}
             and workload.get("pid") is None
             and entry["control"].get("operation") is None
         ):
+            remove_registration(candidate.layout, entry["launch_id"])
             continue
         if (
             isinstance(state, str)
@@ -864,7 +749,8 @@ def runtime_inventory(root: Path, *, agent: str | None = None) -> RuntimeInvento
             observed = str(workload_state or reported_state)
             detail = status.message or f"observed {observed}"
             diagnostic = f"{detail[:180]}"
-        if layout.placement != "resident" and normalized_state == "not running":
+        if normalized_state == "not running":
+            remove_registration(layout, entry["launch_id"])
             continue
         if diagnostic is not None:
             observed_state = str(workload_state or reported_state)

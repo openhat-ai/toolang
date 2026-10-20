@@ -219,7 +219,9 @@ def roaming_layout(source_path: Path) -> AgentLayout:
     return layout
 
 
-def materialize_roaming_program(source_path: Path) -> AgentLayout:
+def materialize_roaming_program(
+    source_path: Path, *, layout: AgentLayout | None = None
+) -> AgentLayout:
     """Materialize one local .too source into its fixed roaming root."""
 
     resolved_source = source_path.expanduser().resolve()
@@ -227,9 +229,16 @@ def materialize_roaming_program(source_path: Path) -> AgentLayout:
         raise FileNotFoundError(f"agent program not found: {resolved_source}")
     if resolved_source.suffix != ".too":
         raise ValueError(f"agent program must point to a .too file: {resolved_source}")
-    layout = roaming_layout(resolved_source)
-    _link_roaming_program(layout, resolved_source)
-    _sync_roaming_project(layout, resolved_source)
+    layout = layout or roaming_layout(resolved_source)
+    try:
+        _link_roaming_program(layout, resolved_source)
+        _sync_roaming_project(layout, resolved_source)
+    except BaseException as exc:
+        if layout.instance_id is not None:
+            from .identity import fail_preparation
+
+            fail_preparation(layout, exc)
+        raise
     return layout
 
 

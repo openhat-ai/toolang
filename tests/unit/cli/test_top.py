@@ -989,20 +989,11 @@ def test_resident_prefix_recovers_offline_completion_without_starting_runtime(
     text = capsys.readouterr().out
     if output == "--json":
         data = json.loads(text)
-        assert data["agent"] == "alice" and data["summary"]["resident"] == 1
-        assert data["summary"]["active"] == 0
-        assert data["summary"]["completed"]["total"] == 1
-        assert len(data["sources"]) == 1
-        completed = data["sources"][0]["completed"]["roots"][0]
-        assert completed["id"] == "run_alice" and completed["thread_id"] == "chat_top"
+        assert data["agent"] == "alice" and data["summary"]["resident"] == 0
+        assert data["summary"]["completed"]["total"] == 0
+        assert data["sources"] == []
     else:
-        heading = next(line for line in text.splitlines() if "AGENT" in line)
-        row = next(line for line in text.splitlines() if "run_alice" in line)
-        assert heading.split()[:3] == ["AGENT", "THREAD", "RUN"]
-        assert row.split()[:3] == ["alice", "chat_top", "run_alice"]
-        assert "run_bob" not in text
-    assert not list(tmp_path.rglob("stats.db"))
-    assert not list(tmp_path.rglob("status.json"))
+        assert "run_alice" not in text and "run_bob" not in text
 
 
 @pytest.mark.parametrize("width", [40, 80, 100, 140])

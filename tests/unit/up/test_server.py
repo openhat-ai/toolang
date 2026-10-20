@@ -108,7 +108,7 @@ def test_automatic_port_selection_ignores_invalid_legacy_peers(
     monkeypatch.setattr(server, "_port_is_available", lambda host, port: True)
     assert server.resolve_runtime_port(
         host="127.0.0.1", explicit_port=None, layout=layout, temporary=False
-    ) == (preferred or 7003)
+    ) == (preferred or 7002)
 
 
 @pytest.mark.parametrize(
@@ -153,7 +153,7 @@ def test_automatic_port_selection_ignores_unreadable_peer_status(
 
     assert server.resolve_runtime_port(
         host="127.0.0.1", explicit_port=None, layout=layout, temporary=False
-    ) == (preferred or 7004)
+    ) == (preferred or 7002)
     assert {path: path.read_bytes() for path in before} == before
 
 
@@ -280,7 +280,8 @@ def test_serve_argv_contains_only_server_inputs(tmp_path: Path) -> None:
     assert _option_values(argv, "--sandbox") == ["host"]
     assert _option_values(argv, "--location") == ["host"]
     assert _option_values(argv, "--source-policy") == ["root"]
-    assert "--placement" not in argv
+    assert _option_values(argv, "--placement") == [spec.layout.placement]
+    assert _option_values(argv, "--store-schema") == ["63"]
     assert "--sandbox-child" not in argv
     assert _option_values(argv, "--compact-model") == ["test/compact effort=low"]
     assert _option_values(argv, "--allow") == [

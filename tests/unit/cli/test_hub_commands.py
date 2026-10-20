@@ -138,8 +138,8 @@ def test_hub_inspection_failure_keeps_local_agents_visible(tmp_path, capsys):
     assert cli.main(["--root", str(tmp_path), "hub"]) == 0
     output = capsys.readouterr().out
     assert "hub not running" in output
-    assert "1 agents, 0 running, 0 talk enabled, partial" in output
-    assert "Hub" in output and "alice" in output
+    assert "no agents" in output
+    assert "Hub" in output and "alice" not in output
     assert "partial: Hub: record inspection failed" in output
 
 

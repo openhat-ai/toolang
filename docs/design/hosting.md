@@ -19,8 +19,8 @@ Behavior:
 boundary. Host `serve` executes in the foreground command's process; host
 `start` launches a detached child. Docker runs one guest workload and its host
 controller. Detached and guest workloads use hidden `too _serve`, receiving
-explicit agent paths, input policy, sandbox, location, and launch ID without
-placement decisions. The execution core is shared across sandboxes.
+explicit agent paths, placement, instance ID, source policy, sandbox, location,
+launch ID, and required store schema; guests do not recompute host identities. The execution core is shared across sandboxes.
 
 The CLI preserves the interpreter's process name and command-line arguments.
 Terminal conversation titles continue to use OSC independently of process names.
@@ -58,6 +58,12 @@ use `--default model=BODY`; Script/rerun `--model BODY` selects one Run, while
 Chat initializes its own multi-run session. Default/limit fields occur once;
 repeated allow values accumulate within the CLI layer. Driver handler selection
 belongs to [Drivers](drivers.md#handler-selection).
+
+Resident/visiting attachment compares all normalized effective executor startup
+bindings, including inferred environment/config/defaults, before preparation.
+Mismatches and unverifiable legacy contracts reject without changing the owner.
+Align `--enable` explicitly when command defaults differ. Run inputs/request model
+options may differ; attachment preserves lifetime. Controls use saved bindings.
 
 ## Sandbox selection and development wheels
 
@@ -249,12 +255,18 @@ full immutable container ID. Other sandbox kinds show `Runtime KIND:ID` without
 assuming their identifiers can be shortened. Older version-1 references without
 identity fields remain readable as generic workloads.
 
-When `toolang start` runs without `--port`, Toolang first tries the agent's last
-runtime port, except `7001`, which is reserved for the default Hub. If that port
-is not reusable, Toolang scans its auto-assigned local range `7002-7999`, starting
-at `7002` and counting upward, skipping ports
-already recorded by other local agents, instead of asking the OS for a random
-ephemeral port.
+Automatic host-facing ports:
+
+| Placement | Selection |
+| --- | --- |
+| Resident | Last successful available port, otherwise `7002–7999` |
+| Visiting | Last successful available port, otherwise OS-assigned |
+| Roaming | Fresh OS-assigned port for each instance |
+
+Only active global registrations reserve peer ports. Hold host listener sockets
+through serving; sandbox adapters publish actual endpoints. Automatic bind
+failures retry at most three times, releasing failed resources and renewing
+`launch_id` while retaining the instance ID. Explicit conflicts fail.
 
 An agent recorded on `7001` receives a new port on its next default start.
 Explicit CLI, environment, or home configuration port overrides still take

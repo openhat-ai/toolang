@@ -155,4 +155,9 @@ def test_script_entry_points_keep_the_filename_and_share_the_normalized_home(
     assert result.returncode == 0, result.stderr
     assert result.stdout == "done"
     assert source.is_file()
-    assert (tmp_path / ".toolang/agents/daily_report_v2/agent.too").resolve() == source
+    from toolang.up.identity import select_roaming
+
+    layout = select_roaming(source)
+    assert layout.name == "daily_report_v2"
+    assert layout.program.resolve() == source.resolve()
+    assert layout.root.name == layout.instance_name

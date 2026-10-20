@@ -67,11 +67,24 @@ class AgentProcess:
         return await launch(spec, progress=progress)
 
     async def stop(
-        self, *, force: bool = False, progress: ProgressSink | None = None
+        self,
+        *,
+        force: bool = False,
+        progress: ProgressSink | None = None,
+        expected_launch_id: str | None = None,
     ) -> bool:
         from toolang.up.sandbox import stop
 
-        return await stop(self.layout, force=force, progress=progress)
+        return await stop(
+            self.layout,
+            force=force,
+            progress=progress,
+            **(
+                {"expected_launch_id": expected_launch_id}
+                if expected_launch_id is not None
+                else {}
+            ),
+        )
 
     @property
     def reference(self) -> SandboxState | None:
@@ -418,6 +431,7 @@ def write_runtime_state(
     location: str = "host",
     lifetime: str | None = None,
     api_version: int | None = None,
+    resource_counts: Mapping[str, object] | None = None,
 ) -> Path:
     """Persist one minimal runtime state file for a running agent."""
 
@@ -436,6 +450,8 @@ def write_runtime_state(
         "workspace_additions": dict(workspace_additions or {}),
         "message": message,
     }
+    if resource_counts is not None:
+        payload["resource_counts"] = dict(resource_counts)
     if lifetime is not None:
         payload["lifetime"] = lifetime
         payload["api_version"] = api_version
@@ -510,21 +526,15 @@ def assigned_runtime_ports(
     *,
     exclude_agent: str | None = None,
 ) -> set[int]:
-    """Return readable local agents' recorded ports, including stopped ones."""
+    """Return peer ports reserved by active global registrations."""
 
-    from .discovery import agent_layouts
+    from .observation import running_instances
 
-    agents_dir = toolang_root / "agents"
-    if not agents_dir.is_dir():
-        return set()
     ports: set[int] = set()
-    for layout in agent_layouts(toolang_root):
-        if layout.name == exclude_agent:
+    for entry in running_instances(toolang_root):
+        if entry.get("instance_name", entry.get("name")) == exclude_agent:
             continue
-        try:
-            port = preferred_runtime_port(layout)
-        except (OSError, ValueError):
-            continue  # An unreadable peer must not block another agent's startup.
+        port = _runtime_state_port(entry)
         if port is not None:
             ports.add(port)
     return ports

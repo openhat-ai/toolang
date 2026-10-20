@@ -463,7 +463,9 @@ def test_roaming_queries_reject_normalized_home_owned_by_another_source(
         run_app=lambda *args: dispatched.append(args) or 0,
     )
     assert result == 1
-    assert "already belongs" in " ".join(capsys.readouterr().err.split())
+    assert (
+        "already belongs" if command[0] == "workspace" else "no retained instance"
+    ) in " ".join(capsys.readouterr().err.split())
     assert dispatched == []
     assert layout.program.resolve() == original
 
@@ -499,7 +501,7 @@ def test_visiting_acquisition_pins_and_preserves_provenance(tmp_path, monkeypatc
     assert fetched[0].rev == sha
     # The hidden server reconstructs paths without live source data.
     restored = resolve_serve(
-        layout=replace(first, program_acquisition=None, placement="resident"), port=9000
+        layout=replace(first, program_acquisition=None), port=9000
     ).layout
     assert restored.program_acquisition == first.program_acquisition
     state = prepare_agent_state(restored)

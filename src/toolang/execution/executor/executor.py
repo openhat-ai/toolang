@@ -977,6 +977,8 @@ class RunExecutor:
         """Persist one cancel control for the process that owns the run."""
 
         self._require_available()
+        if self.store.is_imported(run_id):
+            raise ValueError("imported history has no live execution owner")
         with self.stream.publication():
             if expected_control is not None:
                 self._require_owned_control(run_id, expected_control)
@@ -1006,6 +1008,8 @@ class RunExecutor:
         """Persist one steer control for the process that owns the run."""
 
         self._require_available()
+        if self.store.is_imported(run_id):
+            raise ValueError("imported history has no live execution owner")
         if message.role != "user":
             raise ValueError("run steer requires a user message")
         _ = message.parts

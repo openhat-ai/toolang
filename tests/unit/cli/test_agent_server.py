@@ -92,6 +92,32 @@ def _set_status(
     layout: AgentLayout,
     status: AgentStatus | None,
 ) -> None:
+    if status is not None and status.status == "running":
+        from toolang.up.instance import update_instance
+        from toolang.up.contract import startup_contract
+
+        update_instance(
+            layout.runtime_status,
+            lambda entry: entry["control"].update(
+                last_successful={"sandbox": status.sandbox, "endpoint": status.endpoint}
+            ),
+        )
+        startup = agent_server._resolve_inactive_launch(
+            layout,
+            sandbox=status.sandbox,
+            dev=None,
+            model_catalog=None,
+            base_environ=None,
+            drivers=frozenset({"chat"}),
+            active_port=status.port,
+        )
+        update_instance(
+            layout.runtime_status,
+            lambda entry: entry["control"].update(
+                startup_contract=startup_contract(startup), drivers=["chat"]
+            ),
+        )
+
     class Process:
         def __init__(self, selected: AgentLayout) -> None:
             assert selected == layout
@@ -122,7 +148,7 @@ def test_startup_override_cannot_be_silently_ignored_by_an_existing_runtime(
         _status(value="running", endpoint="http://localhost:7001", sandbox="host"),
     )
     with pytest.raises(
-        agent_server.AgentServerAcquisitionError, match="only applies when starting"
+        agent_server.AgentServerAcquisitionError, match="startup parameters differ"
     ):
         with agent_server.acquire_agent_server(
             layout,
@@ -147,17 +173,10 @@ def test_agent_server_attaches_to_a_compatible_running_agent(
             sandbox="docker:python:3.13-slim",
         ),
     )
-    monkeypatch.setattr(
-        agent_server,
-        "_resolve_inactive_launch",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            AssertionError("a running agent must not resolve another launch")
-        ),
-    )
 
     with agent_server.acquire_agent_server(
         layout,
-        sandbox="docker",
+        sandbox="docker:python:3.13-slim",
         ui_base_url="https://ui.test",
     ) as selected:
         assert selected == AgentServerRef(
@@ -325,7 +344,9 @@ def test_managed_attachment_checks_its_profile_instead_of_waiting_for_health(
         return server, None
 
     monkeypatch.setattr(agent_server, "_retain_server", retain)
-    with agent_server.acquire_agent_server(layout, sandbox=None, show_progress=False):
+    with agent_server.acquire_agent_server(
+        layout, sandbox=None, show_progress=False, attach_only=True
+    ):
         assert retained == ["launch"]
 
 
@@ -365,7 +386,7 @@ def test_agent_server_rejects_dev_for_an_attached_agent(
 
     with pytest.raises(
         agent_server.AgentServerAcquisitionError,
-        match="only applies when starting a new guest",
+        match="(startup parameters differ|development|wheel|dist)",
     ):
         with agent_server.acquire_agent_server(
             layout,
@@ -987,12 +1008,32 @@ def test_sandbox_match_accepts_driver_or_exact_spec() -> None:
 
 @pytest.mark.parametrize(
     "requested,compatible",
-    [(None, True), ({}, False), ({"repo": "/one"}, True), ({"repo": "/two"}, False)],
+    [(None, False), ({}, False), ({"repo": "/one"}, True), ({"repo": "/two"}, False)],
 )
 def test_running_server_cannot_rebind_workspace_names(
     tmp_path, monkeypatch, requested, compatible
 ):
     layout = AgentLayout.resident(tmp_path, "alice")
+
+    from toolang.up.contract import startup_contract
+    from toolang.up.instance import update_instance
+
+    spec = agent_server._resolve_inactive_launch(
+        layout,
+        sandbox="host",
+        dev=None,
+        model_catalog=None,
+        base_environ=None,
+        workspace_additions={"repo": "/one"},
+        active_port=7001,
+        drivers=frozenset({"chat"}),
+    )
+    update_instance(
+        layout.runtime_status,
+        lambda entry: entry["control"].update(
+            startup_contract=startup_contract(spec), drivers=["chat"]
+        ),
+    )
 
     class Process:
         def __init__(self, selected):
@@ -1014,7 +1055,8 @@ def test_running_server_cannot_rebind_workspace_names(
             assert server is not None
     else:
         with pytest.raises(
-            agent_server.AgentServerAcquisitionError, match="bindings differ"
+            agent_server.AgentServerAcquisitionError,
+            match="startup parameters differ: workspace_additions",
         ):
             with agent_server.acquire_agent_server(
                 layout, sandbox=None, workspace_additions=requested
@@ -1052,13 +1094,17 @@ def test_persistent_acquisition_waits_for_an_existing_startup(
         lambda *a, **k: pytest.fail("must not launch a second runtime"),
     )
     if outcome == "running":
-        with agent_server.acquire_agent_server(layout, sandbox="host") as server:
+        with agent_server.acquire_agent_server(
+            layout, sandbox="host", attach_only=True
+        ) as server:
             assert server == AgentServerRef(
                 sandbox="host", endpoint="http://localhost:7001"
             )
     else:
         with pytest.raises(agent_server.AgentServerAcquisitionError, match="ready"):
-            with agent_server.acquire_agent_server(layout, sandbox="host"):
+            with agent_server.acquire_agent_server(
+                layout, sandbox="host", attach_only=True
+            ):
                 pytest.fail("unready runtime acquired")
 
     if outcome == "timeout":
@@ -1154,12 +1200,16 @@ def test_persistent_acquisition_waits_for_http_after_running_report(
     assert not probes
 
     if ready:
-        with agent_server.acquire_agent_server(layout, sandbox="host") as server:
+        with agent_server.acquire_agent_server(
+            layout, sandbox="host", attach_only=True
+        ) as server:
             assert server == AgentServerRef(sandbox="host", endpoint=ref.endpoint)
         assert probes == [f"{ref.endpoint}/healthz"] * 2
     else:
         with pytest.raises(agent_server.AgentServerAcquisitionError, match="ready"):
-            with agent_server.acquire_agent_server(layout, sandbox="host"):
+            with agent_server.acquire_agent_server(
+                layout, sandbox="host", attach_only=True
+            ):
                 pytest.fail("unready runtime acquired")
         assert probes == [f"{ref.endpoint}/healthz"]
     assert SandboxState.load(layout.runtime_status) == SandboxState(

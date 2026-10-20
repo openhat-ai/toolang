@@ -1,6 +1,6 @@
 # Unified agent instances
 
-- Definition only; human approval required before implementation. Replaces [draft #882](https://github.com/openhat-ai/toolang/pull/882).
+- Approved in [#883](https://github.com/openhat-ai/toolang/pull/883). Replaces [draft #882](https://github.com/openhat-ai/toolang/pull/882).
 - Goal: one global registry, uniform layouts, isolated roaming execution, correct Top activity, retained offline history.
 
 ## Identity and layout
@@ -67,4 +67,4 @@ too /work/demo/aid.too inspect -i r18e0b5f817d00000e2c7a0f23d51a9c6 runs
 - Checks: deterministic offline tests/fake sandboxes; opt-in Docker validation. Implementation runs default repository verification; docs-only runs source/link/example checks and `git diff --check`.
 - Upgrade/rollback: stop old workloads; reject unverifiable owners; retain old roots for explicit migration. Old writers cannot open schema 63.
 - Risks: stricter defaults, preparation/snapshot disk cost, retained roots, OS visiting-root cleanup, existing guest trust. No general history merge or cleanup in scope.
-- Update current designs/changelog with implementation. Open questions: none pending; approval remains required.
+- Update current designs/changelog with implementation. Open questions: none pending.

@@ -205,7 +205,9 @@ def test_chat_latest_uses_selected_history_for_agent_sessions(
     if placement == "roaming":
         source = tmp_path / "alice.too"
         source.write_text("agic chat:\n  Reply directly.\n")
-        layout = AgentLayout.roaming(source)
+        from toolang.up.identity import allocate_roaming
+
+        layout = allocate_roaming(source, toolang_root=chat_layout.root)
         selector = str(source)
     elif placement == "visiting":
         layout = AgentLayout(
@@ -233,7 +235,13 @@ def test_chat_latest_uses_selected_history_for_agent_sessions(
 
     @contextmanager
     def acquire(selected, **_kwargs):
-        assert selected == layout
+        if placement == "roaming":
+            assert (
+                selected.root != layout.root
+                and selected.source_path == source.resolve()
+            )
+        else:
+            assert selected == layout
         yield AgentServerRef(sandbox="host", endpoint="http://localhost:7001")
 
     def open_tui(ctx, **kwargs):
@@ -251,7 +259,7 @@ def test_chat_latest_uses_selected_history_for_agent_sessions(
     assert too_main([*prefix, selector, "chat", "--thread"]) == 0
     assert captured == {
         "target": "http://localhost:7001",
-        "layout": layout,
+        "layout": captured["layout"] if placement == "roaming" else layout,
         "thread": "chat_existing",
         "closed": True,
     }

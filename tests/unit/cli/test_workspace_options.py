@@ -221,7 +221,8 @@ def test_hosted_startup_transports_captured_grants_without_resolving_again(
     argv = build_serve_argv(spec, root=Path("/guest"))
     assert json.loads(argv[argv.index("--workspace-bindings") + 1]) == bindings
     assert argv[argv.index("--initial-workdir") + 1] == "repo://src"
-    assert "--placement" not in argv
+    assert argv[argv.index("--placement") + 1] == layout.placement
+    assert argv[argv.index("--store-schema") + 1] == "63"
     assert argv[argv.index("--source-policy") + 1] == (
         "project" if layout.project_inputs else "root"
     )

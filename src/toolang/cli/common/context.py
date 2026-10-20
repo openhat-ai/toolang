@@ -27,6 +27,7 @@ class CliContext:
     agent: str | None = None
     layout: AgentLayout | None = None
     source: Path | None = None
+    launch_id: str | None = None
 
 
 ModelCatalogOption = Annotated[

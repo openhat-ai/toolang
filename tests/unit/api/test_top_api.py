@@ -9,7 +9,8 @@ import httpx
 
 from tests.support.execution_fixtures import project_run_start
 from toolang.api.app import get_agent_core
-from toolang.api.routers import stats, top
+from toolang.api.routers import stats
+from toolang.api.routers import activity as top
 from toolang.base.types.message import Message
 from toolang.execution.schemas import LiveSnapshot, LiveTreeSnapshot, RunNode
 from toolang.execution.store import RunStore

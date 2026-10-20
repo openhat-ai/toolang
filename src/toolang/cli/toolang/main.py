@@ -308,11 +308,23 @@ def callback(
         raise ClickException(str(exc)) from exc
     root = resolve_root(toolang_root)
     selected = _SELECTED_LAYOUT.get()
+    from toolang.up.instance import read_instance
+
+    prefix_agent = _PREFIX_AGENT.get()
+    identity_layout = selected or (
+        AgentLayout.resident(root, prefix_agent) if prefix_agent else None
+    )
+    entry = (
+        read_instance(identity_layout.runtime_status)
+        if identity_layout is not None
+        else None
+    )
     ctx.obj = CliContext(
         root=root,
         agent=_PREFIX_AGENT.get(),
         layout=replace(selected, toolang_root=root) if selected is not None else None,
         source=_SELECTED_SOURCE.get(),
+        launch_id=entry.get("launch_id") if entry else None,
     )
 
 
