@@ -1,6 +1,8 @@
+from toolang.up.workload import ForegroundWorkload
 import asyncio
 
 import httpx
+import pytest
 
 from tests.support.execution_harness import (
     AsyncGate,
@@ -11,6 +13,7 @@ from toolang.base.types.message import Message
 from toolang.base.types.run import ModelCallResult
 from toolang.cli.toolang.main import main
 from toolang.up.core import AgentCore
+from toolang.common.layout import AgentLayout
 from toolang.execution.types import ThreadKind
 from toolang.state.types import StateSyncResult
 from toolang.up.foreground import foreground_api
@@ -20,16 +23,28 @@ from toolang.up.lifecycle import LAUNCH_HEADER, ServerLifecycle
 from toolang.up.observation import RuntimeRegistration, runtime_inventory
 
 
+@pytest.mark.parametrize("placement", ["resident", "visiting", "roaming"])
 def test_shared_foreground_api_observes_and_cancels_the_owning_executor(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, placement
 ):
     gate = AsyncGate()
-    layout = allocate_roaming(tmp_path / "alice.too", toolang_root=tmp_path)
-    instance_id = layout.instance_id
-    assert instance_id is not None
+    monkeypatch.setenv("TOOLANG_ROOT", str(tmp_path))
+    if placement == "resident":
+        layout = AgentLayout.resident(tmp_path, "alice")
+        target = ["--root", str(tmp_path), "alice"]
+    elif placement == "visiting":
+        source_ref = "https://example.test/alice.too"
+        layout = AgentLayout.visiting(source_ref, "alice", toolang_root=tmp_path)
+        target = ["--root", str(tmp_path), source_ref]
+    else:
+        source = tmp_path / "alice.too"
+        layout = allocate_roaming(source, toolang_root=tmp_path)
+        target = [str(source)]
+    instance = ["-i", layout.instance_id] if layout.instance_id else []
     harness = ExecutionHarness.create(
         layout.root,
         source="agic work():\n  Do work.\n",
+        prepare_state=True,
         responses=[
             ScriptedModelTurn(
                 ModelCallResult(message=Message.assistant("done")), gate=gate
@@ -38,7 +53,7 @@ def test_shared_foreground_api_observes_and_cancels_the_owning_executor(
     )
 
     async def scenario():
-        with RuntimeRegistration(
+        with ForegroundWorkload(
             layout, toolang_root=tmp_path, drivers=frozenset()
         ) as registration:
             core = AgentCore(
@@ -90,10 +105,9 @@ def test_shared_foreground_api_observes_and_cancels_the_owning_executor(
                             await asyncio.to_thread(
                                 main,
                                 [
-                                    str(layout.source_path),
+                                    *target,
                                     "steer",
-                                    "-i",
-                                    instance_id,
+                                    *instance,
                                     handle.run_id,
                                     "Continue carefully",
                                 ],
@@ -104,10 +118,9 @@ def test_shared_foreground_api_observes_and_cancels_the_owning_executor(
                             await asyncio.to_thread(
                                 main,
                                 [
-                                    str(layout.source_path),
+                                    *target,
                                     "cancel",
-                                    "-i",
-                                    instance_id,
+                                    *instance,
                                     handle.run_id,
                                 ],
                             )
@@ -115,6 +128,13 @@ def test_shared_foreground_api_observes_and_cancels_the_owning_executor(
                         )
                         accepted = await http.get("/api/v0/profile")
                         assert accepted.status_code == 200
+                        before = layout.runtime_status.read_bytes()
+                        with RuntimeRegistration(
+                            layout, toolang_root=tmp_path, launch_id=registration.token
+                        ):
+                            assert layout.runtime_status.read_bytes() == before
+                        assert layout.runtime_status.read_bytes() == before
+                        assert (await http.get("/api/v0/profile")).status_code == 200
                     result = await handle
                     assert result.status == "canceled"
             finally:

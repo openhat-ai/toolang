@@ -1,5 +1,7 @@
 """Observation generations, discovery retention and slow scans stay independent."""
 
+from toolang.up.workload import ForegroundWorkload
+
 from concurrent.futures import Future
 from contextlib import closing
 from threading import Event
@@ -21,7 +23,7 @@ from toolang.stats.errors import StatsUnavailable
 from toolang.stats.schemas import CompletedRoots, CompletionCounts, RecentUsage
 from toolang.stats.types import Metrics, timestamp
 from toolang.up import top
-from toolang.up.observation import RuntimeInventory, RuntimeRegistration, RuntimeSource
+from toolang.up.observation import RuntimeInventory, RuntimeSource
 from toolang.up.schemas import ActivitySnapshot, SourceActivity
 from toolang.up.types import RuntimeInstance, RuntimeInstanceSnapshot
 
@@ -225,12 +227,12 @@ def test_session_retains_departed_history_but_fresh_top_discovers_only_current_s
     )
     with (
         closing(RunStore(resident.run_store)),
-        RuntimeRegistration(resident, toolang_root=tmp_path, drivers=frozenset()),
+        ForegroundWorkload(resident, toolang_root=tmp_path, drivers=frozenset()),
         closing(
             top.TopObserver(tmp_path, agent=None, period=3600, recent=300, refresh=60)
         ) as observer,
     ):
-        with RuntimeRegistration(layout, toolang_root=tmp_path, drivers=frozenset()):
+        with ForegroundWorkload(layout, toolang_root=tmp_path, drivers=frozenset()):
             with closing(RunStore(layout.run_store)) as store:
                 project_run_start(
                     store,
@@ -295,6 +297,7 @@ def test_slow_usage_never_blocks_live_or_marks_new_window_with_old_metrics(
     source = binding(tmp_path)
     now = [NOW]
     release = Event()
+    next_release = Event()
     scans = []
     live_calls = []
     monkeypatch.setattr(top.time, "time", lambda: now[0])
@@ -308,7 +311,7 @@ def test_slow_usage_never_blocks_live_or_marks_new_window_with_old_metrics(
 
     def slow_usage(source, period, cancelled=None):
         scans.append(period)
-        assert release.wait(3)
+        assert (release if period == 3600 else next_release).wait(3)
         return usage(period)
 
     def live(source, recent, before=None, completed_at=None, **kwargs):
@@ -355,12 +358,14 @@ def test_slow_usage_never_blocks_live_or_marks_new_window_with_old_metrics(
         now[0] += 1
         observer.tick()
         assert state.usage is not None
+        next_release.set()
         state.usage.result(timeout=1)
         total = observer.tick().usage_total()
         assert total is not None and total.model_calls == 76
         assert scans == [3600, 14400]
     finally:
         release.set()
+        next_release.set()
         observer.close()
 
 
@@ -1271,7 +1276,7 @@ def test_failed_docker_batch_keeps_membership_and_readable_history(
     layout.home.mkdir(parents=True)
     with (
         closing(RunStore(layout.run_store)),
-        RuntimeRegistration(
+        ForegroundWorkload(
             layout, toolang_root=tmp_path, drivers=frozenset()
         ) as registration,
     ):
@@ -1330,7 +1335,7 @@ def test_agent_scope_isolates_discovery_but_preserves_its_own_failures(
             layout = AgentLayout.resident(tmp_path, name)
             stack.enter_context(closing(RunStore(layout.run_store)))
             registration = stack.enter_context(
-                RuntimeRegistration(layout, toolang_root=tmp_path, drivers=frozenset())
+                ForegroundWorkload(layout, toolang_root=tmp_path, drivers=frozenset())
             )
             if name == "alice":
                 own_registration = registration
@@ -1352,7 +1357,7 @@ def test_agent_scope_isolates_discovery_but_preserves_its_own_failures(
         elif fault == "same_name_roaming":
             roaming = allocate_roaming(tmp_path / "alice.too", toolang_root=tmp_path)
             registration = stack.enter_context(
-                RuntimeRegistration(roaming, toolang_root=tmp_path, drivers=frozenset())
+                ForegroundWorkload(roaming, toolang_root=tmp_path, drivers=frozenset())
             )
             registration.path.write_text("invalid")
         elif fault == "enumeration":
@@ -1391,7 +1396,7 @@ def test_scopes_agree_on_registered_residents_when_status_changes(
     layout = AgentLayout.resident(tmp_path, "alice")
     with (
         closing(RunStore(layout.run_store)),
-        RuntimeRegistration(layout, toolang_root=tmp_path, drivers=frozenset()),
+        ForegroundWorkload(layout, toolang_root=tmp_path, drivers=frozenset()),
     ):
         original = layout.runtime_status.read_bytes()
         try:
@@ -1436,8 +1441,8 @@ def test_resident_scope_excludes_roaming_instances_with_the_same_name(tmp_path, 
     with (
         closing(RunStore(resident.run_store)),
         closing(RunStore(roaming.run_store)),
-        RuntimeRegistration(resident, toolang_root=root, drivers=frozenset()),
-        RuntimeRegistration(roaming, toolang_root=root, drivers=frozenset()),
+        ForegroundWorkload(resident, toolang_root=root, drivers=frozenset()),
+        ForegroundWorkload(roaming, toolang_root=root, drivers=frozenset()),
         closing(
             top.TopObserver(root, agent=agent, period=3600, recent=300, refresh=60)
         ) as observer,

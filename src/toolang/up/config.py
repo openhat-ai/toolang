@@ -8,7 +8,33 @@ from typing import cast
 
 from toolang.common.config_sources import ConfigSource
 from toolang.common.layout import AgentPlacement
-from .types import ALL_DRIVERS, DriverName, ExecutionDrivers
+from .types import ALL_DRIVERS, DriverName, ExecutionDrivers, PlacementPolicy
+
+
+_PLACEMENT_POLICIES: dict[AgentPlacement, PlacementPolicy] = {
+    "resident": PlacementPolicy(
+        reuse_executor=True,
+        hosted_drivers=ALL_DRIVERS,
+        client_drivers=frozenset({"chat"}),
+        client_lifetime="persistent",
+    ),
+    "visiting": PlacementPolicy(
+        reuse_executor=True,
+        hosted_drivers=frozenset({"chat", "talk"}),
+        client_drivers=frozenset({"chat"}),
+        client_lifetime="automatic",
+    ),
+    "roaming": PlacementPolicy(
+        reuse_executor=False,
+        hosted_drivers=frozenset(),
+        client_drivers=frozenset(),
+        client_lifetime="foreground",
+    ),
+}
+
+
+def placement_policy(placement: AgentPlacement) -> PlacementPolicy:
+    return _PLACEMENT_POLICIES[placement]
 
 
 def parse_drivers(value: str) -> ExecutionDrivers:
@@ -23,11 +49,7 @@ def parse_drivers(value: str) -> ExecutionDrivers:
 
 def default_drivers(placement: AgentPlacement) -> ExecutionDrivers:
     """Resolve placement defaults at a hosting or CLI boundary."""
-    if placement == "resident":
-        return ALL_DRIVERS
-    if placement == "visiting":
-        return frozenset(("chat", "talk"))
-    return frozenset()
+    return placement_policy(placement).hosted_drivers
 
 
 def format_drivers(drivers: ExecutionDrivers) -> str:

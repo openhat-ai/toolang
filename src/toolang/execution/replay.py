@@ -8,6 +8,22 @@ from uuid import uuid4
 from .store import RunStore
 
 
+def replay_request_id(path: Path, source_run: str) -> str | None:
+    """Read a pending replay receipt without placement or CLI knowledge."""
+    if not path.is_file():
+        return None
+    with closing(RunStore(path, read_only=True)) as store:
+        if not store._conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE name='replay_provenance'"
+        ).fetchone():
+            return None
+        receipt = store._conn.execute(
+            "SELECT request_id FROM replay_provenance WHERE destination_run IS NULL AND source_run=?",
+            (source_run,),
+        ).fetchone()
+        return receipt[0] if receipt is not None else None
+
+
 def snapshot_history(
     source: Path,
     destination: Path,

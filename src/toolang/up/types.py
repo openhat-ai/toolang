@@ -15,6 +15,16 @@ ALL_DRIVERS: ExecutionDrivers = frozenset(("chat", "talk", "chore"))
 ServerLifetime = Literal["persistent", "foreground", "automatic"]
 
 
+@dataclass(frozen=True, slots=True)
+class PlacementPolicy:
+    """The execution defaults and reuse boundary that vary by placement."""
+
+    reuse_executor: bool
+    hosted_drivers: ExecutionDrivers
+    client_drivers: ExecutionDrivers
+    client_lifetime: ServerLifetime
+
+
 class TopPeriod(StrEnum):
     hour = "1h"
     four_hours = "4h"

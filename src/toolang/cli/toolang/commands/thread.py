@@ -34,6 +34,7 @@ from toolang.common.layout import AgentLayout
 from toolang.execution.client import RunClient, RunHandle
 from toolang.execution.remote import RemoteRunClient, RemoteRunClientError
 from toolang.execution.inspection.history import RunHistory
+from toolang.execution.replay import replay_request_id
 from toolang.execution.schemas import (
     RerunRequest,
     RunDetail,
@@ -43,6 +44,7 @@ from toolang.execution.types import (
     RunCommand,
 )
 from toolang.up.types import AgentServerRef
+from toolang.up.config import placement_policy
 
 from ...common.context import (
     cli_context,
@@ -178,8 +180,7 @@ def rerun_command(
     model_override = user_call(_rerun_model_override, model_body=model)
     commands = user_call(_restart_commands, allow_options=allows, limit_options=limit)
     selected_catalog = resolve_model_catalog_option(model_catalog)
-    if layout.placement == "roaming":
-        layout = _continue_roaming(ctx, source_run=run)
+    layout = _continue_instance(ctx, source_run=run)
     with open_execution(ctx, required=True) as resources:
         if resources is None:  # pragma: no cover
             raise RuntimeError("execution resources were not opened")
@@ -231,7 +232,9 @@ def rewind_command(
         if chat:
             _open_chat(ctx, thread_id)
         return
-    shared_chat = chat and context_layout(ctx).placement in {"resident", "visiting"}
+    shared_chat = (
+        chat and placement_policy(context_layout(ctx).placement).reuse_executor
+    )
 
     def continue_chat(_result: object, server: AgentServerRef) -> None:
         typer.echo(f"rewound {thread_id} before {run_id}")
@@ -279,7 +282,9 @@ def fork_command(
         if chat:
             _open_chat(ctx, str(edited))
         return
-    shared_chat = chat and context_layout(ctx).placement in {"resident", "visiting"}
+    shared_chat = (
+        chat and placement_policy(context_layout(ctx).placement).reuse_executor
+    )
 
     def continue_chat(result: ThreadInfo, server: AgentServerRef) -> None:
         typer.echo(f"forked {result.id} through {run_id}")
@@ -370,14 +375,13 @@ def _open_chat(
     from .chat import chat_command
 
     if server is None:
-        roaming = context_layout(ctx).placement == "roaming"
-        if roaming:
-            _continue_roaming(ctx, thread_id=thread_id)
+        previous = context_layout(ctx)
+        continued = _continue_instance(ctx, thread_id=thread_id)
         try:
             chat_command(ctx, thread=thread_id)
         finally:
-            if roaming:
-                from toolang.up.identity import finish_preparation
+            if continued is not previous:
+                from toolang.up.workload import finish_preparation
 
                 finish_preparation(
                     context_layout(ctx), "Chat ended before runtime startup"
@@ -434,8 +438,8 @@ def _run_rerun(
     except (OSError, ToolangError, ValueError, RuntimeError) as exc:
         raise ClickException(str(exc)) from exc
     finally:
-        if layout.placement == "roaming":
-            from toolang.up.identity import finish_preparation
+        if not placement_policy(layout.placement).reuse_executor:
+            from toolang.up.workload import finish_preparation
 
             finish_preparation(layout, "rerun ended before runtime startup")
 
@@ -489,19 +493,7 @@ async def _execute_rerun(
     try:
         async with acquire_run_client(server) as client:
             request_id = f"term_{uuid4().hex}"
-            from toolang.execution.store import RunStore
-
-            if layout.placement == "roaming" and layout.instance_id is not None:
-                pending = RunStore(layout.run_store, read_only=True)
-                try:
-                    receipt = pending._conn.execute(
-                        "SELECT request_id FROM replay_provenance WHERE destination_run IS NULL AND source_run=?",
-                        (source,),
-                    ).fetchone()
-                    if receipt is not None:
-                        request_id = receipt[0]
-                finally:
-                    pending.close()
+            request_id = replay_request_id(layout.run_store, source) or request_id
             handle = await client.rerun(
                 RerunRequest(
                     source=source,
@@ -607,14 +599,17 @@ def _offline_edit(ctx: typer.Context, edit):
             store.close()
 
 
-def _continue_roaming(
+def _continue_instance(
     ctx: typer.Context, *, source_run: str | None = None, thread_id: str | None = None
-):
+) -> AgentLayout:
+    source = context_layout(ctx)
+    if placement_policy(source.placement).reuse_executor:
+        return source
     from toolang.cli.common.context import resolve_root
     from toolang.up.replay import prepare_continuation
 
     destination = prepare_continuation(
-        context_layout(ctx),
+        source,
         toolang_root=resolve_root(None),
         source_run=source_run,
         source_thread=thread_id,

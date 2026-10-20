@@ -1,3 +1,4 @@
+from toolang.up.workload import ForegroundWorkload
 from concurrent.futures import ThreadPoolExecutor
 from uuid import UUID
 
@@ -6,7 +7,6 @@ import pytest
 from toolang.up.identity import allocate_roaming, select_roaming
 from toolang.up.instance import read_instance, patch_workload
 from toolang.up.observation import (
-    RuntimeRegistration,
     instance_filename,
     runtime_inventory,
 )
@@ -48,7 +48,7 @@ def test_registry_removal_and_failed_latest_do_not_change_selection(tmp_path):
     root = tmp_path / "global"
     first = allocate_roaming(source, toolang_root=root)
     second = allocate_roaming(source, toolang_root=root)
-    with RuntimeRegistration(
+    with ForegroundWorkload(
         first, toolang_root=root, drivers=frozenset()
     ) as registration:
         registration.path.unlink()

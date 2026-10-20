@@ -384,7 +384,7 @@ def dispatch_roaming(
 
 
 def _finish_roaming_preparation(layout: AgentLayout | None, message: str) -> None:
-    from toolang.up.identity import finish_preparation
+    from toolang.up.workload import finish_preparation
 
     if layout is not None:
         finish_preparation(layout, message)

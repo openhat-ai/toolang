@@ -117,6 +117,8 @@ def test_placement_defaults():
 def test_chat_reuse_preserves_running_selection(
     tmp_path, monkeypatch, requested, running, error
 ):
+    from toolang.cli.common.progress import make_cli_progress
+
     layout = AgentLayout.resident(tmp_path, "alice")
     state = {"drivers": running}
     status = SimpleNamespace(
@@ -125,7 +127,7 @@ def test_chat_reuse_preserves_running_selection(
     from toolang.up.contract import startup_contract
     from toolang.up.instance import update_instance
 
-    spec = agent_server._resolve_inactive_launch(
+    spec = agent_server._resolve_launch(
         layout,
         sandbox="host",
         dev=None,
@@ -151,7 +153,7 @@ def test_chat_reuse_preserves_running_selection(
         model_catalog=None,
         ui_base_url="",
         base_environ={},
-        progress=None,
+        progress=make_cli_progress(enabled=False),
         compact_override=None,
         workspace_additions=None,
         temporary=False,

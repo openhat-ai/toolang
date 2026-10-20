@@ -6,7 +6,8 @@ from uuid import uuid4
 
 from toolang.common.layout import AgentLayout
 from toolang.execution.replay import snapshot_history
-from .identity import allocate_roaming, fail_preparation
+from .identity import allocate_roaming
+from .workload import fail_preparation
 from .source import materialize_roaming_program
 from .instance import read_instance, update_instance
 

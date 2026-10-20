@@ -165,6 +165,8 @@ Discovery references live under `${TOOLANG_ROOT}/.runtime/instances/`:
 Each reference contains only its version, absolute authoritative status path,
 and launch ID. `RuntimeRegistration` publishes into one Toolang root and uses
 one shared `instances/register.lock` for publication and conditional removal.
+It does not initialize or stop workloads; removing a reference changes no
+authoritative lifecycle state.
 The guard is released before starting or waiting for a workload. Pure reads
 neither acquire nor create it. Cleanup of an existing reference creates a missing
 guard, including when only an old guard remains after an upgrade; cleanup of an

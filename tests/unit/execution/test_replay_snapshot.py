@@ -2,7 +2,7 @@ import sqlite3
 import pytest
 
 from toolang.base.types.message import Message, TextPart
-from toolang.execution.replay import snapshot_history
+from toolang.execution.replay import replay_request_id, snapshot_history
 from toolang.execution.store import RunStore
 from toolang.common.ids import IdIssuer
 from toolang.stats.recent import recent_source
@@ -95,6 +95,7 @@ def test_schema_62_read_only_and_migration_preserve_facts(tmp_path):
     readonly = RunStore(path, read_only=True)
     assert not readonly.is_imported("anything")
     readonly.close()
+    assert replay_request_id(path, "run_absent") is None
     with sqlite3.connect(path) as connection:
         assert connection.execute("PRAGMA user_version").fetchone()[0] == 62
     migrated = RunStore(path)
@@ -228,6 +229,20 @@ def test_rerun_thread_selector_is_resolved_inside_the_snapshot(tmp_path):
             copied.execute("SELECT source_run FROM replay_provenance").fetchone()[0]
             == latest.id
         )
+    assert replay_request_id(destination, latest.id) == "seed"
+    assert replay_request_id(destination, first.id) is None
+    copied_store = RunStore(destination)
+    try:
+        project_run_start(
+            copied_store,
+            run_id=IdIssuer(destination, agent_name="aid").issue_run(),
+            thread_id=thread,
+            input=Message.user("replayed"),
+            request_id="seed",
+        )
+    finally:
+        copied_store.close()
+    assert replay_request_id(destination, latest.id) is None
 
 
 def test_partial_state_seed_cannot_be_used_as_a_replay_source(tmp_path, monkeypatch):

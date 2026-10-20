@@ -236,7 +236,7 @@ def test_agent_serve_publishes_once_at_outer_cli(tmp_path, monkeypatch, publicat
         runtime,
         "resolve_startup",
         lambda *a, **kw: SimpleNamespace(
-            startup=SimpleNamespace(sandbox="fake"), target=layout
+            sandbox="fake", serve=SimpleNamespace(layout=layout)
         ),
     )
     monkeypatch.setattr(runtime, "warn_development_package_source", lambda _: None)

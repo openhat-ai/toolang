@@ -48,6 +48,26 @@ each action and outcome as an append-only plain-text line. The stable
 `Agent NAME running: ...` (guest foreground) and `Agent NAME started: ...`
 result lines are written only after readiness succeeds.
 
+## Execution boundaries
+
+Placements share generation initialization, execution services, API assembly,
+and resource-release ordering. Identity/root calculation and source preparation
+are separate boundaries; sandbox transport and foreground ownership are execution
+modes, not additional placement implementations.
+
+- [Startup](../../src/toolang/cli/common/startup.py) resolves one `LaunchSpec`
+  for both new launches and compatible attachment; no parallel startup wrapper exists.
+- [Placement policy](../../src/toolang/up/config.py) centralizes executor reuse,
+  hosted/client driver defaults, and implicit lifetime. History continuation uses
+  the same reuse boundary; controls may attach to existing owners in every placement.
+- [Workloads](../../src/toolang/up/workload.py) initialize generation bindings and
+  own preparation/finalization. Nonreusable execution requires a caller-owned,
+  unstarted identity; retained state never qualifies. Discovery publication does
+  not own execution state.
+- [Application assembly](../../src/toolang/up/application.py) supplies the complete
+  Agent API and Stats to both embedded and hosted `AgentCore` instances. Each
+  execution host starts/closes those services within its existing resource scope.
+
 ## Startup policy
 
 Both commands accept repeatable `--allow RESOURCE=QUERY`,

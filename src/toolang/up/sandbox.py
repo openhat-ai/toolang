@@ -64,10 +64,10 @@ from toolang.up.instance import (
     update_instance,
     patch_workload,
     process_alive,
-    control_owner,
     runtime_lock,
 )
 from toolang.up.observation import RuntimeRegistration
+from toolang.up.config import placement_policy
 from toolang.up.server import ServeSpec, build_serve_argv, resolve_serve
 from toolang.up.types import ExecutionDrivers, ServerLifetime
 
@@ -1144,7 +1144,7 @@ async def release_stopped(layout: AgentLayout) -> None:
 async def _release_stopped_locked(layout: AgentLayout) -> None:
     allocated = read_instance(layout.runtime_status)
     if (
-        layout.placement == "roaming"
+        not placement_policy(layout.placement).reuse_executor
         and layout.instance_id is not None
         and allocated is not None
         and "startup_contract" not in allocated["control"]
@@ -1312,39 +1312,24 @@ def _remembered_sandbox(layout: AgentLayout) -> str | None:
 
 def _begin_launch(spec: LaunchSpec) -> None:
     layout = spec.serve.layout
+    assert spec.serve.launch_id is not None
 
-    def begin(entry):
-        from .identity import identity_bindings
+    from .contract import startup_contract
+    from .workload import begin_workload
 
-        from .contract import startup_contract
-
-        entry["control"].update(identity_bindings(layout))
-        entry["control"]["startup_contract"] = startup_contract(spec)
-        entry["launch_id"] = spec.serve.launch_id
-        entry["workload"] = {"status": "preparing", "pid": None, "updated_at": _now()}
-        entry["control"].update(
-            sandbox=spec.sandbox,
-            endpoint=spec.serve.endpoint,
-            root=str(layout.root),
-            name=layout.name,
-            placement=layout.placement,
-            runtime_instance=layout.instance,
-            home=str(layout.home),
-            store=str(layout.run_store),
-            drivers=sorted(spec.serve.drivers),
-            toolang_root=str(spec.serve.toolang_root or layout.root),
-            project_inputs=bool(layout.project_inputs),
-            managed_membership=bool(layout.managed_membership),
-            source_id=layout.source_id,
-        )
-        if layout.instance is not None:
-            entry["control"]["owner"] = control_owner()
-
-    update_instance(layout.runtime_status, begin, instance=layout.instance)
+    begin_workload(
+        layout,
+        launch_id=spec.serve.launch_id,
+        toolang_root=spec.serve.toolang_root or layout.root,
+        sandbox=spec.sandbox,
+        endpoint=spec.serve.endpoint,
+        drivers=spec.serve.drivers,
+        workload={"status": "preparing", "pid": None, "updated_at": _now()},
+        startup_contract=startup_contract(spec),
+    )
     RuntimeRegistration(
         layout,
         toolang_root=spec.serve.toolang_root or layout.root,
-        drivers=spec.serve.drivers,
         launch_id=spec.serve.launch_id,
     ).__enter__()
 

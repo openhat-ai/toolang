@@ -7,15 +7,11 @@ from typing import AsyncIterator
 
 import uvicorn
 
-from toolang.api.app import create_app
-from toolang.catalog import CapsManager, ChoresManager
-from toolang.common.config_sources import config_sources
 from toolang.plugin.sandboxes.host import host_sandbox_description
-from toolang.stats.config import stats_config
-from toolang.stats.service import StatsService
 from .core import AgentCore
+from .application import create_agent_application, application_statistics
 from .instance import patch_workload
-from .observation import RuntimeRegistration
+from .workload import ForegroundWorkload
 
 
 class _ForegroundServer(uvicorn.Server):
@@ -26,17 +22,12 @@ class _ForegroundServer(uvicorn.Server):
 
 @asynccontextmanager
 async def foreground_api(
-    core: AgentCore, registration: RuntimeRegistration
+    core: AgentCore, workload: ForegroundWorkload
 ) -> AsyncIterator[None]:
     """Keep the reserved socket until the API and all admitted work stop."""
-    app = create_app(core, CapsManager(core.layout), ChoresManager(core.layout))
-    statistics = StatsService(
-        core.store.db_path,
-        core.layout.stats_store,
-        config=stats_config(config_sources(core.layout), home=core.layout.config),
-    )
+    app = create_agent_application(core)
+    statistics = application_statistics(app)
     statistics.start()
-    app.state.stats = statistics
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
             listener.bind(("127.0.0.1", 0))
@@ -57,7 +48,7 @@ async def foreground_api(
                         await asyncio.sleep(0.01)
                 patch_workload(
                     core.layout.runtime_status,
-                    registration.token,
+                    workload.token,
                     {
                         "endpoint": endpoint,
                         "sandbox": "host",

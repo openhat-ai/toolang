@@ -510,6 +510,7 @@ def test_server_owns_statistics_and_joins_worker_before_closing_source(
     source = RunStore(layout.run_store)
     layout.config.write_text("[stats]\narchive_after_seconds = 3600\n")
     core = MagicMock()
+    core.layout = layout
     core.store = source
     core.lifecycle = None
     core.setup.current.return_value.teaming = None

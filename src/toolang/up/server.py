@@ -26,15 +26,12 @@ import uvicorn
 from uvicorn.main import STARTUP_FAILURE
 
 from toolang.api.version import AGENT_API_VERSION
-from toolang.api.app import create_app
 from toolang.base.model_settings import format_model_body
 from toolang.base.types.model import ModelOverride
 from toolang.base.types.policy import AgentCeiling
-from toolang.catalog import CapsManager, ChoresManager
 from toolang.common.config import resolve_ui_base_url
 from toolang.common.env_logger import PY_LOG_ENV_VAR
 from toolang.common.layout import AgentLayout
-from toolang.common.config_sources import config_sources
 from toolang.execution.executor.resources import validate_agent_ceiling
 from toolang.plugin.sandboxes.host import HOST_SANDBOX_DESCRIPTION_ENV
 from toolang.setup import AgentSetup
@@ -42,8 +39,6 @@ from toolang.plugin.models.query import filter_models
 from toolang.setup.config import load_setup_config
 from toolang.state import watcher as state_watcher
 from toolang.state.state import AgentState
-from toolang.stats.config import stats_config
-from toolang.stats.service import StatsService
 from toolang.up import process as agents
 from toolang.up.config import (
     default_drivers,
@@ -53,6 +48,7 @@ from toolang.up.config import (
 from toolang.up.types import ALL_DRIVERS, ExecutionDrivers, ServerLifetime
 from toolang.up.lifecycle import ServerLifecycle
 from toolang.up.core import AgentCore
+from toolang.up.application import create_agent_application, application_statistics
 from toolang.up.logging import (
     DEFAULT_LOG_LEVEL,
     build_uvicorn_log_config,
@@ -427,11 +423,6 @@ def _serve_once(
             ceiling=ceiling,
         )
         shutdown_signal = threading.Event()
-        caps_manager = CapsManager(spec.layout)
-        chores_manager = ChoresManager(spec.layout)
-        statistics_config = stats_config(
-            config_sources(spec.layout), home=spec.layout.config
-        )
 
         @asynccontextmanager
         async def lifespan(app: FastAPI):
@@ -440,12 +431,9 @@ def _serve_once(
             tasks: list[asyncio.Task[None]] = []
             scheduler: ChoreDriver | None = None
             teaming: TeamingLoop | None = None
-            statistics = StatsService(
-                core.store.db_path, spec.layout.stats_store, config=statistics_config
-            )
+            statistics = application_statistics(app)
             try:
                 statistics.start()
-                app.state.stats = statistics
                 agents.write_runtime_state(
                     spec.layout,
                     endpoint=spec.endpoint,
@@ -551,10 +539,8 @@ def _serve_once(
                     failure = failure or str(exc) or type(exc).__name__
                     raise
 
-        app = create_app(
+        app = create_agent_application(
             core,
-            caps_manager,
-            chores_manager,
             lifespan=lifespan,
             cors_allowed_origins=cors_allowed_origins,
         )

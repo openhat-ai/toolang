@@ -5,13 +5,10 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 import json
-import os
 import re
 from pathlib import Path
-from uuid import uuid4
 from typing import Any, TypeGuard, cast
 
-import psutil
 
 from toolang.common.files import atomic_write_text, file_write_lock
 from toolang.common.layout import AgentLayout
@@ -19,13 +16,9 @@ from toolang.up.instance import (
     AGENT_INSTANCE_FORMAT,
     read_document,
     read_instance,
-    update_instance,
-    remove_finished_instance,
-    control_owner,
 )
 from toolang.up.types import (
     ALL_DRIVERS,
-    ExecutionDrivers,
     RuntimeInstance as RuntimeInstance,
     RuntimeInstanceSnapshot as RuntimeInstanceSnapshot,
 )
@@ -66,65 +59,24 @@ def _register_lock(path: Path) -> Path:
 
 
 class RuntimeRegistration:
-    """Publish references; embedded execution also publishes its workload identity."""
+    """Publish only a discovery reference to an already initialized workload."""
 
     def __init__(
         self,
         layout: AgentLayout,
         *,
         toolang_root: Path,
-        drivers: ExecutionDrivers,
-        endpoint: str = "",
-        launch_id: str | None = None,
+        launch_id: str,
     ) -> None:
-        self.layout = layout
-        self.token = launch_id or uuid4().hex
-        self.embedded = launch_id is None
-        self.toolang_root = toolang_root
+        self.token = launch_id
         self.path = toolang_root / ".runtime" / "instances" / instance_filename(layout)
         self.payload = {
             "version": AGENT_INSTANCE_FORMAT,
             "status": str(layout.runtime_status),
             "launch_id": self.token,
         }
-        self.drivers = drivers
-        self.endpoint = endpoint
 
     def __enter__(self) -> RuntimeRegistration:
-        if self.embedded:
-
-            def begin(entry):
-                from .identity import identity_bindings
-
-                entry["control"].update(identity_bindings(self.layout))
-                entry["launch_id"] = self.token
-                entry["control"].update(
-                    root=str(self.layout.root),
-                    name=self.layout.name,
-                    placement=self.layout.placement,
-                    runtime_instance=self.layout.instance,
-                    home=str(self.layout.home),
-                    store=str(self.layout.run_store),
-                    drivers=sorted(self.drivers),
-                    toolang_root=str(self.toolang_root),
-                    project_inputs=bool(self.layout.project_inputs),
-                    managed_membership=bool(self.layout.managed_membership),
-                    source_id=self.layout.source_id,
-                    sandbox="host",
-                    endpoint=self.endpoint,
-                )
-                if self.layout.instance is not None:
-                    entry["control"]["owner"] = control_owner()
-                entry["workload"] = {
-                    "pid": os.getpid(),
-                    "process_created": psutil.Process().create_time(),
-                    "status": "running",
-                    "endpoint": self.endpoint,
-                }
-
-            update_instance(
-                self.layout.runtime_status, begin, instance=self.layout.instance
-            )
         try:
             with file_write_lock(_register_lock(self.path)):
                 atomic_write_text(self.path, json.dumps(self.payload))
@@ -134,15 +86,7 @@ class RuntimeRegistration:
         return self
 
     def close(self) -> None:
-        if self.embedded:
-            from toolang.up.process import stop_runtime_state
-
-            stop_runtime_state(
-                self.layout, expected_pid=os.getpid(), launch_id=self.token
-            )
         _remove_reference(self.path, self.token)
-        if self.embedded:
-            remove_finished_instance(self.layout, self.token)
 
     def __exit__(self, *exc: object) -> None:
         self.close()

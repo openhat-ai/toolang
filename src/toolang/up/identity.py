@@ -10,7 +10,7 @@ from uuid import uuid4
 
 from toolang.common.files import atomic_write_text, file_write_lock
 from toolang.common.layout import AgentLayout, derive_agent_name
-from .instance import AGENT_INSTANCE_FORMAT, read_instance, patch_workload
+from .instance import AGENT_INSTANCE_FORMAT, read_instance
 import os
 import psutil
 
@@ -108,7 +108,6 @@ def allocate_roaming(source: Path, *, toolang_root: Path) -> AgentLayout:
         RuntimeRegistration(
             layout,
             toolang_root=toolang_root,
-            drivers=frozenset(),
             launch_id=payload["instances"]["default"]["launch_id"],
         ).__enter__()
         return layout
@@ -147,27 +146,3 @@ def identity_bindings(layout: AgentLayout) -> dict:
         "project_inputs": bool(layout.project_inputs),
         "managed_membership": bool(layout.managed_membership),
     }
-
-
-def finish_preparation(layout: AgentLayout, message: str) -> None:
-    """Finalize an owned command that returned without starting its workload."""
-    entry = read_instance(layout.runtime_status)
-    if entry is not None and entry["workload"].get("status") in {
-        "preparing",
-        "starting",
-    }:
-        fail_preparation(layout, RuntimeError(message))
-
-
-def fail_preparation(layout: AgentLayout, error: BaseException) -> None:
-    """Retain failed published identities without leaving an active reference."""
-    from .observation import remove_registration
-
-    entry = read_instance(layout.runtime_status)
-    if entry is not None and not entry["control"].get("ref"):
-        patch_workload(
-            layout.runtime_status,
-            entry["launch_id"],
-            {"status": "failed", "pid": None, "message": str(error)},
-        )
-        remove_registration(layout, entry["launch_id"])

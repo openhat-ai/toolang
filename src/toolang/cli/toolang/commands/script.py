@@ -69,7 +69,7 @@ if TYPE_CHECKING:
     from toolang.common.layout import AgentLayout
     from toolang.execution.executor import LocalRunHandle
     from toolang.execution.remote import RemoteRunClient
-    from toolang.up.observation import RuntimeRegistration
+    from toolang.up.workload import ForegroundWorkload
     from toolang.execution.records import RunRecord
     from toolang.execution.store import RunStore
     from toolang.execution.types import RunOverride, SessionSetting
@@ -686,7 +686,7 @@ def _run(
     from toolang.execution.store import RunStore
     from toolang.state.prepare import prepare_agent_state
     from toolang.up import source as agent_sources
-    from toolang.up.observation import RuntimeRegistration
+    from toolang.up.workload import ForegroundWorkload
     from toolang.cli.common.context import resolve_root
     from toolang.up.logging import configure_logging_plan, resolve_agent_logging
 
@@ -746,8 +746,8 @@ def _run(
                 terminal.set_run(run)
 
             if server is None:
-                registration = runtime_scope.enter_context(
-                    RuntimeRegistration(
+                workload = runtime_scope.enter_context(
+                    ForegroundWorkload(
                         layout,
                         toolang_root=layout.toolang_root or resolve_root(None),
                         drivers=frozenset(),
@@ -785,7 +785,7 @@ def _run(
                             session_override=session_override,
                             quiet=quiet,
                             progress=progress,
-                            registration=registration,
+                            workload=workload,
                         )
                     )
             else:
@@ -807,7 +807,7 @@ def _run(
                 run_id = accepted[0] if accepted else None
     except KeyboardInterrupt:
         if layout is not None:
-            from toolang.up.identity import fail_preparation
+            from toolang.up.workload import fail_preparation
             from toolang.up.instance import read_instance
 
             entry = read_instance(layout.runtime_status)
@@ -827,7 +827,7 @@ def _run(
         return 130
     except (OSError, ValueError, ToolangError, RuntimeError) as exc:
         if layout is not None:
-            from toolang.up.identity import fail_preparation
+            from toolang.up.workload import fail_preparation
 
             fail_preparation(layout, exc)
         progress.close()
@@ -1215,7 +1215,7 @@ async def _execute(
     session_override: RunOverride,
     quiet: bool,
     progress: CliProgress | None = None,
-    registration: RuntimeRegistration | None = None,
+    workload: ForegroundWorkload | None = None,
 ) -> RunRecord:
     from toolang.base.types.policy import RunBindings
     from toolang.execution.calls import resolve_spec
@@ -1246,9 +1246,7 @@ async def _execute(
         initial_state=state,
         start_executor=False,
         workspace_additions=state.workspace_additions,
-        lifecycle=ServerLifecycle(registration.token, "foreground")
-        if registration
-        else None,
+        lifecycle=ServerLifecycle(workload.token, "foreground") if workload else None,
         ceiling_overrides=allow_overrides,
         default_overrides=resolve_default_overrides(environ),
         limit_overrides=resolve_limit_overrides(environ),
@@ -1314,8 +1312,8 @@ async def _execute(
         from contextlib import AsyncExitStack
 
         async with AsyncExitStack() as scope:
-            if registration is not None:
-                await scope.enter_async_context(foreground_api(core, registration))
+            if workload is not None:
+                await scope.enter_async_context(foreground_api(core, workload))
             handle = executor.run(
                 spec,
                 run_id=run_id,

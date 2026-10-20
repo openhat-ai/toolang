@@ -235,7 +235,7 @@ def materialize_roaming_program(
         _sync_roaming_project(layout, resolved_source)
     except BaseException as exc:
         if layout.instance_id is not None:
-            from .identity import fail_preparation
+            from .workload import fail_preparation
 
             fail_preparation(layout, exc)
         raise
@@ -472,6 +472,24 @@ def resolve_visiting_layout(
         raise ValueError(f"agent target is not remote: {target_text}")
     return _resolve_visiting_layout(
         target, progress=progress, toolang_root=toolang_root
+    )
+
+
+def prepare_visiting_layout(
+    layout: AgentLayout,
+    *,
+    toolang_root: Path,
+    source_ref: str | None = None,
+    progress: ProgressSink | None = None,
+) -> AgentLayout:
+    """Prepare visiting inputs after startup validation; other sources are ready."""
+    if layout.placement != "visiting" or layout.source_ref is None:
+        return layout
+    source_ref = source_ref or layout.source_ref
+    if visiting_layout(source_ref, toolang_root=toolang_root).root != layout.root:
+        raise ValueError("visiting source identity changed")
+    return resolve_visiting_layout(
+        source_ref, toolang_root=toolang_root, progress=progress
     )
 
 
