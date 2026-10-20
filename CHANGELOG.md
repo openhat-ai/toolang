@@ -13,6 +13,13 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   `AGENT> title` afterward, while Top titles read `top` and `AGENT top`.
   ([#873](https://github.com/openhat-ai/toolang/pull/873))
 
+- Talk members keep the least-used of six assigned colors across registration,
+  leases, and restart, and manual ANSI or RGB edits survive.
+
+- **Breaking:** all teaming keys move from `too:teaming:v1` to
+  `too:teaming:v0`, so restart Hub, agents, and Talk together; existing v1 data
+  stays untouched and is not imported.
+
 - `too top` and `too AGENT top` show a THREAD column between AGENT and RUN
   in live trees, lists, snapshots, and recent completions.
   ([#869](https://github.com/openhat-ai/toolang/pull/869))
