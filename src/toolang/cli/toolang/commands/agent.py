@@ -21,6 +21,8 @@ from toolang.common.progress import ProgressSink
 from toolang.common.time import format_duration
 from toolang.up import source as agent_sources
 from toolang.up import process as agents
+from toolang.up.config import format_drivers
+from toolang.up.types import ALL_DRIVERS, ExecutionDrivers
 from toolang.catalog import templates
 from toolang.setup import AgentSetup, SetupWatcher
 from toolang.state.prepare import prepare_agent_state
@@ -227,6 +229,8 @@ def info_agent(
         *resources,
         ("Status", status_value),
     ]
+    if status.status == "running":
+        rows.append(("Drivers", _drivers_summary(runtime_state.get("drivers"))))
     if status.status == "stopped":
         echo_pairs_table(rows, avatar=agent_avatar(), title=agent_name.upper())
         return
@@ -239,6 +243,17 @@ def info_agent(
     if status.webui_url:
         rows.append(("WebUI", status.webui_url))
     echo_pairs_table(rows, avatar=agent_avatar(), title=agent_name.upper())
+
+
+def _drivers_summary(value: object) -> str:
+    if not isinstance(value, list) or any(
+        not isinstance(driver, str) or driver not in ALL_DRIVERS for driver in value
+    ):
+        return "-"
+    drivers = frozenset(value)
+    if len(drivers) != len(value):
+        return "-"
+    return format_drivers(cast(ExecutionDrivers, drivers))
 
 
 def _caps_summary(state: AgentState) -> str:

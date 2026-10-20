@@ -3590,7 +3590,9 @@ def test_agent_info_builds_state_and_setup_without_server(
 
 
 @pytest.mark.parametrize("target_first", [False, True])
-@pytest.mark.parametrize("status", ["stopped", "starting", "running", "failed"])
+@pytest.mark.parametrize(
+    "status", ["stopped", "preparing", "starting", "running", "failed", "unknown"]
+)
 def test_agent_info_fields_follow_the_compact_layout(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, target_first: bool, status: str
 ) -> None:
@@ -3681,6 +3683,8 @@ def test_agent_info_fields_follow_the_compact_layout(
 
     assert result.exit_code == 0, result.stderr
     expected = ["Home", "Tools", "Models", "Caps", "Chores", "Workspaces", "Status"]
+    if status == "running":
+        expected.append("Drivers")
     if status != "stopped":
         expected += ["Sandbox", "PID", "API", "WebUI"]
     assert [key for key, _value in captured] == expected
@@ -3695,6 +3699,7 @@ def test_agent_info_fields_follow_the_compact_layout(
         assert status_value == "not running"
     elif status == "running":
         assert status_value.startswith("running (up ")
+        assert rows["Drivers"] == "chat,talk,chore"
     elif status == "failed":
         assert status_value == "failed: runtime failed"
     else:
