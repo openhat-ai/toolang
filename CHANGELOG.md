@@ -9,6 +9,14 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Changed
 
+- Dulwich 1.2.17 or newer is now required in runtime and build
+  environments, so an older pinned release must be upgraded.
+  ([#870](https://github.com/openhat-ai/toolang/pull/870))
+
+- In editable/development source checkouts, root `too` help and
+  `too --version` start faster and select the release version despite
+  unrelated refs or branches named like tags.
+
 - Chat terminal titles use `AGENT>` before a thread title exists and
   `AGENT> title` afterward, while Top titles read `top` and `AGENT top`.
   ([#873](https://github.com/openhat-ai/toolang/pull/873))

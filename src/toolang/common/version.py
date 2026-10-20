@@ -19,7 +19,7 @@ _UNKNOWN_SOURCE_VERSION = "unknown"
 
 @cache
 def toolang_version() -> str:
-    """Return the source version captured at process startup."""
+    """Resolve the source version on first use and reuse it for this process."""
 
     detected, source = development_source()
     if detected:
@@ -119,12 +119,15 @@ def repository_source_version(source_root: Path) -> str | None:
 
     from dulwich import porcelain
     from dulwich.errors import NotGitRepository, ObjectMissing
-    from dulwich.repo import Repo
+
+    from ._version_repo import VersionRepo
 
     try:
-        with Repo.discover(source_root) as repository:
+        with VersionRepo.discover(source_root) as repository:
             source_version = porcelain.describe(repository, abbrev=8)
-            status = porcelain.status(repository, untracked_files="no")
+            status = porcelain.status(
+                repository, untracked_files="no", optional_locks=False
+            )
             if any(status.staged.values()) or status.unstaged:
                 return f"{source_version}*"
             return source_version
