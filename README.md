@@ -158,5 +158,5 @@ too [AGENT] top              # Monitor active runs
 
 - Website: [toolang.ai](https://toolang.ai/)
 - Docs: [toolang.ai/docs](https://toolang.ai/docs)
-- Changelog: [CHANGELOG.md](CHANGELOG.md)
 - GitHub: [github.com/openhat-ai/toolang](https://github.com/openhat-ai/toolang)
+- Changelog: [CHANGELOG.md](https://github.com/openhat-ai/toolang/blob/main/CHANGELOG.md)
