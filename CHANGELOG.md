@@ -9,6 +9,11 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Changed
 
+- **Breaking:** `ThreadInfo` and `ThreadDetail` drop `channel`, and thread-list
+  filters omit it, so derive classification from the Thread ID and filter by
+  `kind`.
+  ([#874](https://github.com/openhat-ai/toolang/pull/874))
+
 - **Breaking:** `ThreadPrefix` and prefix creation arguments become
   `ThreadKind` and `kind`, thread records and `ThreadCreated` payloads drop
   `origin`, and thread HTTP responses expose neither field, so derive kind
@@ -190,6 +195,10 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   rebuild from compatible execution records.
 
 ### Fixed
+
+- Thread summaries, status filters, and CLI `steer`/`cancel` selection treat
+  pending and running Runs as active, while each Run keeps its actual status.
+  ([#874](https://github.com/openhat-ai/toolang/pull/874))
 
 - `too AGENT top` scopes discovery to the selected resident's status document
   and its matching runtime registrations: stopped or unresolved temporary
