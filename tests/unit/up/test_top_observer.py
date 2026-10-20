@@ -638,6 +638,7 @@ def test_offline_completion_outside_first_page_replaces_the_known_live_root(
         view = TopView()
         view.project(observer.tick())
         selected_key = view.selected
+        assert view.rows[0].thread == "chat_top"
         assert state.activity is not None
         state.activity.result(timeout=1)
         snapshot = observer.tick()
@@ -652,6 +653,7 @@ def test_offline_completion_outside_first_page_replaces_the_known_live_root(
         assert (
             next(row for row in rows if row.key == selected_key).status == "succeeded"
         )
+        assert next(row for row in rows if row.key == selected_key).thread == "chat_top"
         observer.more()
         observer.tick()
         assert state.page is not None
@@ -660,6 +662,9 @@ def test_offline_completion_outside_first_page_replaces_the_known_live_root(
         assert snapshot.sources[0].completed is not None
         assert len(snapshot.sources[0].completed.roots) == 151
         assert len({row.id for row in snapshot.sources[0].completed.roots}) == 151
+        assert all(
+            row.thread_id == "chat_top" for row in snapshot.sources[0].completed.roots
+        )
     finally:
         observer.close()
         store.close()

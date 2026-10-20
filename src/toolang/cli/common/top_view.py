@@ -140,6 +140,7 @@ def observed_at(source: SourceActivity, snapshot: TopSnapshot) -> str:
 class Row:
     key: Key
     root: str
+    thread: str | None
     source: SourceActivity
     node: LiveNode
     parent: Key | None
@@ -174,7 +175,9 @@ class TopView:
     _sort_hits: list[tuple[int, int, int, str]] = field(default_factory=list)
 
     def project(self, snapshot: TopSnapshot) -> list[Row]:
-        roots: list[tuple[SourceActivity, RunNode, tuple[LiveNode, ...]]] = []
+        roots: list[
+            tuple[SourceActivity, RunNode, tuple[LiveNode, ...], str | None]
+        ] = []
         current = snapshot.live_identities
         for source in snapshot.sources:
             active_roots = set()
@@ -192,7 +195,7 @@ class TopView:
                         if source.live_stale and root.id in known_completed:
                             continue
                         active_roots.add(root.id)
-                        roots.append((source, root, tree.nodes))
+                        roots.append((source, root, tree.nodes, tree.thread_id))
             if source.completed is not None:
                 cutoff = snapshot.recent
                 for root in source.completed.roots:
@@ -203,10 +206,10 @@ class TopView:
                         <= seconds(snapshot.observed_at) - seconds(root.finished_at)
                         <= cutoff
                     ):
-                        roots.append((source, root, (root,)))
+                        roots.append((source, root, (root,), root.thread_id))
         self._revision += 1
         activity = {}
-        for source, root, nodes in roots:
+        for source, root, nodes, _ in roots:
             if root.status in TERMINAL:
                 continue
             key = (source.identity, source.live.epoch if source.live else "", root.id)
@@ -227,7 +230,7 @@ class TopView:
         self._activity = activity
 
         def default_order(item):
-            source, node, _ = item
+            source, node, _, _ = item
             finished = node.status in TERMINAL
             rank = (
                 (seconds(node.finished_at or node.created_at), 0)
@@ -243,7 +246,7 @@ class TopView:
         if sort_field is not None:
 
             def metric(item):
-                source, node, _ = item
+                source, node, _, _ = item
                 value = {
                     "MODEL": node.calls.model_calls,
                     "TOOL": node.calls.tool_calls,
@@ -263,7 +266,7 @@ class TopView:
         rows: list[Row] = []
         all_parents: dict[Key, Key | None] = {}
         keys: set[Key] = set()
-        for source, root, nodes in roots:
+        for source, root, nodes, thread in roots:
             epoch = source.live.epoch if source.live else ""
             children: dict[str, list[LiveNode]] = {}
             by_id = {node.id: node for node in nodes}
@@ -337,6 +340,7 @@ class TopView:
                     Row(
                         key,
                         root.id,
+                        thread,
                         source,
                         node,
                         all_parents[key],
@@ -628,11 +632,13 @@ class TopView:
         agent_width = max(
             [5, *(cell_len(instance_name(row.source)) for row in self.rows)]
         )
+        thread_width = max([6, *(cell_len(row.thread or "-") for row in self.rows)])
         run_width = max([3, *(cell_len(row.root) for row in self.rows)])
         spend_width = max([9, *(len(spend(row.node.cost)) for row in self.rows)])
-        widths = [agent_width, run_width, 5, 5, 6, 6, 6, spend_width, 7]
+        widths = [agent_width, thread_width, run_width, 5, 5, 6, 6, 6, spend_width, 7]
         headings = [
             "AGENT",
+            "THREAD",
             "RUN",
             "MODEL",
             "TOOL",
@@ -649,7 +655,9 @@ class TopView:
         self._row_hits.clear()
         self._sort_hits.clear()
         column = 0
-        for name, size in zip(("AGENT", "RUN", *SORT_FIELDS), widths, strict=True):
+        for name, size in zip(
+            ("AGENT", "THREAD", "RUN", *SORT_FIELDS), widths, strict=True
+        ):
             if show_heading and name in SORT_FIELDS:
                 self._sort_hits.append((len(lines), column, column + size, name))
             column += size + 1
@@ -657,7 +665,7 @@ class TopView:
         def prefix(values: list[str] | tuple[str, ...]) -> str:
             return (
                 " ".join(
-                    set_cell_size(value, size) if index < 2 else value.rjust(size)
+                    set_cell_size(value, size) if index < 3 else value.rjust(size)
                     for index, (value, size) in enumerate(zip(values, widths))
                 )
                 + " "
@@ -734,6 +742,7 @@ class TopView:
             usage = node.usage
             values = [
                 instance_name(row.source),
+                row.thread or "-",
                 row.root,
                 *calls,
                 compact(usage.input_tokens if usage else None),

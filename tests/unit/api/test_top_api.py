@@ -83,6 +83,7 @@ def test_activity_handoff_pins_before_live_and_scans_after_gate(tmp_path, monkey
                 row.id for row in after.completed.roots
             ] == ["run_top"]
             assert after.completed.counts.total == 1
+            assert after.completed.roots[0].thread_id == "chat_top"
             usage = await client.get("/stats/recent?period=28800")
             assert usage.status_code == 200
             assert usage.json()["metrics"]["model_calls"] == 0

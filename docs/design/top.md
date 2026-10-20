@@ -50,7 +50,9 @@ lifetime consumption; a parent Run includes descendants, while a Step shows only
 its own invocation facts. Large numeric values use compact units to keep columns
 aligned; USD spend uses four decimal places without an approximation marker.
 JSON retains source amounts and approximation metadata. Period and folds do not
-change these values. RUN always shows the full owning physical root ID. Terminal Runs show
+change these values. THREAD appears between AGENT and RUN and shows the full
+owning root's thread ID on every row, or `-` when unavailable. RUN always shows
+the full owning physical root ID. Terminal Runs show
 only their state. AGENT shows the existing instance name
 (for example, `aid@r70200d1f`) without the appended `#runtime_instance` ID.
 

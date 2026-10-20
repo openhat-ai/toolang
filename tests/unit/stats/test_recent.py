@@ -86,7 +86,7 @@ def test_completed_roots_count_statuses_current_second_and_page_without_child_ru
 ):
     terminal = []
     for index in range(207):
-        run = source.root(f"done{index:03}", NOW - 1000)
+        run = source.root(f"done{index:03}", NOW - 1000, thread=f"chat_stats{index}")
         state = ("succeeded", "failed", "canceled")[index % 3]
         source.source.finish_run(
             run_id=run,
@@ -120,6 +120,9 @@ def test_completed_roots_count_statuses_current_second_and_page_without_child_ru
             rows.extend(page.roots)
         assert len({row.id for row in rows}) == 207
         assert {row.id for row in rows} == set(terminal)
+        assert {row.id: row.thread_id for row in rows} == {
+            run: f"chat_stats{index}" for index, run in enumerate(terminal)
+        }
         assert rows[0].finished_at == timestamp(NOW)
         assert rows[0].calls == CallCounters(5, 9)
         assert rows[0].usage is not None
@@ -220,9 +223,9 @@ def test_known_completion_lookup_is_bounded_and_keeps_physical_root_window_rules
     parent = source.call(active, NOW - 10, NOW - 9, tool=True)
     child = source.root("lookup_child", NOW - 10, parent=parent, thread="chat_lookup")
     source.finish(child, NOW)
-    edge = source.root("lookup_edge", NOW - 1000)
+    edge = source.root("lookup_edge", NOW - 1000, thread="chat_edge")
     source.finish(edge, NOW - 300)
-    fresh = source.root("lookup_fresh", NOW - 1000)
+    fresh = source.root("lookup_fresh", NOW - 1000, thread="chat_fresh")
     source.finish(fresh, NOW)
     old = source.root("lookup_old", NOW - 1000)
     source.finish(old, NOW - 301)
@@ -242,3 +245,7 @@ def test_known_completion_lookup_is_bounded_and_keeps_physical_root_window_rules
         reader.pin()
         rows = reader.completed_roots(now=NOW, recent=300, identities=identities)
     assert len(rows) == 2 and {row.id for row in rows} == {edge, fresh}
+    assert {row.id: row.thread_id for row in rows} == {
+        edge: "chat_edge",
+        fresh: "chat_fresh",
+    }
