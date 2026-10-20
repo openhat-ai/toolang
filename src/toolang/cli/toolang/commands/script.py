@@ -1063,7 +1063,7 @@ async def _create_remote_script_thread(
         raise RuntimeError(
             "remote script thread creation returned invalid data"
         ) from exc
-    if thread.origin != "script" or not thread.id.startswith("script_"):
+    if thread.origin != "exec" or not thread.id.startswith("exec_"):
         raise RuntimeError("remote script thread creation returned invalid identity")
     return thread.id
 
@@ -1287,7 +1287,7 @@ async def _execute(
     )
     client_id = f"client_{uuid4().hex}"
     thread = ThreadManager(store, ids).create(
-        prefix=ThreadPrefix.SCRIPT,
+        prefix=ThreadPrefix.EXEC,
         client_id=client_id,
         request_id=f"request_{uuid4().hex}",
     )

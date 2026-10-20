@@ -2371,8 +2371,8 @@ def test_roaming_source_reads_inspect_collections_and_records(
         run = project_run_start(
             store,
             run_id="run_roaming",
-            thread_id="script_roaming",
-            origin="script",
+            thread_id="exec_roaming",
+            origin="exec",
             input=Message.user("Inspect roaming history"),
         )
         project_step(
@@ -2392,7 +2392,7 @@ def test_roaming_source_reads_inspect_collections_and_records(
 
     threads = cli.main([str(source), "inspect", "threads"])
     threads_output = capsys.readouterr()
-    runs = cli.main([str(source), "inspect", "script_roaming", "runs"])
+    runs = cli.main([str(source), "inspect", "exec_roaming", "runs"])
     runs_output = capsys.readouterr()
     inspect = cli.main([str(source), "inspect", "run_roaming.0", "--json"])
     inspect_output = capsys.readouterr()
@@ -2403,7 +2403,7 @@ def test_roaming_source_reads_inspect_collections_and_records(
     assert output == 0
     assert json.loads(output_text.out) == "# Ready\n"
     assert threads == 0
-    assert "script_roaming" in threads_output.out
+    assert "exec_roaming" in threads_output.out
     assert "Inspect roaming history" in threads_output.out
     assert runs == 0
     assert "run_roaming" in runs_output.out

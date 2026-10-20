@@ -338,7 +338,7 @@ def test_reservation_survives_business_rollback_and_history_deletion(
         store.close()
     with sqlite3.connect(path) as connection:
         connection.execute("DELETE FROM threads")
-    third = IdIssuer(path, agent_name="alice").issue_thread("script")
+    third = IdIssuer(path, agent_name="alice").issue_thread("exec")
     decoded = decode_id(
         third.split("_", 1)[1], family=LOCAL_ID_FAMILY, agent_name="alice"
     )

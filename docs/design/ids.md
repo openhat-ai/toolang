@@ -5,7 +5,7 @@ Generated suffixes use eight lowercase Base32 characters:
 
 | Identity | Rule |
 | --- | --- |
-| `chat_`, `work_`, `script_` | Agent-keyed `local` allocation: hourly tick(20) + sequence(20). |
+| `chat_`, `work_`, `exec_` | Agent-keyed `local` allocation: hourly tick(20) + sequence(20). |
 | `run_` | Agent-keyed `run` allocation with the same bit budget. |
 | `talk_` | Permute the conversation suffix with an agent-specific key. |
 | `chore_` | Hash the exact name to 40 bits, then permute with an agent-specific key. |

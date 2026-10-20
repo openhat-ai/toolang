@@ -18,7 +18,7 @@ from toolang.up.server import build_serve_argv, resolve_serve
 from toolang.execution.types import ThreadPrefix
 
 
-@pytest.mark.parametrize("prefix", ["web", "term", "spawn", "worker"])
+@pytest.mark.parametrize("prefix", ["web", "term", "spawn", "worker", "script"])
 def test_obsolete_thread_prefixes_cannot_create_contexts(tmp_path, prefix):
     core = AgentCore(AgentLayout.resident(tmp_path, "alice"))
     try:
@@ -30,7 +30,7 @@ def test_obsolete_thread_prefixes_cannot_create_contexts(tmp_path, prefix):
             "talk",
             "chore",
             "work",
-            "script",
+            "exec",
         }
     finally:
         asyncio.run(core.close())
@@ -79,7 +79,8 @@ def test_driver_selection_roundtrips_host_guest_and_preserves_management(
                 json={"client_id": "test-script", "request_id": "script-context"},
             )
             assert script.status_code == 201
-            assert script.json()["thread"]["id"].startswith("script_")
+            assert script.json()["thread"]["id"].startswith("exec_")
+            assert script.json()["thread"]["origin"] == "exec"
 
     finally:
         asyncio.run(core.close())

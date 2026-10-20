@@ -205,8 +205,8 @@ def test_local_script_saves_only_to_an_explicit_destination(
         asyncio.run(harness.executor.stop())
         harness.store.close()
     assert len(threads) == 1
-    assert threads[0].id.startswith("script_")
-    assert threads[0].origin == "script"
+    assert threads[0].id.startswith("exec_")
+    assert threads[0].origin == "exec"
     assert len(runs) == 1
     assert runs[0].status == "succeeded"
     assert durable_output == (TextPart("done"),)
@@ -384,7 +384,7 @@ def test_script_cancellation_cancels_its_owned_run(tmp_path: Path) -> None:
 
     async def scenario() -> None:
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.SCRIPT)
+            thread = harness.threads.create(prefix=ThreadPrefix.EXEC)
             handle = harness.executor.run(
                 harness.run_spec(
                     thread=thread,

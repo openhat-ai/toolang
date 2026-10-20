@@ -343,7 +343,8 @@ and thread APIs; chore threads cannot be forked or rewound.
 
 Interactive clients submit, rerun, and steer under `/api/v0/chat/runs`;
 these write routes require the chat driver. Noninteractive scripts use the
-`/api/v0/runs` routes below and create script threads at `POST /api/v0/runs/threads`.
+`/api/v0/runs` routes below and create `exec_` threads with origin `exec` at
+`POST /api/v0/runs/threads`.
 Interactive thread creation at `POST /api/v0/threads` creates `chat_` contexts.
 All callers use `client_id` and `request_id` rather than a client-type enum.
 Management, cancellation, inspection, and script execution remain available

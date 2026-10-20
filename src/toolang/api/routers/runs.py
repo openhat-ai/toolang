@@ -62,15 +62,15 @@ _AcceptedRunStream = tuple[LocalRunHandle, EventSubscription]
 
 @router.post(
     "/threads",
-    summary="Create Script Thread",
+    summary="Create Execution Thread",
     status_code=201,
     response_model=ThreadResult,
 )
-def create_script_thread(
+def create_exec_thread(
     core: AgentCoreDep, payload: ThreadCreateRequest
 ) -> ThreadResult:
     thread = core.threads.create(
-        prefix=ThreadPrefix.SCRIPT,
+        prefix=ThreadPrefix.EXEC,
         client_id=payload.client_id,
         request_id=payload.request_id,
     )

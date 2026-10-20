@@ -124,7 +124,7 @@ flow child() -> Text:
 @pytest.mark.parametrize("ending", ["", "run fail", "exec successor"])
 @pytest.mark.parametrize(
     "prefix",
-    [ThreadPrefix.CHAT, ThreadPrefix.TALK, ThreadPrefix.CHORE, ThreadPrefix.SCRIPT],
+    [ThreadPrefix.CHAT, ThreadPrefix.TALK, ThreadPrefix.CHORE, ThreadPrefix.EXEC],
 )
 def test_spawn_root_outlives_source_and_executor_drains_it(
     tmp_path: Path, statement: str, ending: str, prefix: ThreadPrefix
@@ -257,7 +257,7 @@ flow child(_: Text) -> Text:
 
 @pytest.mark.parametrize(
     "prefix",
-    [ThreadPrefix.CHAT, ThreadPrefix.TALK, ThreadPrefix.CHORE, ThreadPrefix.SCRIPT],
+    [ThreadPrefix.CHAT, ThreadPrefix.TALK, ThreadPrefix.CHORE, ThreadPrefix.EXEC],
 )
 def test_agic_spawn_returns_snapshot_without_completion_injection(
     tmp_path: Path, prefix: ThreadPrefix

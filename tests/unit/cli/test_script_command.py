@@ -1692,7 +1692,7 @@ def test_script_routes_quiet_execution_through_a_remote_runtime(
         return RunRecord(
             id="run_remote",
             parent=None,
-            thread=ThreadRef("script_remote"),
+            thread=ThreadRef("exec_remote"),
             control=ControlRef.for_run("run_remote", 0),
             state=ControlRef.for_run("run_remote", 0),
             output=None,
@@ -1853,7 +1853,7 @@ def test_remote_script_cancellation_cancels_the_accepted_run(
         return object()
 
     async def create_thread(*_args, **_kwargs):
-        return "script_remote"
+        return "exec_remote"
 
     monkeypatch.setattr("toolang.execution.remote.RemoteRunClient", Client)
     monkeypatch.setattr(
@@ -2017,7 +2017,7 @@ def test_script_does_not_save_an_unsuccessful_run(
         RunRecord(
             id=f"run_{status}",
             parent=None,
-            thread=ThreadRef("script_thread"),
+            thread=ThreadRef("exec_thread"),
             control=ControlRef.for_run(f"run_{status}", 0),
             state=ControlRef.for_run(f"run_{status}", 0),
             output=None,
@@ -2044,7 +2044,7 @@ def test_quiet_unsuccessful_run_reports_fallback_error(
         RunRecord(
             id="run_failed",
             parent=None,
-            thread=ThreadRef("script_thread"),
+            thread=ThreadRef("exec_thread"),
             control=ControlRef.for_run("run_failed", 0),
             state=ControlRef.for_run("run_failed", 0),
             output=None,
@@ -2145,7 +2145,7 @@ def test_remote_script_rejects_invalid_presentation_settings_before_side_effects
 
     async def create_thread(*_args, **_kwargs):
         effects.append("thread")
-        return "script_remote"
+        return "exec_remote"
 
     async def capture(_http, _endpoint, request, **_kwargs):
         effects.append("attachments")
@@ -2249,7 +2249,7 @@ def test_script_passes_resolved_surfaces_before_starting_run(
             )
 
         async def create_thread(*args, **kwargs):
-            return "script_remote"
+            return "exec_remote"
 
         async def capture(_http, _endpoint, request, **kwargs):
             return request

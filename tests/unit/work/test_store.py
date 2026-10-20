@@ -364,14 +364,14 @@ def test_chore_checkpoints_share_runs_database_without_changing_execution_schema
 
     path = tmp_path / "runs.db"
     runs = RunStore(path)
-    runs.create_thread(thread_id="script_existing", origin="script")
+    runs.create_thread(thread_id="exec_existing", origin="exec")
     with sqlite3.connect(path) as connection:
         version = connection.execute("PRAGMA user_version").fetchone()[0]
     chores = ChoreStore(path)
     try:
         definition = _once()
         chores.reconcile(chores=(definition,), now=NOW)
-        assert runs.get_thread(thread_id="script_existing") is not None
+        assert runs.get_thread(thread_id="exec_existing") is not None
         with sqlite3.connect(path) as connection:
             assert connection.execute("PRAGMA user_version").fetchone()[0] == version
             assert connection.execute("SELECT name FROM chores").fetchone() == (

@@ -2076,14 +2076,14 @@ ControlKind = Literal[
 
 
 class ThreadPrefix(StrEnum):
-    """Prefixes for driver, work, and script contexts."""
+    """Prefixes for driver, work, and invocation contexts."""
 
     CHAT = "chat"
     TALK = "talk"
     CHORE = "chore"
     WORK = "work"
 
-    SCRIPT = "script"
+    EXEC = "exec"
 
 
 def valid_execution_id(value: object) -> bool:

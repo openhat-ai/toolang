@@ -236,7 +236,8 @@ agic answer(_: Part[]) -> Part[]:
         assert models.json()["default"] == ("test/scripted")
         assert agics.json()["default"] is None
         assert flows.json()["default"] is None
-        assert thread_id.startswith("script_")
+        assert thread_id.startswith("exec_")
+        assert created.json()["thread"]["origin"] == "exec"
         assert response.status_code == 200
         assert response.headers["content-type"].startswith("text/event-stream")
         assert response.headers["cache-control"] == "no-cache"
@@ -694,8 +695,8 @@ def test_existing_run_stream_attaches_to_live_events(tmp_path: Path) -> None:
     project_run_start(
         core.store,
         run_id="run_live",
-        thread_id="script_live",
-        origin="script",
+        thread_id="exec_live",
+        origin="exec",
         input=Message.user("hello"),
     )
     app = create_app(
@@ -723,7 +724,7 @@ def test_existing_run_stream_attaches_to_live_events(tmp_path: Path) -> None:
                     control=ControlRef.for_run("run_live", 0),
                     started_at="2026-01-01T00:00:00Z",
                 ),
-                thread_id="script_live",
+                thread_id="exec_live",
                 root_run_id="run_live",
             )
             publication.append(
@@ -732,7 +733,7 @@ def test_existing_run_stream_attaches_to_live_events(tmp_path: Path) -> None:
                     status="succeeded",
                     finished_at="2026-01-01T00:00:01Z",
                 ),
-                thread_id="script_live",
+                thread_id="exec_live",
                 root_run_id="run_live",
             )
 
@@ -764,8 +765,8 @@ def test_child_run_stream_redirects_client_to_root_run(tmp_path: Path) -> None:
     project_run_start(
         core.store,
         run_id="run_root",
-        thread_id="script_tree",
-        origin="script",
+        thread_id="exec_tree",
+        origin="exec",
         input=Message.user("root"),
     )
     project_step(
@@ -786,8 +787,8 @@ def test_child_run_stream_redirects_client_to_root_run(tmp_path: Path) -> None:
     project_run_start(
         core.store,
         run_id="run_child",
-        thread_id="script_tree",
-        origin="script",
+        thread_id="exec_tree",
+        origin="exec",
         input=Message.user("child"),
         root_run_id="run_root",
         parent=StepRef.parse("run_root.0"),

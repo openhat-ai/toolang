@@ -41,7 +41,7 @@ class _Snapshot:
 
 @pytest.mark.parametrize("runnable", ["agic:echo", "agic:_", "flow:_"])
 @pytest.mark.parametrize("override_model", [False, True])
-def test_remote_script_uses_a_script_thread_and_native_progress(
+def test_remote_script_uses_an_exec_thread_and_native_progress(
     tmp_path: Path,
     capsys,
     runnable: str,
@@ -108,8 +108,8 @@ def test_remote_script_uses_a_script_thread_and_native_progress(
 
         assert record.status == "succeeded"
         assert str(record.thread) == threads[0].id
-        assert threads[0].id.startswith("script_")
-        assert threads[0].origin == "script"
+        assert threads[0].id.startswith("exec_")
+        assert threads[0].origin == "exec"
         assert core.store.run_output(run_id=record.id) == (TextPart("remote result"),)
         assert control is not None
         assert isinstance(control.payload, RunControlPayload)
