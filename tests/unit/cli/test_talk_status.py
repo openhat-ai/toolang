@@ -59,7 +59,13 @@ def test_presence_refresh_recovers_expires_and_follows_membership(
         monkeypatch.setattr(tui.time, "time", lambda: clock)
         async with talk_app(tmp_path) as (ui, _):
             rows = [{"member": "agent:alice", "deadline": 101_000}]
-            ui.client.team.side_effect = [rows, BackendUnavailable("offline"), rows, []]
+            ui.client.team.side_effect = [
+                rows,
+                BackendUnavailable("offline"),
+                rows,
+                [],
+                [],
+            ]
             changes = AsyncMock(spec=Changes)
             checks = 0
 
@@ -82,21 +88,22 @@ def test_presence_refresh_recovers_expires_and_follows_membership(
                     )
                 elif checks == 4:
                     assert "#dev(1/1)" in footer
-                    assert ui.client.team.await_count == 3
+                    assert ui.client.team.await_count == 4
                     ui.conversation = conversation_record(
                         ui.conversation_id, "gc", ("agent:bob",), name="dev"
                     )
-                    assert "#dev(?/1)" in fragment_list_to_text(ui.status_text())
+                    assert "#dev(0/1)" in fragment_list_to_text(ui.status_text())
                 else:
                     assert "#dev(0/1)" in footer
                     assert ui.status == ""
                     raise asyncio.CancelledError
-                assert timeout == 0.5
+                assert timeout == 1
 
             changes.wait.side_effect = check
+            await ui.refresh_team()
             with pytest.raises(asyncio.CancelledError):
-                await ui.follow_presence(changes)
-            assert checks == 5 and ui.client.team.await_count == 4
+                await ui.follow_team(changes)
+            assert checks == 5 and ui.client.team.await_count == 5
 
     asyncio.run(scenario())
 

@@ -23,7 +23,7 @@ from toolang.teaming.errors import (
     EventProtocolError,
     EventRecoveryRequired,
 )
-from toolang.teaming.backend.valkey.keys import EVENT_META, EVENT_STREAM
+from toolang.teaming.backend.valkey.keys import EVENT_META, EVENT_STREAM, PREFIX
 from toolang.teaming.events import (
     HubCursor,
     HubScope,
@@ -431,7 +431,7 @@ def test_idle_execution_feed_reset_is_detected_and_recovered(tmp_path):
                         await asyncio.sleep(0.01)
                 old = exporter.epoch
                 await driver._call(
-                    "DEL", *(await driver._call("KEYS", "too:teaming:v1:events:*"))
+                    "DEL", *(await driver._call("KEYS", f"{PREFIX}:events:*"))
                 )
                 # The lifecycle restores its registration independently.
                 await driver.initialize()

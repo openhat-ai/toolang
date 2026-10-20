@@ -39,6 +39,10 @@ preserves those ANSI identities through live rendering and scrollback. Code
 blocks and inline code receive distinct derived backgrounds; block padding and
 trailing cells form one rectangle.
 
+Talk sender names and markers use their member's assigned ANSI or custom RGB
+foreground. Bodies keep their normal foreground and backgrounds. Member-color
+changes affect new rendering; committed scrollback is not recolored.
+
 Both clients resolve one palette before interactive input or run output.
 `TOOLANG_COLOR_SCHEME` accepts `dark`, `light`, or three `#RRGGBB` values in
 `input,queue,code` order. An explicit value bypasses discovery; an explicit code

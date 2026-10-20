@@ -4,7 +4,7 @@ import base64
 
 from ...schemas import conversation_id, target
 
-PREFIX = "too:teaming:v1"
+PREFIX = "too:teaming:v0"
 TEAM_MEMBERS = f"{PREFIX}:team:members"
 PRESENCE = f"{PREFIX}:team:presence"
 TEAM_EVENTS = f"{PREFIX}:team:events"

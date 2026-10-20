@@ -19,6 +19,7 @@ from ...types import (
     MESSAGE_RETENTION,
     STORAGE_BATCH_SIZE,
     TEAM_EVENT_RETENTION,
+    MEMBER_COLORS,
 )
 
 _CONSTANTS = (
@@ -37,6 +38,9 @@ _CONSTANTS = (
         }.items()
     )
     + "\n"
+    + "local member_colors={"
+    + ",".join(f"'{color}'" for color in MEMBER_COLORS)
+    + "}\n"
 )
 
 SNAPSHOT = """
@@ -78,7 +82,11 @@ end
 member(op.actor); member(op.agent); member(op.owner)
 for _,value in ipairs(op.participants or {}) do member(value) end
 if op.agent then capture('roster',KEYS[9],op.agent) end
-if op.action=='team' then
+local creating=op.action=='register' and (
+  (op.agent and redis.call('HEXISTS',KEYS[2],op.agent)==0) or
+  (op.owner and redis.call('HEXISTS',KEYS[2],op.owner)==0)
+) or (op.create_member and op.agent and redis.call('HEXISTS',KEYS[2],op.agent)==0)
+if op.action=='team' or creating then
   expect(KEYS[2],'hash')
   table.insert(hashes,{KEYS[2],redis.call('HLEN',KEYS[2])})
   for _,value in ipairs(redis.call('HKEYS',KEYS[2])) do member(value) end
@@ -159,6 +167,25 @@ local function decode(raw)
   local ok,value=pcall(cjson.decode,raw)
   if not ok or type(value)~='table' then fail('invalid record JSON') end
   return value
+end
+local color_counts=nil
+local function new_member(name,owner)
+  if not color_counts then
+    color_counts={}
+    for _,color in ipairs(member_colors) do color_counts[color]=0 end
+    for _,raw in ipairs(redis.call('HVALS',KEYS[2])) do
+      local color=decode(raw).color
+      if type(color)=='string' and color_counts[color] then
+        color_counts[color]=color_counts[color]+1
+      end
+    end
+  end
+  local selected=member_colors[1]
+  for _,color in ipairs(member_colors) do
+    if color_counts[color]<color_counts[selected] then selected=color end
+  end
+  color_counts[selected]=color_counts[selected]+1
+  return {display_name=string.sub(name,7),owner=owner,created_at=timestamp(),lease=cjson.null,color=selected}
 end
 local function stream_capacity(info)
   if string.match(info['last-generated-id'],'^(%d+)%-')=='18446744073709551615' then fail('stream ID exhausted') end
@@ -450,14 +477,17 @@ if op.root~='' then
   if not managed or cjson.decode(managed).root~=op.root then error('Agent identity changed') end
 end
 -- All validation precedes registration and expiry settlement.
+local human_record=human or new_member(op.owner,cjson.null)
+local agent_record=value
+if member~=op.owner and not value then agent_record=new_member(member,op.owner) end
 if not human then
-  redis.call('HSET',KEYS[2],op.owner,cjson.encode({display_name=string.sub(op.owner,7),owner=cjson.null,created_at=timestamp(),lease=cjson.null}))
+  redis.call('HSET',KEYS[2],op.owner,cjson.encode(human_record))
   event('team.member_added',op.owner,nil,op.owner)
 end
 if redis.call('SADD',KEYS[10],op.owner)==1 then event('conversation.member_added',op.owner,system,op.owner) end
 if member==op.owner then return 1 end
 if not value then
-  value={display_name=string.sub(member,7),owner=op.owner,created_at=timestamp(),lease=cjson.null}
+  value=agent_record
   event('team.member_added',member,nil,op.owner)
 end
 if score and not live then expire(member,nil,'expired') end
@@ -558,9 +588,10 @@ if op.updated=='' then
   redis.call('HDEL',KEYS[9],op.agent)
   if redis.call('HDEL',KEYS[2],op.agent)==1 then event('team.member_removed',op.agent,nil,nil) end
 else
+  local created=not value and new_member(op.agent,op.owner) or nil
   redis.call('HSET',KEYS[9],op.agent,op.updated)
   if not value then
-    redis.call('HSET',KEYS[2],op.agent,cjson.encode({display_name=string.sub(op.agent,7),owner=op.owner,created_at=timestamp(),lease=cjson.null}))
+    redis.call('HSET',KEYS[2],op.agent,cjson.encode(created))
     event('team.member_added',op.agent,nil,nil)
   end
 end

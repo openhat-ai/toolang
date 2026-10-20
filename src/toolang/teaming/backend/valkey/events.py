@@ -95,7 +95,9 @@ class ValkeyEvents:
                 stream_id(value.get("floor", "0-0"))
             public = {}
             for member, raw in _hash(participants).items():
-                info = TeamRecord.decode(member, raw).model_dump(exclude={"lease"})
+                info = TeamRecord.decode(member, raw).model_dump(
+                    exclude={"lease", "color"}
+                )
                 public[member] = json.dumps(info)
             return _hash(meta), origins, public
         except (ValueError, TypeError, AttributeError, MessagingError) as exc:

@@ -42,6 +42,24 @@ async def environment(tmp_path, peer="bob"):
             yield toolset.tools(), context, alice, bob
 
 
+def test_team_tool_projects_member_colors_out_of_its_existing_shape(tmp_path):
+    async def scenario():
+        async with environment(tmp_path) as (tools, context, alice, _):
+            assert all(row.get("color") for row in await alice.team())
+            result = await tools["team"].invoke({}, context)
+            assert result.error is None
+            assert {row["id"] for row in result.output["value"]} == {
+                CONNECTION.human,
+                "agent:alice",
+                "agent:bob",
+            }
+            assert all(
+                set(row) == {"id", "name", "online"} for row in result.output["value"]
+            )
+
+    asyncio.run(scenario())
+
+
 def test_write_peek_and_reply_preserve_application_ids_and_origin(tmp_path):
     async def scenario():
         async with environment(tmp_path) as (tools, context, alice, bob):

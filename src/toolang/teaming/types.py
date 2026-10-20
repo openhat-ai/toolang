@@ -15,6 +15,7 @@ TEAM_EVENT_RETENTION = 100000
 STORAGE_BATCH_SIZE = 128
 SNAPSHOT_RETRIES = 8
 MAX_SAFE_INTEGER = 9007199254740990
+MEMBER_COLORS = ("red", "green", "yellow", "blue", "magenta", "cyan")
 
 
 class AgentTransport(Protocol):

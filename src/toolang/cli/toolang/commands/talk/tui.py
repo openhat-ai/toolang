@@ -34,6 +34,7 @@ from toolang.teaming.schemas import (
     ConversationView,
     Message,
     TeamMember,
+    member_color,
     target,
 )
 
@@ -80,6 +81,7 @@ class TalkTui:
         self.pending = False
         self.cursor = "0-0"
         self.presence: list[TeamMember] | None = None
+        self.colors: dict[str, str] = {}
         self._input_gap_visible = True
         self.prompt = InputBox(
             self.invalidate,
@@ -284,7 +286,13 @@ class TalkTui:
                     )
                 else:
                     console.print(
-                        message_block(message, self.human, width, self.surfaces)
+                        message_block(
+                            message,
+                            self.human,
+                            width,
+                            self.surfaces,
+                            color=self.colors.get(message.sender),
+                        )
                     )
             self._input_gap_visible = True
 
@@ -353,19 +361,27 @@ class TalkTui:
             else:
                 await changes.wait(timeout=delay)
 
-    async def follow_presence(self, changes: Changes) -> None:
-        """Refresh GC availability independently of message delivery."""
+    async def refresh_team(self) -> None:
+        """Share one snapshot for colors and presence; retain colors on failure."""
+        try:
+            async with asyncio.timeout(1):
+                rows = await self.client.team()
+        except (MessagingError, TimeoutError):
+            self.presence = None
+        else:
+            self.presence = rows
+            self.colors = {
+                row["member"]: color
+                for row in rows
+                if (color := member_color(row.get("color"))) is not None
+            }
+        self.invalidate()
+
+    async def follow_team(self, changes: Changes) -> None:
+        """Refresh member presentation independently of message delivery."""
         while True:
-            if any(m.startswith("agent:") for m in self.conversation.participants):
-                try:
-                    async with asyncio.timeout(1):
-                        self.presence = await self.client.team()
-                except (MessagingError, TimeoutError):
-                    self.presence = None
-            else:
-                self.presence = None
-            self.invalidate()
-            await changes.wait(timeout=0.5)
+            await changes.wait(timeout=1)
+            await self.refresh_team()
 
     async def run(self) -> None:
         console = terminal_console(width=self.content_width())
@@ -386,6 +402,7 @@ class TalkTui:
             enabled=is_tty,
         )
         try:
+            await self.refresh_team()
             group = self.conversation.kind == "gc"
             async with self.client.team_changes(
                 self.conversation_id, include_presence=group
@@ -393,8 +410,7 @@ class TalkTui:
 
                 def start_following() -> None:
                     self.app.create_background_task(self.follow(changes))
-                    if group:
-                        self.app.create_background_task(self.follow_presence(changes))
+                    self.app.create_background_task(self.follow_team(changes))
 
                 await self.app.run_async(pre_run=start_following)
         finally:

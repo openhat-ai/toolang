@@ -17,17 +17,17 @@ from rich.text import Text
 from toolang.cli.common.terminal_surfaces import TerminalSurfaces
 from toolang.cli.common.control_bars import CONTROL_BAR_MARK, RUN_CONTROL_ACCENT
 from toolang.cli.common.markdown import TerminalMarkdown
-from toolang.teaming.schemas import Message, target
+from toolang.teaming.schemas import Message, member_color, target
+from toolang.teaming.types import MEMBER_COLORS
 
 _ESCAPE = re.compile(
     r"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b\[[0-?]*[ -/]*[@-~]|\x1b[@-_]"
 )
-_AGENT_COLORS = ("red", "green", "yellow", "blue", "magenta", "cyan")
 
 
 def _agent_color(name: str) -> str:
     """Keep each name's ANSI color stable across processes and conversations."""
-    return _AGENT_COLORS[sha256(name.encode("utf-8")).digest()[0] % len(_AGENT_COLORS)]
+    return MEMBER_COLORS[sha256(name.encode("utf-8")).digest()[0] % len(MEMBER_COLORS)]
 
 
 def display_text(value: str) -> str:
@@ -66,6 +66,8 @@ def message_block(
     identity: str,
     width: int,
     surfaces: TerminalSurfaces,
+    *,
+    color: str | None = None,
 ) -> RenderableType:
     sender = target(message.sender)
     agent = sender.kind == "agent"
@@ -73,7 +75,12 @@ def message_block(
     width = max(1, width)
     gutter = min(8, width // 5) if right else 0
     body_width = max(1, width - gutter)
-    header_style = f"{_agent_color(sender.name)} bold not dim" if agent else "not dim"
+    color = member_color(color)
+    header_style = "not dim"
+    if agent:
+        header_style = f"{color or _agent_color(sender.name)} bold not dim"
+    elif color:
+        header_style = f"{color} not dim"
     name = Text(
         display_text(sender.name),
         style=header_style,
@@ -99,7 +106,7 @@ def message_block(
     if padding:
         marker = Text(
             "•" if agent else CONTROL_BAR_MARK,
-            style=header_style if agent else f"{RUN_CONTROL_ACCENT} not dim",
+            style=header_style if agent or color else f"{RUN_CONTROL_ACCENT} not dim",
             justify="right" if right else "left",
         )
         columns = Table.grid(padding=0, expand=True)

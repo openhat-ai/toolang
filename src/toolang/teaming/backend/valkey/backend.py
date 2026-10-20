@@ -49,6 +49,7 @@ from ...schemas import (
     conversation_id,
     conversation_name,
     participant,
+    member_color,
     target,
     TalkCursor,
     rules_revision,
@@ -200,6 +201,7 @@ class ValkeyBackend:
         }
         request.update(
             prefix=PREFIX,
+            create_member=bool(op.get("updated")),
             rules=op.get("inspect_rules", False),
             action=op.get("action")
             if op.get("action") in {"team", "roster", "contacts", "register"}
@@ -286,7 +288,11 @@ class ValkeyBackend:
         raise MessagingError("Teaming state changed repeatedly; retry the operation")
 
     async def team(self) -> list[TeamMember]:
-        return list(json.loads(await self._operation(scripts.READ, {"action": "team"})))
+        rows = list(json.loads(await self._operation(scripts.READ, {"action": "team"})))
+        for row in rows:
+            if "color" in row:
+                row["color"] = member_color(row["color"])
+        return rows
 
     async def roster(self) -> dict[str, dict]:
         rows = await self._operation(scripts.READ, {"action": "roster"})

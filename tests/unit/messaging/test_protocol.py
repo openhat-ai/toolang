@@ -22,6 +22,7 @@ from toolang.teaming.backend.valkey.keys import (
     EVENT_AGENTS,
     convo_key,
     name_key,
+    talk_key,
 )
 from toolang.teaming.ids import dm_id
 from toolang.teaming.errors import (
@@ -435,7 +436,7 @@ def test_partial_datasets_are_never_initialized():
     async def scenario():
         for key in (
             CONVOS,
-            "too:teaming:v1:agent:alice:talk",
+            talk_key("agent:alice"),
             EVENT_META,
             EVENT_AGENTS,
         ):
