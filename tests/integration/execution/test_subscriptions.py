@@ -553,7 +553,6 @@ def test_root_snapshot_rejects_recorded_parent_end_with_active_child(tmp_path):
         thread_id="chat_tree",
         input=Message.user("child"),
         parent=StepRef.parse("run_root.0"),
-        root_run_id="run_root",
     )
     store.finish_run(run_id="run_root", status="succeeded")
 

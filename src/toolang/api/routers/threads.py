@@ -58,13 +58,11 @@ def threads(
     core: AgentCoreDep,
     limit: int = Query(default=50),
     kind: ThreadKind | None = None,
-    channel: str | None = None,
     status: str | None = None,
 ) -> list[ThreadInfo]:
     return core.history.list_threads(
         limit=limit,
         kind=kind,
-        channel=channel,
         status=status,
     )
 

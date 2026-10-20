@@ -127,10 +127,8 @@ def project_run_start(
     run_id: str,
     thread_id: str | ThreadRef,
     input: Message,
-    root_run_id: str | None = None,
     runnable_kind: str = "agic",
     runnable_name: str | None = None,
-    call_kind: str = "top",
     metadata: Mapping[str, Any] | None = None,
     request_id: str | None = None,
     created_at: str | None = None,
@@ -143,8 +141,6 @@ def project_run_start(
     created = created_at or utc_now()
     started = started_at or created
     run_context = dict(context or metadata or {})
-    del root_run_id
-    del call_kind
     thread_id = str(thread_id)
     if store.get_thread(thread_id=thread_id) is None:
         store.create_thread(

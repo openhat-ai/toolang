@@ -33,6 +33,7 @@ import toolang.cli.toolang.commands.plugin as plugin_commands
 import toolang.cli.toolang.commands.thread as thread_commands
 import toolang.cli.toolang.main as cli
 from tests.support.execution_fixtures import (
+    accept_run,
     project_run_control,
     project_run_end,
     project_run_start,
@@ -2483,20 +2484,30 @@ def hosted_agent(monkeypatch):
         asyncio.run(core.close())
 
 
+@pytest.mark.parametrize("status", ["pending", "running"])
 def test_run_controls_reject_stale_history_without_live_ownership(
-    tmp_path: Path, hosted_agent
+    tmp_path: Path, hosted_agent, status: str
 ) -> None:
     root = tmp_path / "toolang"
     _create_agent(root)
     layout = AgentLayout.resident(root, "alice")
     store = RunStore(layout.run_store)
     try:
-        project_run_start(
+        store.create_thread(thread_id="chat_active")
+        run, _ = accept_run(
             store,
             run_id="run_active",
-            thread_id="chat_active",
+            parent=None,
+            thread="chat_active",
             input=Message.user("Start"),
+            context={},
+            request_id=None,
+            created_at="2026-10-20T00:00:00Z",
         )
+        if status == "running":
+            store.begin_run(
+                run_id=run.id, started_at=run.created_at, control=run.control
+            )
     finally:
         store.close()
 

@@ -347,9 +347,12 @@ these write routes require the chat driver. Noninteractive scripts use the
 `/api/v0/runs` routes below and create `exec_` threads with derived kind `exec` at
 `POST /api/v0/runs/threads`.
 Interactive thread creation at `POST /api/v0/threads` creates `chat_` contexts.
-Thread responses omit classification fields; the ID prefix identifies the kind.
+Thread responses omit classification fields and `channel`; the ID prefix
+identifies the kind.
 Thread listing filters with `kind=chat|talk|chore|work|exec`; there is no Thread
-`origin` field or filter.
+`origin` or `channel` filter. Status `running` includes pending and running Runs;
+`active_run.status` retains the actual Run state. CLI steer/cancel use the same
+active-state definition as HTTP controls.
 All callers use `client_id` and `request_id` rather than a client-type enum.
 Management, cancellation, inspection, and script execution remain available
 when chat is disabled. See [driver selection](drivers.md).
@@ -403,7 +406,8 @@ returns HTTP 200 SSE, rather than a control receipt.
 
 Thread `rewind` and `fork` request bodies take an optional `run_id` anchor and
 `request_id` and `client_id`. An omitted run ID selects the last visible run.
-Only chat threads can be rewound or forked.
+Both operations accept every Thread kind and require a visible terminal root
+anchor; rewind also requires an idle Thread.
 
 Non-streaming `steer`, `cancel`, and `rerun` return
 `{run: RunDetail, command: ControlInfo}`. Steer/rerun use HTTP 202; cancel

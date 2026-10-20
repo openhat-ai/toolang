@@ -637,7 +637,6 @@ class ThreadInfo:
     title: str
     created_at: str
     updated_at: str
-    channel: str
     status: str
     created_by: ThreadControlRefData
     head: ThreadControlRefData
@@ -671,7 +670,6 @@ class ThreadInfo:
                 id=thread.id,
                 title=title,
                 created_at=thread.created_at,
-                channel=_thread_channel(thread.kind),
                 status="idle",
                 updated_at=thread.updated_at,
                 created_by=ThreadControlRefData(thread=thread.id, index=0),
@@ -682,12 +680,14 @@ class ThreadInfo:
             )
         last = runs[-1]
         latest_root = next(run for run in reversed(runs) if run.parent is None)
-        active = next((run for run in reversed(runs) if run.status == "running"), None)
+        active = next(
+            (run for run in reversed(runs) if run.status in {"pending", "running"}),
+            None,
+        )
         return cls(
             id=thread.id,
             title=message_summary(input_parts) or thread.kind.value,
             created_at=thread.created_at,
-            channel=_thread_channel(thread.kind),
             status="running" if active is not None else "idle",
             updated_at=max(last.finished_at or last.started_at, thread.updated_at),
             created_by=ThreadControlRefData(thread=thread.id, index=0),
@@ -935,10 +935,6 @@ class ThreadDetail(ThreadInfo):
             **{item.name: getattr(info, item.name) for item in fields(ThreadInfo)},
             runs=list(runs),
         )
-
-
-def _thread_channel(kind: ThreadKind) -> str:
-    return "terminal" if kind == ThreadKind.CHAT else ""
 
 
 def _output_parts(output: Output | None) -> tuple[Part, ...]:

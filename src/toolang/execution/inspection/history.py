@@ -89,7 +89,6 @@ class RunHistory:
         *,
         limit: int | None = 50,
         kind: ThreadKind | None = None,
-        channel: str | None = None,
         status: str | None = None,
     ) -> list[ThreadInfo]:
         """Return filtered thread summaries in most-recently-updated order."""
@@ -101,7 +100,6 @@ class RunHistory:
             item
             for item in items
             if (kind is None or item.kind == kind)
-            and (channel is None or item.channel == channel)
             and (status is None or item.status == status)
         ]
         ordered = sorted(filtered, key=lambda item: item.updated_at, reverse=True)

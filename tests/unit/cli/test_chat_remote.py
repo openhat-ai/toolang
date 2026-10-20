@@ -256,7 +256,6 @@ def _thread(thread_id: str = "chat_remote") -> ThreadInfo:
         title="chat",
         created_at="2026-08-25T00:00:00Z",
         updated_at="2026-08-25T00:00:00Z",
-        channel="terminal",
         status="idle",
         created_by=ThreadControlRefData(thread=thread_id, index=0),
         head=ThreadControlRefData(thread=thread_id, index=0),

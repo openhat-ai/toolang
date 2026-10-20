@@ -321,8 +321,8 @@ def _active_run_id(history: RunHistory, target: str) -> str:
         run = history.get_run(target)
         if run is None:
             raise ClickException(f"run not found: {target}")
-        if run.status != "running":
-            raise ClickException(f"run is not running: {target}")
+        if run.status not in {"pending", "running"}:
+            raise ClickException(f"run is not active: {target}")
         return run.id
     thread = history.get_thread(target, run_limit=0)
     if thread is None:

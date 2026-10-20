@@ -786,7 +786,6 @@ def test_child_run_stream_redirects_client_to_root_run(tmp_path: Path) -> None:
         run_id="run_child",
         thread_id="exec_tree",
         input=Message.user("child"),
-        root_run_id="run_root",
         parent=StepRef.parse("run_root.0"),
     )
     app = create_app(
