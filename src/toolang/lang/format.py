@@ -16,13 +16,11 @@ from .types import is_generated_ref
 from .text import dedent_text_lines, source_lines, text_indent_width
 
 
-_RUNNABLE_HEADER_RE = re.compile(
-    r"^(?P<kind>agic|flow)(?P<rest>.*):(?P<suffix>[ \t]*(?:#.*)?)$"
-)
-_STRUCT_HEADER_RE = re.compile(r"^struct(?P<rest>.*):(?P<suffix>[ \t]*(?:#.*)?)$")
+_RUNNABLE_HEADER_RE = re.compile(r"^(?P<kind>agic|flow)(?P<rest>.*):$")
+_STRUCT_HEADER_RE = re.compile(r"^struct(?P<rest>.*):$")
 _WITH_LINE_RE = re.compile(r"^with[ \t]+(?P<kind>\S+)[ \t]+(?P<reference>.+?)$")
 _DECL_HEADER_RE = re.compile(
-    r"^(?P<kind>psyche|skill|service|prompt|task|chore)[ \t]+(?P<name>[^:\s]+)[ \t]*:"
+    r"^(?P<kind>psyche|skill|service|prompt|chore)[ \t]+(?P<name>[^:\s]+)[ \t]*:"
     r"(?P<body>[ \t]*.*)$"
 )
 _NAMED_BLOCK_HEADER_RE = re.compile(
@@ -40,21 +38,21 @@ _COMMENT_SPLIT_KINDS = {
     "block_body",
 }
 _FLOW_STATEMENT_TYPES = {
-    "let_statement",
-    "run_statement",
-    "spawn_statement",
-    "exec_statement",
-    "seek_statement",
-    "ask_statement",
-    "generate_statement",
-    "reduce_statement",
-    "map_statement",
-    "keep_statement",
-    "drop_statement",
-    "sort_statement",
-    "repeat_statement",
+    "let_stmt",
+    "run_stmt",
+    "spawn_stmt",
+    "exec_stmt",
+    "await_stmt",
+    "seek_stmt",
+    "ask_stmt",
+    "generate_stmt",
+    "reduce_stmt",
+    "map_stmt",
+    "keep_stmt",
+    "drop_stmt",
+    "sort_stmt",
+    "repeat_stmt",
     "until_clause",
-    "inline_agic_body",
 }
 _DECLARATION_TYPES = {
     "with",
@@ -63,7 +61,6 @@ _DECLARATION_TYPES = {
     "skill",
     "service",
     "prompt",
-    "task",
     "chore",
     "context",
     "instruct",
@@ -73,10 +70,11 @@ _DECLARATION_TYPES = {
 _COMMENT_TYPES = {
     "plain_comment",
     "shebang_comment",
-    "item_doc_comment",
-    "module_doc_comment",
+    "item_doc",
+    "param_doc",
+    "program_doc",
 }
-_TEXT_TYPES = {"text_body", "unroled_message", "implicit_run_statement"}
+_TEXT_TYPES = {"content"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -235,7 +233,7 @@ def _runnable_clause(connector: str, runnable: str) -> str:
 def _format_source_lines(lines: list[str], *, root: Node, tab_size: int) -> list[str]:
     formatted: list[_Line] = []
     text_bodies: dict[int, dict[int, str]] = {}
-    previous_doc_indent: str | None = None
+    previous_doc_indent: int | None = None
 
     for row, raw_line in enumerate(lines):
         bom_size = 0
@@ -244,16 +242,20 @@ def _format_source_lines(lines: list[str], *, root: Node, tab_size: int) -> list
             bom_size = len("\ufeff".encode("utf-8"))
         line = raw_line.rstrip()
         prefix = _leading_whitespace(line)
+        indent_width = text_indent_width(line)
         if not line.strip():
             formatted.append(_Line("", "blank"))
             previous_doc_indent = None
             continue
-        node = root.named_descendant_for_point_range(
+        node = root.descendant_for_point_range(
             (row, bom_size + len(prefix)),
             (row, bom_size + len(prefix) + len(line[len(prefix)].encode("utf-8"))),
         )
         if node is None:
             raise ToolangFormatError(f"Missing syntax node at line {row + 1}.")
+        node = next(
+            (item for item in _ancestors(node) if item.type in _COMMENT_TYPES), node
+        )
         ancestors = tuple(_ancestors(node))
         text = next((item for item in ancestors if item.type in _TEXT_TYPES), None)
         kind = _source_line_kind(line, node=node, ancestors=ancestors)
@@ -264,16 +266,20 @@ def _format_source_lines(lines: list[str], *, root: Node, tab_size: int) -> list
             depth = 1 + sum(
                 1
                 for item in ancestors
-                if item.type in {"repeat_statement", "reduce_statement"}
-                and text_indent_width(lines[item.start_point.row])
-                < text_indent_width(line)
+                if item.type in {"repeat_stmt", "reduce_stmt"}
+                and text_indent_width(lines[item.start_point.row]) < indent_width
             )
-        if node.type == "indented_raw_text" and text is not None:
+        if (
+            node.type == "text"
+            and node.parent is not None
+            and node.parent.type == "content"
+            and text is not None
+        ):
             if text.id not in text_bodies:
                 rows = [
                     child.start_point.row
                     for child in text.named_children
-                    if child.type == "text_body_line"
+                    if child.type == "text"
                 ]
                 text_bodies[text.id] = dict(
                     zip(
@@ -294,13 +300,15 @@ def _format_source_lines(lines: list[str], *, root: Node, tab_size: int) -> list
                 flow_ancestry=_flow_ancestry(ancestors),
                 text_owner=text.id if text is not None else None,
                 separate=previous_doc_indent is not None
-                and previous_doc_indent != prefix
+                and previous_doc_indent != indent_width
                 and _leading_whitespace(formatted[-1].value) == rendered_prefix,
                 follows_doc=previous_doc_indent is not None
-                and previous_doc_indent == prefix,
+                and previous_doc_indent == indent_width,
             )
         )
-        previous_doc_indent = prefix if node.type == "item_doc_comment" else None
+        previous_doc_indent = (
+            indent_width if node.type in {"item_doc", "param_doc"} else None
+        )
 
     return _normalize_blank_lines(
         _order_program_comments(_order_directive_sections(formatted))
@@ -329,11 +337,8 @@ def _flow_ancestry(ancestors: tuple[Node, ...]) -> tuple[tuple[int, str], ...]:
     return tuple(
         (node.id, node.type)
         for node in reversed(ancestors)
-        if node.type == "implicit_run_statement"
-        or (
-            node.type in _FLOW_STATEMENT_TYPES
-            and node.type not in {"inline_agic_body", "until_clause"}
-        )
+        if node.type == "implicit_run_stmt"
+        or (node.type in _FLOW_STATEMENT_TYPES and node.type != "until_clause")
     )
 
 
@@ -342,7 +347,7 @@ def _source_line_kind(line: str, *, node: Node, ancestors: tuple[Node, ...]) -> 
     if not _leading_whitespace(line):
         if node.type == "shebang_comment":
             return "shebang"
-        if node.type == "module_doc_comment":
+        if node.type == "program_doc":
             return "program_comment"
         if node.type in _COMMENT_TYPES:
             return "top_comment"
@@ -351,18 +356,23 @@ def _source_line_kind(line: str, *, node: Node, ancestors: tuple[Node, ...]) -> 
         return "directive"
     if "agic_body" not in types:
         return "indented"
-    if node.type == "indented_raw_text":
-        return "message_body" if "unroled_message" in types else "block_body"
+    if (
+        node.type == "text"
+        and node.parent is not None
+        and node.parent.type == "content"
+    ):
+        message = next((item for item in ancestors if item.type == "message"), None)
+        return (
+            "message_body"
+            if message is not None and message.child_by_field_name("role") is None
+            else "block_body"
+        )
     if node.type in _COMMENT_TYPES:
         return "comment"
     owner = next((item for item in ancestors if item.type == "message"), None)
     if owner is not None:
-        text = next(
-            (item for item in owner.named_children if item.type == "text_inline"), None
-        )
-        block = text is not None and any(
-            item.type == "text_block" for item in text.named_children
-        )
+        text = owner.child_by_field_name("content")
+        block = text is not None and text.start_point.row > owner.start_point.row
         return "message_block_header" if block else "message_header"
     return "message_body"
 
@@ -381,6 +391,36 @@ def _format_syntax_line(stripped_line: str, *, node: Node) -> str:
     if node.type in _COMMENT_TYPES:
         return _format_comment_line(stripped_line, node=node)
 
+    if comment := _line_comment(node):
+        offset = comment.start_point.column - node.start_point.column
+        encoded = stripped_line.encode("utf-8")
+        syntax = encoded[:offset].decode("utf-8").rstrip()
+        suffix = encoded[offset:].decode("utf-8")
+        return f"{_format_syntax(syntax, node=node)}  {suffix}"
+    return _format_syntax(stripped_line, node=node)
+
+
+def _line_comment(node: Node) -> Node | None:
+    """Find the CST comment, including inside a bound operation on this line."""
+
+    row = node.start_point.row
+    owner = node
+    for ancestor in _ancestors(node):
+        if ancestor.start_point.row != row:
+            break
+        owner = ancestor
+    pending = [owner]
+    while pending:
+        current = pending.pop()
+        if current.type == "plain_comment":
+            return current
+        pending.extend(
+            child for child in current.named_children if child.start_point.row == row
+        )
+    return None
+
+
+def _format_syntax(stripped_line: str, *, node: Node) -> str:
     ancestors = _ancestor_types(node)
     declaration = next(
         (
@@ -400,7 +440,7 @@ def _format_syntax_line(stripped_line: str, *, node: Node) -> str:
         return _format_runnable_header_line(stripped_line)
     if top_level in {"context", "instruct"}:
         return _format_named_block_header_line(stripped_line)
-    if top_level in {"psyche", "skill", "service", "prompt", "task", "chore"}:
+    if top_level in {"psyche", "skill", "service", "prompt", "chore"}:
         return _format_decl_header_line(stripped_line)
 
     if "field" in ancestors:
@@ -408,7 +448,8 @@ def _format_syntax_line(stripped_line: str, *, node: Node) -> str:
     if "property" in ancestors:
         return _format_property_line(stripped_line)
     if "directive" in ancestors:
-        return _format_directive_line(stripped_line)
+        directive = next(item for item in _ancestors(node) if item.type == "directive")
+        return _format_directive_line(stripped_line, node=directive)
     if "message" in ancestors:
         if match := _MESSAGE_HEADER_RE.match(stripped_line):
             return _format_message_header_line(match)
@@ -423,7 +464,8 @@ def _ancestor_types(node: Node) -> set[str]:
 
 
 def _indent_depth(node: Node) -> int:
-    ancestors = _ancestor_types(node)
+    chain = tuple(_ancestors(node))
+    ancestors = {current.type for current in chain}
     if ancestors & {
         "psyche",
         "skill",
@@ -431,28 +473,57 @@ def _indent_depth(node: Node) -> int:
         "prompt",
     }:
         return 1
-    if ancestors & {"struct_body", "cap_body", "job_body"}:
+    if ancestors & {"struct_body", "cap_body", "chore_body"}:
         return 1
+    text_depth = sum(
+        current.type == "content"
+        and current.parent is not None
+        and current.start_point.row > _content_header_row(current)
+        for current in chain
+    )
     if "agic_body" in ancestors:
-        return 1 + sum(1 for current in _ancestors(node) if current.type == "text_body")
+        return 1 + text_depth
     if "flow_body" in ancestors:
-        return 1 + sum(
+        return (
             1
-            for current in _ancestors(node)
-            if current.type == "text_body"
-            or (
-                current.type == "repeat_statement"
-                and current.start_point.row < node.start_point.row
-            )
-            or (
-                current.type == "reduce_statement"
-                and (initial := current.child_by_field_name("from")) is not None
-                and node.start_point.row >= initial.start_point.row
+            + text_depth
+            + sum(
+                1
+                for current in chain
+                if (
+                    current.type == "repeat_stmt"
+                    and current.start_point.row < node.start_point.row
+                )
+                or (
+                    current.type == "reduce_stmt"
+                    and (
+                        marker := next(
+                            (
+                                child
+                                for child in current.children
+                                if child.type == "initial"
+                            ),
+                            None,
+                        )
+                    )
+                    is not None
+                    and node.start_point.row >= marker.start_point.row
+                )
             )
         )
-    if ancestors & {"context", "instruct"} and "text_body" in ancestors:
-        return 1
+    if ancestors & {"context", "instruct"}:
+        return text_depth
     return 0
+
+
+def _content_header_row(content: Node) -> int:
+    owner = content.parent
+    assert owner is not None
+    if owner.type == "reduce_stmt" and owner.child_by_field_name("initial") == content:
+        return next(
+            child.start_point.row for child in owner.children if child.type == "initial"
+        )
+    return owner.start_point.row
 
 
 def _ancestors(node: Node) -> Iterator[Node]:
@@ -463,25 +534,18 @@ def _ancestors(node: Node) -> Iterator[Node]:
 
 
 def _format_with_line(stripped_line: str) -> str:
-    body, comment = _split_inline_comment(stripped_line)
-    match = _WITH_LINE_RE.match(body)
+    match = _WITH_LINE_RE.match(stripped_line)
     if match is None:
         return stripped_line
-    return f"with {match.group('kind')} {match.group('reference').strip()}{comment}"
+    return f"with {match.group('kind')} {match.group('reference').strip()}"
 
 
 def _format_comment_line(stripped_line: str, *, node: Node) -> str:
-    if node.type in {"item_doc_comment", "module_doc_comment"}:
-        marker = (
-            "##"
-            if node.type == "item_doc_comment"
-            else "##!"
-            if stripped_line.startswith("##!")
-            else "#@"
-        )
-        if tag := node.child_by_field_name("parameter"):
-            name = tag.child_by_field_name("name")
-            description = tag.child_by_field_name("description")
+    if node.type in {"item_doc", "param_doc", "program_doc"}:
+        marker = "#@" if node.type == "program_doc" else "##"
+        if node.type == "param_doc":
+            name = node.child_by_field_name("param")
+            description = node.child_by_field_name("description")
             assert name is not None and description is not None
             assert name.text is not None and description.text is not None
             body = f"@param {name.text.decode('utf-8')} {description.text.decode('utf-8').strip()}"
@@ -516,34 +580,31 @@ def _format_struct_header_line(stripped_line: str) -> str:
     if match is None:
         return stripped_line
     rest = match.group("rest").strip()
-    suffix = match.group("suffix").strip()
-    return f"struct{f' {rest}' if rest else ''}:{f'  {suffix}' if suffix else ''}"
+    return f"struct{f' {rest}' if rest else ''}:"
 
 
 def _format_struct_body_line(stripped_line: str) -> str:
-    body, comment = _split_inline_comment(stripped_line)
     field_match = re.fullmatch(
         r"(?P<name>[a-z][a-z0-9_-]*)[ \t]*(?P<optional>\?)?[ \t]*:[ \t]*"
         r"(?P<type>[A-Za-z][A-Za-z0-9]*(?:\[\])*)",
-        body,
+        stripped_line,
     )
     if field_match is None:
         return stripped_line
     return (
         f"{field_match.group('name')}{field_match.group('optional') or ''}: "
-        f"{field_match.group('type')}{comment}"
+        f"{field_match.group('type')}"
     )
 
 
 def _format_property_line(stripped_line: str) -> str:
-    body, comment = _split_inline_comment(stripped_line)
     match = re.fullmatch(
         r"(?P<key>[a-z][a-z0-9_]*(_[a-z0-9]+)*)[ \t]*=[ \t]*(?P<value>.*)",
-        body,
+        stripped_line,
     )
     if match is None:
         return stripped_line
-    return f"{match.group('key')} = {match.group('value').strip()}{comment}".rstrip()
+    return f"{match.group('key')} = {match.group('value').strip()}".rstrip()
 
 
 def _format_runnable_header_line(stripped_line: str) -> str:
@@ -559,11 +620,7 @@ def _format_runnable_header_line(stripped_line: str) -> str:
     name, params = _parse_runnable_rest(rest)
     rendered_name = f" {name}" if name else ""
     rendered_params = "" if params is None else f"({_format_signature_params(params)})"
-    suffix = match.group("suffix").strip()
-    return (
-        f"{match.group('kind')}{rendered_name}{rendered_params}{output}:"
-        f"{f'  {suffix}' if suffix else ''}"
-    )
+    return f"{match.group('kind')}{rendered_name}{rendered_params}{output}:"
 
 
 def _format_signature_params(raw: str) -> str:
@@ -588,22 +645,22 @@ def _format_signature_params(raw: str) -> str:
     return ", ".join(rendered)
 
 
-def _format_directive_line(stripped_line: str) -> str:
-    body, comment = _split_inline_comment(stripped_line)
+def _format_directive_line(stripped_line: str, *, node: Node) -> str:
+    value = node.child_by_field_name("value")
+    query = value is not None and value.type == "query_value"
     match = re.fullmatch(
         r"(?P<key>models|tools|skills|services|psyches|prompts|hands|handoffs|recall|lanes|instruct|context)"
         r"[ \t]*(?P<op>=|\+=|-=)[ \t]*(?P<values>.*)",
-        body,
+        stripped_line,
     )
     if match is None:
         return stripped_line
     values = (
-        _format_csv_values(match.group("values"))
-        if match.group("key")
-        in {"hands", "handoffs", "recall", "lanes", "instruct", "context"}
-        else format_query_text(match.group("values"))
+        format_query_text(match.group("values"))
+        if query
+        else _format_csv_values(match.group("values"))
     )
-    return f"{match.group('key')} {match.group('op')} {values}{comment}".rstrip()
+    return f"{match.group('key')} {match.group('op')} {values}".rstrip()
 
 
 def _format_message_header_line(match: re.Match[str]) -> str:
@@ -615,7 +672,7 @@ def _format_message_header_line(match: re.Match[str]) -> str:
 
 def _format_flow_statement_line(stripped_line: str, *, node: Node) -> str:
     binding = next(
-        (parent for parent in _ancestors(node) if parent.type == "let_statement"),
+        (parent for parent in _ancestors(node) if parent.type == "let_stmt"),
         None,
     )
     if binding is not None and binding.child_by_field_name("value") is not None:
@@ -623,19 +680,29 @@ def _format_flow_statement_line(stripped_line: str, *, node: Node) -> str:
         return f"{_collapse_syntax_space(before)} = {content.strip()}".rstrip()
     before, separator, after = stripped_line.partition(":")
     rendered = _collapse_syntax_space(before)
-    nested = binding.child_by_field_name("statement") if binding is not None else None
+    nested = binding.child_by_field_name("stmt") if binding is not None else None
     if (
         binding is not None
         and nested is not None
-        and nested.type == "spawn_statement"
-        and binding.child_by_field_name("name") is None
+        and nested.type == "spawn_stmt"
+        and binding.child_by_field_name("local") is None
         and rendered.startswith("let spawn")
     ):
         rendered = rendered.removeprefix("let ")
+    rendered = re.sub(
+        r"\b([0-9]+) (lanes?|times?)\b",
+        lambda match: _unit_phrase(match[1], match[2]),
+        rendered,
+    )
     if not separator:
         return rendered
     body = after.strip()
     return f"{rendered}:" if not body else f"{rendered}: {body}"
+
+
+def _unit_phrase(digits: str, unit: str) -> str:
+    count = digits.lstrip("0") or "0"
+    return f"{count} {unit.rstrip('s')}{'' if count == '1' else 's'}"
 
 
 def _collapse_syntax_space(value: str) -> str:
@@ -655,7 +722,7 @@ def _order_program_comments(lines: list[_Line]) -> list[_Line]:
     return [
         *prefix,
         *(line for line in body if line.kind == "program_comment"),
-        # A moved module comment must still interrupt item-doc attachment.
+        # A moved program comment must still interrupt item-doc attachment.
         *(
             _Line("", "blank") if line.kind == "program_comment" else line
             for line in body
@@ -715,8 +782,8 @@ def _normalize_blank_lines(lines: list[_Line]) -> list[str]:
             # or the last nested child with the following outer statement.
             boundary = next(
                 (
-                    (before[1] == "implicit_run_statement")
-                    != (after[1] == "implicit_run_statement")
+                    (before[1] == "implicit_run_stmt")
+                    != (after[1] == "implicit_run_stmt")
                     for before, after in zip(previous.flow_ancestry, line.flow_ancestry)
                     if before[0] != after[0]
                 ),
@@ -855,31 +922,6 @@ def _parse_runnable_rest(rest: str) -> tuple[str | None, str | None]:
         return rest.strip() or None, None
     name = rest[:params_start].strip() or None
     return name, rest[params_start + 1 : params_end]
-
-
-def _split_inline_comment(line: str) -> tuple[str, str]:
-    quoted = False
-    escaped = False
-    comment_start: int | None = None
-    for index, char in enumerate(line):
-        if quoted:
-            if escaped:
-                escaped = False
-            elif char == "\\":
-                escaped = True
-            elif char == '"':
-                quoted = False
-            continue
-        if char == '"':
-            quoted = True
-        elif char == "#" and (index == 0 or line[index - 1].isspace()):
-            comment_start = index
-            break
-    if comment_start is None:
-        return line.rstrip(), ""
-    body = line[:comment_start].rstrip()
-    comment = line[comment_start:].strip()
-    return body, f"  {comment}" if body else comment
 
 
 def _leading_whitespace(line: str) -> str:

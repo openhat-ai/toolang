@@ -31,6 +31,7 @@ HtmlOption = Annotated[
 ]
 
 _PALETTE = {
+    "error": "bold red",
     "comment": "dim",
     "punctuation": "dim",
     "keyword": "magenta",

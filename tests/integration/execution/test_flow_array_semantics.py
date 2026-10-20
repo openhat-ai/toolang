@@ -177,7 +177,7 @@ def test_outer_arrays_are_identical_across_boundaries(
         "drop last 1",
         "sort ascending by: {{_}}",
         "reduce -> Json: {{_}}",
-        "reduce -> Json:\n    {{_}}\n    from: []",
+        "reduce -> Json:\n    {{_}}\n    initial: []",
     ],
 )
 def test_open_json_nonarrays_fail_inside_step_without_child_calls(
@@ -298,7 +298,7 @@ def test_empty_reduce_returns_typed_initializer_without_child_calls(
         source=(
             f"agic combine(_: Number) -> {output_type}:\n  {{{{_}}}} {{{{_1._}}}}\n"
             f"flow main(_: Text[], initial: {output_type}) -> {output_type}:\n"
-            f"{prefix}  {statement}:\n{body}    from: {initializer}\n"
+            f"{prefix}  {statement}:\n{body}    initial: {initializer}\n"
         ),
         responses=[],
     )

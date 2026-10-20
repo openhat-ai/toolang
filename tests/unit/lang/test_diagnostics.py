@@ -26,9 +26,14 @@ def rendered(error, source):
     [
         ("flow work(value: Text:\n  pass\n", "Expected ')'", 1, 22),
         ("struct X:\n  field:\n", "Expected a field type", 2, 9),
-        ("flow work:\n  sort these items\n", "Malformed flow statement 'sort'", 2, 3),
-        ("agic review:\n  user, broken\n", "Malformed message header 'user'", 2, 3),
-        ("flow work(value: ):\n  run\n  repeat:\n", "flow block", 1, 1),
+        ("flow work:\n  sort these items\n", "Parse error in flow block", 2, 1),
+        ("agic review:\n  user, broken\n", "Parse error in agic block", 2, 1),
+        (
+            "flow work(value: ):\n  run\n  repeat:\n",
+            "Parse error in parameter list",
+            1,
+            16,
+        ),
     ],
 )
 def test_parser_and_formatter_explain_and_locate_syntax(
@@ -69,16 +74,33 @@ def test_missing_cap_value_keeps_semantic_details_but_explains_format_failure():
     )
 
 
+@pytest.mark.parametrize(
+    "header",
+    ["generate", "generate 2 using", "map using", "map in 2 lanes", "reduce using"],
+)
+def test_incomplete_operations_do_not_guess_a_missing_using_clause(header):
+    source = f"flow work:\n  {header}\n"
+    for parse, error in [
+        (Program.from_source, ToolangSyntaxError),
+        (format_source, ToolangFormatError),
+    ]:
+        with pytest.raises(error) as caught:
+            parse(source)
+        assert "requires 'using'" not in str(caught.value)
+        assert "omit 'using'" not in str(caught.value)
+        assert (caught.value.line, caught.value.column) == (1, 1)
+
+
 def test_recovery_error_does_not_blame_valid_run_syntax_for_missing_block():
     source = "flow work:\n  repeat 2 times:\n  run: Review.\n"
     with pytest.raises(ToolangFormatError) as caught:
         format_source(source)
-    assert "Parse error in flow block" in str(caught.value)
+    assert "Expected an indented body in repeat block" in str(caught.value)
     assert "Malformed flow statement" not in str(caught.value)
     assert "run: Review." in rendered(caught.value, source)
-    assert (caught.value.line, caught.value.column) == (1, 1)
+    assert (caught.value.line, caught.value.column) == (3, 1)
     assert caught.value.diagnostic.location is not None
-    assert caught.value.diagnostic.location.precision == "recovery"
+    assert caught.value.diagnostic.location.precision == "construct"
     assert format_source(source.replace("  run:", "    run:"))
 
 
@@ -87,7 +109,9 @@ def test_broad_error_reports_original_fragment_without_guessing_repair(header):
     with pytest.raises(ToolangFormatError) as caught:
         format_source(header)
     assert header in rendered(caught.value, header)
-    assert "Parse error" in str(caught.value)
+    assert (
+        "Expected an indented body" if header.endswith(":") else "Parse error"
+    ) in str(caught.value)
     assert "Expected ':'" not in str(caught.value)
 
 
@@ -161,9 +185,9 @@ def test_cst_keeps_overlapping_error_entries_and_native_ranges():
         (item["kind"], item["node_type"], item["start_byte"], item["end_byte"])
         for item in data["diagnostics"]
     ] == [
-        ("error", "ERROR", 0, 36),
         ("error", "ERROR", 15, 16),
-        ("invalid", "invalid_flow_reserved_statement", 22, 26),
+        ("error", "ERROR", 20, 26),
+        ("invalid", "invalid_missing_body", 36, 36),
     ]
 
 
@@ -209,11 +233,13 @@ def test_cst_diagnostic_positions_do_not_repeatedly_scan_source_prefixes():
             self.scanned_bytes += len(self[start:end])
             return super().count(sub, start, end)
 
-    source = MeasuredSource(b"\xef\xbb\xbf" + b"flow broken:\r\n\trun\r\n" * 256)
+    source = MeasuredSource(
+        b"\xef\xbb\xbf" + b"flow broken:\r\n\tlet result = exec worker\r\n" * 256
+    )
     errors = cst.diagnostics(cst.parse(source).root_node, source)
     assert len(errors) == 256
     assert errors[-1]["start_point"] == {"row": 511, "column": 1}
-    assert errors[-1]["message"] == "Malformed flow statement 'run'"
+    assert errors[-1]["message"] == "Malformed flow statement 'let'"
     # Allow a single indexing pass, but not one scan per diagnostic.
     assert source.scanned_bytes <= len(source)
 

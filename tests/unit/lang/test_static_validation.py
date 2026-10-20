@@ -47,7 +47,7 @@ from toolang.lang.errors import ToolangError, ToolangSourceError
         ),
         (
             "flow work:\n  run -> Text[]: Values\n  reduce:\n    {{_}}\n"
-            "    from: {{#items}}Hello\n",
+            "    initial: {{#items}}Hello\n",
             "unclosed",
         ),
     ],
@@ -70,7 +70,7 @@ def test_source_determined_errors_are_rejected(source, message):
         "flow work:\n  generate 0: No calls\n",
         "flow work:\n  repeat 2 times:\n    run: {{_}}\n    until: {{_3._}}\n",
         "flow work:\n  repeat 2 times:\n    run -> Text[]: Values\n    reduce:\n"
-        "      {{_}} {{_1._}}\n      from: {{_2._}}\n",
+        "      {{_}} {{_1._}}\n      initial: {{_2._}}\n",
         "flow work:\n  repeat 2 times:\n    repeat 2 times windowing 1:\n"
         "      run: {{_}}\n      until: {{_1._}}\n    until: {{_3._}}\n",
         "flow work:\n  repeat 2 times:\n    let topic = Value\n"
@@ -255,7 +255,7 @@ flow main():
   generate 1: Seed
   reduce:
     {{_}} {{_2._}}
-    from: Initial
+    initial: Initial
 """)
 
 
@@ -266,7 +266,7 @@ def test_known_empty_reduce_checks_initializer_but_skips_reducer_history(target)
     )
     source = (
         "agic combine(_):\n  {{_}} {{_2._}}\n"
-        f"flow main():\n  generate 0: No calls\n  {statement}\n    from: INITIAL\n"
+        f"flow main():\n  generate 0: No calls\n  {statement}\n    initial: INITIAL\n"
     )
     Program.from_source(source.replace("INITIAL", "seed"))
     with pytest.raises(ToolangError, match="missing.*seed"):
@@ -283,5 +283,5 @@ agic combine(_: Number, limit: Number) -> Number:
 flow main():
   generate 0: No calls
   reduce using combine:
-    from: 0
+    initial: 0
 """)

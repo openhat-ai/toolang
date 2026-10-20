@@ -41,9 +41,9 @@ flow work:
   let reduce using action
   map in 4 lanes using action
   keep first 2
-  keep if predicate in 2 lanes
+  keep in 2 lanes if predicate
   drop last 1
-  sort descending by score  in 2 lanes
+  sort descending in 2 lanes by score
   keep first 3
   repeat 2 times:
     run action
@@ -619,8 +619,8 @@ struct Summary:
 
 def test_format_source_formats_program_comments_and_keeps_attached_comments() -> None:
     source = """
-##!program comments
-##!    second program comment
+#@program comments
+#@    second program comment
 ## attached comments
 struct Summary:
     title: Text
@@ -632,8 +632,8 @@ struct BulletList:
 """.strip()
 
     assert format_source(source, tab_size=4) == (
-        "##! program comments\n"
-        "##! second program comment\n"
+        "#@ program comments\n"
+        "#@ second program comment\n"
         "\n"
         "## attached comments\n"
         "struct Summary:\n"
@@ -654,7 +654,7 @@ def test_format_source_moves_program_comments_after_shebang() -> None:
 struct Summary:
     title: Text
 
-##!later program comment
+#@later program comment
 struct BulletList:
     items: Text[]
 """.lstrip()
@@ -662,7 +662,7 @@ struct BulletList:
     assert format_source(source, tab_size=4) == (
         "#!/usr/bin/env toolang\n"
         "\n"
-        "##! later program comment\n"
+        "#@ later program comment\n"
         "\n"
         "# attached comments\n"
         "struct Summary:\n"
@@ -675,7 +675,7 @@ struct BulletList:
 
 def test_format_source_covers_complete_program_and_is_idempotent() -> None:
     source = """#!/usr/bin/env toolang<spaces>
-##!complete formatter fixture
+#@complete formatter fixture
 
 with skill   org/review
 
@@ -716,7 +716,7 @@ flow pipeline( _:Part[])->Result:
 """.replace("<spaces>", "   ")
     expected = """#!/usr/bin/env toolang
 
-##! complete formatter fixture
+#@ complete formatter fixture
 
 with skill org/review
 
@@ -1031,7 +1031,7 @@ def test_format_source_reports_original_syntax_error_line_after_shebang() -> Non
         format_source(source)
 
 
-@pytest.mark.parametrize("marker", ["#@", "##!"])
+@pytest.mark.parametrize("marker", ["#@"])
 @pytest.mark.parametrize(
     "description", ["Detached description.", "@param unknown Detached parameter."]
 )
@@ -1119,7 +1119,8 @@ def test_format_source_keeps_message_documentation_attached(prelude, message):
 def test_format_source_formats_first_documentation_comment_after_bom(comment):
     source = f"\ufeff{comment}   Description.\nagic:\n    pass\n"
     formatted = format_source(source)
-    assert formatted.startswith(f"\ufeff{comment} Description.\n")
+    expected = "## !   Description." if comment == "##!" else f"{comment} Description."
+    assert formatted.startswith(f"\ufeff{expected}\n")
     assert _without_spans(to_data(Program.from_source(formatted))) == _without_spans(
         to_data(Program.from_source(source))
     )

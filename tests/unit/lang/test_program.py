@@ -371,10 +371,10 @@ flow pipeline:
   let reduce using action
   map in 4 lanes using action
   keep first 2
-  keep if predicate in 2 lanes
+  keep in 2 lanes if predicate
   drop last 1
   drop if predicate
-  sort descending by score  in 2 lanes
+  sort descending in 2 lanes by score
   keep first 3
   let saved = run action
   let note =

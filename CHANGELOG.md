@@ -9,6 +9,76 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Changed
 
+- **Breaking:** reducer initializers use `initial:` instead of `from:` in both
+  named and inline reducers. Replace each `from:` clause with `initial:`,
+  because an inline `from:` line is now literal text.
+
+- **Breaking:** a literal `initial` word now starts reducer syntax at a flow
+  statement boundary or an inline reducer's text baseline; write such prose
+  after `run:` in a flow or indent it deeper inside an inline reducer.
+
+- **Breaking:** raw CST consumers read `*_stmt` nodes and `stmt` member fields
+  instead of `*_statement` nodes and statement paths.
+
+- Syntax errors highlight native recovery fragments and retained diagnostics
+  in bold red in terminal and HTML output, while keyword and name captures
+  keep their semantic styles.
+
+- **Breaking:** the formatter preserves inline text literally, including `#`
+  and `"`, and never extracts or moves comments from it; place intended
+  comments on separate structural lines.
+
+- **Breaking:** program documentation moves from `##!` to `#@`, while `##!`
+  now documents an item with a literal leading `!`; rewrite existing program
+  documentation with `#@`.
+
+- **Breaking:** lane clauses belong before `using`, `if`, and `by`: the
+  formatter rejects suffix order without reordering it, so move existing suffix
+  clauses ahead of those keywords.
+
+- `lane`/`lanes` and `time`/`times` both parse, and the formatter writes
+  canonical unit spelling and removes leading zeros in those counts.
+
+- Parameters and locals may use keyword names where the grammar allows.
+
+- **Breaking:** retired flow words are ordinary prose and names instead of
+  errors; rewrite `scatter`/`gather` as `run`, annotating array outputs, `storm`
+  as `generate`, and `settle` as `reduce`, with no automatic conversion.
+  ([#868](https://github.com/openhat-ai/toolang/pull/868))
+
+- **Breaking:** agic and flow directive prefixes are closed, so an unknown
+  `key = value` opening line is a syntax error; put assignment-like opening
+  messages in an explicit `user: key = value` text block in agics and
+  `run: key = value` in flows.
+
+- Cap and chore prefixes accept arbitrary `key = value` properties, with blank
+  lines and comments allowed between them, until the first substantive body
+  line; supported names stay validated.
+
+- **Breaking:** raw CST consumers read `program` instead of `source_file`,
+  `target` for call targets, `local` for `let` bindings, `param` and
+  `description` on direct `param_doc` nodes, and `query_value` and
+  `runnable_name` leaves instead of the `directive_value` and `runnable`
+  wrappers.
+
+- **Breaking:** CST text values use `content` instead of `text_inline` and
+  `text_body` wrappers, with direct `text` leaves replacing `text_line`,
+  `indented_raw_text`, and `comment_text`.
+
+- **Breaking:** documentation uses peer `program_doc`, `item_doc`, and
+  `param_doc` nodes; `program_doc` belongs to `program`, while structural
+  bodies include their leading member documentation.
+
+- **Breaking:** raw CST punctuation, fixed operators, and keywords are anonymous
+  terminals, so inspect terminal text instead of named nodes.
+
+- **Breaking:** invalid sources surface malformed targets, directives,
+  messages, assignments, and annotation types as native `ERROR` and missing
+  terminals, retaining only `invalid_missing_body`, `invalid_missing_content`,
+  `invalid_missing_stmt`, `invalid_param`, and `invalid_flow_stmt`; every
+  `invalid_*` node is an error even when `has_error` is false.
+  ([#868](https://github.com/openhat-ai/toolang/pull/868))
+
 - `too top` and `too AGENT top` count agent instances separately from root
   Runs: the first summary reads `N running, M total: R resident, V visiting,
   O roaming`, where a running idle agent still counts as running, preparing or
@@ -131,6 +201,32 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 - Unnamed entry runnables read `agic:` or `flow:` in file help, signature
   help, run headers, and chat status in place of the previous `agic:_` and
   `_ agic` labels.
+
+- Formatting preserves template hashes such as `{{#flag}}` in program, item,
+  and parameter documentation.
+  ([#868](https://github.com/openhat-ai/toolang/pull/868))
+
+- Chore properties named `tools`, `models`, `skills`, `services`, `psyches`,
+  or `prompts` stop at structural `#` comments instead of including comment
+  text in AST property values.
+  ([#868](https://github.com/openhat-ai/toolang/pull/868))
+
+- Non-query directive comments such as `context=none# Keep,exact,comma,,` keep
+  their punctuation instead of being rewritten as CSV values.
+  ([#868](https://github.com/openhat-ai/toolang/pull/868))
+
+- Flow statement formatting keeps punctuation and internal spacing in inline
+  comments, including bound and asynchronous operations, and separates them with
+  the canonical two spaces.
+  ([#868](https://github.com/openhat-ai/toolang/pull/868))
+
+- Incomplete calls such as `generate 2 using` report malformed syntax instead
+  of a speculative hint that an already-present `using` keyword is missing.
+  ([#868](https://github.com/openhat-ai/toolang/pull/868))
+
+- Documentation attachment measures tabs and spaces by visual columns, so mixed
+  indentation no longer detaches member documentation or hides it from the
+  formatter.
 
 ## [0.4.0a9] - 2026-10-18
 

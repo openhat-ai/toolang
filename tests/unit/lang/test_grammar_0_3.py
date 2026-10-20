@@ -32,20 +32,19 @@ agic score -> Number:
         ("sort ascending in 2 lanes by score", "sort ascending by score in 2 lanes"),
     ],
 )
-def test_clause_order_preserves_semantics_and_lane_limit(
-    first: str, second: str
-) -> None:
+def test_lane_clause_precedes_target(first: str, second: str) -> None:
     sources = [
         RUNNABLES + f"flow work:\n  generate 2 using worker\n  {header}\n"
         for header in (first, second)
     ]
-    programs = [Program.from_source(source) for source in sources]
-    assert programs[0] == programs[1]
-    assert getattr(programs[0].flows[0].stmts[-1], "lanes") == 2
-    for source, header in zip(sources, (first, second), strict=True):
-        formatted = format_source(source)
-        assert header in formatted
-        assert format_source(formatted) == formatted
+    program = Program.from_source(sources[0])
+    assert getattr(program.flows[0].stmts[-1], "lanes") == 2
+    formatted = format_source(sources[0])
+    assert first in formatted
+    assert format_source(formatted) == formatted
+    for parse in (Program.from_source, format_source):
+        with pytest.raises((ToolangError, ToolangFormatError)):
+            parse(sources[1])
 
 
 @pytest.mark.parametrize(
@@ -62,7 +61,7 @@ def test_clause_order_preserves_semantics_and_lane_limit(
         ("run -> Number[]: Work with {{_}}.", "Number[]"),
         ("reduce: Work with {{_}} and {{_1._}}.", "Text"),
         (
-            "reduce -> Number[]:\n    Work with {{_}}.\n    from: [0]",
+            "reduce -> Number[]:\n    Work with {{_}}.\n    initial: [0]",
             "Number[]",
         ),
         ("map: Work with {{_}}.", "Text"),
@@ -97,8 +96,6 @@ def test_inline_runnable_fields_preserve_the_operation_contract(
     [
         "map worker par 2",
         "map in 0 lanes using worker",
-        "map in 1 lanes using worker",
-        "map in 2 lane using worker",
         "map in 2 lanes in 3 lanes using worker",
         "map using worker using worker",
         "map -> Text in 2 lanes: Work.",
@@ -106,15 +103,8 @@ def test_inline_runnable_fields_preserve_the_operation_contract(
         "map using worker.",
         "sort by score",
         "sort by score descending",
-        "rank score top 3",
-        "par 2",
-        "top 3",
-        "bottom 3",
-        "scatter 2: Work.",
         "generate {{n}} using worker",
         "repeat 2:\n    run worker",
-        "repeat 1 times:\n    run worker",
-        "repeat 2 time:\n    run worker",
         "until: Done.",
         "let result = repeat 2 times:\n    run worker",
         "let repeat 2 times:\n    run worker",
@@ -343,6 +333,6 @@ def test_syntax_errors_include_source_context_for_keyword_led_lines(
         format_source(source)
     for error in (parsed.value, formatted.value):
         assert header not in str(error)
-        assert "line 2:3:" in str(error)
+        assert "line 2:1:" in str(error)
         assert "Toolang 0.3 syntax" not in str(error)
-        assert "Malformed flow statement" in str(error)
+        assert "Parse error in flow block" in str(error)

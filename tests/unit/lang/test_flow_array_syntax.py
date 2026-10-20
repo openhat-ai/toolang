@@ -24,31 +24,22 @@ def test_collection_targets_follow_one_using_rule(operation, binding, target):
 @pytest.mark.parametrize("operation", ["generate 2", "map", "reduce"])
 @pytest.mark.parametrize("binding", ["", "let result = ", "let "])
 @pytest.mark.parametrize("target", ["worker", "using: {{_}}", "using -> Text: {{_}}"])
-def test_invalid_target_forms_explain_using(operation, binding, target):
+def test_invalid_target_forms_are_rejected(operation, binding, target):
     source = f"flow main(_: Text[]):\n  {binding}{operation} {target}\n"
     for parse in (Program.from_source, format_source):
-        with pytest.raises((ToolangError, ToolangFormatError), match="using"):
+        with pytest.raises((ToolangError, ToolangFormatError)):
             parse(source)
 
 
-@pytest.mark.parametrize("binding", ["", "let result = ", "let "])
-@pytest.mark.parametrize(
-    "operation,replacement",
-    [
-        ("scatter", "run"),
-        ("gather", "run"),
-        ("storm 2", "generate"),
-        ("settle", "reduce"),
-    ],
-)
-def test_removed_statements_report_replacements(binding, operation, replacement):
-    source = f"flow main:\n  {binding}{operation} using worker\n"
-    for parse in (Program.from_source, format_source):
-        with pytest.raises(
-            (ToolangError, ToolangFormatError),
-            match=f"Removed Flow statement.*{replacement}",
-        ):
-            parse(source)
+@pytest.mark.parametrize("word", ["scatter", "gather", "storm", "settle"])
+@pytest.mark.parametrize("binding", ["", "let value = "])
+def test_retired_keywords_are_plain_text(word, binding):
+    source = f"flow main:\n  {binding}{word} using worker\n"
+    formatted = format_source(source)
+    program = Program.from_source(formatted)
+    assert program.flows[0].stmts[0].kind == ("let" if binding else "run")
+    assert f"{word} using worker" in formatted
+    assert format_source(formatted) == formatted
 
 
 @pytest.mark.parametrize("operation", ["generate 2", "map"])

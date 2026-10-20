@@ -7,35 +7,31 @@ from tree_sitter import Node
 from .types import SourceDiagnostic, SourceLocation
 
 
-_PUNCTUATION = {
-    "lparen": "(",
-    "rparen": ")",
-    "lbracket": "[",
-    "rbracket": "]",
-    "lbrace": "{",
-    "rbrace": "}",
-    "colon": ":",
-    "comma": ",",
-}
+_PUNCTUATION = {token: token for token in "()[]{}:,"}
 _CONTEXTS = {
     "params": "parameter list",
     "param": "parameter",
     "field": "field declaration",
     "property": "property assignment",
-    "return_type": "return type",
     "flow": "flow block",
     "agic": "agic block",
     "struct": "struct declaration",
-    "repeat_statement": "repeat block",
-    "reduce_statement": "reduce block",
+    "repeat_stmt": "repeat block",
+    "reduce_stmt": "reduce block",
     "skill": "skill declaration",
     "service": "service declaration",
     "psyche": "psyche declaration",
     "prompt": "prompt declaration",
 }
 _INVALID_CONSTRUCTS = {
-    "invalid_flow_reserved_statement": "flow statement",
-    "invalid_agic_reserved_message": "message header",
+    "invalid_flow_stmt": "flow statement",
+    "invalid_param": "parameter",
+}
+
+_MISSING_CONSTRUCTS = {
+    "invalid_missing_body": "an indented body",
+    "invalid_missing_content": "text content",
+    "invalid_missing_stmt": "a statement",
 }
 
 
@@ -84,13 +80,14 @@ def primary_error(root: Node) -> Node | None:
             break
         candidate = child
     # Neither generic recovery nor an unknown grammar node proves a cause.
-    supported = candidate.type in _INVALID_CONSTRUCTS or (
-        candidate.is_missing
-        and (
-            candidate.type in _PUNCTUATION
-            or any(
-                parent.type in {"type", "property_value"}
-                for parent in _ancestors(candidate)
+    supported = (
+        candidate.type in _INVALID_CONSTRUCTS
+        or candidate.type in _MISSING_CONSTRUCTS
+        or (
+            candidate.is_missing
+            and (
+                candidate.type in _PUNCTUATION
+                or any(parent.type in {"type"} for parent in _ancestors(candidate))
             )
         )
     )
@@ -118,61 +115,27 @@ def _context(node: Node) -> str:
             # Recovery can erase the owning declaration node. Retain evidence
             # from its keyword, without claiming that a child token caused it.
             for child in ancestor.children:
-                keyword = child.type.removesuffix("_keyword")
+                keyword = child.type
                 if context := _CONTEXTS.get(keyword):
                     return context
     return "source"
 
 
-def _flow_migration_hint(node: Node, source: bytes) -> str | None:
-    replacements = {
-        "scatter": "run (add -> Text[] for implicit array output)",
-        "gather": "run",
-        "storm": "generate",
-        "settle": "reduce",
-    }
-    pending = [node]
-    while pending:
-        child = pending.pop()
-        keyword = child.type.removeprefix("flow_").removesuffix("_keyword")
-        if (
-            child.type == "local_name"
-            and child.parent is not None
-            and child.parent.is_error
-            and any(
-                sibling.type == "flow_let_keyword" for sibling in child.parent.children
-            )
-        ):
-            keyword = source[child.start_byte : child.end_byte].decode("utf-8").strip()
-        if (
-            child.type == "text_line"
-            and child.parent is not None
-            and child.parent.type == "invalid_flow_reserved_statement"
-            and child.prev_named_sibling is not None
-            and child.prev_named_sibling.type == "flow_let_keyword"
-        ):
-            # Keyword variable rejection can recover the entire let as one
-            # invalid statement, leaving the operation head in its text field.
-            text = source[child.start_byte : child.end_byte].decode("utf-8").strip()
-            keyword = text.split(maxsplit=1)[0] if text else ""
-        if keyword in replacements:
-            return f"Removed Flow statement {keyword!r}; use {replacements[keyword]}"
-        if child.type in {
-            "flow_generate_keyword",
-            "flow_map_keyword",
-            "flow_reduce_keyword",
-        }:
-            return f"{keyword.capitalize()} requires 'using' for a named runnable; omit 'using' for an inline body"
-        pending.extend(reversed(child.children))
-    for parent in _ancestors(node):
-        if parent.type in {"generate_statement", "map_statement", "reduce_statement"}:
-            target = parent.child_by_field_name("runnable")
-            if (
-                target is not None
-                and target.type == "inline_agic"
-                and any(child.type == "flow_using_keyword" for child in node.children)
-            ):
-                return "Inline runnable bodies must omit 'using'"
+def empty_property_operator(node: Node) -> Node | None:
+    """Recognize a committed property prefix with no value in local recovery."""
+    if (
+        not node.is_error
+        or node.parent is None
+        or node.parent.type not in {"cap_body", "chore_body"}
+    ):
+        return None
+    tokens = [
+        child
+        for child in node.children
+        if child.type not in {"newline", "plain_comment"}
+    ]
+    if [child.type for child in tokens] == ["identifier", "="]:
+        return tokens[1]
     return None
 
 
@@ -180,7 +143,10 @@ def syntax_diagnostic(node: Node, source: bytes) -> SourceDiagnostic:
     """Describe evidence, not the parser's arbitrary recovery-token choice."""
     context = _context(node)
     ancestors = {parent.type for parent in _ancestors(node)}
-    if node.is_missing:
+    property_operator = empty_property_operator(node)
+    if property_operator is not None:
+        reason = "Expected a property value after '='"
+    elif node.is_missing:
         if token := _PUNCTUATION.get(node.type):
             reason = f"Expected {token!r}"
             if context != "source":
@@ -194,12 +160,12 @@ def syntax_diagnostic(node: Node, source: bytes) -> SourceDiagnostic:
                 else "value"
             )
             reason = f"Expected a {category} type"
-        elif "property_value" in ancestors:
-            reason = "Expected a property value after '='"
         else:
             reason = "Parse error"
             if context != "source":
                 reason += f" in {context}"
+    elif node.type in _MISSING_CONSTRUCTS:
+        reason = f"Expected {_MISSING_CONSTRUCTS[node.type]} in {context}"
     elif node.type in _INVALID_CONSTRUCTS:
         keyword_node = node.children[0] if node.children else node
         keyword = source[keyword_node.start_byte : keyword_node.end_byte].decode(
@@ -211,9 +177,12 @@ def syntax_diagnostic(node: Node, source: bytes) -> SourceDiagnostic:
         reason = "Parse error"
         if context != "source":
             reason += f" in {context}"
-    if hint := _flow_migration_hint(node, source):
-        reason = hint
     line, column = source_position(node, source)
+    if property_operator is not None:
+        line, column = (
+            property_operator.end_point.row + 1,
+            property_operator.end_point.column + 1,
+        )
     end_line, end_column = node.end_point
     if node.end_byte > len(source):
         end_line = source.count(b"\n")
@@ -226,7 +195,7 @@ def syntax_diagnostic(node: Node, source: bytes) -> SourceDiagnostic:
             end_line + 1,
             end_column + 1,
             precision="token"
-            if node.is_missing
+            if node.is_missing or property_operator is not None
             else "recovery"
             if node.is_error
             else "construct",

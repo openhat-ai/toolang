@@ -23,6 +23,11 @@ lines. Program is not a lossless formatting tree and contains no installed
 resources, mutable execution state, or runtime services. Formatting works from
 syntax-valid source rather than serializing Program.
 
+Raw CST inspection uses `program`, `*_stmt` nodes, and `stmt` member fields;
+reducer initializers are direct `reduce_stmt.initial: content` values. Syntax
+validation rejects native `ERROR`, missing terminals, and every `invalid_*`
+descendant, including those that do not set the root's `has_error` flag.
+
 Static validation checks names, types, templates, and statically known call
 contracts without preparing resources or executing work. Dynamic values,
 actual inputs, resource readiness/authority, and compatibility with newly
@@ -86,10 +91,10 @@ There is no compatibility discovery or automatic source migration.
 
 ## Documentation Comments
 
-`#@` documents the complete module. Module documentation comments must be
+`#@` documents the complete program. Program documentation comments must be
 unindented, may appear anywhere between top-level declarations, and are joined
-in source order. The legacy `##!` spelling remains accepted. Both spellings
-populate that file's `Program.doc`, independently of runnable descriptions:
+in source order. They cannot separate a declaration header from its body.
+They populate that file's `Program.doc`, independently of runnable descriptions:
 
 ```too
 #@ Research assistant.
@@ -102,7 +107,8 @@ flow research:
 ```
 
 `##` documents the immediately following semantic node at the same indentation
-level. Consecutive `##` lines form one newline-separated document:
+level, with tabs measured at eight-column stops. Consecutive `##` lines form one
+newline-separated document:
 
 ```too
 ## Search the web.
@@ -122,10 +128,10 @@ At the program level, `##` may document any declaration. Inside a struct it may
 document a field, inside an agic it may document a message, and inside a flow
 or nested flow block it may document a statement.
 
-A blank line, an ordinary `#` comment, a module comment, another syntax item,
+A blank line, an ordinary `#` comment, a program comment, another syntax item,
 or the end of the current scope ends attachment. Documentation comments never skip an
-intervening directive or setting. Indented legacy `##!` comments do not document
-a parent node; structural `#@` comments must be at column zero.
+intervening directive or setting. `##!` is item documentation whose text starts
+with a literal `!`; structural `#@` comments must be at program level.
 
 Use `## @param NAME DESCRIPTION` in an agic or flow's attached documentation
 block to describe an input parameter. Tags match exact signature names in any
@@ -154,10 +160,10 @@ both runnable and parameter documentation, capped at 512 code points per
 description. Documentation does not grant calling authority.
 
 `#` marks ordinary comments. `#!` is a shebang only at byte zero; later or
-indented occurrences are ordinary comments. Inline comment markers are always
-ordinary comments. Every marker remains literal inside an explicit text block,
-including on its first content line. Formatting preserves those text boundaries
-and each module comment's authored spelling.
+indented occurrences are ordinary comments. Structural lines support inline
+comments. Explicit inline and multiline content preserve `#` and double quotes
+as literal text, including on the first content line. Formatting preserves those
+text boundaries.
 
 
 ## External Caps
@@ -185,8 +191,7 @@ agic pay:
   Help with the requested wallet funding task.
 ```
 
-The old top-level `use` spelling is not part of this syntax. `use` is reserved
-for a future static tool-call statement.
+Use `with` for cap references. The old top-level `use` form is not accepted.
 
 
 ## Inline Caps
@@ -217,7 +222,11 @@ prompt review:
   Review {{path}} with focus on {{focus}}.
 ```
 
-`psyche` and `prompt` accept no properties and require a body. `skill`
+All inline cap bodies begin with an open-schema `key = value` property prefix.
+Blank lines and structural comments may separate properties. The first substantive
+non-property line starts literal content; subsequent assignment-like lines remain
+content. Toolang validates property names and requirements: `psyche` and `prompt`
+accept no properties and require a body. `skill`
 requires the `description` property and a body. `service` requires
 `description`, `target`, and exactly one of `transport` or its `protocol`
 alias; its body is optional. Service transport is `http` or `stdio`. Optional
@@ -333,10 +342,9 @@ Rules:
 - An omitted type defaults to `Text`.
 - Parameters are initialized as named runtime locals.
 - Parameter names must be unique. Regular parameter and local names must fully
-  match `[a-z][a-z0-9_]*` and must not be a grammar keyword, including reserved
-  legacy words. Comparison is exact and case-sensitive. `_` retains its special
-  primary-input role. This rule does not restrict data-field names. Rename
-  existing keyword-named variables together with their references.
+  match `[a-z][a-z0-9_]*`. Grammar keywords are allowed in these name positions;
+  comparison is exact and case-sensitive. `_` retains its special primary-input
+  role. This rule does not restrict data-field names.
 
 Script CLI arguments and options are derived from the selected runnable's
 signature. The primary input maps to positional/stdin content rather than a
@@ -459,6 +467,9 @@ Agics and flows share these directives:
 | V | instruct, context | `=` | Declaration name, `none`, or `default` |
 
 Values cannot be empty. Directives precede messages or flow statements.
+Blank lines and structural comments may separate directives. Unknown assignment
+headers are syntax errors. The first message or statement ends the directive
+prefix; a later assignment header cannot reopen it.
 Configuration directives occur at most once. Resource operations apply in source
 order: `=` retains matching selected items, `+=` includes matches from the fixed
 base, and `-=` excludes matches. `none` is the empty set, so `= none` clears the
@@ -597,8 +608,8 @@ A flow is an ordered list of static statements:
 ```too
 flow research(_: Text) -> Report:
   run expand
-  keep if relevant in 4 lanes
-  sort descending by score in 3 lanes
+  keep in 4 lanes if relevant
+  sort descending in 3 lanes by score
   keep first 3
   run synthesize
 ```

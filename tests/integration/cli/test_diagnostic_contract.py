@@ -10,9 +10,9 @@ from toolang.cli.toolang.main import app
 CASES = [
     (
         "\n\n\nagic issue(_: Text) sdf:\n  pass\n",
-        "4:1",
+        "4:21",
         "Parse error in agic block",
-        "agic issue(_: Text) sdf:\n  pass",
+        "sdf",
     ),
     (
         "flow work(value: Text:\n  pass\n",
@@ -35,29 +35,29 @@ CASES = [
     ),
     (
         "flow work:\n  sort these items\n",
-        "2:3",
-        "Malformed flow statement 'sort'",
+        "2:1",
+        "Parse error in flow block",
         "sort these items",
     ),
     (
         "agic review:\n  user, broken\n",
-        "2:3",
-        "Malformed message header 'user'",
+        "2:1",
+        "Parse error in agic block",
         "user, broken",
     ),
     (
         "flow work:\n  repeat 2 times:\n  run: Review.\n",
-        "1:1",
-        "Parse error in flow block",
-        "flow work:\n  repeat 2 times:\n  run: Review.",
+        "3:1",
+        "Expected an indented body in repeat block",
+        "run: Review.",
     ),
     ("flow work", "1:1", "Parse error in flow block", "flow work"),
-    ("flow work:", "1:1", "Parse error in flow block", "flow work:"),
+    ("flow work:", "1:11", "Expected an indented body in flow block", "flow work:"),
     ("@\n", "1:1", "Parse error", "@"),
     (
         "flow work:\n  sort {{#中文}}\n",
-        "2:3",
-        "Malformed flow statement 'sort'",
+        "2:1",
+        "Parse error in flow block",
         "sort {{#中文}}",
     ),
     ("@\nflow work(value: Text:\n  pass\n", "1:1", "Parse error", "@"),
@@ -103,8 +103,12 @@ def test_cst_output_keeps_raw_entries_but_uses_the_same_rendering_contract(
     if source == "struct X:\n\tfield:":
         position, reason, excerpt = "1:1", "Parse error in struct declaration", source
     expected = f"case.too:{position}: {reason}: {excerpt!r}\n"
-    if "repeat 2 times" in source:
-        expected += "case.too:3:3: Parse error in flow block: 'run: Review.'\n"
+    if any(
+        text in source
+        for text in ("sort these items", "sort {{#中文}}", "user, broken")
+    ):
+        context = "agic" if "user, broken" in source else "flow"
+        expected += f"case.too:3:1: Expected an indented body in {context} block: ''\n"
     if source.startswith("@\nflow"):
         expected += (
             "case.too:2:22: Expected ')' in parameter list: 'flow work(value: Text:'\n"
@@ -130,7 +134,7 @@ def test_cst_output_keeps_raw_entries_but_uses_the_same_rendering_contract(
             "end_point",
         }
     else:
-        assert result.stdout.startswith("(source_file")
+        assert result.stdout.startswith("(program")
 
 
 def test_unlocated_validation_failure_has_no_fake_position_or_excerpt(monkeypatch):

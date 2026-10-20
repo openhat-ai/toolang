@@ -266,7 +266,7 @@ def test_empty_array_skips_element_conversion_but_checks_named_arguments(
     statement = (
         "map using worker"
         if operation == "map"
-        else "reduce using worker:\n    from: 0"
+        else "reduce using worker:\n    initial: 0"
     )
     harness = ExecutionHarness.create(
         tmp_path,

@@ -38,7 +38,7 @@ def test_exec_round_trip_and_target_parity(statement):
 @pytest.mark.parametrize(
     "source,expected",
     [
-        ("exec    successor # handoff\n", "exec successor # handoff\n"),
+        ("exec    successor # handoff\n", "exec successor  # handoff\n"),
         ("exec  :  Keep   this spacing.\n", "exec: Keep   this spacing.\n"),
         (
             "exec   ->  Text[] :\n  Keep   this spacing.\n",
