@@ -32,10 +32,11 @@ Consequently, a bare valid name can show agent help before the agent exists.
 `agent:NAME` escapes collisions with registered commands. Scheme prefixes take
 precedence over `.too` suffixes; non-URI `.too` paths are local sources. Other
 explicit path/ref syntax remains a target candidate even when malformed.
-Delegate validation to existing name/source owners, wrapping syntax failures
-with Typer's `BadParameter` for `AGENT`. Never fall back to another target kind
-when that validation fails. Recognition performs no fetch, write, or runtime
-inspection.
+Delegate validation to existing name/source owners. Format syntax failures with
+Typer's `BadParameter` for `AGENT`, then raise native `ClickException` with exit 2
+to avoid command typo suggestions during lookup. Never fall back to another
+target kind when validation fails. Recognition performs no fetch, write, or
+runtime inspection.
 
 Root options are parsed by the root Typer group before this hook. Use native
 option spellings, eager help/version, and `--` handling. Global options belong

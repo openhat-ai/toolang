@@ -17,7 +17,7 @@ from rich.text import Text
 import typer
 from typer._click import Context, HelpFormatter
 from typer._click.core import ParameterSource
-from typer._click.exceptions import ClickException, UsageError
+from typer._click.exceptions import BadParameter, ClickException, UsageError
 from typer._click.parser import _ParsingState
 from typer.core import TyperCommand, TyperGroup, TyperOption
 from typer.main import get_command_from_info
@@ -258,19 +258,32 @@ class _ScriptGroup(OptionalValueGroup, CliGroup):
         if separator and kind in {"agic", "flow", "runnable"}:
             lookup = name.strip()
             if not lookup:
-                raise ValueError(f"{kind} target cannot be empty")
+                raise BadParameter(
+                    f"{kind} target cannot be empty", param_hint="RUNNABLE", ctx=ctx
+                )
             requested_kind = None if kind == "runnable" else kind
         else:
             lookup = token
         command = self.get_command(ctx, lookup)
         if separator and kind in {"agic", "flow", "runnable"}:
             if not isinstance(command, _RunnableCommand):
-                raise ValueError(f"runnable not found: {lookup}")
+                raise BadParameter(
+                    f"runnable not found: {lookup}", param_hint="RUNNABLE", ctx=ctx
+                )
             if requested_kind == "agic" and command._flow is not None:
-                raise ValueError(f"runnable is not an agic: {lookup}")
+                raise BadParameter(
+                    f"runnable is not an agic: {lookup}",
+                    param_hint="RUNNABLE",
+                    ctx=ctx,
+                )
             if requested_kind == "flow" and command._flow is None:
-                raise ValueError(f"runnable is not a flow: {lookup}")
-            args = [lookup, *args[1:]]
+                raise BadParameter(
+                    f"runnable is not a flow: {lookup}",
+                    param_hint="RUNNABLE",
+                    ctx=ctx,
+                )
+            # Keep the executable spelling in native help and parameter errors.
+            return token, command, args[1:]
         return super().resolve_command(ctx, args)
 
 
@@ -479,7 +492,7 @@ def _runnable_command(
             typer.Option("--dev", metavar="[PATH]", help=DEVELOPMENT_WHEEL_HELP),
         ] = None,
         items: Annotated[list[str] | None, typer.Argument(hidden=True)] = None,
-    ) -> int:
+    ) -> None:
         assert runnable is not None
         inherited = ctx.parent.params if ctx.parent is not None else {}
         allow = [*inherited.get("allow", ()), *(allow or ())]
@@ -503,7 +516,7 @@ def _runnable_command(
             runnable, items=tuple(items or ()), stdin=stdin
         )
         override = _materialize_script_runnable_override(override, program=program)
-        return _run(
+        status = _run(
             source_path,
             runnable=identity,
             runnable_kind=runnable.kind,
@@ -520,6 +533,7 @@ def _runnable_command(
             workspace_options=tuple(workspace),
             workdir=selected_workdir,
         )
+        raise typer.Exit(status)
 
     kind = runnable.kind if runnable is not None else "runnable"
     doc = (runnable.doc or "").strip() if runnable is not None else ""

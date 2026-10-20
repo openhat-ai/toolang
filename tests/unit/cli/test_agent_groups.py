@@ -315,3 +315,39 @@ def test_local_target_inspection_preserves_the_selected_root(tmp_path, monkeypat
     assert seen == [root]
     assert not root.exists()
     assert not (tmp_path / ".toolang").exists()
+
+
+@pytest.mark.parametrize("target", ["github:", "gh:", "agent:Chat"])
+def test_invalid_agent_refs_are_not_treated_as_command_typos(
+    target, monkeypatch, capsys
+):
+    _no_preparation(monkeypatch)
+    assert cli.main([target, "chat", "--help"]) == 2
+    error = capsys.readouterr().err
+    assert "Invalid value for AGENT" in error
+    assert "Did you mean" not in error
+
+
+@pytest.mark.parametrize("tail", [["--help"], ["chat"], ["chat", "--help"]])
+def test_directory_targets_report_the_actual_file_kind(
+    tmp_path, monkeypatch, capsys, tail
+):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "folder.too").mkdir()
+    _no_preparation(monkeypatch)
+    assert cli.main(["./folder.too", *tail]) == 2
+    error = capsys.readouterr().err
+    assert "directory" in error
+    assert "not found" not in error
+    assert list(tmp_path.iterdir()) == [tmp_path / "folder.too"]
+
+
+@pytest.mark.parametrize("tail", [["add", "."], ["remove", "example"]])
+def test_remote_workspace_mutations_fail_before_source_acquisition(
+    tmp_path, monkeypatch, capsys, tail
+):
+    monkeypatch.chdir(tmp_path)
+    _no_preparation(monkeypatch)
+    assert cli.main(["gh:owner/alice", "workspace", *tail]) == 2
+    assert "no durable workspace configuration" in capsys.readouterr().err
+    assert not list(tmp_path.iterdir())

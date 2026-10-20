@@ -27,14 +27,18 @@ def agent_group(
     ctx: Context, name: str, commands: Mapping[str, Command]
 ) -> Command | None:
     """Recognize the root operand and return its native agent group."""
-    if name.startswith("-") or not (
-        is_agent_name(name) or name.endswith(".too") or ":" in name or "/" in name
-    ):
+    if not (is_agent_name(name) or name.endswith(".too") or ":" in name or "/" in name):
         return None
     try:
         target = parse_target(name)
     except ValueError as exc:
-        raise BadParameter(str(exc), param_hint="AGENT", ctx=ctx) from exc
+        # Typer adds command suggestions to every UsageError raised during lookup.
+        # A malformed target has already been recognized and is not a command typo.
+        error = ClickException(
+            BadParameter(str(exc), param_hint="AGENT", ctx=ctx).format_message()
+        )
+        error.exit_code = 2
+        raise error from exc
     return inherit_ui(AgentGroup(name, target, commands), ctx)
 
 

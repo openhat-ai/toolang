@@ -46,6 +46,8 @@ def parse_target(text: str) -> AgentTarget | Path:
         path = Path(text).expanduser().resolve()
         if path.suffix != ".too":
             raise ValueError(f"agent program must point to a .too file: {text}")
+        if path.is_dir():
+            raise ValueError(f"expected a file, got a directory: {text}")
         return path
     return source.parse_agent_target(text)
 

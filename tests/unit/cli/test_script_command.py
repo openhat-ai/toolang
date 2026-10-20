@@ -1642,8 +1642,10 @@ def test_script_rejects_an_explicit_runnable_kind_mismatch(
         stdin=StringIO(),
     )
 
-    assert result == 1
-    assert "runnable is not a flow: demo" in capsys.readouterr().err
+    assert result == 2
+    error = capsys.readouterr().err
+    assert "Invalid value for RUNNABLE" in error
+    assert "runnable is not a flow: demo" in error
 
 
 def test_script_accepts_sandbox_option_at_the_runnable_level(

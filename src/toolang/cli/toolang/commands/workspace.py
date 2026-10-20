@@ -75,14 +75,12 @@ def add_workspace(
         ),
     ] = None,
 ) -> None:
-    require_prefix_agent(ctx)
-    prepare_agent(ctx)
+    layout = _editable_layout(ctx)
     configured = ConfiguredWorkspaces(
-        _authored_config(context_layout(ctx)),
-        lock_path=_workspace_edit_lock(context_layout(ctx)),
+        _authored_config(layout), lock_path=_workspace_edit_lock(layout)
     )
     selected_name, selected_path = user_call(configured.add, path, name=name)
-    _refresh_project(context_layout(ctx))
+    _refresh_project(layout)
     typer.echo(f"Workspace {selected_name} added: {selected_path}")
 
 
@@ -111,11 +109,16 @@ def list_workspaces(ctx: typer.Context) -> None:
     )
 
 
-def _authored_config(layout: AgentLayout) -> Path:
-    if layout.placement == "visiting":
+def _editable_layout(ctx: typer.Context) -> AgentLayout:
+    require_prefix_agent(ctx)
+    if context_layout(ctx).placement == "visiting":
         raise typer.BadParameter(
             "visiting agents have no durable workspace configuration; use -w or --workdir"
         )
+    return prepare_agent(ctx)
+
+
+def _authored_config(layout: AgentLayout) -> Path:
     if layout.placement == "roaming":
         return layout.program.resolve(strict=True).parent / "toolang.toml"
     return layout.config
@@ -136,14 +139,12 @@ def remove_workspace(
         typer.Argument(metavar="NAME", click_type=TextType(), help="Workspace name"),
     ],
 ) -> None:
-    require_prefix_agent(ctx)
-    prepare_agent(ctx)
+    layout = _editable_layout(ctx)
     configured = ConfiguredWorkspaces(
-        _authored_config(context_layout(ctx)),
-        lock_path=_workspace_edit_lock(context_layout(ctx)),
+        _authored_config(layout), lock_path=_workspace_edit_lock(layout)
     )
     path = user_call(configured.remove, name)
-    _refresh_project(context_layout(ctx))
+    _refresh_project(layout)
     typer.echo(f"Workspace {name} removed: {path}")
 
 

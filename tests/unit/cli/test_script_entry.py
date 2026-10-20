@@ -32,6 +32,65 @@ def _source(text: str = "agic():\n  Hello.\n") -> str:
     return "demo.too"
 
 
+@pytest.mark.parametrize("explicit_run", [False, True])
+@pytest.mark.parametrize("unnamed", [False, True])
+@pytest.mark.parametrize("status", [0, 1, 130])
+def test_script_execution_preserves_its_exit_status(
+    monkeypatch, explicit_run, unnamed, status
+):
+    path = _source(f"flow {'' if unnamed else 'ping'}():\n  pass\n")
+    monkeypatch.setattr(script, "_run", lambda *_args, **_kwargs: status)
+    prefix = ["run"] if explicit_run else []
+    tail = [] if unnamed else ["ping"]
+    assert cli.main([*prefix, path, *tail]) == status
+
+
+def test_root_separator_allows_an_option_like_script_filename(capsys):
+    Path("-agent.too").write_text("flow ping():\n  pass\n")
+    assert cli.main(["--", "-agent.too", "ping", "--help"]) == 0
+    output = capsys.readouterr()
+    assert "Run flow ping" in output.out
+    assert not output.err
+    assert not Path(".toolang").exists()
+
+
+@pytest.mark.parametrize("explicit_run", [False, True])
+@pytest.mark.parametrize("selector", ["flow:chat", "flow:info", "runnable:chat"])
+def test_runnable_help_preserves_the_selector_needed_for_colliding_commands(
+    capsys, selector, explicit_run
+):
+    path = _source("flow chat():\n  pass\nflow info():\n  pass\n")
+    prefix = ["run"] if explicit_run else []
+    assert cli.main([*prefix, path, selector, "--help"]) == 0
+    output = capsys.readouterr()
+    command_path = " ".join(["too", *prefix, path, selector])
+    assert f"Usage: {command_path} [OPTIONS]" in output.out
+    assert not output.err
+    assert not Path(".toolang").exists()
+
+
+@pytest.mark.parametrize("explicit_run", [False, True])
+@pytest.mark.parametrize(
+    "selector,expected",
+    [
+        ("flow:", "flow target cannot be empty"),
+        ("agic:ping", "runnable is not an agic"),
+        ("flow:missing", "runnable not found"),
+    ],
+)
+def test_invalid_runnable_selectors_are_usage_errors(
+    capsys, selector, expected, explicit_run
+):
+    path = _source("flow ping():\n  pass\n")
+    prefix = ["run"] if explicit_run else []
+    assert cli.main([*prefix, path, selector]) == 2
+    output = capsys.readouterr()
+    assert "Invalid value for RUNNABLE" in output.err
+    assert expected in output.err
+    assert not output.out
+    assert not Path(".toolang").exists()
+
+
 @pytest.mark.parametrize("executable", ["too", "toolang"])
 @pytest.mark.parametrize("arguments", [[], ["--help"], ["-h"]])
 def test_init_without_directory_only_shows_help(
@@ -368,7 +427,7 @@ def test_entry_selector_requires_an_entry_of_the_requested_kind(
         script, "_run", lambda *args, **kwargs: pytest.fail("ran wrong kind")
     )
     other = "flow" if kind == "agic" else "agic"
-    assert cli.main([path, f"{other}:_"]) == 1
+    assert cli.main([path, f"{other}:_"]) == 2
     article = "an" if other == "agic" else "a"
     assert f"runnable is not {article} {other}" in capsys.readouterr().err
     Path(path).write_text("agic main():\n  Named.\n")
