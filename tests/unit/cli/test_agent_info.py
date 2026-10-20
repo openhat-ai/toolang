@@ -126,7 +126,9 @@ def test_running_info_uses_runtime_resources_without_loading_local_sources(
             sandbox=sandbox,
         ),
     )
-    monkeypatch.setattr(AgentProcess, "state", lambda _self: {})
+    monkeypatch.setattr(
+        AgentProcess, "state", lambda _self: {"drivers": ["chore", "talk", "chat"]}
+    )
     payloads = {
         "/api/v0/models": {"items": [{"provider": "guest"}]},
         "/api/v0/tools": {"items": [{"toolset": "guest"}, {"toolset": "guest"}]},
@@ -154,6 +156,7 @@ def test_running_info_uses_runtime_resources_without_loading_local_sources(
     assert "1 skill" in output.out
     assert "1 chore" in output.out
     assert "guest" in output.out
+    assert "Drivers: chat,talk,chore" in output.out
     assert set(calls) == set(payloads)
     assert not (layout.home / ".state").exists()
 
@@ -168,6 +171,47 @@ def test_running_info_uses_runtime_resources_without_loading_local_sources(
     monkeypatch.setattr(RuntimeClient, "get", failed)
     assert main(arguments) == 1
     assert "runtime request failed: unavailable" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("metadata", "expected"),
+    [
+        ({"drivers": ["chore", "talk", "chat"]}, "chat,talk,chore"),
+        ({"drivers": ["chore", "chat"]}, "chat,chore"),
+        ({"drivers": []}, "none"),
+        ({}, "-"),
+        ({"drivers": None}, "-"),
+        ({"drivers": "chat"}, "-"),
+        ({"drivers": ("chat",)}, "-"),
+        ({"drivers": ["chat", "chat"]}, "-"),
+        ({"drivers": ["unknown"]}, "-"),
+        ({"drivers": [1]}, "-"),
+        ({"drivers": [["chat"]]}, "-"),
+    ],
+)
+def test_running_info_formats_driver_metadata(
+    tmp_path, monkeypatch, capsys, metadata, expected
+):
+    layout = AgentLayout.resident(tmp_path, "alice")
+    layout.home.mkdir(parents=True)
+    layout.program.write_text("invalid Toolang!!!")
+    monkeypatch.setattr(
+        AgentProcess,
+        "status",
+        lambda *_args, **_kwargs: AgentStatus(
+            name="alice",
+            status="running",
+            endpoint="http://localhost:8123",
+            api_url=None,
+            webui_url=None,
+            sandbox="host",
+        ),
+    )
+    monkeypatch.setattr(AgentProcess, "state", lambda _self: metadata)
+    monkeypatch.setattr(agent, "_running_resources", lambda *_args, **_kwargs: [])
+
+    assert main(["--root", str(tmp_path), "alice", "info"]) == 0
+    assert f"Drivers: {expected}" in capsys.readouterr().out
 
 
 @pytest.mark.parametrize("placement", ["roaming", "visiting"])
@@ -212,5 +256,6 @@ def test_offline_info_prepares_a_fresh_nonresident_target(
     assert main([selector, "info"] if target_first else ["info", selector]) == 0
     output = capsys.readouterr()
     assert "not running" in output.out
+    assert "Drivers:" not in output.out
     assert layout.program.is_file()
     assert layout.agent_state.is_dir()

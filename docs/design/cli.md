@@ -71,6 +71,11 @@ logging, recovery, environment capture, and process cleanup.
 
 ## Resource and plugin inspection
 
+`too TARGET info` (also `too info TARGET`) shows enabled `Drivers` immediately
+after `Status` while the agent is running. It reads existing runtime metadata
+and formats selections in `chat,talk,chore` order, with `none` for an empty set
+and `-` for unavailable metadata. Nonrunning agents omit the row.
+
 `too [TARGET] caps`, kind-specific cap lists, `tools`, `models`, and `providers`
 inspect the selected scope. No target means root configuration, not an implicit
 `default` agent. `--all`/`-a` changes visibility for that same scope and grants no
