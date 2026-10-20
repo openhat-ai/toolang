@@ -92,8 +92,8 @@ too translate.too -- Toolang, a language and runtime for agents and humans
 Use `too init` to create a starter script that you can rename and customize:
 
 ```bash
-too init PROJECT-DIR
-too PROJECT-DIR/aid.too --help
+too init PROJECT_DIR
+too PROJECT_DIR/aid.too --help
 ```
 
 ## Language
@@ -136,12 +136,12 @@ too AGENT start              # Start an agent in the background
 too AGENT stop               # Stop an agent
 too AGENT chat               # Chat directly with an agent
 
-too init PROJECT-DIR         # Initialize Toolang in a directory
+too init PROJECT_DIR         # Initialize Toolang in a directory
 too run FILE.too [RUNNABLE]  # Execute a .too file
 
 too hub start                # Start the hub in the background
 too talk                     # List conversations
-too talk CONVO-ID            # Open a conversation by ID
+too talk CONVO_ID            # Open a conversation by ID
 too talk AGENT               # Open a conversation with an agent
 too talk all                 # Open a conversation with the team
 
