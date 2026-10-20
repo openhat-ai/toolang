@@ -156,3 +156,31 @@ def test_retained_selection_offline_edits_and_isolated_replay(
         completed = reader.completed(now=int(time.time()) + 1, recent=300)
         assert completed.counts.succeeded == 1
     assert not list((tmp_path / "global" / ".runtime" / "instances").glob("*.json"))
+
+
+@pytest.mark.parametrize("command", ["fork", "rewind"])
+def test_offline_edit_chat_starts_a_fresh_chat_executor(tmp_path, monkeypatch, command):
+    import io
+    import sys
+    from toolang.up.instance import read_instance
+
+    source = tmp_path / "aid.too"
+    source.write_text("flow main(_: Text) -> Text:\n  pass\n")
+    root = tmp_path / "global"
+    monkeypatch.setenv("TOOLANG_ROOT", str(root))
+    assert main([str(source), "main", "--quiet", "hello"]) == 0
+    original = select_roaming(source)
+    store = RunStore(original.run_store, read_only=True)
+    try:
+        (run,) = store.list_runs()
+    finally:
+        store.close()
+    monkeypatch.setattr(sys, "stdin", io.StringIO("/exit\n"))
+    assert main([str(source), command, run.id, "--chat"]) == 0
+    continued = select_roaming(source)
+    assert continued.root != original.root
+    entry = read_instance(continued.runtime_status)
+    assert entry is not None
+    assert entry["control"]["drivers"] == ["chat"]
+    assert entry["workload"]["status"] == "stopped"
+    assert not list((root / ".runtime" / "instances").glob("*.json"))

@@ -1,10 +1,12 @@
 """Prepare a new roaming owner from a retained execution snapshot."""
 
 from pathlib import Path
+from contextlib import closing
 import shutil
 from uuid import uuid4
 
 from toolang.common.layout import AgentLayout
+from toolang.driver.chore.store import ChoreStore
 from toolang.execution.replay import snapshot_history
 from .identity import allocate_roaming
 from .workload import fail_preparation
@@ -45,6 +47,8 @@ def prepare_continuation(
             source_run=source_run,
             source_thread=source_thread,
         )
+        with closing(ChoreStore(destination.run_store)) as chores:
+            chores.reset()
         for origin, target in (
             (source.home / ".state", destination.home / ".state"),
             (source.root_state, destination.root_state),

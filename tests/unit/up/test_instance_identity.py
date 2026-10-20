@@ -107,3 +107,26 @@ def test_retained_selection_rejects_inconsistent_identity_bindings(
     )
     with pytest.raises(ValueError, match="identity"):
         select_roaming(source, layout.instance_id)
+
+
+def test_registry_publication_failure_retains_a_failed_selectable_identity(
+    tmp_path, monkeypatch
+):
+    from toolang.up.observation import RuntimeRegistration
+
+    source = tmp_path / "aid.too"
+    root = tmp_path / "global"
+
+    def fail(_registration):
+        raise PermissionError("registry is read-only")
+
+    monkeypatch.setattr(RuntimeRegistration, "__enter__", fail)
+    with pytest.raises(PermissionError, match="registry is read-only"):
+        allocate_roaming(source, toolang_root=root)
+    retained = select_roaming(source)
+    entry = read_instance(retained.runtime_status)
+    assert entry is not None
+    assert entry["workload"]["status"] == "failed"
+    assert entry["workload"]["pid"] is None
+    assert "registry is read-only" in entry["workload"]["message"]
+    assert not list((root / ".runtime" / "instances").glob("*.json"))

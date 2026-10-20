@@ -53,6 +53,11 @@ class ChoreStore:
         with self._lock:
             self._conn.close()
 
+    def reset(self) -> None:
+        """Discard scheduler coordination when copied history gets a new owner."""
+        with self._write():
+            self._conn.execute("DELETE FROM chores")
+
     def reconcile(
         self,
         *,

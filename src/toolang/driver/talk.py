@@ -115,6 +115,9 @@ class MessagingLoop:
             try:
                 cursor = await self.client.talk_cursor(conversation)
                 receipt = self.executor.store.talk.get(scope, cursor)
+                if receipt is not None and self.executor.store.is_imported(receipt.run):
+                    # Historical receipts cannot acknowledge another owner's batch.
+                    continue
                 if receipt is not None:
                     batch = json.loads(receipt.batch.payload)
                     through = receipt.batch.through

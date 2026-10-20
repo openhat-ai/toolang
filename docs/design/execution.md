@@ -63,6 +63,8 @@ for captured Report fields.
 - Imported Runs retain original ownership across repeated replay. They remain
   inspectable, but supply no destination live activity, controls, events, usage,
   completions, or archive totals. Mutable workspaces/tools and `stats.db` are not copied.
+  New owners discard copied chore checkpoints; imported Talk receipts cannot
+  drive message handling or advance Hub cursors.
 - Replay provenance and accepted destination Run are linked atomically by request ID.
   Incomplete seeds cannot execute or seed another instance; failure retains source
   and destination roots for inspection.

@@ -105,11 +105,17 @@ def allocate_roaming(source: Path, *, toolang_root: Path) -> AgentLayout:
         stage.rename(layout.root)
         from .observation import RuntimeRegistration
 
-        RuntimeRegistration(
-            layout,
-            toolang_root=toolang_root,
-            launch_id=payload["instances"]["default"]["launch_id"],
-        ).__enter__()
+        try:
+            RuntimeRegistration(
+                layout,
+                toolang_root=toolang_root,
+                launch_id=payload["instances"]["default"]["launch_id"],
+            ).__enter__()
+        except BaseException as exc:
+            from .workload import fail_preparation
+
+            fail_preparation(layout, exc)
+            raise
         return layout
 
 
