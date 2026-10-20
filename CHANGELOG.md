@@ -224,6 +224,10 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   of a speculative hint that an already-present `using` keyword is missing.
   ([#868](https://github.com/openhat-ai/toolang/pull/868))
 
+- Documentation attachment measures tabs and spaces by visual columns, so mixed
+  indentation no longer detaches member documentation or hides it from the
+  formatter.
+
 ## [0.4.0a9] - 2026-10-18
 
 ### Added
