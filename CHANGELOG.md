@@ -7,6 +7,51 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking:** use `too start AGENT`, `too stop AGENT`, `too serve AGENT`, and
+  `too info AGENT`; agent-first lifecycle and info forms are rejected.
+  ([#879](https://github.com/openhat-ai/toolang/pull/879))
+
+- **Breaking:** place global `--root`/`-r` before the command or agent, as in
+  `too --root ROOT alice chat`.
+  ([#879](https://github.com/openhat-ai/toolang/pull/879))
+
+- Valid but unregistered agent names select agent help, and existence is checked
+  only when a command needs it.
+  ([#879](https://github.com/openhat-ai/toolang/pull/879))
+
+- Unknown and unavailable agent commands report separate errors.
+  ([#879](https://github.com/openhat-ai/toolang/pull/879))
+
+- Native command help and parameter parsing no longer fetch agent sources,
+  though execution may still acquire them.
+  ([#879](https://github.com/openhat-ai/toolang/pull/879))
+
+### Fixed
+
+- Direct `.too` script failures and interruptions preserve their nonzero exit
+  status instead of reporting success.
+  ([#879](https://github.com/openhat-ai/toolang/pull/879))
+
+- Typed runnable selectors keep their `flow:`/`agic:`/`runnable:` spelling in
+  help and parameter errors, so colliding command names remain executable.
+  ([#879](https://github.com/openhat-ai/toolang/pull/879))
+
+- Empty, missing, and wrong-kind runnable selectors report usage errors and exit
+  with status 2.
+  ([#879](https://github.com/openhat-ai/toolang/pull/879))
+
+- Malformed agent refs keep their AGENT diagnostic without unrelated command
+  suggestions, and a directory named `*.too` reports that a file was expected.
+  ([#879](https://github.com/openhat-ai/toolang/pull/879))
+
+- Root `--` accepts source filenames beginning with a dash.
+  ([#879](https://github.com/openhat-ai/toolang/pull/879))
+
+- Rejected remote workspace changes fail before any sources are fetched.
+  ([#879](https://github.com/openhat-ai/toolang/pull/879))
+
 ## [0.4.0a11] - 2026-10-20
 
 ### Fixed
