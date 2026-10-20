@@ -16,7 +16,7 @@ scope.
 
 ## Design
 
-Add one optional `color` property to the existing member JSON in the Hash
+Add one required `color` property to the existing member JSON in the Hash
 `too:teaming:v0:team:members`:
 
 ```json
@@ -38,11 +38,9 @@ Add one optional `color` property to the existing member JSON in the Hash
   probing, background assignment task, or reservation state.
 - Subsequent registrations, lease changes, and restarts preserve `color`.
   Only creating a new directory record assigns a value; deletion removes it.
-  Existing records without color retain fallback rendering and are not backfilled.
 - Users change that same field. Support standard ANSI color names and `#RRGGBB`;
-  explicit duplicates are allowed. Missing/invalid color values use the existing
-  presentation fallback rather than interpreting arbitrary terminal styles.
-  Authoritative JSON, identity, owner, and lease validation remains unchanged.
+  explicit duplicates are allowed. Member values must follow the current schema;
+  add no compatibility handling for missing or invalid color fields.
 - Carry color through the existing team snapshot. Reuse Talk's snapshot refresh
   for both color and presence, including DMs; add no separate polling service or
   notification protocol. Read one bounded snapshot before initial history and
@@ -56,7 +54,10 @@ Add one optional `color` property to the existing member JSON in the Hash
   through the existing Hub schema/API owners under repository version policy;
   add no new version counter or migration/reset workflow.
 - All teaming keys use the prerelease `too:teaming:v0` namespace, reserving
-  `v1` for stabilization. Leave existing v1 data untouched; do not import it.
+  `v1` for stabilization. Support only current v0 state; add no migration or
+  handling for older Valkey or local state.
+- Before rendering a batch with unknown senders, try one bounded team refresh
+  for the whole batch; preserve cached/fallback rendering if lookup fails.
 
 ## Manual edit
 
@@ -99,10 +100,12 @@ Acceptance scenarios:
    duplicates work, and restart/re-registration/lease changes preserve edits.
 4. The documented edit preserves other JSON properties and fails without writing
    for an unknown member. Removing/recreating a member gets a fresh assignment.
-5. Missing/invalid colors and lookup failures preserve usable rendering,
-   delivery, and drafts; corrupt authoritative fields still fail closed.
+5. Lookup failures preserve cached colors, message delivery, and drafts;
+   member records follow the current schema.
 6. Body/layout/scrollback/no-color contracts and tool/publication shapes remain
    unchanged, with no additional key, command, or API endpoint.
+7. An unknown sender's first batch uses the assigned color after one successful
+   refresh; a failed lookup still renders the whole batch and advances its cursor.
 
 Use offline tests and controlled clocks. Implementation requires the default
 repository checks. Verify the source, links, and manual-edit example alongside

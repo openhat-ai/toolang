@@ -34,7 +34,6 @@ from toolang.teaming.schemas import (
     ConversationView,
     Message,
     TeamMember,
-    member_color,
     target,
 )
 
@@ -82,6 +81,7 @@ class TalkTui:
         self.cursor = "0-0"
         self.presence: list[TeamMember] | None = None
         self.colors: dict[str, str] = {}
+        self._team_refresh_lock = asyncio.Lock()
         self._input_gap_visible = True
         self.prompt = InputBox(
             self.invalidate,
@@ -273,14 +273,24 @@ class TalkTui:
     async def show(self, entries: list[tuple[str, dict[str, str]]]) -> None:
         if not entries:
             return
+        messages: list[tuple[str, Message | None]] = []
+        for sid, fields in entries:
+            try:
+                message = Message.decode(fields["data"])
+            except (KeyError, MessagingError):
+                message = None
+            messages.append((sid, message))
+        if any(
+            message is not None and message.sender not in self.colors
+            for _, message in messages
+        ):
+            await self.refresh_team()
 
         def write() -> None:
             width = self.content_width()
             console = terminal_console(width=width)
-            for sid, fields in entries:
-                try:
-                    message = Message.decode(fields["data"])
-                except (KeyError, MessagingError):
+            for sid, message in messages:
+                if message is None:
                     console.print(
                         Text(f"Skipped malformed message at {sid}", style="yellow")
                     )
@@ -363,19 +373,16 @@ class TalkTui:
 
     async def refresh_team(self) -> None:
         """Share one snapshot for colors and presence; retain colors on failure."""
-        try:
-            async with asyncio.timeout(1):
-                rows = await self.client.team()
-        except (MessagingError, TimeoutError):
-            self.presence = None
-        else:
-            self.presence = rows
-            self.colors = {
-                row["member"]: color
-                for row in rows
-                if (color := member_color(row.get("color"))) is not None
-            }
-        self.invalidate()
+        async with self._team_refresh_lock:
+            try:
+                async with asyncio.timeout(1):
+                    rows = await self.client.team()
+            except (MessagingError, TimeoutError):
+                self.presence = None
+            else:
+                self.presence = rows
+                self.colors = {row["member"]: row["color"] for row in rows}
+            self.invalidate()
 
     async def follow_team(self, changes: Changes) -> None:
         """Refresh member presentation independently of message delivery."""

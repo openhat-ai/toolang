@@ -4,7 +4,7 @@ import asyncio
 from collections import Counter
 import json
 
-from fakeredis import FakeAsyncValkey, FakeServer
+from fakeredis import FakeServer
 import httpx
 import pytest
 from valkey.exceptions import ResponseError
@@ -123,24 +123,18 @@ def test_manual_edits_preserve_leases_and_survive_reregistration_and_restart():
             assert not await raw.hexists(TEAM_MEMBERS, "agent:unknown")
         async with client(server, "human:owner") as restarted:
             colors = {row["member"]: row["color"] for row in await restarted.team()}
-            assert colors == {"human:owner": "bright_magenta", "agent:alice": "#7aa2f7"}
+            assert colors == {"human:owner": "bright_magenta", "agent:alice": "#7AA2F7"}
 
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("color", [None, "bold red", "red on blue", "#fff", [], 42])
-def test_invalid_or_absent_color_does_not_break_reads_or_publication(color):
+def test_member_colors_are_excluded_from_execution_publication():
     async def scenario():
         async with client(FakeServer(server_type="valkey"), "human:owner") as human:
             backend, raw = human.backend, human.backend._client
             await backend.register(human.actor, agent="agent:alice", token="lease")
-            await set_color(raw, "agent:alice", color)
+            await set_color(raw, "agent:alice", "bright_cyan")
             before = await raw.hget(TEAM_MEMBERS, "agent:alice")
-            rows = await human.team()
-            assert (
-                next(row for row in rows if row["member"] == "agent:alice")["color"]
-                is None
-            )
             await backend.renew_lease("agent:alice", "lease")
             await human.send("agent:alice", body="still available")
             await backend.events.initialize()
@@ -154,17 +148,10 @@ def test_invalid_or_absent_color_does_not_break_reads_or_publication(color):
     asyncio.run(scenario())
 
 
-def test_missing_color_is_not_backfilled_and_removal_releases_its_slot():
+def test_removal_and_recreation_assigns_a_new_color():
     async def scenario():
         async with client(FakeServer(server_type="valkey"), "human:owner") as human:
             backend, raw = human.backend, human.backend._client
-            record = json.loads(await raw.hget(TEAM_MEMBERS, human.actor))
-            del record["color"]
-            await raw.hset(TEAM_MEMBERS, human.actor, json.dumps(record))
-            await human.register_human()
-            await backend.initialize()
-            assert "color" not in (await human.team())[0]
-            assert json.loads(await raw.hget(TEAM_MEMBERS, human.actor)) == record
             found = {"agent:alice"}
             roster = Roster(
                 backend, root="root", owner=human.actor, discover=lambda: set(found)
@@ -179,7 +166,7 @@ def test_missing_color_is_not_backfilled_and_removal_releases_its_slot():
             await roster.scan()
             assert (
                 json.loads(await raw.hget(TEAM_MEMBERS, "agent:alice"))["color"]
-                == "red"
+                == "green"
             )
 
     asyncio.run(scenario())
@@ -221,31 +208,21 @@ def test_existing_team_route_exposes_colors_without_leases_or_new_routes():
         ):
             await set_color(human.backend._client, human.actor, "#ABCDEF")
             rows = await hub.team()
-            assert rows[0]["color"] == "#abcdef"
+            assert rows[0]["color"] == "#ABCDEF"
             assert "lease" not in rows[0]
             assert not any("color" in path for path in app.openapi()["paths"])
 
     asyncio.run(scenario())
 
 
-def test_v0_namespace_leaves_v1_data_untouched():
+def test_all_teaming_keys_use_v0_namespace():
     async def scenario():
         server = FakeServer(server_type="valkey")
-        raw = FakeAsyncValkey(server=server, decode_responses=True)
-        old = "too:teaming:v1:team:members"
-        await raw.execute_command("HSET", old, "agent:old", "old record")
         async with client(server, "human:owner") as human:
+            raw = human.backend._client
             await human.backend.events.initialize()
             assert PREFIX == "too:teaming:v0"
-            assert await raw.execute_command("HGETALL", old) == {
-                "agent:old": "old record"
-            }
-            assert set(await raw.keys("*")) - {old}
-            assert all(
-                key.startswith(PREFIX + ":")
-                for key in await raw.keys("*")
-                if key != old
-            )
-        await raw.aclose()
+            keys = await raw.keys("*")
+            assert keys and all(key.startswith(PREFIX + ":") for key in keys)
 
     asyncio.run(scenario())

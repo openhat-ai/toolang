@@ -493,7 +493,6 @@ def test_team_refresh_keeps_cached_colors_on_failure_and_renders_edits(
                 rows,
                 BackendUnavailable("offline"),
                 [{**rows[0], "color": "#7aa2f7"}],
-                [{**rows[0], "color": "red on blue"}],
             ]
             rendered = []
             render = tui.message_block
@@ -510,12 +509,71 @@ def test_team_refresh_keeps_cached_colors_on_failure_and_renders_edits(
                 lambda *, width: Console(file=output, width=width, color_system=None),
             )
             message = Message.create("agent:alice", "still delivered")
-            for number, expected in enumerate(("green", "green", "#7aa2f7", None)):
+            for number, expected in enumerate(("green", "green", "#7aa2f7")):
                 await ui.refresh_team()
                 await ui.show([(f"1-{number}", {"data": message.encode()})])
                 assert rendered[-1] == expected
                 assert (ui.presence is None) == (number == 1)
-            assert output.getvalue().count("still delivered") == 4
+            assert output.getvalue().count("still delivered") == 3
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("failure", [False, True])
+def test_unknown_sender_refreshes_once_before_rendering_the_batch(
+    tmp_path, monkeypatch, failure
+):
+    from toolang.teaming.errors import BackendUnavailable
+
+    async def scenario():
+        async with talk_app(tmp_path) as (ui, _):
+            ui.client.team.return_value = [
+                {"member": "agent:alice", "color": "red", "deadline": 1}
+            ]
+            await ui.refresh_team()
+            ui.client.team.reset_mock()
+            ui.client.team.return_value = [
+                {"member": "agent:alice", "color": "red", "deadline": 1},
+                {"member": "agent:bob", "color": "green", "deadline": 1},
+            ]
+            if failure:
+                ui.client.team.side_effect = BackendUnavailable("offline")
+            rendered = []
+            render = tui.message_block
+
+            def block(message, *args, color=None):
+                rendered.append((message.sender, color))
+                return render(message, *args, color=color)
+
+            monkeypatch.setattr(tui, "message_block", block)
+            output = StringIO()
+            monkeypatch.setattr(
+                tui,
+                "terminal_console",
+                lambda *, width: Console(file=output, width=width, color_system=None),
+            )
+            messages = [
+                Message.create("agent:alice", "Known sender"),
+                Message.create("agent:bob", "New sender first message"),
+                Message.create("agent:bob", "New sender second message"),
+            ]
+            await ui.show(
+                [
+                    (f"1-{index}", {"data": message.encode()})
+                    for index, message in enumerate(messages)
+                ]
+            )
+            ui.client.team.assert_awaited_once()
+            assert rendered == [
+                ("agent:alice", "red"),
+                ("agent:bob", None if failure else "green"),
+                ("agent:bob", None if failure else "green"),
+            ]
+            assert ui.cursor == "1-2"
+            assert all(message.body in output.getvalue() for message in messages)
+            if not failure:
+                await ui.show([("1-3", {"data": messages[-1].encode()})])
+                ui.client.team.assert_awaited_once()
 
     asyncio.run(scenario())
 

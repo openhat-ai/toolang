@@ -58,7 +58,7 @@ def test_presence_refresh_recovers_expires_and_follows_membership(
         clock = 100.0
         monkeypatch.setattr(tui.time, "time", lambda: clock)
         async with talk_app(tmp_path) as (ui, _):
-            rows = [{"member": "agent:alice", "deadline": 101_000}]
+            rows = [{"member": "agent:alice", "color": "green", "deadline": 101_000}]
             ui.client.team.side_effect = [
                 rows,
                 BackendUnavailable("offline"),

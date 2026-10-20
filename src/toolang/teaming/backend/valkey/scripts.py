@@ -82,11 +82,7 @@ end
 member(op.actor); member(op.agent); member(op.owner)
 for _,value in ipairs(op.participants or {}) do member(value) end
 if op.agent then capture('roster',KEYS[9],op.agent) end
-local creating=op.action=='register' and (
-  (op.agent and redis.call('HEXISTS',KEYS[2],op.agent)==0) or
-  (op.owner and redis.call('HEXISTS',KEYS[2],op.owner)==0)
-) or (op.create_member and op.agent and redis.call('HEXISTS',KEYS[2],op.agent)==0)
-if op.action=='team' or creating then
+if op.action=='team' then
   expect(KEYS[2],'hash')
   table.insert(hashes,{KEYS[2],redis.call('HLEN',KEYS[2])})
   for _,value in ipairs(redis.call('HKEYS',KEYS[2])) do member(value) end
@@ -175,7 +171,7 @@ local function new_member(name,owner)
     for _,color in ipairs(member_colors) do color_counts[color]=0 end
     for _,raw in ipairs(redis.call('HVALS',KEYS[2])) do
       local color=decode(raw).color
-      if type(color)=='string' and color_counts[color] then
+      if color_counts[color] then
         color_counts[color]=color_counts[color]+1
       end
     end

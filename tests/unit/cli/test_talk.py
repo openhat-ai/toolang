@@ -805,25 +805,6 @@ def test_member_color_applies_only_to_name_and_marker(sender, own_message, color
     assert "\x1b" not in output.getvalue()
 
 
-@pytest.mark.parametrize("color", ["red on blue", "bold red", "\x1b[31m", "#fff"])
-def test_invalid_member_colors_retain_safe_presentation_fallback(color):
-    message = Message.create("agent:alice", "body text")
-    console = Console(width=60)
-    fallback = list(
-        console.render(
-            message_block(message, "human:reader", 60, DARK_TERMINAL_SURFACES)
-        )
-    )
-    actual = list(
-        console.render(
-            message_block(
-                message, "human:reader", 60, DARK_TERMINAL_SURFACES, color=color
-            )
-        )
-    )
-    assert actual == fallback
-
-
 @pytest.mark.parametrize("identity", ["alice", "bryan"])
 @pytest.mark.parametrize("sender", ["alice", "bob", "bryan", "visitor"])
 def test_message_marker_shares_name_row_and_name_aligns_with_body(identity, sender):

@@ -17,7 +17,7 @@ from rich.text import Text
 from toolang.cli.common.terminal_surfaces import TerminalSurfaces
 from toolang.cli.common.control_bars import CONTROL_BAR_MARK, RUN_CONTROL_ACCENT
 from toolang.cli.common.markdown import TerminalMarkdown
-from toolang.teaming.schemas import Message, member_color, target
+from toolang.teaming.schemas import Message, target
 from toolang.teaming.types import MEMBER_COLORS
 
 _ESCAPE = re.compile(
@@ -75,7 +75,6 @@ def message_block(
     width = max(1, width)
     gutter = min(8, width // 5) if right else 0
     body_width = max(1, width - gutter)
-    color = member_color(color)
     header_style = "not dim"
     if agent:
         header_style = f"{color or _agent_color(sender.name)} bold not dim"

@@ -16,7 +16,6 @@ from pydantic import (
     ConfigDict,
     Field,
     AfterValidator,
-    BeforeValidator,
     field_validator,
     model_validator,
     with_config,
@@ -36,17 +35,12 @@ _STREAM_ID = re.compile(r"[0-9]+-[0-9]+\Z")
 MAX_RULES_BYTES = 64 * 1024
 
 
-def member_color(value: object) -> str | None:
-    """Ignore invalid cosmetic values without weakening member record validation."""
-    if isinstance(value, str) and re.fullmatch(
-        r"(?:bright_)?(?:black|red|green|yellow|blue|magenta|cyan|white)|#[0-9a-fA-F]{6}",
-        value,
-    ):
-        return value.lower()
-    return None
-
-
-MemberColor = Annotated[str | None, BeforeValidator(member_color)]
+MemberColor = Annotated[
+    str,
+    Field(
+        pattern=r"^(?:(?:bright_)?(?:black|red|green|yellow|blue|magenta|cyan|white)|#[0-9a-fA-F]{6})$"
+    ),
+]
 
 
 def identifier(value: str) -> str:
@@ -246,7 +240,7 @@ class TeamRecord(ProtocolModel):
     owner: str | None
     created_at: str
     lease: LeaseRecord | None
-    color: MemberColor = None
+    color: MemberColor
 
     _timestamp = field_validator("created_at")(utc_timestamp)
 
@@ -362,7 +356,7 @@ class TeamMember(TypedDict):
     created_at: Annotated[str, AfterValidator(utc_timestamp)]
     deadline: Annotated[float, Field(ge=0, le=MAX_SAFE_INTEGER)] | None
     online: NotRequired[bool | None]
-    color: NotRequired[MemberColor]
+    color: MemberColor
 
 
 @with_config(ConfigDict(extra="forbid", strict=True))

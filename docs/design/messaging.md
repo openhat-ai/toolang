@@ -31,9 +31,8 @@ and recorded launches, not delivery or live presence.
 Hub store schema `4` owns messaging and execution-event data. Incompatible or
 corrupt initialized stores fail closed without resets, mutation, or import.
 All teaming keys use the prerelease `too:teaming:v0` namespace; `v1` is reserved
-for stabilization. Existing `too:teaming:v1` data is left untouched and is not
-imported into the new namespace. Restart Hub, agents, and Talk together after
-upgrading.
+for stabilization. Only v0 state is supported; there is no compatibility or
+migration path.
 Hub and clients must use compatible versions and backend data. Restart applies
 configuration changes; Talk must be reopened when its endpoint, backend, or
 human identity changes.
@@ -123,7 +122,7 @@ Each directory member receives a `color` when first created. Hub chooses the
 least-used of `red`, `green`, `yellow`, `blue`, `magenta`, and `cyan`, breaking
 ties in that order. Registration, lease updates, and restart preserve it; member
 removal deletes it. Agent and human names and message markers use this color.
-Missing or invalid colors retain the existing rendering fallback.
+`color` is required and accepts a standard ANSI color name or `#RRGGBB`.
 
 To customize an existing member, atomically edit its JSON in
 `too:teaming:v0:team:members` using `valkey-cli` against the configured backend:
@@ -143,7 +142,9 @@ Use a standard ANSI name, including its `bright_` variant, or a quoted
 `HGET` snapshot, which could overwrite a newer lease, or delete a member to
 change its color. Talk refreshes colors and presence through one team snapshot
 loop with a one-second fallback interval; lookup failures retain cached colors
-without blocking delivery. Edits affect subsequent rendering; reopening Talk
+without blocking delivery. Before committing a batch with unknown senders to
+scrollback, Talk attempts one bounded team refresh for the entire batch.
+Edits affect subsequent rendering; reopening Talk
 applies current colors to retained history without repainting existing scrollback.
 
 Failed sends preserve drafts and require a user retry decision. Transient reads
