@@ -9,6 +9,10 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Changed
 
+- Chat terminal titles use `AGENT>` before a thread title exists and
+  `AGENT> title` afterward, while Top titles read `top` and `AGENT top`.
+  ([#873](https://github.com/openhat-ai/toolang/pull/873))
+
 - `too top` and `too AGENT top` show a THREAD column between AGENT and RUN
   in live trees, lists, snapshots, and recent completions.
   ([#869](https://github.com/openhat-ai/toolang/pull/869))
