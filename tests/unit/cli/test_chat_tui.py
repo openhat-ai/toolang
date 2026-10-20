@@ -7115,7 +7115,7 @@ def test_chat_terminal_publication_does_not_block_ui_events() -> None:
             lookup=lookup,
             on_result=results.put,
         )
-        terminal.start("alice")
+        terminal.start(tui.chat_label("alice"))
         app.title.start("term_x")
         try:
             app._handle_run_state(RunAccepted("run_1"))
@@ -7127,7 +7127,7 @@ def test_chat_terminal_publication_does_not_block_ui_events() -> None:
             released.set()
             result = await asyncio.to_thread(results.get, True, 5)
             app.handle_ui_event(ChatUIEvent("thread_title", result))
-            assert stream.getvalue().endswith("\x1b]0;alice: hello world\x07")
+            assert stream.getvalue().endswith("\x1b]0;alice> hello world\x07")
             before = stream.getvalue()
             app.handle_run_event(run_end(run="run_1", status="succeeded"))
             assert results.empty() and stream.getvalue() == before
@@ -7179,14 +7179,14 @@ def test_terminal_title_requires_tty_but_not_tmux(
             terminal=TerminalSession(enabled=True),
         )
         app.terminal.start(
-            "alice",
+            tui.chat_label("alice"),
             write=output.write_raw,
             flush=output.flush,
             enabled=app._terminal_is_tty,
         )
         app.terminal.close()
     assert output.writes == (
-        ["\x1b]0;alice\x07", "\x1b]0;\x07"] if input_tty and output_tty else []
+        ["\x1b]0;alice>\x07", "\x1b]0;\x07"] if input_tty and output_tty else []
     )
 
 

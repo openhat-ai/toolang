@@ -218,7 +218,7 @@ def test_interactive_top_publishes_scoped_title_and_closes_on_exit(
     )
     top.top(context)
     assert entries[0][0] == "top"
-    assert entries[0][1]["label"] == (f"top {agent}" if agent else "top team")
+    assert entries[0][1]["label"] == (f"{agent} top" if agent else "top")
     assert entries[0][1]["layout"] == layout
     assert entries[0][1]["context"] == ("" if agent else str(tmp_path.resolve()))
     assert events == ["start", "close", "observer closed"]

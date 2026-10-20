@@ -244,7 +244,7 @@ def test_publication_exclusions_include_cleanup(
     with prepare_terminal(
         "top",
         root=tmp_path,
-        label="top team",
+        label="top",
         stream=output,
         eligible=excluded != "eligible",
         environment={},

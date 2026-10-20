@@ -138,14 +138,15 @@ untouched; Chat and Talk always run in the invoking terminal.
 
 | Command | Title |
 | --- | --- |
-| Chat | `alice: thread title`, initially `alice` |
+| Chat | `alice> thread title`, initially `alice>` |
 | Talk | `@alice`, `@alice,bob`, or `#dev` |
+| Top | `top` or `alice top` |
 | Serve | `serve alice` or `serve hub` |
 | Script Run | `run file.too` or `run file.too runnable` (basename only) |
 | Rerun | `rerun run_id` (source ID) |
 
 Each type's prefix defaults to an empty string. Configure
-`chat`, `talk`, `serve`, `run`, and `rerun` independently:
+`chat`, `talk`, `top`, `serve`, `run`, and `rerun` independently:
 
 ```toml
 [terminal.title.prefix]
@@ -166,7 +167,7 @@ TOOLANG_TITLE_PREFIX_CHAT='[too] ' too alice chat
 TOOLANG_TITLE_PREFIX_CHAT='' too alice chat
 ```
 
-Prefixes concatenate directly: `"💬"` gives `💬alice`; `"💬 "` gives `💬 alice`.
+Prefixes concatenate directly: `"💬"` gives `💬alice>`; `"💬 "` gives `💬 alice>`.
 Printable spaces are preserved. Unsafe controls are removed and the complete
 title is clipped to 32 display columns without splitting graphemes. Titles clear
 on handled exit. TTY input, output, and presentation streams are required;
@@ -177,7 +178,7 @@ In tmux, foreground commands also publish pane-local string options:
 
 | Option | Value |
 | --- | --- |
-| `@toolang_kind` | `chat`, `talk`, `serve`, `run`, or `rerun` |
+| `@toolang_kind` | `chat`, `talk`, `top`, `serve`, `run`, or `rerun` |
 | `@toolang_root` | Agent root for agent commands; Toolang root for commands without an agent |
 | `@toolang_agent` | Bare agent name; empty for Talk, team Top, and Hub Serve |
 | `@toolang_thread` | Chat thread ID, once created |
