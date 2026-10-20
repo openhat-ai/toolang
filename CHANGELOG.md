@@ -9,9 +9,9 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Added
 
-- Roaming scripts, Chat, and serve launches each keep a fresh executor and a
-  retained `<source_dir>/.toolang/<agent>@<instance_id>/` root, while
-  `--instance/-i` selects retained history instead of restarting an old root.
+- Roaming script and Chat launches each keep a fresh executor and a retained
+  `<source_dir>/.toolang/<agent>@<instance_id>/` root, while `--instance/-i`
+  selects retained history instead of restarting an old root.
   ([#884](https://github.com/openhat-ai/toolang/pull/884))
 
 - Host scripts expose the full shared Agent API on their existing event loop,
@@ -45,6 +45,10 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   existing root; align those options or run `too AGENT stop` first.
   ([#884](https://github.com/openhat-ai/toolang/pull/884))
 
+- **Breaking:** Roaming `serve` is removed; run `too FILE.too` or
+  `too FILE.too chat` instead.
+  ([#884](https://github.com/openhat-ai/toolang/pull/884))
+
 - Resident ports reuse their previous value only when available, otherwise
   7002-7999; visiting ports reuse theirs only when available, otherwise an
   OS-assigned port; roaming launches get a fresh OS-assigned port.
@@ -52,6 +56,17 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 - OpenAPI documents name the former `top` group `activity`, while HTTP paths
   and contracts stay unchanged.
+  ([#884](https://github.com/openhat-ai/toolang/pull/884))
+
+### Fixed
+
+- Failed preparation no longer leaves active registrations; runtime references
+  remain until resource release, Stats works for embedded scripts, and
+  incomplete replay seeds are rejected.
+  ([#884](https://github.com/openhat-ai/toolang/pull/884))
+
+- CLI controls attach to foreground roaming executors on their real published
+  port, covering steer, cancel, profile, and Top.
   ([#884](https://github.com/openhat-ai/toolang/pull/884))
 
 ## [0.4.0a11] - 2026-10-20
