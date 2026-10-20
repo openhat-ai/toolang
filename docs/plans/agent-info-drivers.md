@@ -6,8 +6,8 @@ No implementation is included.
 ## Goal and scope
 
 Show the agent's enabled execution drivers in `too TARGET info` and
-`too info TARGET` while running, immediately after `Status`. Success means users can see
-the running agent's driver selection without inspecting runtime files.
+`too info TARGET` while running, immediately after `Status`. Success means users
+can see the running agent's driver selection without inspecting runtime files.
 Use the existing [driver contract](../design/drivers.md); do not change driver
 selection, startup, handlers, API schemas, or other commands.
 
@@ -36,6 +36,8 @@ Drivers: chat,talk,chore
 - `src/toolang/cli/toolang/commands/agent.py`: format the existing runtime
   metadata and insert the running-only row immediately after `Status`.
 - `tests/unit/cli/test_agent_info.py`: extend existing info coverage.
+- `tests/integration/cli/test_local_core_commands.py`: update the existing row
+  order checks and cover nonrunning statuses with stale driver metadata.
 - `docs/design/cli.md`: describe the running-only row and its unavailable value.
 
 ## Acceptance tests
