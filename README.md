@@ -141,7 +141,7 @@ too run FILE.too [RUNNABLE]  # Execute a .too file
 
 too hub start                # Start the hub in the background
 too talk                     # List conversations
-too talk CONVO_ID            # Open a conversation by ID
+too talk CONVO               # Open a conversation by ID
 too talk AGENT               # Open a conversation with an agent
 too talk all                 # Open a conversation with the team
 
