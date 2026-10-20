@@ -74,7 +74,7 @@ def accept_sources(
         return "/".join(parts[:2]) if parts[0] == "skills" and len(parts) >= 2 else path
 
     for file in authored.files:
-        if file.origin != ("agent" if scope == "home" else "root"):
+        if file.layer != ("agent" if scope == "home" else "root"):
             continue
         relative = key(file.relative_path)
         records[relative] = StateFile(scope, relative, file.raw_digest)
@@ -333,7 +333,7 @@ def accept_sources(
         files=tuple(
             file
             for file in authored.files
-            if file.origin != ("agent" if scope == "home" else "root")
+            if file.layer != ("agent" if scope == "home" else "root")
             or unit(key(file.relative_path)) not in excluded
         ),
     )

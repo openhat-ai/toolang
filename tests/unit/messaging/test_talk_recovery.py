@@ -1,6 +1,7 @@
 """Batch receipts survive cursor failures and interrupted execution admission."""
 
 import asyncio
+from contextlib import closing
 import json
 from unittest.mock import AsyncMock
 
@@ -18,7 +19,8 @@ from toolang.base.types.message import Message as ModelMessage
 from toolang.base.types.run import ModelCallResult, ToolCall
 from toolang.execution.executor import conversations
 from toolang.execution.executor.executor import _Execution
-from toolang.execution.types import ConversationScope
+from toolang.execution.store import RunStore
+from toolang.execution.types import ConversationScope, ThreadKind, ThreadRef
 from toolang.lang.input import CallInput
 from toolang.lang.types import Array
 from toolang.teaming.errors import BackendUnavailable
@@ -35,6 +37,87 @@ def server(monkeypatch):
         conversations, "AgentClient", lambda root, actor: make_client(server, actor)
     )
     return server
+
+
+@pytest.mark.parametrize("operation", ["fork", "rewind"])
+def test_thread_controls_preserve_talk_binding_receipt_and_cursor(
+    tmp_path, server, operation
+):
+    harness = harness_with_msg(
+        tmp_path,
+        server,
+        [
+            ModelCallResult(message=ModelMessage.assistant("First handled.")),
+            ModelCallResult(message=ModelMessage.assistant("Second handled.")),
+        ],
+    )
+
+    async def scenario():
+        async with (
+            harness,
+            make_client(server) as alice,
+            make_client(server, "human:owner") as human,
+        ):
+            await prepare(alice, human)
+            first = await human.send("gc_00000001", body="First request.")
+            await make_loop(tmp_path, alice, harness).poll()
+            scope = ConversationScope(alice.config.identity, "gc_00000001")
+            thread = harness.store.talk.binding(scope)
+            assert thread == talk_thread_id("gc_00000001", agent_name="alice")
+            receipt = harness.store.talk.get(scope, "0-0")
+            assert receipt is not None
+            assert receipt.batch.through == first["stream_id"]
+            assert await alice.talk_cursor("gc_00000001") == first["stream_id"]
+
+            forked = None
+            if operation == "fork":
+                forked = harness.threads.fork(thread_id=thread, run_id=receipt.run)
+                assert forked != thread and ThreadRef(forked).kind == ThreadKind.TALK
+            else:
+                harness.threads.rewind(thread_id=thread, run_id=receipt.run)
+
+            with closing(RunStore(harness.store.db_path, read_only=True)) as reopened:
+                assert reopened.talk.binding(scope) == thread
+                assert reopened.talk.get(scope, "0-0") == receipt
+                assert reopened.get_run(run_id=receipt.run) is not None
+                assert [
+                    run.id
+                    for run in reopened.list_thread_history_chronological(
+                        thread_id=thread
+                    )
+                ] == ([receipt.run] if operation == "fork" else [])
+            assert await alice.talk_cursor("gc_00000001") == first["stream_id"]
+
+            restarted = make_loop(tmp_path, alice, harness)
+            await restarted.poll()
+            assert len(harness.adapter.invocations) == 1
+            assert len(harness.store.list_runs()) == 1
+            second = await human.send("gc_00000001", body="Second request.")
+            await restarted.poll()
+            assert await alice.talk_cursor("gc_00000001") == second["stream_id"]
+            assert len(harness.adapter.invocations) == 2
+            next_receipt = harness.store.talk.get(scope, first["stream_id"])
+            assert next_receipt is not None and next_receipt.run != receipt.run
+            next_run = harness.store.get_run(run_id=next_receipt.run)
+            assert next_run is not None and next_run.thread.id == thread
+            assert harness.store.talk.binding(scope) == thread
+            assert harness.store.talk.get(scope, "0-0") == receipt
+            if forked is not None:
+                assert [
+                    run.id
+                    for run in harness.store.list_thread_history_chronological(
+                        thread_id=forked
+                    )
+                ] == [receipt.run]
+            else:
+                assert [
+                    run.id
+                    for run in harness.store.list_thread_history_chronological(
+                        thread_id=thread
+                    )
+                ] == [next_run.id]
+
+    asyncio.run(scenario())
 
 
 @pytest.mark.parametrize("status", ["pending", "running"])
@@ -200,7 +283,7 @@ def test_existing_unbound_talk_id_is_not_adopted(tmp_path, server):
         ):
             await prepare(alice, human)
             thread = talk_thread_id("gc_00000001", agent_name="alice")
-            harness.store.create_thread(thread_id=thread, origin="work")
+            harness.store.create_thread(thread_id=thread)
             before = harness.store.get_thread(thread_id=thread)
             await human.send("gc_00000001", body="Do not mix histories.")
             await make_loop(tmp_path, alice, harness).poll()

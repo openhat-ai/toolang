@@ -34,7 +34,7 @@ from toolang.execution.events import (
 )
 from toolang.execution.subscriptions import RecordSnapshot
 from toolang.execution.types import (
-    ThreadPrefix,
+    ThreadKind,
     ToolStepSpec,
     ToolStepReport,
     StepRef,
@@ -78,7 +78,7 @@ agic calculate(_: Text) -> Text:
 
     async def scenario() -> None:
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             run = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
@@ -151,7 +151,7 @@ flow parent() -> Part[][]:
 
     async def scenario():
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             root = await harness.executor.run(
                 harness.run_spec(thread=thread, runnable="parent"), tracer=tracer
             )
@@ -208,7 +208,7 @@ flow relay(_: Text) -> Text:
 
     async def scenario() -> None:
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             root = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
@@ -268,7 +268,7 @@ flow parallel(_: Text) -> Text[]:
 
     async def scenario() -> None:
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             root = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,

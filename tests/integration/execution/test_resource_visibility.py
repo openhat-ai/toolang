@@ -33,7 +33,7 @@ from toolang.base.types.message import ToolResultPart, message_text
 from toolang.base.types.run import ToolCall
 from toolang.execution.records import RecallControlPayload, StoredModelStepSpec
 from toolang.execution.types import (
-    ThreadPrefix,
+    ThreadKind,
     TypedRef,
 )
 from toolang.state.prepare import prepare_agent_state
@@ -79,7 +79,7 @@ def test_first_call_has_all_workspaces_without_discovery_or_rule_reads(
 
     async def scenario():
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             runs = [
                 await harness.executor.run(
                     _spec(harness, publication, thread), tracer=tracer
@@ -118,7 +118,7 @@ def test_compaction_reintroduces_workspaces_even_if_far_mentions_them(tmp_path):
 
     async def scenario():
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             first = await harness.executor.run(
                 _spec(harness, publication, thread), tracer=tracer
             )
@@ -230,7 +230,7 @@ def test_publication_preserves_bound_psyches_and_runnable_authority(tmp_path):
         async with harness:
             run = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="chat",
                 ),
                 tracer=tracer,
@@ -358,7 +358,7 @@ def test_runnable_docs_do_not_inflate_recurring_route_messages(tmp_path):
         async with harness:
             run = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="chat",
                 ),
                 tracer=tracer,
@@ -467,7 +467,7 @@ def test_definition_changes_invalidate_and_refresh_guidance(tmp_path, kind, name
         async with harness:
             run = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="chat",
                 ),
                 tracer=tracer,

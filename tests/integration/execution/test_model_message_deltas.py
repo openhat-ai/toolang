@@ -61,7 +61,7 @@ from toolang.execution.types import (
     ServiceRecallTarget,
     SkillRecallTarget,
     SkillTriggerRecallTarget,
-    ThreadPrefix,
+    ThreadKind,
     TypedRef,
     StepRef,
 )
@@ -121,7 +121,7 @@ agic chat(_: Part[]) -> Part[]:
         async with harness:
             handle = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="chat",
                     primary=(TextPart("start"), ImagePart(file_id="image")),
                 ),
@@ -228,7 +228,7 @@ def test_online_tool_loops_only_record_and_render_additions(
         async with harness:
             root = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="chat",
                     primary=(
                         TextPart("start"),
@@ -326,7 +326,7 @@ def test_interruption_during_cleanup_still_persists_adopted_output(
         async with harness:
             handle = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="chat",
                     primary=(TextPart("start"),),
                 ),
@@ -418,7 +418,7 @@ def test_interrupted_model_end_preserves_referenced_output(
         async with harness:
             handle = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="chat",
                     primary=(TextPart("start"),),
                 ),
@@ -528,7 +528,7 @@ def test_steer_and_interrupted_model_begin_replay_once(
         async with harness:
             handle = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="chat",
                     primary=(TextPart("start"),),
                 ),
@@ -619,7 +619,7 @@ agic parent() -> Boolean:
         async with harness:
             root = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable=runnable,
                     primary=(TextPart("start"),)
                     if scenario_name == "parallel"

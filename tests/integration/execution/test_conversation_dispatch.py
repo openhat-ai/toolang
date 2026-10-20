@@ -15,7 +15,7 @@ from toolang.base.types.run import ModelCallResult, ToolCall
 from toolang.execution.errors import ThreadBusy
 from toolang.execution.events import ThreadCreated
 from toolang.execution.records import RunControlPayload
-from toolang.execution.types import ThreadPrefix, ControlRef, RunRef
+from toolang.execution.types import ThreadKind, ControlRef, RunRef
 
 
 def call(name, **arguments):
@@ -24,7 +24,7 @@ def call(name, **arguments):
     )
 
 
-@pytest.mark.parametrize("prefix", list(ThreadPrefix))
+@pytest.mark.parametrize("prefix", list(ThreadKind))
 def test_spawn_reuses_any_idle_local_prefix_without_rewriting_metadata(
     tmp_path, prefix
 ):
@@ -41,7 +41,7 @@ flow worker(_: Text) -> Text:
 
     async def scenario():
         async with harness:
-            destination = harness.threads.create(prefix=prefix)
+            destination = harness.threads.create(kind=prefix)
             previous = await harness.executor.run(
                 harness.run_spec(
                     thread=destination,
@@ -51,7 +51,7 @@ flow worker(_: Text) -> Text:
             )
             assert previous.status == "succeeded"
             metadata = harness.store.get_thread(thread_id=destination)
-            source = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            source = harness.threads.create(kind=ThreadKind.CHAT)
             harness.adapter._responses.extend(
                 [
                     call(
@@ -81,8 +81,8 @@ flow worker(_: Text) -> Text:
             assert worker.thread.id == destination
             after = harness.store.get_thread(thread_id=destination)
             assert after is not None and metadata is not None
-            assert (after.origin, after.created_at) == (
-                metadata.origin,
+            assert (after.kind, after.created_at) == (
+                metadata.kind,
                 metadata.created_at,
             )
             assert len(harness.store.list_threads()) == 2
@@ -131,7 +131,7 @@ flow other() -> Text:
 
     async def scenario():
         async with harness:
-            destination = harness.threads.create(prefix=ThreadPrefix.TALK)
+            destination = harness.threads.create(kind=ThreadKind.TALK)
             running = harness.executor.run(
                 harness.run_spec(thread=destination, runnable="agic:worker")
             )
@@ -148,7 +148,7 @@ flow other() -> Text:
                     ModelCallResult(message=Message.assistant("Thread is busy.")),
                 ]
             )
-            source = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            source = harness.threads.create(kind=ThreadKind.CHAT)
             parent = await harness.executor.run(
                 harness.run_spec(thread=source, runnable="agic:controller")
             )
@@ -185,7 +185,7 @@ flow worker(_: Text) -> Text:
 
     async def scenario():
         async with harness:
-            destination = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            destination = harness.threads.create(kind=ThreadKind.CHAT)
             previous = await harness.executor.run(
                 harness.run_spec(
                     thread=destination,
@@ -221,7 +221,7 @@ flow worker(_: Text) -> Text:
                     ModelCallResult(message=Message.assistant("Admitted.")),
                 ]
             )
-            source = harness.threads.create(prefix=ThreadPrefix.TALK)
+            source = harness.threads.create(kind=ThreadKind.TALK)
             parent = await harness.executor.run(
                 harness.run_spec(thread=source, runnable="agic:controller")
             )
@@ -263,7 +263,7 @@ def test_self_cancel_preserves_accepted_control_receipt_during_delivery(tmp_path
 
     async def scenario():
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.TALK)
+            thread = harness.threads.create(kind=ThreadKind.TALK)
             handle = harness.executor.run(
                 harness.run_spec(thread=thread, runnable="agic:controller")
             )
@@ -319,7 +319,7 @@ agic controller() -> Text:
 
     async def scenario():
         async with harness:
-            destination = harness.threads.create(prefix=ThreadPrefix.CHORE)
+            destination = harness.threads.create(kind=ThreadKind.CHORE)
             worker = harness.executor.run(
                 harness.run_spec(thread=destination, runnable="agic:worker")
             )
@@ -336,7 +336,7 @@ agic controller() -> Text:
                     ModelCallResult(message=Message.assistant("Reported.")),
                 ]
             )
-            source = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            source = harness.threads.create(kind=ThreadKind.CHAT)
             parent = await harness.executor.run(
                 harness.run_spec(thread=source, runnable="agic:controller")
             )

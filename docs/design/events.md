@@ -27,6 +27,9 @@ model, tool, or flow activity. Completion carries direct typed JSON data,
 summary/usage, and display errors. Bindings, State references, full calls, and
 provider-native evidence remain in records and explicit inspection.
 
+Thread creation events carry the Thread ID without a separate `origin` or
+`kind` field; the ID prefix identifies the context kind.
+
 See [event dataclasses](../../src/toolang/execution/events.py) for exact fields and
 [event projection](../../src/toolang/execution/event_projection.py) for the boundary
 from runtime values to public payloads.
@@ -100,7 +103,7 @@ Upgrade publishers and subscribers together. Model completion
 summaries expose four token fields under `report.usage`; USD `report.cost` and
 `report.cost_approximate` are siblings. They contain no full cost evidence.
 Stored model Report now uses `usage`, `cost`, `invoked`, `cont`, with no
-`accounting` envelope; Run records add terminal `report`. Schema 61 requires fresh
+`accounting` envelope; Run records add terminal `report`. Schema 62 requires fresh
 storage without compatibility reads. See [terminal records](execution.md#terminal-usage-and-cost-records)
 and [Run Events](execution.md#run-events).
 

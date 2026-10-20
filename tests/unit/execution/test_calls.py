@@ -27,7 +27,7 @@ from toolang.execution.schemas import (
     RunRequest,
     RunnableRequest,
 )
-from toolang.execution.types import AllowOverride, RunCommand, RunOverride, ThreadPrefix
+from toolang.execution.types import AllowOverride, RunCommand, RunOverride, ThreadKind
 from toolang.lang.input import CallInput
 from toolang.lang.types import Array
 from toolang.setup import ToolCollection
@@ -63,7 +63,7 @@ def test_qualified_slash_calls_resolve_reserved_public_runnables(
             input,
             setup=harness.setup,
             state=harness.state,
-            thread="term_test",
+            thread="chat_test",
             default_runnable=f"{kind}:{name}",
         )
         assert spec.input == CallInput()
@@ -97,7 +97,7 @@ def test_empty_slash_call_executes_without_primary_input(
                 input,
                 setup=harness.setup,
                 state=harness.state,
-                thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                thread=harness.threads.create(kind=ThreadKind.CHAT),
                 default_runnable=f"{kind}:work",
             )
             assert spec.input == CallInput()
@@ -130,7 +130,7 @@ def test_empty_slash_call_reports_missing_required_input(
                 input,
                 setup=harness.setup,
                 state=harness.state,
-                thread="term_test",
+                thread="chat_test",
                 default_runnable=f"{kind}:work",
             )
     finally:
@@ -198,7 +198,7 @@ def test_materialized_agic_request_requires_a_model(tmp_path) -> None:
         with pytest.raises(ValueError, match="requires a model"):
             resolve_run_request(
                 RunRequest(
-                    thread_id="term_test",
+                    thread_id="chat_test",
                     request_id="request_without_model",
                     runnable=RunnableRequest("agic:default", CallInput({"_": "hello"})),
                     model=None,
@@ -223,7 +223,7 @@ def test_materialized_request_rejects_an_unqualified_runnable(tmp_path) -> None:
         with pytest.raises(ValueError, match="runnable ref must be exact"):
             resolve_run_request(
                 RunRequest(
-                    thread_id="term_test",
+                    thread_id="chat_test",
                     request_id="request_with_selector",
                     runnable=RunnableRequest("default", CallInput({"_": "hello"})),
                     model=ModelRequest("test/scripted"),
@@ -246,7 +246,7 @@ def test_materialized_request_validates_the_selected_module(
         tmp_path, source=f"{kind} chat(_: Text):\n  pass\n", responses=[]
     )
     request = RunRequest(
-        thread_id="term_test",
+        thread_id="chat_test",
         request_id="module_selection",
         driver=driver,
         runnable=RunnableRequest(f"{module}::{kind}:chat", CallInput({"_": "hello"})),
@@ -275,7 +275,7 @@ def test_entry_selector_resolves_to_a_lined_run_identity(tmp_path, kind, selecto
     try:
         spec = resolve_run_request(
             RunRequest(
-                thread_id="term_test",
+                thread_id="chat_test",
                 request_id="entry_selector",
                 runnable=RunnableRequest(
                     selector.format(kind=kind), CallInput({"_": "hello"})
@@ -330,7 +330,7 @@ flow hello_flow(_: Text) -> Text:
                     input,
                     setup=harness.setup,
                     state=harness.state,
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     default_runnable="default",
                 )
             )
@@ -370,7 +370,7 @@ flow hello_flow(_: Text) -> Text:
 
     async def scenario() -> None:
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             commands, input = parse_call("/flow:hello_flow\n\nhello world")
             first = await harness.executor.run(
                 resolve_spec(
@@ -421,7 +421,7 @@ def test_resolve_spec_binds_policy_primary_and_typed_named_inputs(
             input,
             setup=harness.setup,
             state=harness.state,
-            thread="term_test",
+            thread="chat_test",
             default_runnable="default",
         )
 
@@ -469,7 +469,7 @@ agic default(_: Part[]):
             input,
             setup=harness.setup,
             state=harness.state,
-            thread="term_test",
+            thread="chat_test",
             default_runnable="default",
         )
 
@@ -518,7 +518,7 @@ agic default(_: Part[]):
                 CallInput({"_": "$review -- inspect this"}),
                 setup=harness.setup,
                 state=state,
-                thread="term_test",
+                thread="chat_test",
                 default_runnable="default",
             )
     finally:
@@ -561,7 +561,7 @@ agic default(_: Part[]):
             CallInput({"_": "$review -- inspect this"}),
             setup=harness.setup,
             state=state,
-            thread="term_test",
+            thread="chat_test",
             default_runnable="default",
         )
 
@@ -585,7 +585,7 @@ def test_run_default_selects_the_named_runnable_over_session_binding(
             input,
             setup=harness.setup,
             state=harness.state,
-            thread="term_test",
+            thread="chat_test",
             default_runnable="default",
             surface=RunBindings(runnable="agic:default"),
             session_commands=(RunCommand("default", "runnable", "agic:review"),),
@@ -624,7 +624,7 @@ def test_surface_session_and_run_selections_keep_model_defaults(
             input,
             setup=setup,
             state=harness.state,
-            thread="term_test",
+            thread="chat_test",
             default_runnable="default",
             surface=surface,
             session_commands=session,
@@ -674,7 +674,7 @@ def test_invalid_explicit_model_is_rejected_before_run_persistence(tmp_path) -> 
     harness = ExecutionHarness.create(tmp_path, source=_SOURCE, responses=[])
 
     async def scenario() -> None:
-        thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+        thread = harness.threads.create(kind=ThreadKind.CHAT)
         commands, input = parse_call("/model missing\nInput")
         with pytest.raises(ToolangError, match="model"):
             resolve_spec(
@@ -707,7 +707,7 @@ def test_missing_default_model_is_rejected_before_run_persistence(tmp_path) -> N
     )
 
     async def scenario() -> None:
-        thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+        thread = harness.threads.create(kind=ThreadKind.CHAT)
         commands, input = parse_call("Input")
         spec = resolve_spec(
             commands,

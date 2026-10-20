@@ -21,7 +21,7 @@ from tests.support.execution_harness import (
 from tests.support.execution_assertions import assert_run_event_integrity
 from toolang.base.types.run import ModelCallResult, ToolCall
 from toolang.execution.events import RunEnd
-from toolang.execution.types import ThreadPrefix
+from toolang.execution.types import ThreadKind
 from toolang.base.types.message import Message, ToolResultPart
 from toolang.execution.records import (
     ControlRecord,
@@ -77,7 +77,7 @@ agic inner() -> Text:
         async with harness:
             root = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="flow:outer",
                 )
             )
@@ -114,7 +114,7 @@ def test_child_control_relations_preserve_their_owner(tmp_path: Path) -> None:
         async with harness:
             handle = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="flow:outer",
                 ),
                 tracer=tracer,
@@ -172,7 +172,7 @@ agic inner(_: Part[]) -> Text:
         async with harness:
             handle = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="outer",
                     primary=resolve_input_parts("work"),
                 ),
@@ -275,8 +275,7 @@ def test_recall_preserves_target_revision_and_raw_content(
     run = project_run_start(
         store,
         run_id="run_recall",
-        thread_id="term_recall",
-        origin="test",
+        thread_id="chat_recall",
         input=Message.user("hello"),
     )
     trigger = project_step(

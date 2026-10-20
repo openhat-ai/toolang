@@ -10,7 +10,7 @@ from toolang.base.types.run import ModelCallResult, ToolCall
 from toolang.base.utils.function_tools import create_function_tool, tool
 from toolang.plugin.toolsets.loading import LoadedTool
 from toolang.plugin.toolsets.registry import ToolRef
-from toolang.execution.types import ThreadPrefix
+from toolang.execution.types import ThreadKind
 
 
 @pytest.mark.parametrize(
@@ -62,7 +62,7 @@ def test_unknown_name_keeps_original_exchange_and_does_not_execute(
         async with harness:
             record = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="task",
                 )
             )

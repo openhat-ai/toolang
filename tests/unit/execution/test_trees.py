@@ -48,8 +48,7 @@ def test_tree_orders_parallel_runs_by_item_and_keeps_lane(tmp_path: Path) -> Non
         root = project_run_start(
             store,
             run_id="run_parallel_root",
-            thread_id="term_parallel",
-            origin="test",
+            thread_id="chat_parallel",
             input=Message.user("Parallel"),
         )
         parent = project_step(
@@ -67,7 +66,6 @@ def test_tree_orders_parallel_runs_by_item_and_keeps_lane(tmp_path: Path) -> Non
             store,
             run_id="run_parallel_second",
             thread_id=root.thread,
-            origin="test",
             input=Message.user("Second"),
             parent=parent.ref,
             context={
@@ -81,7 +79,6 @@ def test_tree_orders_parallel_runs_by_item_and_keeps_lane(tmp_path: Path) -> Non
             store,
             run_id="run_parallel_first",
             thread_id=root.thread,
-            origin="test",
             input=Message.user("First"),
             parent=parent.ref,
             context={
@@ -122,8 +119,7 @@ def test_tree_merges_loop_steps_and_runs_at_authored_position(
         root = project_run_start(
             store,
             run_id="run_loop_root",
-            thread_id="term_loop",
-            origin="test",
+            thread_id="chat_loop",
             input=Message.user("Loop"),
         )
         loop = project_step(
@@ -141,7 +137,6 @@ def test_tree_merges_loop_steps_and_runs_at_authored_position(
             store,
             run_id="run_loop_until",
             thread_id=root.thread,
-            origin="test",
             input=Message.user("Until"),
             parent=loop.ref,
             context={
@@ -204,8 +199,7 @@ def test_tree_rejects_missing_parallel_coordinates_and_multiple_run_children(
         root = project_run_start(
             store,
             run_id="run_corrupt_root",
-            thread_id="term_corrupt",
-            origin="test",
+            thread_id="chat_corrupt",
             input=Message.user("Corrupt"),
         )
         parallel = project_step(
@@ -223,7 +217,6 @@ def test_tree_rejects_missing_parallel_coordinates_and_multiple_run_children(
             store,
             run_id="run_corrupt_parallel",
             thread_id=root.thread,
-            origin="test",
             input=Message.user("Missing lane"),
             parent=parallel.ref,
             context={
@@ -274,8 +267,7 @@ def test_tree_aggregates_partial_accounting_without_inventing_values(
         root = project_run_start(
             store,
             run_id="run_metrics_root",
-            thread_id="term_metrics",
-            origin="test",
+            thread_id="chat_metrics",
             input=Message.user("Metrics"),
         )
         first = project_step(
@@ -349,8 +341,7 @@ def test_tree_aggregates_exact_reasoning_through_nested_runs(tmp_path: Path) -> 
         root = project_run_start(
             store,
             run_id="run_reasoning_root",
-            thread_id="term_reasoning",
-            origin="test",
+            thread_id="chat_reasoning",
             input=Message.user("Reasoning"),
         )
         parent = project_step(
@@ -368,7 +359,6 @@ def test_tree_aggregates_exact_reasoning_through_nested_runs(tmp_path: Path) -> 
             store,
             run_id="run_reasoning_child",
             thread_id=root.thread,
-            origin="test",
             input=Message.user("Child"),
             parent=parent.ref,
         )
@@ -422,8 +412,7 @@ def test_step_root_snapshot_ignores_external_parent_but_rejects_internal_orphan(
         root = project_run_start(
             store,
             run_id="run_step_root",
-            thread_id="term_step_root",
-            origin="test",
+            thread_id="chat_step_root",
             input=Message.user("Step root"),
         )
         loop = project_step(
@@ -474,8 +463,7 @@ def test_tree_keeps_canonical_error_pointers_and_resolves_only_its_snapshot(
         root = project_run_start(
             store,
             run_id="run_tree_errors",
-            thread_id="term_tree_errors",
-            origin="test",
+            thread_id="chat_tree_errors",
             input=Message.user("Errors"),
         )
         first = project_step(

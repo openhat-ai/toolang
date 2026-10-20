@@ -26,7 +26,7 @@ from toolang.execution.records import (
 )
 from toolang.execution.store import RunStore
 from toolang.execution.threads import ThreadManager
-from toolang.execution.types import ControlRef, ThreadPrefix
+from toolang.execution.types import ControlRef, ThreadKind
 from toolang.lang.input import CallInput, resolve_input_parts
 from toolang.lang.types import Array
 
@@ -184,7 +184,7 @@ def _race_run(
             store,
             run_id="run_racing_run",
             parent=None,
-            thread="term_race",
+            thread="chat_race",
             input=Message.user("new input"),
             context={"runnable": {"kind": "agic", "name": "chat"}},
             request_id="racing-run",
@@ -208,10 +208,10 @@ def _race_rewind(
         ready.put("rewind")
         start.wait()
         _thread, control, superseded = store.rewind_thread(
-            thread_id="term_race",
+            thread_id="chat_race",
             anchor=None,
             request_id="racing-rewind",
-            expected_head=ControlRef.for_thread("term_race", 0),
+            expected_head=ControlRef.for_thread("chat_race", 0),
             created_at="2026-01-01T00:00:04Z",
         )
         results.put(("rewind", "accepted", control.index, superseded))
@@ -314,7 +314,7 @@ def test_remote_process_can_steer_an_owned_run(tmp_path: Path) -> None:
 
     async def scenario() -> None:
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             handle = harness.executor.run(
                 harness.run_spec(
                     thread=thread,
@@ -379,7 +379,7 @@ def test_remote_process_can_cancel_a_pending_steer(tmp_path: Path) -> None:
 
     async def scenario() -> None:
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             handle = harness.executor.run(
                 harness.run_spec(
                     thread=thread,
@@ -428,7 +428,7 @@ def test_duplicate_run_control_request_has_one_process_winner(
     store = RunStore(db_path)
     try:
         for run_id in ("run_request_a", "run_request_b"):
-            thread = f"term_{run_id}"
+            thread = f"chat_{run_id}"
             store.create_thread(thread_id=thread)
             accept_run(
                 store,
@@ -470,12 +470,12 @@ def test_pending_control_has_one_cross_process_cancellation_winner(
     db_path = tmp_path / "runs.db"
     store = RunStore(db_path)
     try:
-        store.create_thread(thread_id="term_cancel_race")
+        store.create_thread(thread_id="chat_cancel_race")
         accept_run(
             store,
             run_id="run_cancel_race",
             parent=None,
-            thread="term_cancel_race",
+            thread="chat_cancel_race",
             input=Message.user("hello"),
             context={},
             request_id=None,
@@ -523,12 +523,12 @@ def test_control_claim_and_cross_process_cancellation_are_linearizable(
     db_path = tmp_path / "runs.db"
     store = RunStore(db_path)
     try:
-        store.create_thread(thread_id="term_claim_cancel_race")
+        store.create_thread(thread_id="chat_claim_cancel_race")
         accept_run(
             store,
             run_id="run_claim_cancel_race",
             parent=None,
-            thread="term_claim_cancel_race",
+            thread="chat_claim_cancel_race",
             input=Message.user("hello"),
             context={},
             request_id=None,
@@ -574,12 +574,12 @@ def test_only_one_process_can_claim_a_pending_control(tmp_path: Path) -> None:
     db_path = tmp_path / "runs.db"
     store = RunStore(db_path)
     try:
-        store.create_thread(thread_id="term_claim_race")
+        store.create_thread(thread_id="chat_claim_race")
         accept_run(
             store,
             run_id="run_claim_race",
             parent=None,
-            thread="term_claim_race",
+            thread="chat_claim_race",
             input=Message.user("hello"),
             context={},
             request_id=None,
@@ -616,7 +616,6 @@ def test_concurrent_forks_preserve_one_terminal_anchor(
             store,
             run_id="run_fork_anchor",
             thread_id="chat_fork_source",
-            origin="chat",
             input=Message.user("source"),
         )
         project_run_end(store, run_id="run_fork_anchor")
@@ -667,8 +666,7 @@ def test_run_and_rewind_race_is_linearizable(tmp_path: Path) -> None:
         project_run_start(
             store,
             run_id="run_race_anchor",
-            thread_id="term_race",
-            origin="chat",
+            thread_id="chat_race",
             input=Message.user("anchor"),
         )
         project_run_end(store, run_id="run_race_anchor")
@@ -685,7 +683,7 @@ def test_run_and_rewind_race_is_linearizable(tmp_path: Path) -> None:
     reopened = RunStore(db_path)
     try:
         new_run = reopened.get_run(run_id="run_racing_run")
-        thread = reopened.get_thread(thread_id="term_race")
+        thread = reopened.get_thread(thread_id="chat_race")
         assert new_run is not None
         assert thread is not None
 
@@ -693,25 +691,25 @@ def test_run_and_rewind_race_is_linearizable(tmp_path: Path) -> None:
         if rewind[1] == "accepted":
             assert rewind[2:] == (1, ("run_race_anchor",))
             assert reopened.thread_view(thread.id).head == ControlRef.for_thread(
-                "term_race", 1
+                "chat_race", 1
             )
             anchor = reopened.get_run(run_id="run_race_anchor")
             assert anchor is not None
             assert [
                 run.id
                 for run in reopened.list_thread_history_chronological(
-                    thread_id="term_race"
+                    thread_id="chat_race"
                 )
             ] == ["run_racing_run"]
         else:
             assert str(rewind[1]).startswith("rejected:thread is running")
             assert reopened.thread_view(thread.id).head == ControlRef.for_thread(
-                "term_race", 0
+                "chat_race", 0
             )
             assert [
                 run.id
                 for run in reopened.list_thread_history_chronological(
-                    thread_id="term_race"
+                    thread_id="chat_race"
                 )
             ] == ["run_race_anchor", "run_racing_run"]
     finally:

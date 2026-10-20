@@ -26,7 +26,6 @@ def test_activity_handoff_pins_before_live_and_scans_after_gate(tmp_path, monkey
         store,
         run_id="run_top",
         thread_id="chat_top",
-        origin="chat",
         input=Message.user("fixture"),
         started_at=timestamp(NOW - 10),
     )

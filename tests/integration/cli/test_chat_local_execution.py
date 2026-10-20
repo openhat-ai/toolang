@@ -31,7 +31,7 @@ from toolang.execution.records import RunControlPayload, SteerControlPayload
 from toolang.execution.schemas import ControlInfo, RunRequest, RunnableRequest
 from toolang.execution.store import RunStore
 from toolang.execution.types import (
-    ThreadPrefix,
+    ThreadKind,
     Output,
     AllowOverride,
     ModelOverride,
@@ -57,8 +57,7 @@ def test_latest_chat_output_keeps_one_snapshot_during_concurrent_write(
         project_run_start(
             writer,
             run_id="run_a",
-            thread_id="term_a",
-            origin="chat",
+            thread_id="chat_a",
             input=Message.user("input"),
         )
         project_run_end(writer, run_id="run_a", output=Output("original answer", None))
@@ -74,7 +73,7 @@ def test_latest_chat_output_keeps_one_snapshot_during_concurrent_write(
             return get_output(run)
 
         monkeypatch.setattr(session.history, "get_output", change_before_output)
-        result = session.get_result(None, thread_id="term_a")
+        result = session.get_result(None, thread_id="chat_a")
         assert result.run_id == "run_a"
         assert result.output == (TextPart("original answer"),)
         assert get_output("run_a") is None
@@ -181,8 +180,8 @@ def test_local_chat_run_request_materializes_chat_runnable() -> None:
         session.run_client = RunClient()
         await session._run(
             RunRequest(
-                thread_id="term_test",
-                request_id="term_request",
+                thread_id="chat_test",
+                request_id="chat_request",
                 runnable=RunnableRequest("agic:chat", CallInput({"_": "hello"})),
                 model=ModelRequest("test/scripted"),
                 policy=RunPolicy(allow=(AgentCeiling(models=("test/*",)),)),
@@ -692,8 +691,7 @@ def test_local_chat_thread_title_is_ready_when_the_run_is_accepted(
     run = project_run_start(
         store,
         run_id="run_a",
-        thread_id="term_a",
-        origin="chat",
+        thread_id="chat_a",
         input=Message.user("hello"),
     )
     session = object.__new__(local.LocalChatSession)
@@ -701,8 +699,8 @@ def test_local_chat_thread_title_is_ready_when_the_run_is_accepted(
     session.history = RunHistory(store)
     try:
         assert run.status == "running"
-        assert asyncio.run(session._thread_title("term_a")) == "hello"
-        assert asyncio.run(session._thread_title("term_missing")) is None
+        assert asyncio.run(session._thread_title("chat_a")) == "hello"
+        assert asyncio.run(session._thread_title("chat_missing")) is None
     finally:
         store.close()
 
@@ -730,7 +728,7 @@ def test_local_chat_default_runnable_tracks_the_latest_state(tmp_path: Path) -> 
     )
 
     try:
-        thread_id = original.threads.create(prefix=ThreadPrefix.CHAT)
+        thread_id = original.threads.create(kind=ThreadKind.CHAT)
         request = session.build_request(
             thread_id,
             RunOverride(),

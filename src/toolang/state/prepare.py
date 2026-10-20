@@ -781,7 +781,7 @@ def _file_belongs_to_cap_scope(
     *,
     cap_scope: CapScope,
 ) -> bool:
-    return item.origin == ("root" if cap_scope == "root" else "agent")
+    return item.layer == ("root" if cap_scope == "root" else "agent")
 
 
 def _scope_relative_path(

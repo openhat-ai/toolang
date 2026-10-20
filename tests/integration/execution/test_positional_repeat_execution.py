@@ -25,7 +25,7 @@ from toolang.execution.store import RunStore
 from toolang.execution.types import (
     LoopStepReport,
     AwaitableHandle,
-    ThreadPrefix,
+    ThreadKind,
     StepRef,
 )
 from toolang.state.prepare import prepare_agent_state
@@ -73,7 +73,7 @@ def _run(harness, *, tracer=None):
         async with harness:
             root = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="main",
                     primary=(TextPart("seed"),),
                 ),
@@ -242,7 +242,7 @@ def test_canceled_trailing_condition_does_not_count_body(tmp_path):
         async with harness:
             handle = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="main",
                     primary=(TextPart("seed"),),
                 )
@@ -277,7 +277,7 @@ def test_unbounded_local_only_repeat_yields_to_cancellation(tmp_path):
 
             handle = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="main",
                 ),
                 tracer=Tracer(),
@@ -486,7 +486,7 @@ def test_exec_inside_named_flow_condition_stays_in_child_run(tmp_path):
         async with harness:
             root = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="main",
                     primary=(TextPart("seed"),),
                 )
@@ -612,7 +612,7 @@ def test_until_refreshes_handle_status_on_each_evaluation(tmp_path, prefix):
         async with harness:
             parent = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="main",
                     primary=(TextPart("seed"),),
                 ),

@@ -77,6 +77,7 @@ from .types import (
     StepRef,
     StepStatus,
     ThreadRef,
+    ThreadKind,
     ToolStepSpec,
     ToolStepReport,
     TypedRef,
@@ -534,7 +535,6 @@ class ThreadRecord:
     """Durable thread metadata."""
 
     id: str
-    origin: str
     created_at: str
     updated_at: str
     horizon: RunRef | StepRef | None = None
@@ -542,6 +542,12 @@ class ThreadRecord:
     def __post_init__(self) -> None:
         if not valid_thread_id(self.id):
             raise ValueError(f"invalid thread id: {self.id!r}")
+
+    @property
+    def kind(self) -> ThreadKind:
+        """Return the context kind derived from the durable ID."""
+
+        return ThreadRef(self.id).kind
 
 
 @dataclass(frozen=True, slots=True)

@@ -24,7 +24,7 @@ from toolang.execution.types import (
     CallCounters,
     ModelStepReport,
     RunReport,
-    ThreadPrefix,
+    ThreadKind,
     TokenUsage,
     ToolStepReport,
 )
@@ -59,7 +59,7 @@ def test_model_is_live_before_result_and_snapshot_is_resident(tmp_path, monkeypa
             with pytest.raises(RuntimeError, match="disconnected"):
                 await client.live_trees()
             await client.connect()
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             handle = harness.executor.run(
                 harness.run_spec(
                     thread=thread, runnable="task", primary=(TextPart("x" * 100_000),)
@@ -143,7 +143,7 @@ def test_tool_entry_counts_once_including_failure_and_cancellation(tmp_path, out
         async with harness:
             handle = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="task",
                 )
             )
@@ -201,7 +201,7 @@ agic child(_: Text) -> Text:
         async with harness:
             handle = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="parent",
                     primary=(TextPart("hello"),),
                 )
@@ -250,7 +250,7 @@ def test_pre_entry_cancellation_finishes_once_with_zero_work(tmp_path):
         async with harness:
             handle = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="task",
                 )
             )
@@ -317,7 +317,7 @@ def test_end_rollback_retains_live_facts_and_receipts_do_not_recount(
         async with harness:
             result = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="task",
                 )
             )
@@ -350,7 +350,7 @@ def test_invoked_model_failure_or_cancel_keeps_one_call(tmp_path, failure):
         async with harness:
             handle = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="task",
                 )
             )
@@ -399,7 +399,7 @@ def test_model_result_usage_survives_cancel_during_part_delivery(tmp_path, bound
         async with harness:
             result = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="task",
                 ),
                 tracer=tracer,
@@ -445,7 +445,7 @@ def test_returned_usage_survives_final_stream_validation_failure(tmp_path):
         async with harness:
             result = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="task",
                 )
             )
@@ -527,7 +527,7 @@ def test_terminal_statistics_do_not_deadlock_with_cross_thread_control(
         async with harness:
             handle = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="task",
                 )
             )

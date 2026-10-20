@@ -47,7 +47,6 @@ class Fixture:
             self.source,
             run_id=run,
             thread_id=thread,
-            origin="chat",
             input=Message.user("fixture"),
             started_at=timestamp(start),
             created_at=timestamp(start),

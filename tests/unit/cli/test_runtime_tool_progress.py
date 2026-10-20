@@ -327,7 +327,7 @@ def test_spawn_summary_carries_identity_through_existing_tool_progress():
     end = _end(
         begin,
         "succeeded",
-        output={"id": "run_job", "thread": "spawn_thread", "status": "pending"},
+        output={"id": "run_job", "thread": "work_thread", "status": "pending"},
     )
     assert (
         trace_live_rows(normalize_operation(begin), "")[0].text
@@ -336,7 +336,7 @@ def test_spawn_summary_carries_identity_through_existing_tool_progress():
     rows = [
         r.text for r in trace_terminal_rows(normalize_operation(begin), end, error="")
     ]
-    assert rows == ["› Spawned new run: flow:research", "  run_job in spawn_thread"]
+    assert rows == ["› Spawned new run: flow:research", "  run_job in work_thread"]
 
 
 def test_flow_spawn_summary_is_visible_without_child_events():
@@ -365,10 +365,10 @@ def test_flow_spawn_summary_is_visible_without_child_events():
         step=StepRef.parse("run_root.0"),
         kind="spawn",
         status="succeeded",
-        output=Output(AwaitableHandle("run_job", "spawn_thread"), "job"),
+        output=Output(AwaitableHandle("run_job", "work_thread"), "job"),
         finished_at=FINISH,
     )
     update = projector.handle(run_event_from_data(run_event_to_data(end)))
     rows = [row.text for block in update.committed for row in block.rows]
     assert "• Spawned flow:research" in rows
-    assert "  run_job in spawn_thread" in rows
+    assert "  run_job in work_thread" in rows

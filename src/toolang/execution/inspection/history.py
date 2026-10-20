@@ -42,6 +42,7 @@ from ..types import (
     RunStatus,
     StepRef,
     ThreadRef,
+    ThreadKind,
 )
 from ..errors import HistoryChangedError
 from ..values import parts_from_value
@@ -87,8 +88,7 @@ class RunHistory:
         self,
         *,
         limit: int | None = 50,
-        origin: str | None = None,
-        channel: str | None = None,
+        kind: ThreadKind | None = None,
         status: str | None = None,
     ) -> list[ThreadInfo]:
         """Return filtered thread summaries in most-recently-updated order."""
@@ -99,8 +99,7 @@ class RunHistory:
         filtered = [
             item
             for item in items
-            if (origin is None or item.origin == origin)
-            and (channel is None or item.channel == channel)
+            if (kind is None or item.kind == kind)
             and (status is None or item.status == status)
         ]
         ordered = sorted(filtered, key=lambda item: item.updated_at, reverse=True)

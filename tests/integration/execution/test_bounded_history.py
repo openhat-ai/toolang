@@ -49,7 +49,7 @@ def start(
     store: RunStore,
     name: str = "run_a",
     *,
-    thread: str = "term_a",
+    thread: str = "chat_a",
     parent: StepRef | None = None,
 ) -> RunRecord:
     return project_run_start(
@@ -57,7 +57,6 @@ def start(
         run_id=name,
         thread_id=thread,
         parent=parent,
-        origin="chat",
         input=Message.user(name),
     )
 
@@ -105,8 +104,8 @@ def test_inspection_read_keeps_one_snapshot_during_completion(
     read = {
         "run": lambda: history.get_run("run_a"),
         "child": lambda: history.get_run("run_child"),
-        "runs": lambda: history.list_runs(thread_id="term_a"),
-        "thread": lambda: history.get_thread("term_a"),
+        "runs": lambda: history.list_runs(thread_id="chat_a"),
+        "thread": lambda: history.get_thread("chat_a"),
     }[query]
     expected = read()
     method = "list_steps" if query in {"run", "child"} else "list_steps_for_runs"
@@ -135,14 +134,14 @@ def test_thread_list_keeps_one_snapshot_during_rewind(
         project_run_end(store, run_id=name)
     history = RunHistory(store)
     expected = history.list_threads()
-    head = store.thread_view("term_a").head
+    head = store.thread_view("chat_a").head
     original = store.thread_views
     writer = RunStore(store.db_path)
     try:
 
         def interleave(thread_ids: Sequence[str]) -> dict[str, ThreadView]:
             writer.rewind_thread(
-                thread_id="term_a",
+                thread_id="chat_a",
                 anchor="run_b",
                 expected_head=head,
                 request_id=None,
@@ -152,7 +151,7 @@ def test_thread_list_keeps_one_snapshot_during_rewind(
 
         monkeypatch.setattr(store, "thread_views", interleave)
         assert history.list_threads() == expected
-        assert len(writer.thread_view("term_a").runs()) == 1
+        assert len(writer.thread_view("chat_a").runs()) == 1
     finally:
         writer.close()
 
@@ -164,13 +163,13 @@ def test_thread_page_keeps_membership_across_append_rewind_and_restart(
         start(store, name)
         project_run_end(store, run_id=name)
     history = RunHistory(store)
-    first = history.thread_view("term_a", limit=1)
+    first = history.thread_view("chat_a", limit=1)
     assert [r.id for r in first.runs()] == ["run_z"]
     captured_thread = first.record
     writer = RunStore(store.db_path)
     try:
         writer.rewind_thread(
-            thread_id="term_a",
+            thread_id="chat_a",
             anchor="run_a",
             request_id=None,
             expected_head=first.head,
@@ -194,7 +193,7 @@ def test_thread_page_keeps_membership_across_append_rewind_and_restart(
             for run in page.runs()
         ] == ["run_z", "run_a", "run_b"]
         assert [
-            run.id for run in RunHistory(reopened).thread_view("term_a").runs()
+            run.id for run in RunHistory(reopened).thread_view("chat_a").runs()
         ] == ["run_z", "run_c"]
     finally:
         reopened.close()
@@ -209,21 +208,21 @@ def test_thread_ranges_reverse_pages_and_inherited_children(store: RunStore) -> 
     start(store, "run_b")
     project_run_end(store, run_id="run_b")
     store.fork_thread(
-        thread_id="term_fork",
-        source="term_a",
+        thread_id="chat_fork",
+        source="chat_a",
         anchor=None,
         request_id=None,
         created_at="2026-01-02T00:00:00Z",
     )
-    start(store, "run_c", thread="term_fork")
+    start(store, "run_c", thread="chat_fork")
     project_run_end(store, run_id="run_c")
     history = RunHistory(store)
-    view = history.thread_view("term_fork", end=RunRef("run_c"))
+    view = history.thread_view("chat_fork", end=RunRef("run_c"))
     assert [run.id for run in view.runs()] == ["run_a", "run_b"]
     assert view.contains("run_child") and not view.contains("run_c")
-    assert [run.thread for run in view.tree()] == [ThreadRef("term_a")] * 3
+    assert [run.thread for run in view.tree()] == [ThreadRef("chat_a")] * 3
     reversed_pages = pages(
-        history, history.thread_view("term_fork", limit=2, reverse=True)
+        history, history.thread_view("chat_fork", limit=2, reverse=True)
     )
     assert [
         [run.id for run in page.runs()]
@@ -231,7 +230,7 @@ def test_thread_ranges_reverse_pages_and_inherited_children(store: RunStore) -> 
         if isinstance(page, ThreadView)
     ] == [["run_b", "run_c"], ["run_a"]]
     assert [
-        run.id for run in history.thread_view("term_fork", begin=RunRef("run_b")).runs()
+        run.id for run in history.thread_view("chat_fork", begin=RunRef("run_b")).runs()
     ] == ["run_b", "run_c"]
 
 
@@ -251,7 +250,7 @@ def test_thread_page_does_not_decode_unselected_run_outputs(
         return original(row)
 
     monkeypatch.setattr(store_module, "_run_from_row", decode)
-    first = RunHistory(store).thread_view("term_a", limit=1)
+    first = RunHistory(store).thread_view("chat_a", limit=1)
     assert decoded == ["run_0"]
     assert first.cursor is not None and "large output" not in first.cursor
 
@@ -570,16 +569,16 @@ def test_compaction_output_reader_uses_latest_success_and_keeps_range_metadata(
     start(store, "run_b")
     project_run_end(store, run_id="run_b")
     history = RunHistory(store)
-    assert history.get_compaction("term_a") is None
-    start(store, "run_old", thread="compact_term_a")
+    assert history.get_compaction("chat_a") is None
+    start(store, "run_old", thread="work_compact_chat_a")
     project_run_end(store, run_id="run_old", output=Output("obsolete summary", None))
     from tests.support.execution_fixtures import project_compaction
 
     ref = project_compaction(
-        store, thread="term_a", begin="run_a", end="run_b", summary="earlier facts"
+        store, thread="chat_a", begin="run_a", end="run_b", summary="earlier facts"
     )
     store.publish_compaction(ref, roots=(RunRef("run_a"), RunRef("run_b")))
-    start(store, "run_failed", thread="compact_term_a")
+    start(store, "run_failed", thread="work_compact_chat_a")
     project_run_end(store, run_id="run_failed", status="failed")
     original = store_module._run_from_row
 
@@ -588,17 +587,17 @@ def test_compaction_output_reader_uses_latest_success_and_keeps_range_metadata(
         return original(row)
 
     monkeypatch.setattr(store_module, "_run_from_row", decode)
-    found = history.get_compaction("term_a")
+    found = history.get_compaction("chat_a")
     assert found is not None
     assert found.ref == ref
     assert found.result.to_data() == {
-        "thread": "term_a",
+        "thread": "chat_a",
         "begin": "run_a",
         "end": "run_b",
         "summary": "earlier facts",
     }
     with pytest.raises(KeyError):
-        history.get_compaction("term_missing")
+        history.get_compaction("chat_missing")
 
 
 def test_history_reads_do_not_modify_durable_records(store: RunStore) -> None:
@@ -613,7 +612,7 @@ def test_history_reads_do_not_modify_durable_records(store: RunStore) -> None:
     before = dump()
     history = RunHistory(store)
     pages(history, history.run_view("run_a", limit=1))
-    pages(history, history.thread_view("term_a", limit=1))
+    pages(history, history.thread_view("chat_a", limit=1))
     assert dump() == before
 
 
@@ -626,7 +625,7 @@ def test_invalid_bounds_and_limits_are_rejected(store: RunStore) -> None:
         with pytest.raises(ValueError):
             history.run_view("run_a", limit=limit)
         with pytest.raises(ValueError):
-            history.thread_view("term_a", limit=limit)
+            history.thread_view("chat_a", limit=limit)
     with pytest.raises(ValueError):
         history.run_view("run_a", begin=StepRef.parse("run_b.0"))
     with pytest.raises(ValueError):
@@ -634,7 +633,7 @@ def test_invalid_bounds_and_limits_are_rejected(store: RunStore) -> None:
             "run_a", begin=StepRef.parse("run_a.1"), end=StepRef.parse("run_a.0")
         )
     with pytest.raises(ValueError):
-        history.thread_view("term_a", end=RunRef("run_missing"))
+        history.thread_view("chat_a", end=RunRef("run_missing"))
     with pytest.raises(ValueError):
         history.next_page("not a cursor")
 
@@ -691,9 +690,9 @@ def test_thread_view_keeps_physical_member_order_for_interleaved_child_records(
     project_run_end(store, run_id="run_a")
     start(store, "run_b")
     start(store, "run_child", parent=parent.ref)
-    view = RunHistory(store).thread_view("term_a")
+    view = RunHistory(store).thread_view("chat_a")
     assert [run.id for run in view.tree()] == ["run_a", "run_b", "run_child"]
-    assert view.tree() == store.thread_view("term_a").tree()
+    assert view.tree() == store.thread_view("chat_a").tree()
 
 
 def test_timeline_nests_container_end_after_its_child_boundaries(

@@ -19,10 +19,10 @@ with a `RunRef`. `Pointer` is the generic facade used where the concrete Ref
 kind is not known before parsing, such as CLI inspection.
 
 ```text
-term_ab12                              ThreadRef
+chat_ab12                              ThreadRef
 run_ab12                               RunRef
 run_ab12.0.1                           StepRef
-term_ab12@0                            ControlRef
+chat_ab12@0                            ControlRef
 run_ab12@1                             ControlRef
 sha256_<64 lowercase hex digits>       ContentRef
 run_ab12.0/output/value          FieldRef
@@ -46,7 +46,6 @@ Ref type and serialize to canonical text.
 
 ```text
 id
-origin
 created_at
 updated_at
 horizon
@@ -55,6 +54,9 @@ horizon
 `horizon` identifies the retained history boundary. Creation/fork provenance and
 the current control head are derived from Thread controls for caller-facing
 schemas; they are not duplicated in the canonical Thread record.
+`kind` is a property derived from the [Thread ID prefix](ids.md); neither `kind`
+nor `origin` is a persisted Thread field. Execution store schema 62 rejects older
+databases without migration.
 
 ### ControlRecord
 
@@ -99,7 +101,7 @@ text. Rerun creates a new Run entry. Each persisted
 value retains its self-describing codec, without a Local/name/dim wrapper.
 References address `payload/input/_` or `payload/input/argumentName`.
 
-RunStore reads and writes only schema 61. Older stores, including those with
+RunStore reads and writes only schema 62. Older stores, including those with
 retired Activity indexes or retry records, are rejected without mutation. No
 upgrade, Activity cleanup, backfill or compatibility read is performed. Preserve
 required old runtime data separately and use fresh storage for new execution.
@@ -148,7 +150,7 @@ Flow's spawn-kind Step carries a `SpawnStmt`; async run uses a run-kind Step wit
 `RunStmt.asynchronous=true`. Both publish an output such as:
 
 ```json
-{"type":"_Awaitable","value":{"kind":"run","id":"run_example","thread":"term_example","result_type":"Text"},"binding":"job"}
+{"type":"_Awaitable","value":{"kind":"run","id":"run_example","thread":"chat_example","result_type":"Text"},"binding":"job"}
 ```
 
 The tag stays `_Awaitable` for every result contract. The accepted complete contract,
@@ -240,7 +242,7 @@ messages, and toolsets are content-addressed; provider request bodies and
 credentials are not stored. Model `report` records `usage: TokenUsage`, `cost: ModelCost`, `invoked`, and
 continuation (`cont`). Tool `report` contains `summary` and `invoked`. All durable
 statistics live inside Report; no snapshot nodes or parallel statistics indexes
-are persisted. Schema 61 requires fresh storage without old-record decoding.
+are persisted. Schema 62 requires fresh storage without old-record decoding.
 
 For a Repeat Step, `spec.until_index` counts preceding body statements; null or
 an absent historical field means a trailing condition. Body statements are

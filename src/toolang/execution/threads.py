@@ -24,7 +24,7 @@ from .records import (
 )
 from .store import RunStore
 from .stream import CanonicalStream
-from .types import ThreadPrefix
+from .types import ThreadKind
 from .types import ConversationScope, ControlRef
 
 _LOGGER = logging.getLogger(__name__)
@@ -72,20 +72,18 @@ class ThreadManager:
     def create(
         self,
         *,
-        prefix: ThreadPrefix,
+        kind: ThreadKind,
         request_id: str | None = None,
         client_id: str | None = None,
     ) -> str:
         """Create an empty thread and return its id."""
 
-        canonical_prefix = ThreadPrefix(prefix)
-        thread_id = self.ids.issue_thread(canonical_prefix.value)
+        thread_id = self.ids.issue_thread(ThreadKind(kind).value)
         created_at = utc_now()
 
         def operation() -> tuple[str, ThreadEvent]:
             thread, control = self.store.create_thread(
                 thread_id=thread_id,
-                origin=canonical_prefix.value,
                 request_id=request_id,
                 client_id=client_id,
                 created_at=created_at,
@@ -93,7 +91,6 @@ class ThreadManager:
             event = ThreadCreated(
                 thread=thread.id,
                 control=control.ref,
-                origin=thread.origin,
                 created_at=created_at,
             )
             return thread.id, event
@@ -111,7 +108,6 @@ class ThreadManager:
             return thread_id, ThreadCreated(
                 thread=thread_id,
                 control=ControlRef.for_thread(thread_id, 0),
-                origin=thread.origin,
                 created_at=thread.created_at,
             )
 
@@ -127,16 +123,12 @@ class ThreadManager:
     ) -> str:
         """Fork after one terminal visible run and return the new thread id."""
 
-        source = self._branchable_thread(thread_id)
-        try:
-            prefix = ThreadPrefix(source.id.split("_", 1)[0])
-        except ValueError as exc:
-            raise ValueError(f"thread has no issuable prefix: {source.id}") from exc
-        result_thread_id = self.ids.issue_thread(prefix.value)
+        source = self._require_thread(thread_id)
+        result_thread_id = self.ids.issue_thread(source.kind.value)
         created_at = utc_now()
 
         def operation() -> tuple[str, ThreadEvent]:
-            source = self._branchable_thread(thread_id)
+            source = self._require_thread(thread_id)
             thread, control = self.store.fork_thread(
                 thread_id=result_thread_id,
                 source=source.id,
@@ -171,7 +163,7 @@ class ThreadManager:
         created_at = utc_now()
 
         def operation() -> tuple[None, ThreadEvent]:
-            thread = self._branchable_thread(thread_id)
+            thread = self._require_thread(thread_id)
             updated, control, ejected = self.store.rewind_thread(
                 thread_id=thread.id,
                 anchor=run_id,
@@ -193,12 +185,10 @@ class ThreadManager:
 
         return self._apply(operation)
 
-    def _branchable_thread(self, thread_id: str) -> ThreadRecord:
+    def _require_thread(self, thread_id: str) -> ThreadRecord:
         thread = self.store.get_thread(thread_id=thread_id)
         if thread is None:
             raise FileNotFoundError(f"thread not found: {thread_id}")
-        if thread.origin != "chat":
-            raise ValueError(f"thread cannot be branched: {thread.id}")
         return thread
 
     def _notify(self, event: ThreadEvent) -> None:

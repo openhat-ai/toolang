@@ -70,7 +70,7 @@ _HOST_DESCRIPTION = "macOS 27.0 arm64"
 
 
 @pytest.mark.parametrize(
-    "endpoint", ["runs/run_a", "threads/term_a", "threads/term_a/result"]
+    "endpoint", ["runs/run_a", "threads/chat_a", "threads/chat_a/result"]
 )
 def test_history_response_keeps_one_snapshot_during_concurrent_write(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, endpoint: str
@@ -85,8 +85,7 @@ def test_history_response_keeps_one_snapshot_during_concurrent_write(
         project_run_start(
             writer,
             run_id="run_a",
-            thread_id="term_a",
-            origin="chat",
+            thread_id="chat_a",
             input=Message.user("input"),
         )
         parent = project_step(
@@ -103,9 +102,8 @@ def test_history_response_keeps_one_snapshot_during_concurrent_write(
         project_run_start(
             writer,
             run_id="run_b",
-            thread_id="term_a",
+            thread_id="chat_a",
             parent=parent.ref,
-            origin="chat",
             input=Message.user("child input"),
         )
         project_run_end(writer, run_id="run_b", output=Output("child answer", None))
@@ -147,12 +145,12 @@ def test_history_response_keeps_one_snapshot_during_concurrent_write(
         assert response.status_code == 200
         data = response.json()
         detail = TypeAdapter(RunDetail).validate_python(
-            data["runs"][0] if endpoint == "threads/term_a" else data
+            data["runs"][0] if endpoint == "threads/chat_a" else data
         )
         assert detail.status == "succeeded"
         assert detail.output is not None
         assert parts_from_value(detail.output.value) == (TextPart("original answer"),)
-        if endpoint == "threads/term_a":
+        if endpoint == "threads/chat_a":
             child = TypeAdapter(RunDetail).validate_python(data["runs"][1])
             assert child.output == Output("child answer", None)
         assert writer.get_run(run_id="run_b") is None
@@ -364,13 +362,13 @@ agic chat(_: Part[]) -> Part[]:
                 },
             )
             empty = client.get(f"/api/v0/threads/{thread_id}/result")
-            unknown = client.get("/api/v0/threads/term_missing/result")
+            unknown = client.get("/api/v0/threads/chat_missing/result")
             wrong_namespace = client.get("/api/v0/threads/run_missing/result")
             executed = client.post(
                 "/api/v0/runs/authored/stream",
                 json={
                     "thread_id": thread_id,
-                    "request_id": "term_remote_chat",
+                    "request_id": "chat_remote_chat",
                     "runnable": {"ref": "agic:chat", "input": {"_": "hello"}},
                     "model": {
                         "ref": TEST_MODEL_REF,
@@ -425,7 +423,7 @@ agic chat(_: Part[]) -> Part[]:
         assert empty.status_code == 404
         assert empty.json()["detail"] == f"thread has no result: {thread_id}"
         assert unknown.status_code == 404
-        assert unknown.json()["detail"] == "thread not found: term_missing"
+        assert unknown.json()["detail"] == "thread not found: chat_missing"
         assert wrong_namespace.status_code == 404
         assert wrong_namespace.json()["detail"] == "thread not found: run_missing"
         assert explicit.id == latest.id == run_id

@@ -13,7 +13,7 @@ from tests.support.execution_assertions import without_runtime_snapshots
 from tests.support.execution_harness import ExecutionHarness
 from toolang.base.types.message import Message, TextPart, message_text
 from toolang.base.types.run import ModelCallResult
-from toolang.execution.types import ThreadPrefix
+from toolang.execution.types import ThreadKind
 
 
 def test_research_pipeline_calls_synthesis_with_empty_evidence(
@@ -40,7 +40,7 @@ def test_research_pipeline_calls_synthesis_with_empty_evidence(
 
     async def scenario() -> None:
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             root = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
@@ -97,7 +97,7 @@ def test_delivery_pipeline_preserves_inputs_and_accumulates_reviews(
 
     async def scenario() -> None:
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             root = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,

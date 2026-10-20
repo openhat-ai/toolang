@@ -58,8 +58,7 @@ def test_run_store_persists_dot_separated_step_paths(tmp_path: Path) -> None:
         root = project_run_start(
             store,
             run_id="run_dot_path",
-            thread_id="term_dot_path",
-            origin="chat",
+            thread_id="chat_dot_path",
             input=Message.user("hello"),
         )
         step = project_step(
@@ -77,7 +76,6 @@ def test_run_store_persists_dot_separated_step_paths(tmp_path: Path) -> None:
             store,
             run_id="run_dot_child",
             thread_id=root.thread,
-            origin="chat",
             input=Message.user("child"),
             parent=step.ref,
         )
@@ -90,7 +88,7 @@ def test_run_store_persists_dot_separated_step_paths(tmp_path: Path) -> None:
             assert connection.execute(
                 "SELECT parent FROM runs WHERE id = 'run_dot_child'"
             ).fetchone() == ("run_dot_path.2.3",)
-            assert int(connection.execute("PRAGMA user_version").fetchone()[0]) == 61
+            assert int(connection.execute("PRAGMA user_version").fetchone()[0]) == 62
         finally:
             connection.close()
     finally:
@@ -104,16 +102,14 @@ def test_list_runs_uses_insertion_order_for_equal_timestamps(tmp_path: Path) -> 
         first = project_run_start(
             store,
             run_id="run_order_first",
-            thread_id="term_order_first",
-            origin="chat",
+            thread_id="chat_order_first",
             input=Message.user("first"),
             created_at=timestamp,
         )
         second = project_run_start(
             store,
             run_id="run_order_second",
-            thread_id="term_order_second",
-            origin="chat",
+            thread_id="chat_order_second",
             input=Message.user("second"),
             created_at=timestamp,
         )
@@ -131,12 +127,12 @@ def test_pending_run_has_applied_entry_and_only_requests_need_cleanup(
 ) -> None:
     store = RunStore(tmp_path / "runs.db")
     try:
-        store.create_thread(thread_id="term_admitted")
+        store.create_thread(thread_id="chat_admitted")
         run, entry = accept_run(
             store,
             run_id="run_admitted",
             parent=None,
-            thread="term_admitted",
+            thread="chat_admitted",
             input=Message.user("hello"),
             context={},
             request_id=None,
@@ -182,8 +178,7 @@ def test_list_controls_orders_mixed_scopes_without_status_reordering(
         run = project_run_start(
             store,
             run_id="run_control_order",
-            thread_id="term_control_order",
-            origin="chat",
+            thread_id="chat_control_order",
             input=Message.user("order"),
             created_at="2026-01-01T00:00:00Z",
         )
@@ -195,18 +190,17 @@ def test_list_controls_orders_mixed_scopes_without_status_reordering(
             created_at="2026-01-01T00:00:00Z",
         )
         store.create_thread(
-            thread_id="term_control_new",
-            origin="chat",
+            thread_id="chat_control_new",
             created_at="2026-01-01T01:00:00Z",
         )
 
         before = store.list_controls()
         pointers = tuple(control.id for control in before)
         assert pointers == (
-            "term_control_new@0",
+            "chat_control_new@0",
+            "chat_control_order@0",
             "run_control_order@1",
             "run_control_order@0",
-            "term_control_order@0",
         )
         assert next(
             control for control in before if control.index == steer.index
@@ -235,8 +229,7 @@ def test_list_controls_retains_rewound_runs_and_children(
         visible = project_run_start(
             store,
             run_id="run_control_visible",
-            thread_id="term_control_visibility",
-            origin="chat",
+            thread_id="chat_control_visibility",
             input=Message.user("visible"),
             created_at="2026-01-01T00:00:00Z",
         )
@@ -255,7 +248,6 @@ def test_list_controls_retains_rewound_runs_and_children(
             store,
             run_id="run_control_child",
             thread_id=visible.thread,
-            origin="chat",
             input=Message.user("child"),
             parent=parent.ref,
             created_at="2026-01-01T00:01:00Z",
@@ -266,7 +258,6 @@ def test_list_controls_retains_rewound_runs_and_children(
             store,
             run_id="run_control_hidden",
             thread_id=visible.thread,
-            origin="chat",
             input=Message.user("hidden"),
             created_at="2026-01-01T00:02:00Z",
         )
@@ -282,8 +273,8 @@ def test_list_controls_retains_rewound_runs_and_children(
         )
         pointers = {control.id for control in store.list_controls()}
         assert pointers == {
-            "term_control_visibility@0",
-            f"term_control_visibility@{rewind.index}",
+            "chat_control_visibility@0",
+            f"chat_control_visibility@{rewind.index}",
             "run_control_visible@0",
             "run_control_child@0",
             "run_control_hidden@0",
@@ -327,8 +318,7 @@ def test_corrupted_run_and_step_fields_are_rejected(
         run = project_run_start(
             store,
             run_id="run_corrupted_record",
-            thread_id="term_corrupted_record",
-            origin="chat",
+            thread_id="chat_corrupted_record",
             input=Message.user("hello"),
         )
         project_step(
@@ -367,8 +357,7 @@ def test_removed_system_step_kind_is_rejected(tmp_path: Path) -> None:
         run = project_run_start(
             store,
             run_id="run_corrupted_kind",
-            thread_id="term_corrupted_kind",
-            origin="chat",
+            thread_id="chat_corrupted_kind",
             input=Message.user("hello"),
         )
         project_step(
@@ -396,7 +385,7 @@ def test_invalid_execution_ids_are_rejected_before_any_rows_are_written(
     db_path = tmp_path / "runs.db"
     store = RunStore(db_path)
     try:
-        store.create_thread(thread_id="term_valid")
+        store.create_thread(thread_id="chat_valid")
         before_runs = _table_count(db_path, "runs")
         before_controls = _table_count(db_path, "controls")
         before_threads = _table_count(db_path, "threads")
@@ -406,7 +395,7 @@ def test_invalid_execution_ids_are_rejected_before_any_rows_are_written(
                 store,
                 run_id="run.bad",
                 parent=None,
-                thread="term_valid",
+                thread="chat_valid",
                 input=Message.user("invalid"),
                 context={},
                 request_id=None,
@@ -427,7 +416,7 @@ def test_run_acceptance_rolls_back_the_run_when_control_insert_fails(
 ) -> None:
     store = RunStore(tmp_path / "runs.db")
     try:
-        store.create_thread(thread_id="term_atomic_start")
+        store.create_thread(thread_id="chat_atomic_start")
         _execute_sql(
             store.db_path,
             """
@@ -445,7 +434,7 @@ def test_run_acceptance_rolls_back_the_run_when_control_insert_fails(
                 store,
                 run_id="run_atomic_start",
                 parent=None,
-                thread="term_atomic_start",
+                thread="chat_atomic_start",
                 input=Message.user("hello"),
                 context={},
                 request_id="atomic-run",
@@ -466,8 +455,7 @@ def test_rerun_acceptance_preserves_the_source_and_allows_repeated_reruns(
         source = project_run_start(
             store,
             run_id="run_source",
-            thread_id="term_rerun",
-            origin="chat",
+            thread_id="chat_rerun",
             input=Message.user("hello"),
             created_at="2026-01-01T00:00:00Z",
             started_at="2026-01-01T00:00:00Z",
@@ -524,8 +512,7 @@ def test_rerun_preserves_its_rewound_source(tmp_path: Path) -> None:
         anchor = project_run_start(
             store,
             run_id="run_rerun_anchor",
-            thread_id="term_rerun_rewound",
-            origin="chat",
+            thread_id="chat_rerun_rewound",
             input=Message.user("anchor"),
         )
         project_run_end(store, run_id=anchor.id)
@@ -533,7 +520,6 @@ def test_rerun_preserves_its_rewound_source(tmp_path: Path) -> None:
             store,
             run_id="run_rerun_rewound",
             thread_id=anchor.thread,
-            origin="chat",
             input=Message.user("source"),
         )
         project_run_end(store, run_id=source.id)
@@ -575,12 +561,12 @@ def test_step_and_control_projection_roll_back_as_one_write_unit(
 ) -> None:
     store = RunStore(tmp_path / "runs.db")
     try:
-        store.create_thread(thread_id="term_atomic_event")
+        store.create_thread(thread_id="chat_atomic_event")
         accept_run(
             store,
             run_id="run_atomic_event",
             parent=None,
-            thread="term_atomic_event",
+            thread="chat_atomic_event",
             input=Message.user("hello"),
             context={},
             request_id=None,
@@ -689,12 +675,12 @@ def test_run_control_revision_only_advances_when_control_state_changes(
 ) -> None:
     store = RunStore(tmp_path / "runs.db")
     try:
-        store.create_thread(thread_id="term_control_revision")
+        store.create_thread(thread_id="chat_control_revision")
         accept_run(
             store,
             run_id="run_control_revision",
             parent=None,
-            thread="term_control_revision",
+            thread="chat_control_revision",
             input=Message.user("hello"),
             context={},
             request_id=None,
@@ -744,12 +730,12 @@ def test_run_store_rejects_a_legacy_execution_schema(
 ) -> None:
     path = tmp_path / "runs.db"
     store = RunStore(path)
-    store.create_thread(thread_id="term_v18_revision")
+    store.create_thread(thread_id="chat_v18_revision")
     accept_run(
         store,
         run_id="run_v18_revision",
         parent=None,
-        thread="term_v18_revision",
+        thread="chat_v18_revision",
         input=Message.user("hello"),
         context={},
         request_id=None,
@@ -773,12 +759,12 @@ def test_claimed_control_cannot_be_canceled_before_its_event_is_persisted(
 ) -> None:
     store = RunStore(tmp_path / "runs.db")
     try:
-        store.create_thread(thread_id="term_claimed_control")
+        store.create_thread(thread_id="chat_claimed_control")
         accept_run(
             store,
             run_id="run_claimed_control",
             parent=None,
-            thread="term_claimed_control",
+            thread="chat_claimed_control",
             input=Message.user("hello"),
             context={},
             request_id=None,

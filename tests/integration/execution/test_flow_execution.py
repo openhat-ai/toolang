@@ -55,7 +55,7 @@ from toolang.execution.types import (
     FieldRef,
     Occurrence,
     RunRef,
-    ThreadPrefix,
+    ThreadKind,
     StepRef,
 )
 from toolang.lang.ast import (
@@ -111,7 +111,7 @@ class _RecordingThreadListener(ThreadListener):
 
 def _executor(tmp_path: Path) -> RunExecutor:
     store = RunStore(tmp_path / ".runtime" / "runs.db")
-    store.create_thread(thread_id="term_test")
+    store.create_thread(thread_id="chat_test")
     return RunExecutor(
         store, IdIssuer(tmp_path / ".runtime" / "runs.db", agent_name="alice")
     )
@@ -257,7 +257,7 @@ async def _start(
     name: str,
     *,
     run_id: str | None = None,
-    thread_id: str = "term_test",
+    thread_id: str = "chat_test",
     request_id: str | None = None,
     tracer: RunTracer | None = None,
 ) -> Any:
@@ -340,7 +340,7 @@ def test_run_executor_validates_args_against_runnable_params(
                 _spec(
                     setup=setup,
                     state=state,
-                    thread="term_test",
+                    thread="chat_test",
                     runnable=_name(flow),
                 )
             )
@@ -349,7 +349,7 @@ def test_run_executor_validates_args_against_runnable_params(
                 _spec(
                     setup=setup,
                     state=state,
-                    thread="term_test",
+                    thread="chat_test",
                     runnable=_name(flow),
                     named={
                         "focus": (TextPart("events"),),
@@ -361,7 +361,7 @@ def test_run_executor_validates_args_against_runnable_params(
             _spec(
                 setup=setup,
                 state=state,
-                thread="term_test",
+                thread="chat_test",
                 runnable=_name(flow),
                 named={"focus": (TextPart("events"),)},
             )
@@ -392,7 +392,7 @@ def test_run_executor_rejects_lossy_input_before_acceptance(
                 _spec(
                     setup=_setup(tmp_path),
                     state=_state(flow),
-                    thread="term_test",
+                    thread="chat_test",
                     runnable=_name(flow),
                     primary=(ImagePart(file_id="image-1"),),
                 )
@@ -415,7 +415,7 @@ def test_run_executor_rejects_invalid_ceiling_before_acceptance(
                 _spec(
                     setup=_setup(tmp_path),
                     state=_state(flow),
-                    thread="term_test",
+                    thread="chat_test",
                     runnable=_name(flow),
                     ceiling=AgentCeiling(tools=("missing/*",)),
                 )
@@ -548,7 +548,7 @@ def test_run_rejects_ambiguous_runnable_name(tmp_path: Path) -> None:
                 _spec(
                     setup=_setup(tmp_path),
                     state=state,
-                    thread="term_test",
+                    thread="chat_test",
                     runnable=runnable,
                 )
             )
@@ -592,7 +592,7 @@ def test_run_handle_shields_execution_from_waiter_cancellation(
             _spec(
                 setup=_setup(tmp_path),
                 state=_state(flow),
-                thread="term_test",
+                thread="chat_test",
                 runnable=_name(flow),
             )
         )
@@ -618,7 +618,7 @@ def test_duplicate_run_request_is_rejected(tmp_path: Path) -> None:
     executor = _executor(tmp_path)
     store = executor.store
     first_tracer = _RecordingTracer(store)
-    store.create_thread(thread_id="term_idempotent")
+    store.create_thread(thread_id="chat_idempotent")
 
     first = asyncio.run(
         _start(
@@ -627,7 +627,7 @@ def test_duplicate_run_request_is_rejected(tmp_path: Path) -> None:
             _state(flow),
             _name(flow),
             run_id="run_unique",
-            thread_id="term_idempotent",
+            thread_id="chat_idempotent",
             request_id="run-unique",
             tracer=first_tracer,
         )
@@ -640,7 +640,7 @@ def test_duplicate_run_request_is_rejected(tmp_path: Path) -> None:
                 _state(flow),
                 _name(flow),
                 run_id="run_unique",
-                thread_id="term_idempotent",
+                thread_id="chat_idempotent",
                 request_id="run-unique",
             )
         )
@@ -804,7 +804,7 @@ def test_parallel_children_preserve_input_and_output_types(
     binding = BoundRun(
         run_id="run_root",
         root_run_id="run_root",
-        thread="term_test",
+        thread="chat_test",
         bindings=RunBindings(runnable="flow:parent"),
         input=RunnableInput(),
         control_input=CallInput({}),
@@ -864,7 +864,7 @@ def test_parallel_children_reuse_the_lane_that_finished(
     binding = BoundRun(
         run_id="run_root",
         root_run_id="run_root",
-        thread="term_test",
+        thread="chat_test",
         bindings=RunBindings(runnable="flow:parent"),
         input=RunnableInput(),
         control_input=CallInput({}),
@@ -963,12 +963,12 @@ def test_flow_step_events_record_only_values_read_by_the_statement(
 def test_flow_run_rejects_steer_controls(tmp_path: Path) -> None:
     executor = _executor(tmp_path)
     store = executor.store
-    store.create_thread(thread_id="term_flow")
+    store.create_thread(thread_id="chat_flow")
     accept_run(
         store,
         run_id="run_flow",
         parent=None,
-        thread="term_flow",
+        thread="chat_flow",
         input=Message.user("hello"),
         context={},
         request_id=None,
@@ -988,13 +988,13 @@ def test_flow_run_rejects_steer_controls(tmp_path: Path) -> None:
 
 def test_run_control_request_is_unique_across_runs(tmp_path: Path) -> None:
     store = RunStore(tmp_path / "runs.db")
-    store.create_thread(thread_id="term_test")
-    store.create_thread(thread_id="term_other")
+    store.create_thread(thread_id="chat_test")
+    store.create_thread(thread_id="chat_other")
     accept_run(
         store,
         run_id="run_test",
         parent=None,
-        thread="term_test",
+        thread="chat_test",
         input=Message.user("hello"),
         context={},
         request_id="run-1",
@@ -1004,7 +1004,7 @@ def test_run_control_request_is_unique_across_runs(tmp_path: Path) -> None:
         store,
         run_id="run_other",
         parent=None,
-        thread="term_other",
+        thread="chat_other",
         input=Message.user("hello"),
         context={},
         request_id=None,
@@ -1035,12 +1035,12 @@ def test_run_control_request_is_unique_across_runs(tmp_path: Path) -> None:
 
 def test_run_control_acceptance_rejects_invalid_runtime_values(tmp_path: Path) -> None:
     store = RunStore(tmp_path / "runs.db")
-    store.create_thread(thread_id="term_test")
+    store.create_thread(thread_id="chat_test")
     accept_run(
         store,
         run_id="run_test",
         parent=None,
-        thread="term_test",
+        thread="chat_test",
         input=Message.user("hello"),
         context={},
         request_id=None,
@@ -1083,12 +1083,12 @@ def test_internal_event_projection_does_not_update_control_status(
     tmp_path: Path,
 ) -> None:
     store = RunStore(tmp_path / "runs.db")
-    store.create_thread(thread_id="term_test")
+    store.create_thread(thread_id="chat_test")
     _, entry = accept_run(
         store,
         run_id="run_test",
         parent=None,
-        thread="term_test",
+        thread="chat_test",
         input=Message.user("hello"),
         context={},
         request_id=None,
@@ -1113,7 +1113,7 @@ def test_thread_manager_emits_only_successful_events(tmp_path: Path) -> None:
     listener = _RecordingThreadListener()
     manager = ThreadManager(executor.store, executor.ids, listener=listener)
 
-    thread_id = manager.create(prefix=ThreadPrefix.CHAT)
+    thread_id = manager.create(kind=ThreadKind.CHAT)
     created = executor.store.get_thread(thread_id=thread_id)
 
     assert created is not None
@@ -1132,9 +1132,9 @@ def test_thread_create_rejects_duplicate_request(
     listener = _RecordingThreadListener()
     manager = ThreadManager(executor.store, executor.ids, listener=listener)
 
-    first = manager.create(prefix=ThreadPrefix.CHAT, request_id="create-thread")
+    first = manager.create(kind=ThreadKind.CHAT, request_id="create-thread")
     with pytest.raises(ValueError, match="thread control request already exists"):
-        manager.create(prefix=ThreadPrefix.CHAT, request_id="create-thread")
+        manager.create(kind=ThreadKind.CHAT, request_id="create-thread")
 
     assert executor.store.get_thread(thread_id=first) is not None
     assert [event.type for event in listener.events] == ["thread_created"]
@@ -1145,10 +1145,10 @@ def test_thread_request_is_unique_across_thread_kinds(tmp_path: Path) -> None:
     executor = _executor(tmp_path)
     manager = ThreadManager(executor.store, executor.ids)
 
-    manager.create(prefix=ThreadPrefix.CHAT, request_id="create-thread")
+    manager.create(kind=ThreadKind.CHAT, request_id="create-thread")
 
     with pytest.raises(ValueError, match="thread control request already exists"):
-        manager.create(prefix=ThreadPrefix.CHAT, request_id="create-thread")
+        manager.create(kind=ThreadKind.CHAT, request_id="create-thread")
     asyncio.run(executor.stop())
 
 
@@ -1157,7 +1157,7 @@ def test_run_history_starts_from_thread_records(
 ) -> None:
     executor = _executor(tmp_path)
     store = executor.store
-    created = ThreadManager(store, executor.ids).create(prefix=ThreadPrefix.CHAT)
+    created = ThreadManager(store, executor.ids).create(kind=ThreadKind.CHAT)
     history = RunHistory(store)
     monkeypatch.setattr(
         store,
@@ -1179,7 +1179,7 @@ def test_thread_fork_and_rewind_use_control_refs_without_copying_runs(
     store = executor.store
     listener = _RecordingThreadListener()
     manager = ThreadManager(store, executor.ids, listener=listener)
-    created = manager.create(prefix=ThreadPrefix.CHAT)
+    created = manager.create(kind=ThreadKind.CHAT)
     anchor_id = "run_anchor"
     accept_run(
         store,
@@ -1231,7 +1231,7 @@ def test_thread_fork_rejects_duplicate_request_without_starting_runs(
     store = executor.store
     listener = _RecordingThreadListener()
     manager = ThreadManager(store, executor.ids, listener=listener)
-    created = manager.create(prefix=ThreadPrefix.CHAT)
+    created = manager.create(kind=ThreadKind.CHAT)
     accept_run(
         store,
         run_id="run_anchor",
@@ -1281,7 +1281,7 @@ def test_rewind_uses_durable_acceptance_order_instead_of_timestamps(
     executor = _executor(tmp_path)
     store = executor.store
     manager = ThreadManager(store, executor.ids)
-    created = manager.create(prefix=ThreadPrefix.CHAT)
+    created = manager.create(kind=ThreadKind.CHAT)
     timestamp = "2026-01-01T00:00:00Z"
     for run_id in ("run_before", "run_anchor", "run_after"):
         accept_run(
@@ -1316,7 +1316,7 @@ def test_rewind_can_trim_inherited_fork_history(tmp_path: Path) -> None:
     executor = _executor(tmp_path)
     store = executor.store
     manager = ThreadManager(store, executor.ids)
-    source = manager.create(prefix=ThreadPrefix.CHAT)
+    source = manager.create(kind=ThreadKind.CHAT)
     for run_id in ("run_a", "run_b"):
         accept_run(
             store,
@@ -1352,7 +1352,7 @@ def test_implicit_thread_anchor_ignores_child_runs(tmp_path: Path) -> None:
     executor = _executor(tmp_path)
     store = executor.store
     manager = ThreadManager(store, executor.ids)
-    source = manager.create(prefix=ThreadPrefix.CHAT)
+    source = manager.create(kind=ThreadKind.CHAT)
     for run_id, parent in (("run_root", None),):
         accept_run(
             store,
@@ -1448,7 +1448,7 @@ def _accept_same_start(db_path: str) -> bool:
             store,
             run_id="run_shared_start",
             parent=None,
-            thread="term_shared_start",
+            thread="chat_shared_start",
             input=Message.user("hello"),
             context={"runnable": {"kind": "flow", "name": "shared"}},
             request_id="shared-run",
@@ -1465,7 +1465,7 @@ def _allocate_execution_ids(state_path: str, count: int) -> tuple[list[str], lis
     ids = IdIssuer(Path(state_path), agent_name="alice")
     return (
         [ids.issue_run() for _ in range(count)],
-        [ids.issue_thread(ThreadPrefix.CHAT.value) for _ in range(count)],
+        [ids.issue_thread(ThreadKind.CHAT.value) for _ in range(count)],
     )
 
 
@@ -1486,10 +1486,10 @@ def _rewind_thread(db_path: str, request_id: str) -> int | None:
     store = RunStore(Path(db_path))
     try:
         _thread, control, _superseded = store.rewind_thread(
-            thread_id="term_thread_controls",
+            thread_id="chat_thread_controls",
             anchor="run_thread_anchor",
             request_id=request_id,
-            expected_head=ControlRef.for_thread("term_thread_controls", 0),
+            expected_head=ControlRef.for_thread("chat_thread_controls", 0),
             created_at="2026-01-01T00:00:03Z",
         )
         return control.index
@@ -1502,12 +1502,12 @@ def _rewind_thread(db_path: str, request_id: str) -> int | None:
 def test_run_control_indexes_are_process_safe(tmp_path: Path) -> None:
     db_path = tmp_path / "runs.db"
     store = RunStore(db_path)
-    store.create_thread(thread_id="term_test")
+    store.create_thread(thread_id="chat_test")
     accept_run(
         store,
         run_id="run_test",
         parent=None,
-        thread="term_test",
+        thread="chat_test",
         input=Message.user("hello"),
         context={},
         request_id=None,
@@ -1528,7 +1528,7 @@ def test_run_control_indexes_are_process_safe(tmp_path: Path) -> None:
 def test_run_acceptance_has_one_owner_across_processes(tmp_path: Path) -> None:
     db_path = tmp_path / "runs.db"
     store = RunStore(db_path)
-    store.create_thread(thread_id="term_shared_start")
+    store.create_thread(thread_id="chat_shared_start")
     store.close()
     context = get_context("spawn")
     with context.Pool(4) as pool:
@@ -1581,7 +1581,7 @@ def test_remote_process_can_cancel_an_owned_run(
             _spec(
                 setup=_setup(tmp_path),
                 state=_state(flow),
-                thread="term_test",
+                thread="chat_test",
                 runnable=_name(flow),
             ),
             run_id="run_remote_cancel",
@@ -1634,7 +1634,7 @@ def test_executor_stop_cancels_and_persists_active_runs(
             _spec(
                 setup=_setup(tmp_path),
                 state=_state(flow),
-                thread="term_test",
+                thread="chat_test",
                 runnable=_name(flow),
             ),
             run_id="run_executor_stop",
@@ -1667,7 +1667,7 @@ def test_executor_stop_persists_run_before_owner_task_starts(
             _spec(
                 setup=_setup(tmp_path),
                 state=_state(flow),
-                thread="term_test",
+                thread="chat_test",
                 runnable=_name(flow),
             ),
             run_id="run_never_started",
@@ -1685,12 +1685,12 @@ def test_executor_stop_persists_run_before_owner_task_starts(
 def test_thread_control_indexes_and_head_are_process_safe(tmp_path: Path) -> None:
     db_path = tmp_path / "runs.db"
     store = RunStore(db_path)
-    store.create_thread(thread_id="term_thread_controls")
+    store.create_thread(thread_id="chat_thread_controls")
     accept_run(
         store,
         run_id="run_thread_anchor",
         parent=None,
-        thread="term_thread_controls",
+        thread="chat_thread_controls",
         input=Message.user("hello"),
         context={},
         request_id=None,
@@ -1718,7 +1718,7 @@ def test_thread_control_indexes_and_head_are_process_safe(tmp_path: Path) -> Non
     reopened = RunStore(db_path)
     assert [
         control.index
-        for control in reopened.list_thread_controls(thread_id="term_thread_controls")
+        for control in reopened.list_thread_controls(thread_id="chat_thread_controls")
     ] == [0, 1]
     reopened.close()
 
@@ -1727,12 +1727,12 @@ def test_private_event_projector_persists_run_and_step_records(
     tmp_path: Path,
 ) -> None:
     store = RunStore(tmp_path / "runs.db")
-    store.create_thread(thread_id="term_test")
+    store.create_thread(thread_id="chat_test")
     accept_run(
         store,
         run_id="run_test",
         parent=None,
-        thread="term_test",
+        thread="chat_test",
         input=Message.user("hello"),
         context={},
         request_id=None,
@@ -1785,13 +1785,13 @@ def test_private_event_projector_persists_run_and_step_records(
 
 def test_step_queries_use_exact_canonical_run_ids(tmp_path: Path) -> None:
     store = RunStore(tmp_path / "runs.db")
-    store.create_thread(thread_id="term_test")
+    store.create_thread(thread_id="chat_test")
     for run_id, text in (("run_literal", "literal"), ("run_ax", "other")):
         accept_run(
             store,
             run_id=run_id,
             parent=None,
-            thread="term_test",
+            thread="chat_test",
             input=Message.user(text),
             context={},
             request_id=None,
@@ -1835,7 +1835,7 @@ def test_step_queries_use_exact_canonical_run_ids(tmp_path: Path) -> None:
             store,
             run_id="run.invalid",
             parent=None,
-            thread="term_test",
+            thread="chat_test",
             input=Message.user("invalid"),
             context={},
             request_id=None,

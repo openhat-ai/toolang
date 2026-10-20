@@ -122,7 +122,7 @@ requests from reaching a different Run incarnation.
 A Run ID selects its Thread; a Thread ID selects its active Run for steering/
 cancellation or its latest terminal root for rerun/fork/rewind. Rerun accepts a
 new root from the source invocation. Fork includes its anchor; rewind removes
-its anchor and the visible suffix. Only Chat threads are branchable.
+its anchor and the visible suffix. All Thread kinds use the same branch state checks.
 [Execution](execution.md) owns admission and durable effects;
 [Hosting](hosting.md#server-lifetime-and-client-leases) owns server retention,
 and [Chat](chat.md) owns session snapshots and queue behavior.

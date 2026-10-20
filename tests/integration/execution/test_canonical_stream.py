@@ -28,7 +28,7 @@ from toolang.execution.events import (
 from toolang.execution.store import RunStore
 from toolang.execution.stream import CanonicalStream, Publication, StreamLimits
 from toolang.execution.threads import ThreadManager
-from toolang.execution.types import Pointer, ThreadPrefix
+from toolang.execution.types import Pointer, ThreadKind
 
 
 async def collect(reader):
@@ -101,9 +101,9 @@ flow child(_: Text) -> Text:
     async def scenario():
         async with harness:
             reader = source.subscribe()
-            thread = await asyncio.to_thread(threads.create, prefix=ThreadPrefix.CHAT)
-            other = threads.create(prefix=ThreadPrefix.CHAT)
-            third = threads.create(prefix=ThreadPrefix.CHAT)
+            thread = await asyncio.to_thread(threads.create, kind=ThreadKind.CHAT)
+            other = threads.create(kind=ThreadKind.CHAT)
+            third = threads.create(kind=ThreadKind.CHAT)
             handles = [
                 harness.executor.run(
                     harness.run_spec(
@@ -144,11 +144,11 @@ def test_failed_publication_rolls_back_thread_and_cursor(tmp_path, monkeypatch):
     with monkeypatch.context() as patch:
         patch.setattr(Publication, "append", fail_after_staging)
         with pytest.raises(RuntimeError, match="serialization failed"):
-            threads.create(prefix=ThreadPrefix.CHAT)
+            threads.create(kind=ThreadKind.CHAT)
     assert not harness.store.list_threads()
     assert not harness.store.list_controls()
     assert source.tail.seq == 0
-    threads.create(prefix=ThreadPrefix.CHAT)
+    threads.create(kind=ThreadKind.CHAT)
     assert source.tail.seq == 1
     harness.store.close()
 
@@ -168,7 +168,7 @@ def test_failing_tracer_cannot_change_run_result(tmp_path, caplog):
             tracer = FailingTracer()
             run = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="parent",
                     primary=(TextPart("input"),),
                 ),
@@ -201,7 +201,7 @@ def test_overflowed_tracer_is_released_while_execution_continues(tmp_path):
             reference = weakref.ref(tracer)
             handle = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="reply",
                     primary=(TextPart("input"),),
                 ),

@@ -86,11 +86,11 @@ def test_remote_chat_initial_workdir_uses_selected_thread() -> None:
     )
     try:
         assert session.initial_workdir(None) == "lab://"
-        assert session.initial_workdir("term_existing") == "repo://from-history"
+        assert session.initial_workdir("chat_existing") == "repo://from-history"
     finally:
         session.close()
 
-    assert requests[-1].url.params["thread_id"] == "term_existing"
+    assert requests[-1].url.params["thread_id"] == "chat_existing"
 
 
 def _models() -> dict[str, object]:
@@ -250,14 +250,12 @@ def _profile_without_description(
     }
 
 
-def _thread(thread_id: str = "term_remote") -> ThreadInfo:
+def _thread(thread_id: str = "chat_remote") -> ThreadInfo:
     return ThreadInfo(
         id=thread_id,
         title="chat",
         created_at="2026-08-25T00:00:00Z",
         updated_at="2026-08-25T00:00:00Z",
-        origin="chat",
-        channel="terminal",
         status="idle",
         created_by=ThreadControlRefData(thread=thread_id, index=0),
         head=ThreadControlRefData(thread=thread_id, index=0),
@@ -277,7 +275,7 @@ def _detail(
     return RunDetail(
         id=run_id,
         parent=None,
-        thread_id="term_remote",
+        thread_id="chat_remote",
         root_run_id=run_id,
         runnable_kind="agic",
         runnable_name="chat",
@@ -400,7 +398,7 @@ def test_remote_chat_non_run_operations_and_executor_metadata() -> None:
             return httpx.Response(201, json={"thread": _json(_thread())})
         if request.url.path in {
             "/api/v0/runs/run_remote",
-            "/api/v0/threads/term_remote/result",
+            "/api/v0/threads/chat_remote/result",
         }:
             return httpx.Response(200, json=_json(result))
         raise AssertionError(f"unexpected request: {request.method} {request.url}")
@@ -434,7 +432,7 @@ def test_remote_chat_non_run_operations_and_executor_metadata() -> None:
                 }
             ]
         }
-        assert session.create_thread() == "term_remote"
+        assert session.create_thread() == "chat_remote"
         setting = session.apply_setting(
             session.initial_setting(),
             RunOverride(
@@ -446,7 +444,7 @@ def test_remote_chat_non_run_operations_and_executor_metadata() -> None:
         assert session.get_result("run_remote", thread_id=None).output == (
             TextPart("remote answer"),
         )
-        assert session.get_result(None, thread_id="term_remote").run_id == (
+        assert session.get_result(None, thread_id="chat_remote").run_id == (
             "run_remote"
         )
         assert setting.model is not None and setting.model.ref == "test/model"
@@ -917,7 +915,7 @@ def test_remote_chat_repeated_concrete_runs_do_not_list_models() -> None:
             RunOverride(model=ModelOverride(identity="test/model(variant)")),
         ):
             request = session.build_request(
-                "term_remote",
+                "chat_remote",
                 override,
                 CallInput({"_": "hello"}),
                 session.initial_setting(),
@@ -997,7 +995,7 @@ def test_remote_chat_falls_back_to_detail_without_resubmitting(
     errors: list[str] = []
     try:
         request = session.build_request(
-            "term_remote",
+            "chat_remote",
             RunOverride(),
             CallInput({"_": "hello"}),
             session.initial_setting(),
@@ -1060,7 +1058,7 @@ def test_remote_chat_blocks_ambiguous_pre_acceptance_failure() -> None:
     try:
         for _ in range(2):
             request = session.build_request(
-                "term_remote",
+                "chat_remote",
                 RunOverride(),
                 CallInput({"_": "hello"}),
                 session.initial_setting(),

@@ -28,7 +28,7 @@ from toolang.base.types.run import (
     ToolCall,
 )
 from toolang.execution.executor.runs import agic
-from toolang.execution.types import ModelStepReport, ThreadPrefix
+from toolang.execution.types import ModelStepReport, ThreadKind
 from toolang.lang.types import Array
 
 SOURCE = """
@@ -81,7 +81,7 @@ def test_recovery_retains_accounting_and_replay_without_executing_failed_batch(
         async with harness:
             run = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="chat",
                 ),
                 tracer=tracer,
@@ -147,7 +147,7 @@ def test_failed_step_retains_available_text(
         async with harness:
             run = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="chat",
                 ),
                 tracer=tracer,
@@ -190,7 +190,7 @@ def test_recovery_is_bounded(tmp_path: Path, kind, limit, attempts: int) -> None
         async with harness:
             run = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="chat",
                     limits=RunLimits(agic_model_calls=limit),
                 ),
@@ -238,7 +238,7 @@ def test_network_backoff_is_cancelable_and_accepts_steering(
         async with harness:
             handle = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="chat",
                 ),
                 tracer=tracer,
@@ -309,7 +309,7 @@ agic chat() -> Boolean:
         async with harness:
             run = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="chat",
                 ),
                 tracer=tracer,
@@ -353,7 +353,7 @@ def test_failed_attempt_respects_token_accounting_limits(
         async with harness:
             run = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="chat",
                     limits=RunLimits(tokens=25),
                 ),
@@ -401,7 +401,7 @@ def test_run_time_limit_stops_long_backoff(
         async with harness:
             handle = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="chat",
                     limits=RunLimits(time=1),
                 ),

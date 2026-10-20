@@ -40,7 +40,7 @@ from toolang.plugin.models.resolution import (
 from toolang.execution.store import RunStore
 from toolang.execution.threads import ThreadManager
 from toolang.execution.schemas import ControlInfo, RunRequest
-from toolang.execution.types import RunOverride, SessionSetting, ThreadPrefix
+from toolang.execution.types import RunOverride, SessionSetting, ThreadKind
 from toolang.lang.input import CallInput
 from toolang.plugin.sandboxes.host import host_sandbox_description
 from toolang.setup import AgentSetup, SetupWatcher
@@ -317,7 +317,7 @@ class LocalChatSession:
         }
 
     def create_thread(self) -> str:
-        return self.threads.create(prefix=ThreadPrefix.CHAT)
+        return self.threads.create(kind=ThreadKind.CHAT)
 
     def thread_title(self, thread_id: str) -> str | None:
         """Return one thread's title, or ``None`` when it cannot be read.

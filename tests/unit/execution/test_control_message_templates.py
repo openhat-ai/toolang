@@ -79,9 +79,9 @@ def test_control_description_is_an_attribute(
         (
             "fork",
             ForkControlPayload(
-                ThreadRef("term_ab12"),
+                ThreadRef("chat_ab12"),
                 RunRef("run_ab12"),
-                ControlRef.for_thread("term_ab12", 0),
+                ControlRef.for_thread("chat_ab12", 0),
             ),
         ),
         (
@@ -89,14 +89,14 @@ def test_control_description_is_an_attribute(
             RewindControlPayload(
                 RunRef("run_ab12"),
                 RunRef("run_ab12"),
-                ControlRef.for_thread("term_ab12", 0),
+                ControlRef.for_thread("chat_ab12", 0),
             ),
         ),
     ],
 )
 def test_other_controls_add_no_lifecycle_message(kind, payload) -> None:
     ref = (
-        ControlRef.for_thread("term_ab12", 1)
+        ControlRef.for_thread("chat_ab12", 1)
         if kind in {"create", "fork", "rewind"}
         else ControlRef.for_run("run_ab12", 1)
     )

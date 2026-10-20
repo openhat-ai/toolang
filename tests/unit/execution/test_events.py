@@ -623,7 +623,7 @@ def test_part_data_does_not_interpret_retired_runtime_receipts(name):
         "runtime",
         output={
             "id": "run_child",
-            "thread": "spawn_child",
+            "thread": "work_child",
             "controls": ["run_root@1"],
             "cwd": "/workspace",
         },

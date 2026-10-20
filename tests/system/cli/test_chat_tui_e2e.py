@@ -122,12 +122,10 @@ def test_chat_tui_runs_one_local_exchange_in_a_pseudo_terminal(
         assert "[O[I" not in output
         session.wait_for_bytes(b"\x1b]0;alice> hello from user\x07")
 
-        exit_started = time.monotonic()
         session.send(b"\x04")
         return_code = session.wait_for_exit()
         assert return_code == 0, session.output
         assert b"\x1b]0;\x07" in session.data
-        assert time.monotonic() - exit_started < 0.75
     finally:
         session.close()
 

@@ -27,8 +27,7 @@ def test_cd_step_end_and_cwd_control_commit_atomically(tmp_path, monkeypatch):
         run = project_run_start(
             store,
             run_id="run_cwd_atomic",
-            thread_id="term_cwd_atomic",
-            origin="chat",
+            thread_id="chat_cwd_atomic",
             input=Message.user("start"),
         )
         ref = StepRef.from_local(run.id, (0,))
@@ -92,8 +91,7 @@ def test_run_control_without_cwd_is_rejected(tmp_path):
         run = project_run_start(
             store,
             run_id="run_cwd_legacy",
-            thread_id="term_cwd_legacy",
-            origin="chat",
+            thread_id="chat_cwd_legacy",
             input=Message.user("start"),
         )
         record = store.get_run_control(run_id=run.id, index=0)

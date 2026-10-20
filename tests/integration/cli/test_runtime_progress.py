@@ -20,7 +20,7 @@ from toolang.base.types.message import Message, ToolResultPart
 from toolang.base.types.run import ModelCallResult, ToolCall
 from toolang.cli.common.execution_progress import ProgressProjector
 from toolang.execution.events import StepBegin, StepEnd
-from toolang.execution.types import ThreadPrefix, ToolStepReport
+from toolang.execution.types import ThreadKind, ToolStepReport
 from toolang.execution.values import parts_from_value
 from tests.support.execution_assertions import assert_run_event_integrity
 
@@ -61,7 +61,7 @@ agic target() -> Text:
             monkeypatch.setattr(harness.store, "accept_exec_control", fail_commit)
             root = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="agic:caller",
                 ),
                 tracer=tracer,
@@ -156,7 +156,7 @@ agic child() -> Text:
         async with harness:
             handle = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="agic:caller",
                 ),
                 tracer=tracer,

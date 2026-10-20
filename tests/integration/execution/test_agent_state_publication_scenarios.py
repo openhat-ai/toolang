@@ -25,7 +25,7 @@ from toolang.execution.types import (
     ControlRef,
     Occurrence,
     StepRef,
-    ThreadPrefix,
+    ThreadKind,
 )
 from toolang.state.prepare import prepare_agent_state
 from toolang.state.state import AgentState
@@ -142,7 +142,7 @@ agic worker:
 
     async def scenario() -> None:
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             seed = await harness.executor.run(
                 harness.run_spec(thread=thread, runnable="agic:seed")
             )
@@ -225,7 +225,7 @@ flow parent:
 
     async def scenario() -> None:
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             seed = await harness.executor.run(
                 harness.run_spec(thread=thread, runnable="agic:seed")
             )
@@ -304,7 +304,7 @@ agic parent:
 
     async def scenario() -> None:
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             handle = harness.executor.run(
                 harness.run_spec(
                     thread=thread,
@@ -350,7 +350,7 @@ def test_publication_orders_step_state_and_child_acceptance_at_one_boundary(
 
     async def scenario() -> None:
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             handle = harness.executor.run(
                 harness.run_spec(
                     thread=thread,
@@ -420,7 +420,7 @@ def test_publication_preserves_the_next_step_of_an_active_agic(tmp_path: Path) -
 
     async def scenario() -> None:
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             handle = harness.executor.run(
                 harness.run_spec(
                     thread=thread,
@@ -511,7 +511,7 @@ def test_parallel_steps_record_the_state_on_their_boundary_side(
 
         monkeypatch.setattr(_Execution, "execute_child", gate_second_child)
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             handle = harness.executor.run(
                 harness.run_spec(
                     thread=thread,
@@ -619,7 +619,7 @@ flow parent:
 
     async def scenario() -> None:
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             handle = harness.executor.run(
                 harness.run_spec(
                     thread=thread,
@@ -717,7 +717,7 @@ flow parent() -> {output if operation == "reduce" else f"{output}[]"}:
 
     async def scenario() -> None:
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             handle = harness.executor.run(
                 harness.run_spec(thread=thread, runnable="flow:parent")
             )

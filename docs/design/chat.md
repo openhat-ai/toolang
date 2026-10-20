@@ -138,12 +138,12 @@ steers project into model history. [Records](records.md) owns the durable edges;
 [Agic](agic.md) owns message assembly and guidance visibility.
 
 HTTP RunDetail returns resolved Output envelopes, controls, and Step projections.
-ThreadInfo derives title, head, origin, active/latest Run, and counts; it does
+ThreadInfo derives title, head, active/latest Run, and counts; it does
 not copy a separate parent field into canonical ThreadRecord. Fork provenance
 belongs to its create/fork control. A fork inherits through its anchor without
 copying physical Run/Step rows. Rewind hides the anchor and suffix, retaining
-records for explicit inspection. Only Chat threads can fork/rewind; those
-operations do not start follow-up execution.
+records for explicit inspection. All Thread kinds can fork/rewind under the
+same state checks; those operations do not start follow-up execution.
 
 Input recall history belongs to the runtime layout, separate from execution
 records and model context; [Layout](layout.md#runtime-room) owns its paths.

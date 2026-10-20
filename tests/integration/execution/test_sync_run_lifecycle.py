@@ -18,7 +18,7 @@ from toolang.base.types.message import Message, ToolResultPart
 from toolang.base.types.run import ModelCallResult, ToolCall
 from toolang.execution.events import RunBegin, RunEnd, StepBegin, StepEnd
 from toolang.execution.types import (
-    ThreadPrefix,
+    ThreadKind,
     StepRef,
 )
 
@@ -68,7 +68,7 @@ agic child() -> Text:
         async with harness:
             handle = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable=f"{caller}:{caller}_parent",
                 ),
                 tracer=tracer,
@@ -186,7 +186,7 @@ agic child():
         async with harness:
             handle = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable=f"{caller}:{caller}_parent",
                 ),
                 tracer=tracer,

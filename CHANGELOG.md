@@ -9,6 +9,30 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Changed
 
+- **Breaking:** `ThreadInfo` and `ThreadDetail` drop `channel`, and thread-list
+  filters omit it, so derive classification from the Thread ID and filter by
+  `kind`.
+  ([#874](https://github.com/openhat-ai/toolang/pull/874))
+
+- **Breaking:** `ThreadPrefix` and prefix creation arguments become
+  `ThreadKind` and `kind`, thread records and `ThreadCreated` payloads drop
+  `origin`, and thread HTTP responses expose neither field, so derive kind
+  from the ID prefix; replace `origin` filters with `kind` on `GET /threads`.
+  ([#874](https://github.com/openhat-ai/toolang/pull/874))
+
+- **Breaking:** thread IDs must start with `chat_`, `talk_`, `chore_`, `work_`,
+  or `exec_`, and invocation threads move from `script_` to `exec_`.
+  ([#874](https://github.com/openhat-ai/toolang/pull/874))
+
+- Fork and rewind work for every thread kind: fork keeps the source kind
+  without Talk bindings or chore definitions, and rewind keeps message
+  cursors and chore checkpoints.
+  ([#874](https://github.com/openhat-ai/toolang/pull/874))
+
+- **Breaking:** `SourceFile.origin` becomes `layer` on root and agent sources,
+  so code reading `origin` must read `layer`.
+  ([#874](https://github.com/openhat-ai/toolang/pull/874))
+
 - Dulwich 1.2.17 or newer is now required in runtime and build
   environments, so an older pinned release must be upgraded.
   ([#870](https://github.com/openhat-ai/toolang/pull/870))
@@ -138,10 +162,12 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   are rejected.
 
 - **Breaking:** persisted contracts are consolidated and advanced: agent state
-  format 23, agent instance format 3, run store schema 61, and hub store schema
+  format 23, agent instance format 3, run store schema 62, and hub store schema
   4. Older data is rejected without rewriting, while derived State rebuilds
   from authored inputs. Stop agents before upgrading and delete a stale
-  `AGENT_HOME/.runtime/status.json`; start from fresh `runs.db` storage, keeping
+  `AGENT_HOME/.runtime/status.json`; start from fresh
+  `AGENT_HOME/.runtime/runs.db` storage
+  (`AGENT_HOME/.runtime/instances/<id>/runs.db` for isolated instances), keeping
   required old runtime data separately; and select a fresh Redis/Valkey dataset
   for the Hub. Existing history, drafts, checkpoints, and cursors are not
   migrated.
@@ -155,20 +181,28 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   detail derives from `started_at`, and an exec Step's report stores only its
   Control reference, so read the target from `payload/runnable`. Update Pointer
   paths to `STEP/spec`, `RUN/report`, `STEP/report`, and `CONTROL/request_id`;
-  schema 61 rejects older execution stores without mutation, so keep required
+  schema 62 rejects older execution stores without mutation, so keep required
   old data separately and start with fresh storage.
 
 - **Breaking:** chore scheduler checkpoint records and `chores` columns rename
   `chore_id` and `active_run_id` to `id` and `active_run`; code reading a
   `ChoreRecord` must use `id` and `active_run`, while chore lookup parameters
   and the HTTP `active_run_id` projection are unchanged. Checkpoints share the
-  schema-61 execution store, so the fresh-storage requirement above applies.
+  schema-62 execution store, so the fresh-storage requirement above applies.
 
 - `AGENT_HOME/.runtime/stats.db` uses schema `2` with `roots`, `buckets`, and
   `state` tables; discard an older cache while the server is stopped and let it
   rebuild from compatible execution records.
 
 ### Fixed
+
+- Pending Runs report their admission time and thread lists order by each
+  thread's latest visible Run change, so recently updated work stays first.
+  ([#874](https://github.com/openhat-ai/toolang/pull/874))
+
+- Thread summaries, status filters, and CLI `steer`/`cancel` selection treat
+  pending and running Runs as active, while each Run keeps its actual status.
+  ([#874](https://github.com/openhat-ai/toolang/pull/874))
 
 - `too AGENT top` scopes discovery to the selected resident's status document
   and its matching runtime registrations: stopped or unresolved temporary

@@ -31,7 +31,7 @@ from tests.support.execution_harness import (
 from toolang.base.types.message import TextPart, ToolResultPart, message_text
 from toolang.base.types.run import ToolCall
 from toolang.execution.recall import recall_revisions
-from toolang.execution.types import RulesRecallTarget, ThreadPrefix
+from toolang.execution.types import RulesRecallTarget, ThreadKind
 from toolang.plugin.toolsets.fs import _FilesystemTool
 
 
@@ -430,7 +430,7 @@ flow parent(_: Part[]) -> Text[]:
         async with harness:
             spec = replace(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="parent",
                     primary=(TextPart("start"),),
                 ),

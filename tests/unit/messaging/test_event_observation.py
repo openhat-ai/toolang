@@ -14,7 +14,7 @@ import pytest
 from tests.support.execution_harness import ExecutionHarness
 from toolang.base.types.message import TextPart
 from toolang.execution.schemas import StreamFrame
-from toolang.execution.types import ThreadPrefix
+from toolang.execution.types import ThreadKind
 from toolang.teaming.backend.valkey import ValkeyBackend
 from toolang.teaming.backend.valkey.schema import HUB_STORE_SCHEMA
 from toolang.teaming.config import BackendConfig
@@ -48,7 +48,7 @@ async def prefix(subscription):
 
 
 async def run(harness):
-    thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+    thread = harness.threads.create(kind=ThreadKind.CHAT)
     return await harness.executor.run(
         harness.run_spec(
             thread=thread, runnable="example", primary=(TextPart("input"),)
@@ -475,9 +475,9 @@ def test_hub_filters_and_cursor_errors_have_flat_http_contract(tmp_path):
         ):
             for params in (
                 {"after": "bad"},
-                {"thread": "term_x"},
+                {"thread": "chat_x"},
                 {"agent": "human:owner"},
-                {"agent": "agent:alice", "thread": "term_x", "run": "run_x"},
+                {"agent": "agent:alice", "thread": "chat_x", "run": "run_x"},
             ):
                 response = await http.get("/events/stream", params=params)
                 assert (
@@ -578,7 +578,7 @@ def test_multi_origin_cached_replay_preserves_global_order_and_identity(tmp_path
                         run_begin(
                             "run_one",
                             ControlRef.for_run("run_one", 0),
-                            thread_id="term_one",
+                            thread_id="chat_one",
                         ),
                     ),
                     (
@@ -586,7 +586,7 @@ def test_multi_origin_cached_replay_preserves_global_order_and_identity(tmp_path
                         run_begin(
                             "run_one",
                             ControlRef.for_run("run_one", 0),
-                            thread_id="term_one",
+                            thread_id="chat_one",
                         ),
                     ),
                     (exporters[0], run_end("run_one", "succeeded")),
@@ -598,7 +598,7 @@ def test_multi_origin_cached_replay_preserves_global_order_and_identity(tmp_path
                                 exporter.highwater.epoch, exporter.highwater.seq + 1
                             ),
                             event,
-                            "term_one",
+                            "chat_one",
                             "run_one",
                             0,
                         )
@@ -796,10 +796,10 @@ def test_projection_omits_optional_history_before_failing_active_budget(
     monkeypatch.setattr(records, "MAX_RECENT", 2)
     for index in range(4):
         name = f"run_{index}"
-        begin = run_begin(name, ControlRef.for_run(name, 0), thread_id="term_one")
+        begin = run_begin(name, ControlRef.for_run(name, 0), thread_id="chat_one")
         projection.apply(
             CanonicalEvent(
-                EventCursor("a" * 32, index * 2 + 1), begin, "term_one", name, 0
+                EventCursor("a" * 32, index * 2 + 1), begin, "chat_one", name, 0
             )
         )
         if index < 3:
@@ -809,7 +809,7 @@ def test_projection_omits_optional_history_before_failing_active_budget(
                     run_end(
                         name, "succeeded", finished_at=f"2026-10-09T00:00:0{index}Z"
                     ),
-                    "term_one",
+                    "chat_one",
                     name,
                     0,
                 )
@@ -934,7 +934,7 @@ def test_recovery_bounds_optional_history_without_losing_active_tree(
             recent = await run(harness)
             active = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="slow",
                     primary=(TextPart("input"),),
                 )
@@ -1021,7 +1021,7 @@ def test_recovery_bounds_records_work_before_it_consumes_the_snapshot_budget(
         async with harness:
             old = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="history",
                     primary=(TextPart("input"),),
                 )
@@ -1029,7 +1029,7 @@ def test_recovery_bounds_records_work_before_it_consumes_the_snapshot_budget(
             recent = await run(harness)
             active = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="slow",
                     primary=(TextPart("input"),),
                 )
@@ -1296,7 +1296,7 @@ def test_projection_preserves_nested_background_run_structure():
         (root, step, child, step_ended, root_end, child_end), 1
     ):
         projection.apply(
-            CanonicalEvent(EventCursor("a" * 32, seq), event, "term_one", root.run, 0)
+            CanonicalEvent(EventCursor("a" * 32, seq), event, "chat_one", root.run, 0)
         )
     snapshot = projection.snapshot(StreamScope(root=root.run))
     assert [event_from_data(frame.data) for frame in snapshot.structural()] == [
@@ -1322,8 +1322,8 @@ def test_projection_rejects_invalid_tree_structure(damage):
     projection.apply(
         CanonicalEvent(
             EventCursor("a" * 32, 1),
-            run_begin(name, ControlRef.for_run(name, 0), thread_id="term_one"),
-            "term_one",
+            run_begin(name, ControlRef.for_run(name, 0), thread_id="chat_one"),
+            "chat_one",
             name,
             0,
         )
@@ -1375,12 +1375,12 @@ def test_invalid_recovery_metadata_is_a_backend_error(damage):
                 entities[field("root", "run_one")] = {
                     "v": 0,
                     "root": "run_one",
-                    "thread": "term_one",
+                    "thread": "chat_one",
                 }
             else:
-                entities[field("control", "term_one#0")] = {
+                entities[field("control", "chat_one#0")] = {
                     "v": 0,
-                    "thread": "term_one",
+                    "thread": "chat_one",
                     "root": None,
                     "source": None,
                     "event": {"type": "invalid"},

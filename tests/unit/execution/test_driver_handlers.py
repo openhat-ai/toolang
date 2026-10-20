@@ -14,7 +14,7 @@ from toolang.execution.store import RunStore
 from toolang.common.ids import IdIssuer
 from toolang.execution.records import RunControlPayload
 from toolang.execution.runnables import resolve_driver_handler
-from toolang.execution.types import DriverName, ThreadPrefix
+from toolang.execution.types import DriverName, ThreadKind
 from toolang.lang import Program
 from toolang.lang.input import CallInput
 from toolang.state.state import compose_agent_state
@@ -99,7 +99,7 @@ def test_runtime_talk_source_is_recorded_and_reused_by_rerun(tmp_path, monkeypat
             spec = RunSpec(
                 setup=harness.setup,
                 state=harness.state,
-                thread=harness.threads.create(prefix=ThreadPrefix.TALK),
+                thread=harness.threads.create(kind=ThreadKind.TALK),
                 bindings=RunBindings(),
                 limits=harness.setup.limits,
                 driver="talk",
@@ -154,7 +154,7 @@ def test_selected_handler_bad_input_does_not_fall_back(tmp_path):
             spec = RunSpec(
                 setup=harness.setup,
                 state=harness.state,
-                thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                thread=harness.threads.create(kind=ThreadKind.CHAT),
                 bindings=RunBindings(),
                 limits=harness.setup.limits,
                 driver="chat",
@@ -198,7 +198,7 @@ def test_chat_session_can_choose_an_entry_without_a_default_handler(tmp_path):
 
     async def scenario():
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             request = build_run_request(
                 thread_id=thread,
                 request_id="session_selected",

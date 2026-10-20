@@ -109,7 +109,7 @@ def test_execution_error_codec_uses_strict_tagged_objects() -> None:
         {"type": "message"},
         {"type": "message", "message": "failure", "extra": True},
         {"type": "ref", "ref": "run_root.0/output"},
-        {"type": "ref", "ref": "term_root/error"},
+        {"type": "ref", "ref": "chat_root/error"},
     ),
 )
 def test_execution_error_codec_rejects_noncanonical_values(value: object) -> None:
@@ -125,8 +125,7 @@ def test_error_resolution_rejects_missing_null_and_cyclic_targets(
         run = project_run_start(
             store,
             run_id="run_errors",
-            thread_id="term_errors",
-            origin="test",
+            thread_id="chat_errors",
             input=Message.user("hello"),
         )
         first = StepRef.from_local(run.id, (0,))
@@ -191,8 +190,7 @@ def test_record_registry_serializes_exact_record_shapes(tmp_path: Path) -> None:
         run = project_run_start(
             store,
             run_id="run_records",
-            thread_id="term_records",
-            origin="test",
+            thread_id="chat_records",
             input=Message.user("hello"),
         )
         step = project_step(
@@ -237,7 +235,6 @@ def test_record_registry_serializes_exact_record_shapes(tmp_path: Path) -> None:
         assert set(thread_data) == {
             "horizon",
             "id",
-            "origin",
             "created_at",
             "updated_at",
         }
@@ -306,11 +303,11 @@ def test_flat_input_references_survive_reordering_and_reopening(tmp_path: Path) 
         {"parts": Array("Part[]", (TextPart("nested"),)), "argument": "value", "_": ""}
     )
     with closing(RunStore(path)) as store:
-        store.create_thread(thread_id="term_flat")
+        store.create_thread(thread_id="chat_flat")
         store.accept_run(
             run_id="run_flat",
             parent=None,
-            thread="term_flat",
+            thread="chat_flat",
             resources=AgentResources(),
             limits=RunLimits(),
             state="0" * 64,
@@ -350,8 +347,7 @@ def test_model_step_record_serializes_compact_report_cont_key(tmp_path: Path) ->
         run = project_run_start(
             store,
             run_id="run_model_report",
-            thread_id="term_model_report",
-            origin="test",
+            thread_id="chat_model_report",
             input=Message.user("hello"),
         )
         step = project_step(
@@ -387,8 +383,7 @@ def test_record_selection_matches_rfc6901_traversal(
         run = project_run_start(
             store,
             run_id="run_select",
-            thread_id="term_select",
-            origin="test",
+            thread_id="chat_select",
             input=Message.user("hello"),
         )
         step = project_step(
@@ -449,8 +444,7 @@ def test_control_pointer_uses_one_record_lookup(tmp_path: Path) -> None:
         run = project_run_start(
             store,
             run_id="run_lookup",
-            thread_id="term_lookup",
-            origin="test",
+            thread_id="chat_lookup",
             input=Message.user("hello"),
         )
         queries: list[str] = []
@@ -474,8 +468,7 @@ def test_record_lookup_retains_steps_owned_by_a_rewound_run(tmp_path: Path) -> N
         run = project_run_start(
             store,
             run_id="run_ejected",
-            thread_id="term_ejected",
-            origin="test",
+            thread_id="chat_ejected",
             input=Message.user("hello"),
         )
         step = project_step(
@@ -515,8 +508,7 @@ def test_record_lookup_retains_children_of_a_rewound_run(
         root = project_run_start(
             store,
             run_id="run_parent",
-            thread_id="term_parent",
-            origin="test",
+            thread_id="chat_parent",
             input=Message.user("hello"),
         )
         parent = project_step(
@@ -534,7 +526,6 @@ def test_record_lookup_retains_children_of_a_rewound_run(
             store,
             run_id="run_child",
             thread_id=root.thread,
-            origin="test",
             input=Message.user("child"),
             parent=parent.ref,
         )
@@ -657,9 +648,9 @@ def test_every_control_payload_variant_has_one_canonical_record_shape() -> None:
         (
             "fork",
             ForkControlPayload(
-                ThreadRef("term_source"),
+                ThreadRef("chat_source"),
                 RunRef("run_source"),
-                ControlRef.for_thread("term_source", 0),
+                ControlRef.for_thread("chat_source", 0),
             ),
             {"fork_from", "fork_at", "fork_head"},
         ),
@@ -668,7 +659,7 @@ def test_every_control_payload_variant_has_one_canonical_record_shape() -> None:
             RewindControlPayload(
                 RunRef("run_source"),
                 RunRef("run_end"),
-                ControlRef.for_thread("term_control", 2),
+                ControlRef.for_thread("chat_control", 2),
             ),
             {"rewind_from", "rewind_through", "rewind_if"},
         ),
@@ -676,7 +667,7 @@ def test_every_control_payload_variant_has_one_canonical_record_shape() -> None:
 
     for index, (kind, payload, payload_fields) in enumerate(cases):
         target = (
-            "term_control" if kind in {"create", "fork", "rewind"} else "run_control"
+            "chat_control" if kind in {"create", "fork", "rewind"} else "run_control"
         )
         record = ControlRecord(
             id=f"{target}@{index}",
@@ -716,8 +707,7 @@ def test_step_timing_and_private_cursors_survive_reopening(tmp_path, status):
         run = project_run_start(
             store,
             run_id="run_contract",
-            thread_id="term_contract",
-            origin="test",
+            thread_id="chat_contract",
             input=Message.user("contract"),
             request_id="contract-request",
             created_at="2026-10-18T00:59:59Z",
@@ -789,8 +779,7 @@ def test_exec_reports_resolve_their_own_controls_after_reopening(tmp_path):
         run = project_run_start(
             store,
             run_id="run_exec_reports",
-            thread_id="term_exec_reports",
-            origin="test",
+            thread_id="chat_exec_reports",
             input=Message.user("handoff"),
         )
         for index, target in enumerate(("flow:middle", "flow:final")):

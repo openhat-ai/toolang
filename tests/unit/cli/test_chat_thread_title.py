@@ -64,7 +64,7 @@ def _session(
 def test_remote_thread_title_reads_a_thread_with_runs() -> None:
     session = _session({"title": "hello world", "run_count": 2})
     try:
-        assert session.thread_title("term_x") == "hello world"
+        assert session.thread_title("chat_x") == "hello world"
     finally:
         session.close()
 
@@ -73,7 +73,7 @@ def test_remote_thread_title_requests_metadata_without_run_details() -> None:
     requests = []
     session = _session({"title": "hello world", "run_count": 2}, requests=requests)
     try:
-        assert session.thread_title("term_x") == "hello world"
+        assert session.thread_title("chat_x") == "hello world"
         assert len(requests) == 1
         assert requests[0].url.params["limit"] == "0"
     finally:
@@ -94,7 +94,7 @@ def test_remote_thread_title_ignores_threads_without_a_title(
 ) -> None:
     session = _session(payload)
     try:
-        assert session.thread_title("term_x") is None
+        assert session.thread_title("chat_x") is None
     finally:
         session.close()
 
@@ -102,7 +102,7 @@ def test_remote_thread_title_ignores_threads_without_a_title(
 def test_remote_thread_title_survives_a_missing_thread() -> None:
     session = _session({"detail": "thread not found"}, status=404)
     try:
-        assert session.thread_title("term_missing") is None
+        assert session.thread_title("chat_missing") is None
     finally:
         session.close()
 
@@ -134,6 +134,6 @@ def test_remote_thread_title_survives_a_transport_failure() -> None:
         transport=httpx.MockTransport(handler),
     )
     try:
-        assert session.thread_title("term_x") is None
+        assert session.thread_title("chat_x") is None
     finally:
         session.close()

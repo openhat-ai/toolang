@@ -49,7 +49,7 @@ def test_lookup_failure_retries_at_normal_event(failed) -> None:
         lookup=lookup,
         on_result=results.put,
     )
-    title.start("term_x")
+    title.start("chat_x")
     title.accept(results.get(timeout=5))
     assert labels == ["alice>"]
     title.refresh()
@@ -86,7 +86,7 @@ def test_pending_and_obsolete_results() -> None:
         on_result=results.put,
     )
     try:
-        title.start("term_x")
+        title.start("chat_x")
         assert entered.wait(5)
         title.refresh()
         released.set()
@@ -94,8 +94,8 @@ def test_pending_and_obsolete_results() -> None:
         old = results.get(timeout=5)
         assert labels == ["alice>"]
         labels.clear()
-        title.set_thread("term_y")
-        title.set_thread("term_x")
+        title.set_thread("chat_y")
+        title.set_thread("chat_x")
         title.accept(old)
         assert not labels
         title.refresh()
@@ -124,7 +124,7 @@ def test_failed_publication_retries_and_disabled_lookup_is_silent() -> None:
         on_result=results.put,
     )
     title.start(None)
-    title.set_thread("term_x")
+    title.set_thread("chat_x")
     assert not writes  # Identity alone does not update OSC.
     for _ in range(2):
         title.refresh()
@@ -142,7 +142,7 @@ def test_failed_publication_retries_and_disabled_lookup_is_silent() -> None:
         lookup=forbidden,
         on_result=forbidden,
     )
-    disabled.start("term_x")
+    disabled.start("chat_x")
     disabled.refresh()
     disabled.clear()
 
@@ -165,7 +165,7 @@ def test_lookup_worker_start_failure_retries_at_next_normal_event(monkeypatch):
         patch.setattr(
             "toolang.cli.toolang.commands.chat.title.Thread.start", fail_start
         )
-        title.start("term_x")
+        title.start("chat_x")
     assert not labels and results.empty()
     title.refresh()
     title.accept(results.get(timeout=5))

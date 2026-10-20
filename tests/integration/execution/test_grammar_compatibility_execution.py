@@ -10,7 +10,7 @@ from tests.support.execution_harness import ExecutionHarness
 from toolang.base.types.message import Message, message_text
 from toolang.base.types.run import ModelCallResult
 from toolang.execution.store import RunStore
-from toolang.execution.types import LoopStepReport, ThreadPrefix
+from toolang.execution.types import LoopStepReport, ThreadKind
 from toolang.lang import format_source
 from toolang.lang.ast import RunStmt
 
@@ -56,7 +56,7 @@ def test_literal_hashes_and_quotes_reach_outputs_and_prompts(
         async with harness:
             root = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="main",
                     named={"_": []} if entry == "initial" else {},
                 )
@@ -109,7 +109,7 @@ def test_repeat_units_and_first_member_docs_preserve_iteration_counts(
         async with harness:
             root = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="main",
                     named={"_": "seed"},
                 )
@@ -160,7 +160,7 @@ def test_contextual_names_bind_child_inputs_and_retained_handles(
         async with harness:
             root = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="main",
                     named={name: literal},
                 )
@@ -221,7 +221,7 @@ def test_lane_prefixes_reach_child_occurrences_and_typed_collection_results(
         async with harness:
             root = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="main",
                     named={"_": "seed" if operation == "generate" else ["a", "b", "c"]},
                 )

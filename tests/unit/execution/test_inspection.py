@@ -25,8 +25,7 @@ def test_focused_relations_preserve_run_and_step_ownership(tmp_path: Path) -> No
         root = project_run_start(
             store,
             run_id="run_inspection_root",
-            thread_id="term_inspection",
-            origin="test",
+            thread_id="chat_inspection",
             input=Message.user("Inspect"),
             runnable_kind="flow",
             runnable_name="root",
@@ -68,7 +67,6 @@ def test_focused_relations_preserve_run_and_step_ownership(tmp_path: Path) -> No
             store,
             run_id="run_inspection_child",
             thread_id=root.thread,
-            origin="test",
             input=Message.user("Child"),
             parent=run_step.ref,
             runnable_name="child",
@@ -123,8 +121,7 @@ def test_child_step_counts_do_not_decode_unrelated_step_payloads(
         run = project_run_start(
             store,
             run_id="run_focused_step_counts",
-            thread_id="term_focused_step_counts",
-            origin="test",
+            thread_id="chat_focused_step_counts",
             input=Message.user("Focused counts"),
         )
         loop = project_step(
@@ -180,8 +177,7 @@ def test_focused_multi_table_read_uses_one_sqlite_snapshot(tmp_path: Path) -> No
         run = project_run_start(
             store,
             run_id="run_inspection_transaction",
-            thread_id="term_inspection_transaction",
-            origin="test",
+            thread_id="chat_inspection_transaction",
             input=Message.user("Transaction"),
         )
         project_step(
@@ -219,8 +215,7 @@ def test_structural_snapshot_uses_one_transaction_without_rowid(tmp_path: Path) 
         run = project_run_start(
             store,
             run_id="run_tree_transaction",
-            thread_id="term_tree_transaction",
-            origin="test",
+            thread_id="chat_tree_transaction",
             input=Message.user("Tree transaction"),
         )
         project_step(
@@ -253,8 +248,7 @@ def test_run_inspection_reads_only_each_run_entry_control(tmp_path: Path) -> Non
         run = project_run_start(
             store,
             run_id="run_entry_scope",
-            thread_id="term_entry_scope",
-            origin="test",
+            thread_id="chat_entry_scope",
             input=Message.user("Entry scope"),
         )
         unrelated = project_run_control(
@@ -289,8 +283,7 @@ def test_direct_child_run_order_keeps_semantic_coordinates_separate(
         root = project_run_start(
             store,
             run_id="run_relation_order",
-            thread_id="term_relation_order",
-            origin="test",
+            thread_id="chat_relation_order",
             input=Message.user("Relation order"),
         )
         parallel = project_step(
@@ -319,7 +312,6 @@ def test_direct_child_run_order_keeps_semantic_coordinates_separate(
             store,
             run_id="run_z_parallel",
             thread_id=root.thread,
-            origin="test",
             input=Message.user("Z"),
             parent=parallel.ref,
             created_at="2026-01-01T00:00:00Z",
@@ -334,7 +326,6 @@ def test_direct_child_run_order_keeps_semantic_coordinates_separate(
             store,
             run_id="run_a_parallel",
             thread_id=root.thread,
-            origin="test",
             input=Message.user("A"),
             parent=parallel.ref,
             created_at="2026-01-01T00:00:01Z",
@@ -349,7 +340,6 @@ def test_direct_child_run_order_keeps_semantic_coordinates_separate(
             store,
             run_id="run_loop_body",
             thread_id=root.thread,
-            origin="test",
             input=Message.user("Body"),
             parent=loop.ref,
             context={
@@ -363,7 +353,6 @@ def test_direct_child_run_order_keeps_semantic_coordinates_separate(
             store,
             run_id="run_loop_until",
             thread_id=root.thread,
-            origin="test",
             input=Message.user("Until"),
             parent=loop.ref,
             context={

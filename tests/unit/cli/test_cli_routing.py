@@ -933,8 +933,8 @@ def test_cli_script_rejects_inbox_option(
         ["info"],
         ["chat"],
         ["chat", "--thread"],
-        ["chat", "--thread", "term_1"],
-        ["chat", "-t", "term_1"],
+        ["chat", "--thread", "chat_1"],
+        ["chat", "-t", "chat_1"],
         ["inspect", "run_1"],
         ["steer", "run_1", "change direction"],
         ["rerun", "run_1"],
@@ -1084,13 +1084,13 @@ def test_cli_routes_visiting_chat_through_materialization(
     monkeypatch.setattr(agent_sources, "resolve_visiting_layout", resolve)
 
     result = dispatch_visiting(
-        [selector, "chat", "--thread", "term_1"],
+        [selector, "chat", "--thread", "chat_1"],
         run_app=run_app,
     )
 
     assert result == 12
     assert captured["source"] == selector
-    assert captured["args"] == ["chat", "--thread", "term_1"]
+    assert captured["args"] == ["chat", "--thread", "chat_1"]
     assert captured["layout"] == layout
 
 

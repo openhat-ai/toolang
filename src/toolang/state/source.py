@@ -446,7 +446,7 @@ class SourceFile:
     path: Path
     relative_path: str
     category: str
-    origin: str
+    layer: str
     content: bytes
     digest: str
     size: int
@@ -545,7 +545,7 @@ def source_manifest_from_snapshot(
     prefix = Path("agents") / snapshot.agent_name
     entries: list[SourceManifestEntry] = []
     for item in snapshot.files:
-        if item.origin != ("root" if scope == "root" else "agent"):
+        if item.layer != ("root" if scope == "root" else "agent"):
             continue
         path = Path(item.relative_path)
         if scope == "home":
@@ -596,7 +596,7 @@ def _read_scope_sources(
                 observe_home_source(root, agent_name),
             )
         )
-    for base, origin, observation in observations:
+    for base, layer, observation in observations:
         for issue in observation.issues:
             issues.append(
                 SourceIssue(
@@ -618,7 +618,7 @@ def _read_scope_sources(
             )
             try:
                 files.extend(
-                    _collect_file(root, entry.source, category=category, origin=origin)
+                    _collect_file(root, entry.source, category=category, layer=layer)
                 )
             except SourceChangedError:
                 raise
@@ -695,7 +695,7 @@ def _collect_file(
     path: Path,
     *,
     category: str,
-    origin: str,
+    layer: str,
 ) -> list[SourceFile]:
     if not path.exists() and not path.is_symlink():
         return []
@@ -711,7 +711,7 @@ def _collect_file(
         from toolang.common.config_sources import rebase_config_content
 
         content = rebase_config_content(
-            content, path.parent, include_workspaces=origin == "agent"
+            content, path.parent, include_workspaces=layer == "agent"
         )
     after = _observe_file(path, relative_path=before.path)
     if before != after:
@@ -721,7 +721,7 @@ def _collect_file(
             path=path,
             relative_path=path.relative_to(toolang_root).as_posix(),
             category=category,
-            origin=origin,
+            layer=layer,
             content=content,
             digest=sha256(content).hexdigest(),
             size=len(content),

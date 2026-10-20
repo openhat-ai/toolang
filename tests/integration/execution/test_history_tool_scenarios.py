@@ -31,7 +31,7 @@ from toolang.execution.types import (
     FieldRef,
     ModelStepSpec,
     StepRef,
-    ThreadPrefix,
+    ThreadKind,
     ToolStepSpec,
     ToolStepReport,
     TypedRef,
@@ -48,13 +48,12 @@ def store(tmp_path):
         yield store
 
 
-def start(store, name="run_a", thread="term_a", parent=None):
+def start(store, name="run_a", thread="chat_a", parent=None):
     return project_run_start(
         store,
         run_id=name,
         thread_id=thread,
         parent=parent,
-        origin="chat",
         input=Message.user(name),
     )
 
@@ -73,7 +72,7 @@ def step(store, run="run_a", index=0, *, output=None, kind="value", status="succ
     )
 
 
-def read(store, tool, *, caller="term_a", **query):
+def read(store, tool, *, caller="chat_a", **query):
     context = HistoryToolContext(
         store.db_path.parent,
         store.db_path.parent,
@@ -90,23 +89,19 @@ def collect(store, tool, page):
 
 
 def test_thread_listing_freezes_ids_but_reads_current_metadata(store):
-    for identity in ("term_c", "term_b", "term_a"):
-        store.create_thread(
-            thread_id=identity, origin="chat", created_at="2026-01-01T00:00:00Z"
-        )
+    for identity in ("chat_c", "chat_b", "chat_a"):
+        store.create_thread(thread_id=identity, created_at="2026-01-01T00:00:00Z")
     first = read(store, "read_threads", limit=1)
-    assert [r["id"] for r in first["threads"]] == ["term_a"]
-    store.create_thread(
-        thread_id="term_new", origin="chat", created_at="2027-01-01T00:00:00Z"
-    )
-    start(store, thread="term_c")  # Moves C to the front of new reads, not this cursor.
-    current = store.get_thread(thread_id="term_c")
+    assert [r["id"] for r in first["threads"]] == ["chat_a"]
+    store.create_thread(thread_id="chat_new", created_at="2027-01-01T00:00:00Z")
+    start(store, thread="chat_c")  # Moves C to the front of new reads, not this cursor.
+    current = store.get_thread(thread_id="chat_c")
     with closing(RunStore(store.db_path, read_only=True)) as reopened:
         pages = collect(reopened, "read_threads", first)
         assert [r["id"] for p in pages for r in p["threads"]] == [
-            "term_a",
-            "term_b",
-            "term_c",
+            "chat_a",
+            "chat_b",
+            "chat_c",
         ]
         assert pages[-1]["threads"] == [record_to_data(current)]
     assert [r["id"] for r in read(store, "read_threads")["threads"]] == list(
@@ -123,31 +118,31 @@ def test_run_pages_preserve_fork_membership_across_rewind_append_and_restart(sto
         start(store, name)
         project_run_end(store, run_id=name)
     store.fork_thread(
-        thread_id="term_fork",
-        source="term_a",
+        thread_id="chat_fork",
+        source="chat_a",
         anchor=None,
         request_id=None,
         created_at="2026-01-02T00:00:00Z",
     )
-    first = read(store, "read_runs", caller="term_fork", limit=1)
-    assert first["thread"] == "term_fork"
-    assert first["head"] == "term_fork@0"
+    first = read(store, "read_runs", caller="chat_fork", limit=1)
+    assert first["thread"] == "chat_fork"
+    assert first["head"] == "chat_fork@0"
     store.rewind_thread(
-        thread_id="term_fork",
+        thread_id="chat_fork",
         anchor="run_a",
         request_id=None,
         expected_head=ControlRef.parse(first["head"]),
         created_at="2026-01-03T00:00:00Z",
     )
-    start(store, "run_new", thread="term_fork")
+    start(store, "run_new", thread="chat_fork")
     project_run_end(store, run_id="run_new")
     with closing(RunStore(store.db_path, read_only=True)) as reopened:
         pages = collect(reopened, "read_runs", first)
     records = [r for p in pages for r in p["runs"]]
     assert [r["id"] for r in records] == ["run_c", "run_a", "run_b"]
-    assert all(r["thread"] == "term_a" for r in records)
+    assert all(r["thread"] == "chat_a" for r in records)
     assert all(p["head"] == first["head"] for p in pages)
-    assert [r["id"] for r in read(store, "read_runs", thread="term_fork")["runs"]] == [
+    assert [r["id"] for r in read(store, "read_runs", thread="chat_fork")["runs"]] == [
         "run_c",
         "run_new",
     ]
@@ -206,7 +201,7 @@ def test_invalid_and_foreign_bounds_fail(store, tool, query):
 @pytest.mark.parametrize(
     "tool,query",
     [
-        ("read_runs", {"thread": "term_missing"}),
+        ("read_runs", {"thread": "chat_missing"}),
         ("read_steps", {"run": "run_missing"}),
         ("read_output", {"run": "run_missing"}),
     ],
@@ -549,7 +544,7 @@ def test_real_history_calls_are_ordinary_steps_and_replay_without_reading_again(
 
     async def scenario():
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             run = await harness.executor.run(
                 harness.run_spec(thread=thread, runnable="task"), tracer=tracer
             )
@@ -587,10 +582,8 @@ def test_real_history_calls_are_ordinary_steps_and_replay_without_reading_again(
 def test_thread_page_decodes_only_selected_metadata(store, monkeypatch):
     import toolang.execution.store as store_module
 
-    for identity in ("term_c", "term_b", "term_a"):
-        store.create_thread(
-            thread_id=identity, origin="chat", created_at="2026-01-01T00:00:00Z"
-        )
+    for identity in ("chat_c", "chat_b", "chat_a"):
+        store.create_thread(thread_id=identity, created_at="2026-01-01T00:00:00Z")
     decoded = []
     original = store_module._thread_from_row
 
@@ -600,8 +593,8 @@ def test_thread_page_decodes_only_selected_metadata(store, monkeypatch):
 
     monkeypatch.setattr(store_module, "_thread_from_row", decode)
     page = read(store, "read_threads", limit=1)
-    assert page["threads"][0]["id"] == "term_a"
-    assert decoded == ["term_a"]
+    assert page["threads"][0]["id"] == "chat_a"
+    assert decoded == ["chat_a"]
 
 
 def test_value_resolution_uses_the_same_snapshot_as_page_selection(store, monkeypatch):
@@ -674,7 +667,7 @@ def test_history_read_can_be_interrupted_without_late_result_delivery(
         async with harness:
             handle = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="task",
                 ),
                 tracer=tracer,

@@ -56,7 +56,7 @@ from toolang.lang.types import Array, Struct, Value
 
 
 def test_pointer_accepts_run_step_control_and_json_paths() -> None:
-    assert Pointer.parse("term_1").kind == "thread"
+    assert Pointer.parse("chat_1").kind == "thread"
     assert Pointer.parse("run_1").kind == "run"
     pointer = Pointer.parse("run_1.0.2/key~1name/1")
     field = pointer.field_ref()
@@ -65,7 +65,7 @@ def test_pointer_accepts_run_step_control_and_json_paths() -> None:
     assert field is not None and str(field.field) == "/key~1name/1"
     assert pointer.tokens == ("key/name", "1")
     assert Pointer.parse("run_1@3/payload/input/1").kind == "control"
-    assert Pointer.parse("term_1@0").kind == "control"
+    assert Pointer.parse("chat_1@0").kind == "control"
     assert str(
         FieldRef.from_path(StepRef.from_local("run_1", (0, 2)), "output", "value")
     ) == ("run_1.0.2/output/value")
@@ -81,7 +81,7 @@ def test_pointer_accepts_run_step_control_and_json_paths() -> None:
         "run_1@x/_",
         "run_1@0@1",
         "run@file",
-        "term_1.0",
+        "chat_1.0",
     ),
 )
 def test_pointer_rejects_noncanonical_values(value: str) -> None:
@@ -90,7 +90,7 @@ def test_pointer_rejects_noncanonical_values(value: str) -> None:
 
 
 def test_pointer_accepts_a_whole_value_slash() -> None:
-    pointer = Pointer.parse("term_1/")
+    pointer = Pointer.parse("chat_1/")
     field = pointer.field_ref()
     assert field is not None and str(field.field) == "/"
     assert pointer.tokens == ("",)

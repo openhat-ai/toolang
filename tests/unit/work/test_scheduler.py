@@ -13,6 +13,7 @@ from toolang.base.types.run import ModelCallResult
 from toolang.catalog.chore import AuthoredChores, ChoreFile
 
 from toolang.execution.records import CreateControlPayload, RunControlPayload
+from toolang.execution.types import ThreadKind, ThreadRef
 from toolang.lang.input import CallInput
 from toolang.lang.types import Array
 from toolang.catalog.chore_authoring import new_chore_file
@@ -117,6 +118,89 @@ async def _close_scheduler(
     await scheduler.stop()
 
 
+@pytest.mark.parametrize("operation", ["fork", "rewind"])
+def test_thread_controls_preserve_completed_chore_checkpoint_on_restart(
+    tmp_path, operation
+):
+    harness = ExecutionHarness.create(
+        tmp_path / "toolang",
+        prepare_state=True,
+        source=_SOURCE,
+        responses=[_result("First completed."), _result("Manual completed.")],
+    )
+    layout = harness.setup.layout
+    _create_chore(
+        AuthoredChores(
+            layout.home, lock_path=layout.home_edit_lock, agent_name=layout.name
+        ),
+        "review",
+        "/agic:review focus=security\n\nReview this.",
+    )
+
+    async def scenario():
+        scheduler = _scheduler(harness)
+        try:
+            await scheduler.start()
+            completed = await _wait_record(
+                scheduler, "review", lambda item: item.status == "done"
+            )
+            (chore,) = load_chores(layout)
+            (original,) = harness.store.list_runs()
+            assert (
+                original.status == "succeeded" and original.thread.id == chore.thread_id
+            )
+            forked = None
+            if operation == "fork":
+                forked = harness.threads.fork(
+                    thread_id=chore.thread_id, run_id=original.id
+                )
+                assert forked != chore.thread_id
+                assert ThreadRef(forked).kind == ThreadKind.CHORE
+            else:
+                harness.threads.rewind(thread_id=chore.thread_id, run_id=original.id)
+
+            checkpoint = ChoreStore(layout.run_store, read_only=True)
+            try:
+                assert checkpoint.list() == (completed,)
+            finally:
+                checkpoint.close()
+            assert load_chores(layout) == (chore,)
+
+            await scheduler.stop()
+            scheduler = _scheduler(harness)
+            await scheduler.start()
+            await scheduler.refresh()
+            assert await scheduler.get("review") == completed
+            assert len(harness.adapter.invocations) == 1
+            assert len(harness.store.list_runs()) == 1
+
+            await scheduler.run_chore(chore.id)
+            await _wait_record(scheduler, "review", lambda item: item.status == "done")
+            assert len(harness.adapter.invocations) == 2
+            roots = harness.store.list_runs()
+            assert len(roots) == 2
+            assert all(run.thread.id == chore.thread_id for run in roots)
+            if forked is not None:
+                assert [
+                    run.id
+                    for run in harness.store.list_thread_history_chronological(
+                        thread_id=forked
+                    )
+                ] == [original.id]
+            else:
+                visible = harness.store.list_thread_history_chronological(
+                    thread_id=chore.thread_id
+                )
+                assert len(visible) == 1 and visible[0].id != original.id
+        finally:
+            await _close_scheduler(scheduler, harness)
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        harness.store.close()
+
+
 def test_busy_chore_thread_keeps_its_source_trigger_until_admission(
     tmp_path, monkeypatch
 ):
@@ -137,7 +221,7 @@ def test_busy_chore_thread_keeps_its_source_trigger_until_admission(
     _create_chore(catalog, "review", "/agic:review focus=chore\n\nKeep queued.")
     scheduler = _scheduler(harness)
     thread = f"chore_{chore_id('review', agent_name=harness.setup.layout.name)}"
-    harness.store.create_thread(thread_id=thread, origin="chore")
+    harness.store.create_thread(thread_id=thread)
     rejected = threading.Event()
     run = harness.executor.run
 

@@ -33,7 +33,7 @@ def test_human_type_labels_use_nullable_suffix() -> None:
         ({}, {}, "Json", "value"),
         ([], [], "str[]", "value"),
         ([{"type": "text"}], [TextPart("value")], "Part[]", "value"),
-        ("term_target", Pointer.parse("term_target"), "ThreadRecord", "value"),
+        ("chat_target", Pointer.parse("chat_target"), "ThreadRecord", "value"),
     ),
 )
 def test_implicit_pointer_projector_preserves_existing_browsing_rules(
@@ -43,13 +43,12 @@ def test_implicit_pointer_projector_preserves_existing_browsing_rules(
     expected: str,
 ) -> None:
     record = ThreadRecord(
-        id="term_render",
-        origin="test",
+        id="chat_render",
         created_at="",
         updated_at="",
     )
     selected = RecordSelection(
-        pointer=Pointer.parse("term_render/horizon"),
+        pointer=Pointer.parse("chat_render/horizon"),
         record=record,
         value=value,
         runtime=runtime,
@@ -84,10 +83,9 @@ def test_human_table_never_truncates_a_pointer_in_a_narrow_terminal() -> None:
 def test_human_multiline_cell_never_wraps_its_pointer() -> None:
     output = StringIO()
     console = Console(file=output, width=20, force_terminal=False)
-    pointer = Pointer.parse(f"term_{'x' * 80}/horizon")
+    pointer = Pointer.parse(f"chat_{'x' * 80}/horizon")
     record = ThreadRecord(
-        id="term_render",
-        origin="test",
+        id="chat_render",
         created_at="",
         updated_at="",
     )
@@ -114,11 +112,10 @@ def test_human_multiline_cell_never_wraps_its_pointer() -> None:
 def test_human_resolved_pointer_marks_the_type_not_the_field() -> None:
     output = StringIO()
     console = Console(file=output, width=80, force_terminal=False)
-    base = Pointer.parse("term_render")
+    base = Pointer.parse("chat_render")
     pointer = base.select("horizon")
     record = ThreadRecord(
-        id="term_render",
-        origin="test",
+        id="chat_render",
         created_at="",
         updated_at="",
     )
@@ -148,11 +145,10 @@ def test_human_resolved_pointer_marks_the_type_not_the_field() -> None:
 def test_human_parts_align_in_the_value_cell_without_a_bullet() -> None:
     output = StringIO()
     console = Console(file=output, width=80, force_terminal=False)
-    base = Pointer.parse("term_render")
+    base = Pointer.parse("chat_render")
     pointer = base.select("horizon")
     record = ThreadRecord(
-        id="term_render",
-        origin="test",
+        id="chat_render",
         created_at="",
         updated_at="",
     )

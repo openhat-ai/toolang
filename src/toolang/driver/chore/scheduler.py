@@ -474,7 +474,6 @@ class ChoreDriver:
             if thread is None:
                 self.executor.store.create_thread(
                     thread_id=chore.thread_id,
-                    origin="chore",
                 )
             return await self.executor.run(spec, run_id=run_id)
 

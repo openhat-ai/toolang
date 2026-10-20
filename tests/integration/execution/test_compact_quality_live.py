@@ -147,7 +147,7 @@ def test_live_distinct_models_compact_and_resume_the_caller(tmp_path, request):
     from toolang.base.types.run import ModelCallResult
     from toolang.execution.inspection.history import RunHistory
     from toolang.execution.tokens import TokenCounter
-    from toolang.execution.types import ThreadPrefix
+    from toolang.execution.types import ThreadKind
     from toolang.plugin.models.budget import input_budget
     from tests.support.execution_harness import ExecutionHarness
     from tests.support.setup import replace_materialized_setup
@@ -175,7 +175,7 @@ def test_live_distinct_models_compact_and_resume_the_caller(tmp_path, request):
             ],
         )
         async with h:
-            thread = h.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = h.threads.create(kind=ThreadKind.CHAT)
             for index in range(len(FACTS)):
                 seeded = await h.executor.run(
                     h.run_spec(

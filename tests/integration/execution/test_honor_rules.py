@@ -35,7 +35,7 @@ from toolang.execution.records import RecallControlPayload
 from toolang.execution.store import RunStore
 from toolang.execution.types import (
     RulesRecallTarget,
-    ThreadPrefix,
+    ThreadKind,
     ToolStepSpec,
     TypedRef,
     ControlRef,
@@ -112,7 +112,7 @@ def _workspace_state(harness, workspaces):
 def _spec(harness, publication, thread=None):
     return replace(
         harness.run_spec(
-            thread=thread or harness.threads.create(prefix=ThreadPrefix.CHAT),
+            thread=thread or harness.threads.create(kind=ThreadKind.CHAT),
             runnable="chat",
         ),
         state=publication,
@@ -531,7 +531,7 @@ flow parent(_: Part[]) -> Part[][]:
 
     async def scenario():
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             handle = harness.executor.run(
                 replace(
                     harness.run_spec(
@@ -597,7 +597,7 @@ def test_restart_recovers_intercepted_reply_once_without_rule_files(
 
     async def scenario():
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             request = _spec(harness, publication, thread)
             if not saved_delta:
                 request = replace(
@@ -691,7 +691,7 @@ def test_selected_near_determines_whether_next_run_needs_honor(tmp_path, recall)
 
     async def scenario():
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             first = await harness.executor.run(_spec(harness, publication, thread))
             second = await harness.executor.run(_spec(harness, publication, thread))
             assert first.status == second.status == "succeeded"
@@ -739,7 +739,7 @@ def test_history_keeps_intercepted_calls_with_their_replies(
 
     async def scenario():
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             run = await harness.executor.run(_spec(harness, publication, thread))
             assert run.status == "succeeded", run.error
             with closing(RunStore(harness.store.db_path, read_only=True)) as store:

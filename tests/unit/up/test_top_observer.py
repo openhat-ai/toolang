@@ -234,7 +234,6 @@ def test_session_retains_departed_history_but_fresh_top_discovers_only_current_s
                     store,
                     run_id="run_done",
                     thread_id="chat_top",
-                    origin="chat",
                     input=Message.user("fixture"),
                     started_at=timestamp(NOW - 10),
                 )
@@ -610,7 +609,6 @@ def test_offline_completion_outside_first_page_replaces_the_known_live_root(
             store,
             run_id=name,
             thread_id="chat_top",
-            origin="chat",
             input=Message.user("fixture"),
             started_at=timestamp(NOW - 10),
         )
@@ -682,7 +680,6 @@ def test_online_completion_lookup_keeps_the_first_page_cursor_and_checks_epoch(
             store,
             run_id=name,
             thread_id="chat_top",
-            origin="chat",
             input=Message.user("fixture"),
             started_at=timestamp(NOW - 10),
         )
@@ -1056,8 +1053,7 @@ def test_embedded_completed_work_proves_zero_active_roots(
         project_run_start(
             store,
             run_id="run_embedded",
-            thread_id="script_top",
-            origin="script",
+            thread_id="exec_top",
             input=Message.user("fixture"),
             started_at=timestamp(NOW - 1000),
         )
@@ -1501,8 +1497,7 @@ def test_failed_retired_lookup_preserves_http_snapshot_and_retries_as_paging(
             project_run_start(
                 store,
                 run_id=identity,
-                thread_id="chat",
-                origin="chat",
+                thread_id="chat_fixture",
                 input=Message.user("fixture"),
                 started_at=timestamp(NOW - 10),
             )

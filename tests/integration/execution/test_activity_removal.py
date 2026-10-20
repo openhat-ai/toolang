@@ -10,7 +10,7 @@ from tests.support.execution_harness import ExecutionHarness
 from toolang.base.types.message import TextPart
 from toolang.execution.store import RunStore
 from toolang.execution.errors import RunStoreSchemaError
-from toolang.execution.types import ThreadPrefix
+from toolang.execution.types import ThreadKind
 
 LEGACY_SCHEMA = Path(__file__).parents[2] / "fixtures/execution/activity.sql"
 
@@ -46,7 +46,7 @@ def test_legacy_activity_store_is_rejected_without_modifying_it(tmp_path, read_o
             tmp_path, source="flow example:\n  let result = Done\n", responses=[]
         )
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             await harness.executor.run(
                 harness.run_spec(
                     thread=thread, runnable="example", primary=(TextPart("input"),)

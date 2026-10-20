@@ -42,7 +42,7 @@ from toolang.execution.store import RunStore
 from toolang.execution.inspection.trees import build_execution_tree
 from toolang.execution.types import (
     FieldRef,
-    ThreadPrefix,
+    ThreadKind,
     ToolStepSpec,
     StepRef,
 )
@@ -94,7 +94,7 @@ def test_runtime_result_survives_restart_without_followup_model(
 
     async def scenario() -> None:
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             root = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
@@ -207,7 +207,7 @@ def test_steer_during_result_delivery_preserves_result_once(
         async with harness:
             handle = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="parent",
                 ),
                 tracer=tracer,
@@ -310,7 +310,7 @@ def test_interruption_before_result_commit_preserves_completed_result(
         async with harness:
             handle = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="parent",
                 ),
                 tracer=tracer,
@@ -396,7 +396,7 @@ def test_interrupting_runtime_child_cancels_its_tool_step(
         async with harness:
             handle = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="parent",
                 ),
                 tracer=tracer,
@@ -478,7 +478,7 @@ def test_skipped_batch_is_durable_and_does_not_consume_call_budget(
         async with harness:
             handle = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="parent",
                     limits=RunLimits(
                         agic_model_calls=3 if followup else 1, agic_tool_calls=1
@@ -556,7 +556,7 @@ def test_steer_during_execute_delivery_keeps_committed_transfer(tmp_path: Path) 
         async with harness:
             handle = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="parent",
                 ),
                 tracer=tracer,
@@ -675,7 +675,7 @@ def test_steer_at_tool_begin_closes_the_started_step(
         async with harness:
             handle = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="parent",
                 ),
                 tracer=tracer,
@@ -750,7 +750,7 @@ def test_immediate_steer_during_skipped_batch_preserves_all_results(
         async with harness:
             handle = harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="parent",
                 ),
                 tracer=tracer,

@@ -15,7 +15,7 @@ from toolang.execution.types import (
     ControlRef,
     FieldRef,
     LoopStepReport,
-    ThreadPrefix,
+    ThreadKind,
     TypedRef,
 )
 from toolang.lang.errors import ToolangError
@@ -52,7 +52,7 @@ def test_run_preserves_one_call_with_complete_input_and_output(
 
     async def scenario():
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             run = await harness.executor.run(
                 harness.run_spec(thread=thread, runnable="main", named={"_": value})
             )
@@ -144,7 +144,7 @@ def test_outer_arrays_are_identical_across_boundaries(
 
     async def scenario() -> None:
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             run = await harness.executor.run(
                 harness.run_spec(thread=thread, runnable="main", named={"_": items})
             )
@@ -191,7 +191,7 @@ def test_open_json_nonarrays_fail_inside_step_without_child_calls(
 
     async def scenario():
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             run = await harness.executor.run(
                 harness.run_spec(thread=thread, runnable="main")
             )
@@ -215,7 +215,7 @@ def test_part_arrays_select_outer_parts_and_keep_their_type(tmp_path, statement)
 
     async def scenario():
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             run = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
@@ -250,7 +250,7 @@ def test_singleton_json_reduce_keeps_the_seed_without_a_child_call(tmp_path, ite
 
     async def scenario():
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             run = await harness.executor.run(
                 harness.run_spec(thread=thread, runnable="main", named={"_": [item]})
             )
@@ -305,7 +305,7 @@ def test_empty_reduce_returns_typed_initializer_without_child_calls(
 
     async def scenario():
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             run = await harness.executor.run(
                 harness.run_spec(
                     thread=thread, runnable="main", named={"_": [], "initial": initial}

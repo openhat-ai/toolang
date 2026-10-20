@@ -976,7 +976,6 @@ def test_resident_prefix_recovers_offline_completion_without_starting_runtime(
                 store,
                 run_id=f"run_{name}",
                 thread_id="chat_top",
-                origin="chat",
                 input=Message.user("fixture"),
                 started_at=timestamp(NOW - 20),
             )

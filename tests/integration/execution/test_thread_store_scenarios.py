@@ -35,7 +35,7 @@ from toolang.execution.types import (
     ModelStepSpec,
     ModelStepReport,
     StepRef,
-    ThreadPrefix,
+    ThreadKind,
 )
 from toolang.lang.input import resolve_input_parts
 
@@ -82,7 +82,7 @@ agic chat(_: Part[]) -> Part[]:
 
     async def scenario() -> tuple[str, str, ModelCall]:
         async with harness:
-            thread_id = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread_id = harness.threads.create(kind=ThreadKind.CHAT)
             record = await harness.executor.run(
                 harness.run_spec(
                     thread=thread_id,
@@ -136,7 +136,7 @@ agic chat(_: Text) -> Text:
 
     async def scenario() -> None:
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             first = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
@@ -198,7 +198,7 @@ agic chat(_: Part[]) -> Part[]:
 
     async def scenario() -> None:
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             first = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
@@ -299,7 +299,7 @@ agic calculate(_: Text) -> Boolean:
 
     async def scenario() -> tuple[str, tuple[ModelCall, ...]]:
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             record = await harness.executor.run(
                 harness.run_spec(
                     thread=thread,
@@ -472,8 +472,7 @@ def test_recent_history_never_splits_a_complete_tool_exchange(
         run = project_run_start(
             store,
             run_id="run_tool_history",
-            thread_id="term_tool_history",
-            origin="chat",
+            thread_id="chat_tool_history",
             input=Message.user("calculate"),
         )
         call_parts = (
@@ -571,8 +570,7 @@ def test_recent_history_skips_incomplete_and_orphan_tool_messages(
         run = project_run_start(
             store,
             run_id="run_invalid_tool_history",
-            thread_id="term_invalid_tool_history",
-            origin="chat",
+            thread_id="chat_invalid_tool_history",
             input=Message.user("calculate"),
         )
         project_step(

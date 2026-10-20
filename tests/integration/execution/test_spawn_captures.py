@@ -17,7 +17,7 @@ from toolang.execution.executor.iteration import (
     snapshot,
 )
 from toolang.execution.stream import TraceObserver
-from toolang.execution.types import AwaitableHandle, ThreadPrefix
+from toolang.execution.types import AwaitableHandle, ThreadKind
 
 
 @pytest.mark.parametrize("operation", ["run", "spawn", "exec", "let generate 1"])
@@ -50,7 +50,7 @@ flow worker(_: Text) -> Text:
             observer = TraceObserver(harness.executor.stream.subscribe(), tracer)
             parent = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="flow:parent",
                     primary=(TextPart("input"),),
                 ),
@@ -105,7 +105,7 @@ flow bridge(_: Text) -> Text:
         async with harness:
             parent = await harness.executor.run(
                 harness.run_spec(
-                    thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
                     runnable="flow:parent",
                     primary=(TextPart("outer-input"),),
                 )
@@ -166,7 +166,7 @@ agic reader(_: Text) -> Text:
             with iteration_scope(IterationScope(2, frames)):
                 parent = await harness.executor.run(
                     harness.run_spec(
-                        thread=harness.threads.create(prefix=ThreadPrefix.CHAT),
+                        thread=harness.threads.create(kind=ThreadKind.CHAT),
                         runnable="flow:parent",
                         primary=(TextPart("input"),),
                     ),

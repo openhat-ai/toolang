@@ -1055,13 +1055,13 @@ def collect_local_entries(
 
     entries: dict[str, StateCap] = {}
     for item in authored.files:
-        entry_scope_value: CapScope = "root" if item.origin == "root" else "home"
+        entry_scope_value: CapScope = "root" if item.layer == "root" else "home"
         if scope is not None and entry_scope_value != scope:
             continue
         entry = _local_entry_from_file(authored, item)
         if entry is None:
             continue
-        entry_scope_value: CapScope = "root" if item.origin == "root" else "home"
+        entry_scope_value: CapScope = "root" if item.layer == "root" else "home"
         if scope is not None and entry_scope_value != scope:
             continue
         if kinds is not None and entry.kind not in kinds:
@@ -1297,7 +1297,7 @@ def _local_entry_from_file(
 ) -> StateCap | None:
     if item.category != "cap":
         return None
-    scope: CapScope = "root" if item.origin == "root" else "home"
+    scope: CapScope = "root" if item.layer == "root" else "home"
     relative_path = Path(item.relative_path)
     local_parts = _local_parts(
         relative_path, agent_name=authored.agent_name, scope=scope
@@ -1502,12 +1502,12 @@ def _collect_remote_entry_requests(
     scopes = ("root", "home") if scope is None else (scope,)
     requests: list[_RemoteEntryRequest] = []
     for item_scope in scopes:
-        config_origin = "root" if item_scope == "root" else "agent"
+        config_layer = "root" if item_scope == "root" else "agent"
         config_file = next(
             (
                 item
                 for item in authored.files
-                if item.category == "config" and item.origin == config_origin
+                if item.category == "config" and item.layer == config_layer
             ),
             None,
         )

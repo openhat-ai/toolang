@@ -33,6 +33,7 @@ import toolang.cli.toolang.commands.plugin as plugin_commands
 import toolang.cli.toolang.commands.thread as thread_commands
 import toolang.cli.toolang.main as cli
 from tests.support.execution_fixtures import (
+    accept_run,
     project_run_control,
     project_run_end,
     project_run_start,
@@ -70,7 +71,7 @@ from toolang.execution.types import (
     Occurrence,
     OccurrencePosition,
     StepRef,
-    ThreadPrefix,
+    ThreadKind,
     ToolStepSpec,
 )
 from toolang.lang.input import resolve_input_parts
@@ -241,7 +242,7 @@ def test_local_agent_clone_copies_workspace_config_unchanged(tmp_path: Path) -> 
 
 @pytest.mark.parametrize(
     "value",
-    ("run_root:2.3", "run_root.01", "term_root.0", "run_root^0"),
+    ("run_root:2.3", "run_root.01", "chat_root.0", "run_root^0"),
 )
 def test_inspect_rejects_invalid_pointers(tmp_path: Path, value: str) -> None:
     root = tmp_path / "toolang"
@@ -320,8 +321,7 @@ def test_inspect_run_output_complete_values(
         run = project_run_start(
             store,
             run_id="run_output",
-            thread_id="term_output",
-            origin="test",
+            thread_id="chat_output",
             input=Message.user("Test output"),
         )
         store.finish_run(run_id=run.id, output=Output(local, binding="result"))
@@ -357,8 +357,7 @@ def test_inspect_run_output_serializes_resolved_value_once(
         run = project_run_start(
             store,
             run_id="run_serialization",
-            thread_id="term_output",
-            origin="test",
+            thread_id="chat_output",
             input=Message.user("Test output"),
         )
         store.finish_run(run_id=run.id, output=Output(expected))
@@ -388,8 +387,7 @@ def test_inspect_run_output_piped_json_ignores_forced_color(
         run = project_run_start(
             store,
             run_id="run_color",
-            thread_id="term_output",
-            origin="test",
+            thread_id="chat_output",
             input=Message.user("Test output"),
         )
         store.finish_run(run_id=run.id, output=Output({"answer": 42}))
@@ -419,8 +417,7 @@ def test_inspect_run_output_text_parts_preserve_whitespace(
         run = project_run_start(
             store,
             run_id="run_blank",
-            thread_id="term_output",
-            origin="test",
+            thread_id="chat_output",
             input=Message.user("Test output"),
         )
         store.finish_run(run_id=run.id, output=Output(local))
@@ -449,8 +446,7 @@ def test_inspect_run_output_emits_unrendered_text(
         run = project_run_start(
             store,
             run_id="run_parts",
-            thread_id="term_output",
-            origin="test",
+            thread_id="chat_output",
             input=Message.user("Test output"),
         )
         local = value_for_type("Part[]", parts) if as_parts else text
@@ -474,8 +470,7 @@ def test_inspect_run_without_output_is_explicit(tmp_path: Path, status: str) -> 
         run = project_run_start(
             store,
             run_id="run_empty",
-            thread_id="term_output",
-            origin="test",
+            thread_id="chat_output",
             input=Message.user("Test output"),
         )
         if status == "failed":
@@ -501,8 +496,7 @@ def test_inspect_run_output_resolves_references(
             project_run_start(
                 store,
                 run_id=run_id,
-                thread_id="term_output",
-                origin="test",
+                thread_id="chat_output",
                 input=Message.user("Test output"),
             )
 
@@ -548,7 +542,7 @@ def test_inspect_run_output_resolves_references(
     (
         ("run_output", "output", "--human", "--json"),
         ("run_output/output", "output"),
-        ("term_output", "output"),
+        ("chat_output", "output"),
         ("run_output@0", "output"),
         ("run_output.0", "output"),
         ("runs", "output"),
@@ -564,8 +558,7 @@ def test_inspect_output_rejects_unsupported_queries(
         run = project_run_start(
             store,
             run_id="run_output",
-            thread_id="term_output",
-            origin="test",
+            thread_id="chat_output",
             input=Message.user("Test output"),
         )
         project_step(
@@ -594,8 +587,7 @@ def test_inspect_thread_and_run_collections_read_local_history(tmp_path: Path) -
         run = project_run_start(
             store,
             run_id="run_first",
-            thread_id="term_main",
-            origin="chat",
+            thread_id="chat_main",
             input=Message.user("Review the repository"),
         )
         project_step(
@@ -614,10 +606,10 @@ def test_inspect_thread_and_run_collections_read_local_history(tmp_path: Path) -
         store.close()
 
     threads = _invoke(root, "alice", "inspect", "threads")
-    runs = _invoke(root, "alice", "inspect", "term_main", "runs")
+    runs = _invoke(root, "alice", "inspect", "chat_main", "runs")
 
     assert threads.exit_code == 0
-    assert "term_main" in threads.stdout
+    assert "chat_main" in threads.stdout
     assert "Review the repository" in threads.stdout
     assert runs.exit_code == 0
     assert "run_first" in runs.stdout
@@ -640,21 +632,20 @@ def test_inspect_thread_summary_keeps_selection_snapshot(
             project_run_start(
                 writer,
                 run_id=run_id,
-                thread_id="term_a",
-                origin="chat",
+                thread_id="chat_a",
                 input=Message.user(run_id),
             )
             project_run_end(writer, run_id=run_id)
         expected = _invoke(root, "alice", "inspect", "threads")
         assert expected.exit_code == 0
-        head = writer.thread_view("term_a").head
+        head = writer.thread_view("chat_a").head
         original = RunHistory.describe_threads
 
         def interleave(
             history: RunHistory, records: Sequence[ThreadRecord]
         ) -> list[ThreadInfo]:
             writer.rewind_thread(
-                thread_id="term_a",
+                thread_id="chat_a",
                 anchor="run_b",
                 expected_head=head,
                 request_id=None,
@@ -727,7 +718,6 @@ Maintain the knowledge base.
             runs,
             run_id="run_failed",
             thread_id=job.thread_id,
-            origin="chore",
             input=Message.user("Maintain the knowledge base."),
         )
         project_run_end(
@@ -760,8 +750,7 @@ def test_inspect_emits_exact_step_record_json(tmp_path: Path) -> None:
         run = project_run_start(
             store,
             run_id="run_inspect",
-            thread_id="term_inspect",
-            origin="chat",
+            thread_id="chat_inspect",
             input=Message.user("Inspect this"),
             context={"occurrence": {"item": 0, "items": 2}},
         )
@@ -784,7 +773,7 @@ def test_inspect_emits_exact_step_record_json(tmp_path: Path) -> None:
         project_run_end(store, run_id=run.id)
         detail = RunHistory(store).get_run(run.id)
         assert detail is not None
-        assert detail.thread_id == "term_inspect"
+        assert detail.thread_id == "chat_inspect"
         assert detail.occurrence == run.occur
         assert detail.steps[0].occurrence is not None
         assert detail.steps[0].occurrence.lane is not None
@@ -827,11 +816,11 @@ def test_inspect_emits_exact_step_record_json(tmp_path: Path) -> None:
         "run_inspect.0/input/0",
         "--json",
     )
-    human_thread = _invoke(root, "alice", "inspect", "term_inspect")
+    human_thread = _invoke(root, "alice", "inspect", "chat_inspect")
     human_run = _invoke(root, "alice", "inspect", "run_inspect")
     human_control = _invoke(root, "alice", "inspect", "run_inspect@0")
     human = _invoke(root, "alice", "inspect", "run_inspect.0")
-    old_thread_field = _invoke(root, "alice", "inspect", "term_inspect/thread_id")
+    old_thread_field = _invoke(root, "alice", "inspect", "chat_inspect/thread_id")
     old_run_field = _invoke(root, "alice", "inspect", "run_inspect/occurrence")
     old_run_ejection = _invoke(root, "alice", "inspect", "run_inspect/ejected_by")
     old_step_field = _invoke(
@@ -859,7 +848,7 @@ def test_inspect_emits_exact_step_record_json(tmp_path: Path) -> None:
     assert human_thread.exit_code == 0, human_thread.stderr
     human_thread_text = " ".join(strip_ansi(human_thread.stdout).split())
     assert "FIELD TYPE VALUE" in human_thread_text
-    assert "/id str term_inspect" in human_thread_text
+    assert "/id str chat_inspect" in human_thread_text
     assert human_run.exit_code == 0, human_run.stderr
     human_run_text = " ".join(strip_ansi(human_run.stdout).split())
     assert "FIELD TYPE VALUE" in human_run_text
@@ -926,8 +915,7 @@ def test_inspect_lists_root_and_related_record_subjects(tmp_path: Path) -> None:
         first = project_run_start(
             store,
             run_id="run_subject_first",
-            thread_id="custom_subject",
-            origin="test",
+            thread_id="chat_subject",
             input=Message.user("First"),
             created_at="2026-01-01T00:00:00Z",
         )
@@ -969,7 +957,6 @@ def test_inspect_lists_root_and_related_record_subjects(tmp_path: Path) -> None:
             store,
             run_id="run_subject_child",
             thread_id=first.thread,
-            origin="test",
             input=Message.user("Child"),
             created_at="2026-01-01T12:00:00Z",
             parent=StepRef.from_local(first.id, (2,)),
@@ -979,7 +966,6 @@ def test_inspect_lists_root_and_related_record_subjects(tmp_path: Path) -> None:
             store,
             run_id="run_subject_second",
             thread_id=first.thread,
-            origin="test",
             input=Message.user("Second"),
             created_at="2026-01-02T00:00:00Z",
         )
@@ -987,15 +973,13 @@ def test_inspect_lists_root_and_related_record_subjects(tmp_path: Path) -> None:
         unrelated = project_run_start(
             store,
             run_id="run_subject_other",
-            thread_id="term_subject_other",
-            origin="test",
+            thread_id="chat_subject_other",
             input=Message.user("Other"),
             created_at="2026-01-03T00:00:00Z",
         )
         project_run_end(store, run_id=unrelated.id)
         store.create_thread(
-            thread_id="threads",
-            origin="test",
+            thread_id="chat_threads",
             created_at="2025-12-31T00:00:00Z",
         )
     finally:
@@ -1008,7 +992,7 @@ def test_inspect_lists_root_and_related_record_subjects(tmp_path: Path) -> None:
         root,
         "alice",
         "inspect",
-        "custom_subject",
+        "chat_subject",
         "runs",
         "--json",
     )
@@ -1017,7 +1001,7 @@ def test_inspect_lists_root_and_related_record_subjects(tmp_path: Path) -> None:
         root,
         "alice",
         "inspect",
-        "custom_subject",
+        "chat_subject",
         "runs",
     )
     steps = _invoke(
@@ -1031,9 +1015,9 @@ def test_inspect_lists_root_and_related_record_subjects(tmp_path: Path) -> None:
 
     assert threads.exit_code == 0, threads.stderr
     assert [item["id"] for item in json.loads(threads.stdout)] == [
-        "term_subject_other",
-        "custom_subject",
-        "threads",
+        "chat_subject_other",
+        "chat_subject",
+        "chat_threads",
     ]
     assert human_threads.exit_code == 0, human_threads.stderr
     human_thread_lines = [
@@ -1065,11 +1049,9 @@ def test_inspect_lists_root_and_related_record_subjects(tmp_path: Path) -> None:
     child_run_line = next(
         line for line in human_run_lines if line.startswith("run_subject_child ")
     )
-    assert "<agic> test succeeded 3 custom_subject -" in first_run_line
+    assert "<agic> test succeeded 3 chat_subject -" in first_run_line
     assert first_run_line.split()[-1] == "2026-01-01T00:00:00Z"
-    assert (
-        "<agic> test succeeded 0 custom_subject run_subject_first.2" in child_run_line
-    )
+    assert "<agic> test succeeded 0 chat_subject run_subject_first.2" in child_run_line
     assert child_run_line.split()[-1] == "2026-01-01T12:00:00Z"
     assert human_scoped_runs.exit_code == 0, human_scoped_runs.stderr
     human_scoped_lines = [
@@ -1128,8 +1110,7 @@ def test_inspect_lists_mixed_control_subjects(tmp_path: Path) -> None:
         run = project_run_start(
             store,
             run_id="run_control_subject",
-            thread_id="term_control_subject",
-            origin="test",
+            thread_id="chat_control_subject",
             input=Message.user("Control"),
             created_at="2026-01-01T00:00:00Z",
         )
@@ -1141,8 +1122,7 @@ def test_inspect_lists_mixed_control_subjects(tmp_path: Path) -> None:
             created_at="2026-01-01T01:00:00Z",
         )
         store.create_thread(
-            thread_id="controls",
-            origin="test",
+            thread_id="chat_controls",
             created_at="2026-01-01T02:00:00Z",
         )
     finally:
@@ -1156,10 +1136,10 @@ def test_inspect_lists_mixed_control_subjects(tmp_path: Path) -> None:
     documents = json.loads(result.stdout)
     pointers = [item["id"] for item in documents]
     assert pointers == [
-        "controls@0",
+        "chat_controls@0",
         "run_control_subject@1",
+        "chat_control_subject@0",
         "run_control_subject@0",
-        "term_control_subject@0",
     ]
     assert all("scope" not in item for item in documents)
     for pointer, document in zip(pointers, documents, strict=True):
@@ -1204,8 +1184,7 @@ def test_inspect_collections_are_unbounded_and_empty_stores_succeed(
             run = project_run_start(
                 store,
                 run_id=f"run_unbounded_{index}",
-                thread_id=f"term_unbounded_{index}",
-                origin="test",
+                thread_id=f"chat_unbounded_{index}",
                 input=Message.user(str(index)),
                 created_at=f"2026-01-01T00:00:{index:02}Z",
             )
@@ -1236,8 +1215,7 @@ def test_inspect_human_collection_uses_one_focused_run_snapshot(
         run = project_run_start(
             store,
             run_id="run_single_query",
-            thread_id="term_single_query",
-            origin="test",
+            thread_id="chat_single_query",
             input=Message.user("One query"),
         )
         project_run_end(store, run_id=run.id)
@@ -1284,7 +1262,7 @@ def test_inspect_human_collection_uses_one_focused_run_snapshot(
 @pytest.mark.parametrize(
     ("subjects", "allowed"),
     (
-        (("custom_subject", "steps"), "runs"),
+        (("chat_subject", "steps"), "runs"),
         (("run_subject", "runs"), "steps"),
         (("run_subject.0", "steps"), None),
         (("run_subject/status", "steps"), None),
@@ -1302,8 +1280,7 @@ def test_inspect_rejects_disallowed_subject_transitions(
         run = project_run_start(
             store,
             run_id="run_subject",
-            thread_id="custom_subject",
-            origin="test",
+            thread_id="chat_subject",
             input=Message.user("Subject"),
         )
         project_step(
@@ -1338,19 +1315,19 @@ def test_inspect_static_subjects_are_reserved_and_missing_scopes_fail(
     store.close()
 
     reserved = _invoke(root, "alice", "inspect", "steps")
-    missing_thread = _invoke(root, "alice", "inspect", "custom_missing", "runs")
+    missing_thread = _invoke(root, "alice", "inspect", "chat_missing", "runs")
     missing_run = _invoke(root, "alice", "inspect", "run_missing", "steps")
 
     assert reserved.exit_code == 2
     assert "allowed: threads, runs, controls" in " ".join(reserved.stderr.split())
     assert missing_thread.exit_code == 1
-    assert "record not found: custom_missing" in missing_thread.stderr
+    assert "record not found: chat_missing" in missing_thread.stderr
     assert missing_run.exit_code == 1
     assert "record not found: run_missing" in missing_run.stderr
 
 
 @pytest.mark.parametrize(
-    "subject", ("threads", "runs", "controls", "term_missing runs")
+    "subject", ("threads", "runs", "controls", "chat_missing runs")
 )
 def test_inspect_collections_require_execution_history(
     tmp_path: Path,
@@ -1376,8 +1353,7 @@ def test_inspect_projects_complete_persisted_model_call(
         run = project_run_start(
             store,
             run_id="run_model_call",
-            thread_id="term_model_call",
-            origin="test",
+            thread_id="chat_model_call",
             input=Message.user("Call"),
         )
         output_schema: dict[str, object] = {
@@ -1556,8 +1532,7 @@ def test_inspect_projects_run_tree_and_container_step_call(tmp_path: Path) -> No
         parent = project_run_start(
             store,
             run_id="run_tree_parent",
-            thread_id="term_tree",
-            origin="test",
+            thread_id="chat_tree",
             input=Message.user("Tree"),
             runnable_kind="flow",
             runnable_name="parent",
@@ -1578,7 +1553,6 @@ def test_inspect_projects_run_tree_and_container_step_call(tmp_path: Path) -> No
             store,
             run_id="run_tree_child",
             thread_id=parent.thread,
-            origin="test",
             input=Message.user("Child"),
             runnable_kind="agic",
             runnable_name="child",
@@ -1705,8 +1679,7 @@ def test_inspect_lists_child_runs_owned_by_runtime_tool(tmp_path: Path) -> None:
         parent = project_run_start(
             store,
             run_id="run_parent",
-            thread_id="term_parent",
-            origin="test",
+            thread_id="chat_parent",
             input=Message.user("Parent"),
         )
         step = project_step(
@@ -1724,7 +1697,6 @@ def test_inspect_lists_child_runs_owned_by_runtime_tool(tmp_path: Path) -> None:
             store,
             run_id="run_child",
             thread_id=parent.thread,
-            origin="test",
             input=Message.user("Child"),
             parent=step.ref,
         )
@@ -1756,8 +1728,7 @@ def test_inspect_projects_exact_tool_call_and_persisted_result(
         run = project_run_start(
             store,
             run_id="run_tool_call",
-            thread_id="term_tool_call",
-            origin="test",
+            thread_id="chat_tool_call",
             input=Message.user("Tool"),
         )
         path = StepRef.from_local(run.id, (0,))
@@ -1842,16 +1813,14 @@ def test_inspect_structural_projection_handles_empty_and_bounded_errors(
         empty = project_run_start(
             store,
             run_id="run_empty_tree",
-            thread_id="term_empty_tree",
-            origin="test",
+            thread_id="chat_empty_tree",
             input=Message.user("Empty"),
         )
         project_run_end(store, run_id=empty.id)
         failed = project_run_start(
             store,
             run_id="run_failed_tree",
-            thread_id="term_failed_tree",
-            origin="test",
+            thread_id="chat_failed_tree",
             input=Message.user("Failed"),
         )
         error = "failure " + "x" * 300
@@ -1928,8 +1897,7 @@ def test_inspect_empty_step_relations_and_container_call_succeed(
         run = project_run_start(
             store,
             run_id="run_empty_relations",
-            thread_id="term_empty_relations",
-            origin="test",
+            thread_id="chat_empty_relations",
             input=Message.user("Empty relations"),
         )
         run_step = project_step(
@@ -1997,8 +1965,7 @@ def test_inspect_rejects_unregistered_projector_spellings(
         run = project_run_start(
             store,
             run_id="run_projector_spelling",
-            thread_id="term_projector_spelling",
-            origin="test",
+            thread_id="chat_projector_spelling",
             input=Message.user("Call"),
         )
         project_step(
@@ -2049,8 +2016,7 @@ def test_inspect_validates_tree_and_call_before_specialized_reads(
         run = project_run_start(
             store,
             run_id="run_projector_validation",
-            thread_id="term_projector_validation",
-            origin="test",
+            thread_id="chat_projector_validation",
             input=Message.user("Validation"),
         )
         model = project_step(
@@ -2182,8 +2148,7 @@ def test_inspect_human_reports_pointer_resolution_errors(
         run = project_run_start(
             store,
             run_id="run_pointer_errors",
-            thread_id="term_pointer_errors",
-            origin="test",
+            thread_id="chat_pointer_errors",
             input=Message.user("hello"),
         )
         first = StepRef.from_local(run.id, (0,))
@@ -2311,8 +2276,7 @@ def test_inspect_step_path_does_not_cross_run_boundaries(tmp_path: Path) -> None
         parent = project_run_start(
             store,
             run_id="run_parent",
-            thread_id="term_step_owner",
-            origin="chat",
+            thread_id="chat_step_owner",
             input=Message.user("Inspect parent"),
         )
         parent_step = project_step(
@@ -2330,7 +2294,6 @@ def test_inspect_step_path_does_not_cross_run_boundaries(tmp_path: Path) -> None
             store,
             run_id="run_child",
             thread_id=parent.thread,
-            origin="chat",
             input=Message.user("Inspect child"),
             parent=parent_step.ref,
         )
@@ -2371,8 +2334,7 @@ def test_roaming_source_reads_inspect_collections_and_records(
         run = project_run_start(
             store,
             run_id="run_roaming",
-            thread_id="script_roaming",
-            origin="script",
+            thread_id="exec_roaming",
             input=Message.user("Inspect roaming history"),
         )
         project_step(
@@ -2392,7 +2354,7 @@ def test_roaming_source_reads_inspect_collections_and_records(
 
     threads = cli.main([str(source), "inspect", "threads"])
     threads_output = capsys.readouterr()
-    runs = cli.main([str(source), "inspect", "script_roaming", "runs"])
+    runs = cli.main([str(source), "inspect", "exec_roaming", "runs"])
     runs_output = capsys.readouterr()
     inspect = cli.main([str(source), "inspect", "run_roaming.0", "--json"])
     inspect_output = capsys.readouterr()
@@ -2403,7 +2365,7 @@ def test_roaming_source_reads_inspect_collections_and_records(
     assert output == 0
     assert json.loads(output_text.out) == "# Ready\n"
     assert threads == 0
-    assert "script_roaming" in threads_output.out
+    assert "exec_roaming" in threads_output.out
     assert "Inspect roaming history" in threads_output.out
     assert runs == 0
     assert "run_roaming" in runs_output.out
@@ -2433,8 +2395,7 @@ def test_visiting_selector_reads_inspection_without_fetching(
         run = project_run_start(
             store,
             run_id="run_visiting",
-            thread_id="term_visiting",
-            origin="chat",
+            thread_id="chat_visiting",
             input=Message.user("Inspect visiting history"),
         )
         project_step(
@@ -2523,26 +2484,35 @@ def hosted_agent(monkeypatch):
         asyncio.run(core.close())
 
 
+@pytest.mark.parametrize("status", ["pending", "running"])
 def test_run_controls_reject_stale_history_without_live_ownership(
-    tmp_path: Path, hosted_agent
+    tmp_path: Path, hosted_agent, status: str
 ) -> None:
     root = tmp_path / "toolang"
     _create_agent(root)
     layout = AgentLayout.resident(root, "alice")
     store = RunStore(layout.run_store)
     try:
-        project_run_start(
+        store.create_thread(thread_id="chat_active")
+        run, _ = accept_run(
             store,
             run_id="run_active",
-            thread_id="term_active",
-            origin="chat",
+            parent=None,
+            thread="chat_active",
             input=Message.user("Start"),
+            context={},
+            request_id=None,
+            created_at="2026-10-20T00:00:00Z",
         )
+        if status == "running":
+            store.begin_run(
+                run_id=run.id, started_at=run.created_at, control=run.control
+            )
     finally:
         store.close()
 
     requests = hosted_agent(layout)
-    steer = _invoke(root, "alice", "steer", "term_active", "Focus on tests")
+    steer = _invoke(root, "alice", "steer", "chat_active", "Focus on tests")
     cancel = _invoke(root, "alice", "cancel", "run_active")
 
     assert steer.exit_code == cancel.exit_code == 1
@@ -2626,7 +2596,7 @@ agic reply(_: Part[]) -> Part[]:
     monkeypatch.setattr(thread_commands, "acquire_run_client", run_client)
 
     async def run_source():
-        thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+        thread = harness.threads.create(kind=ThreadKind.CHAT)
         source = await harness.executor.run(
             harness.run_spec(
                 thread=thread,
@@ -2708,7 +2678,7 @@ agic reply(_: Part[]) -> Part[]:
     runtime_selections: list[tuple[str | None, Path | None]] = []
 
     async def run_source():
-        thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+        thread = harness.threads.create(kind=ThreadKind.CHAT)
         source = await harness.executor.run(
             harness.run_spec(
                 thread=thread,
@@ -2805,7 +2775,6 @@ def test_thread_fork_and_rewind_use_thread_manager_semantics(
             store,
             run_id="run_first",
             thread_id="chat_source",
-            origin="chat",
             input=Message.user("First"),
         )
         project_run_end(store, run_id=first.id)
@@ -2813,7 +2782,6 @@ def test_thread_fork_and_rewind_use_thread_manager_semantics(
             store,
             run_id="run_second",
             thread_id="chat_source",
-            origin="chat",
             input=Message.user("Second"),
         )
         project_run_end(store, run_id=second.id)
@@ -2867,7 +2835,6 @@ def test_thread_commands_anchor_on_roots_with_child_runs(
             store,
             run_id="run_parent",
             thread_id="chat_source",
-            origin="chat",
             input=Message.user("Parent"),
         )
         parent_step = project_step(
@@ -2886,7 +2853,6 @@ def test_thread_commands_anchor_on_roots_with_child_runs(
             run_id="run_child",
             thread_id="chat_source",
             parent=parent_step.ref,
-            origin="chat",
             input=Message.user("Child"),
         )
         project_run_end(store, run_id=child.id)

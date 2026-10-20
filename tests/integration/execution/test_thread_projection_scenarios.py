@@ -36,7 +36,6 @@ def _append(
         run_id=run,
         thread_id=thread,
         parent=parent,
-        origin="chat",
         input=Message.user(run),
         created_at="2026-01-01T00:00:00Z",
     )
@@ -95,26 +94,26 @@ def test_nested_forks_capture_source_views_and_closed_rewinds_survive_restart(
     store: RunStore,
 ) -> None:
     # Equal timestamps and deliberately unsorted IDs exercise durable insertion order.
-    _append(store, "term_source", "run_z")
-    _append(store, "term_source", "run_child", parent=StepRef.from_local("run_z", "0"))
-    _append(store, "term_source", "run_a")
-    _rewind(store, "term_source", "run_a")
-    _append(store, "term_source", "run_b")
-    _fork(store, "term_source", "term_fork")
-    _rewind(store, "term_source", "run_z")
-    _append(store, "term_source", "run_c")
-    _fork(store, "term_fork", "term_nested")
-    _rewind(store, "term_fork", "run_b")
-    _append(store, "term_fork", "run_d")
-    _fork(store, "term_fork", "term_repeated")
-    _rewind(store, "term_fork", "run_z")
-    _append(store, "term_fork", "run_e")
+    _append(store, "chat_source", "run_z")
+    _append(store, "chat_source", "run_child", parent=StepRef.from_local("run_z", "0"))
+    _append(store, "chat_source", "run_a")
+    _rewind(store, "chat_source", "run_a")
+    _append(store, "chat_source", "run_b")
+    _fork(store, "chat_source", "chat_fork")
+    _rewind(store, "chat_source", "run_z")
+    _append(store, "chat_source", "run_c")
+    _fork(store, "chat_fork", "chat_nested")
+    _rewind(store, "chat_fork", "run_b")
+    _append(store, "chat_fork", "run_d")
+    _fork(store, "chat_fork", "chat_repeated")
+    _rewind(store, "chat_fork", "run_z")
+    _append(store, "chat_fork", "run_e")
 
     expected = {
-        "term_source": ["run_c"],
-        "term_fork": ["run_e"],
-        "term_nested": ["run_z", "run_child", "run_b"],
-        "term_repeated": ["run_z", "run_child", "run_d"],
+        "chat_source": ["run_c"],
+        "chat_fork": ["run_e"],
+        "chat_nested": ["run_z", "run_child", "run_b"],
+        "chat_repeated": ["run_z", "run_child", "run_d"],
     }
     reopened = RunStore(store.db_path)
     try:
@@ -137,18 +136,18 @@ def test_nested_forks_capture_source_views_and_closed_rewinds_survive_restart(
                 assert detail is not None
                 assert [r.id for r in detail.runs] == ids
             inherited = reader.get_run(run_id="run_z")
-            assert inherited is not None and str(inherited.thread) == "term_source"
+            assert inherited is not None and str(inherited.thread) == "chat_source"
             assert (
                 reader.get_record(Pointer(StepRef.from_local("run_z", "0"))) is not None
             )
-            assert reader.list_thread_runs_chronological(thread_id="term_nested") == ()
+            assert reader.list_thread_runs_chronological(thread_id="chat_nested") == ()
             assert [
                 r.id
                 for r in reader.list_thread_history_chronological(
-                    thread_id="term_fork", include_rewound=True
+                    thread_id="chat_fork", include_rewound=True
                 )
             ] == ["run_z", "run_child", "run_b", "run_d", "run_e"]
-            assert [r.id for r in reader.thread_view("term_nested").runs()] == [
+            assert [r.id for r in reader.thread_view("chat_nested").runs()] == [
                 "run_z",
                 "run_b",
             ]
@@ -160,17 +159,16 @@ def test_nested_forks_capture_source_views_and_closed_rewinds_survive_restart(
 def test_fork_validates_every_run_in_the_prefix_tree(
     store: RunStore, active_child: bool
 ) -> None:
-    _append(store, "term_source", "run_first")
+    _append(store, "chat_source", "run_first")
     if active_child:
         project_run_start(
             store,
             run_id="run_child",
-            thread_id="term_source",
-            origin="chat",
+            thread_id="chat_source",
             input=Message.user("child"),
             parent=StepRef.from_local("run_first", "0"),
         )
-    _append(store, "term_source", "run_last")
+    _append(store, "chat_source", "run_last")
     if not active_child:
         store._conn.execute(
             "UPDATE runs SET status='running', finished_at=NULL WHERE id='run_first'"
@@ -178,25 +176,25 @@ def test_fork_validates_every_run_in_the_prefix_tree(
         store._conn.commit()
     before = _physical(store)
     with pytest.raises(ValueError, match="nonterminal run"):
-        _fork(store, "term_source", "term_fork", "run_last")
-    assert store.get_thread(thread_id="term_fork") is None
-    assert store.list_thread_controls(thread_id="term_fork") == ()
+        _fork(store, "chat_source", "chat_fork", "run_last")
+    assert store.get_thread(thread_id="chat_fork") is None
+    assert store.list_thread_controls(thread_id="chat_fork") == ()
     assert _physical(store) == before
 
 
 def test_stale_rewind_head_is_rejected_without_writes(store: RunStore) -> None:
-    _append(store, "term_source", "run_first")
-    _append(store, "term_source", "run_second")
-    head = store.thread_view("term_source").head
-    _rewind(store, "term_source", "run_second")
+    _append(store, "chat_source", "run_first")
+    _append(store, "chat_source", "run_second")
+    head = store.thread_view("chat_source").head
+    _rewind(store, "chat_source", "run_second")
     before = _physical(store)
     with pytest.raises(ValueError, match="head changed"):
         store.rewind_thread(
-            thread_id="term_source",
+            thread_id="chat_source",
             anchor="run_first",
             request_id=None,
             expected_head=head,
             created_at="2026-01-01T00:00:04Z",
         )
     assert _physical(store) == before
-    assert len(store.list_thread_controls(thread_id="term_source")) == 2
+    assert len(store.list_thread_controls(thread_id="chat_source")) == 2

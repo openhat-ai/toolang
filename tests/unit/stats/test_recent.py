@@ -156,7 +156,7 @@ def test_idle_detection_is_pinned_and_includes_unfinished_roots_of_any_age(
         reader.pin()
         assert not reader.has_unfinished_roots()
         if pending:
-            source.source.create_thread(thread_id="chat_pending", origin="chat")
+            source.source.create_thread(thread_id="chat_pending")
             accept_run(
                 source.source,
                 run_id="run_pending",

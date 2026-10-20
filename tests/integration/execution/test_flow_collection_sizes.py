@@ -11,7 +11,7 @@ import pytest
 from tests.support.execution_harness import ExecutionHarness
 from toolang.base.types.message import Message
 from toolang.base.types.run import ModelCallResult
-from toolang.execution.types import ThreadPrefix
+from toolang.execution.types import ThreadKind
 
 
 def _check(
@@ -40,7 +40,7 @@ flow main() -> {output_type}:
 
     async def scenario() -> None:
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
             run = await harness.executor.run(
                 harness.run_spec(thread=thread, runnable="main")
             )

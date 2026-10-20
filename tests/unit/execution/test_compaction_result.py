@@ -9,7 +9,7 @@ from toolang.base.types.compaction import CompactionResult
 from toolang.execution.compaction import assemble_compaction
 from toolang.execution.types import RunRef, ThreadRef
 
-THREAD = ThreadRef("term_test")
+THREAD = ThreadRef("chat_test")
 ROOTS = tuple(RunRef(f"run_{i}") for i in range(4))
 
 
@@ -55,10 +55,10 @@ def test_explicit_interval_and_incremental_coverage():
 
 
 @pytest.mark.parametrize(
-    "summary", ['Quoted "facts"\n中文 {{literal}}', '{"thread":"term_other"}']
+    "summary", ['Quoted "facts"\n中文 {{literal}}', '{"thread":"chat_other"}']
 )
 def test_framework_does_not_interpret_summary(summary):
-    assert assemble(summary) == CompactionResult("term_test", "run_0", "run_2", summary)
+    assert assemble(summary) == CompactionResult("chat_test", "run_0", "run_2", summary)
 
 
 @pytest.mark.parametrize("summary", [None, {}, [], 1, "", " \n"])

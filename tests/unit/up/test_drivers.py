@@ -15,22 +15,22 @@ from toolang.common.layout import AgentLayout
 from toolang.up.config import default_drivers, format_drivers, parse_drivers
 from toolang.up.core import AgentCore
 from toolang.up.server import build_serve_argv, resolve_serve
-from toolang.execution.types import ThreadPrefix
+from toolang.execution.types import ThreadKind
 
 
-@pytest.mark.parametrize("prefix", ["web", "term", "spawn", "worker"])
+@pytest.mark.parametrize("prefix", ["web", "term", "spawn", "worker", "script"])
 def test_obsolete_thread_prefixes_cannot_create_contexts(tmp_path, prefix):
     core = AgentCore(AgentLayout.resident(tmp_path, "alice"))
     try:
         with pytest.raises(ValueError):
-            core.threads.create(prefix=prefix)
+            core.threads.create(kind=prefix)
         assert not core.store.list_threads()
-        assert {item.value for item in ThreadPrefix} == {
+        assert {item.value for item in ThreadKind} == {
             "chat",
             "talk",
             "chore",
             "work",
-            "script",
+            "exec",
         }
     finally:
         asyncio.run(core.close())
@@ -79,7 +79,9 @@ def test_driver_selection_roundtrips_host_guest_and_preserves_management(
                 json={"client_id": "test-script", "request_id": "script-context"},
             )
             assert script.status_code == 201
-            assert script.json()["thread"]["id"].startswith("script_")
+            assert script.json()["thread"]["id"].startswith("exec_")
+            assert "origin" not in script.json()["thread"]
+            assert "kind" not in script.json()["thread"]
 
     finally:
         asyncio.run(core.close())

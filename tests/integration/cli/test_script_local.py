@@ -23,7 +23,7 @@ from tests.support.execution_harness import (
     ExecutionHarness,
     ScriptedModelTurn,
 )
-from toolang.execution.types import ErrorMessage, ThreadPrefix, RunOverride
+from toolang.execution.types import ErrorMessage, ThreadKind, RunOverride
 from toolang.lang.input import CallInput
 from toolang.lang.input import resolve_input_parts
 from toolang.state.types import StateSyncResult
@@ -205,8 +205,8 @@ def test_local_script_saves_only_to_an_explicit_destination(
         asyncio.run(harness.executor.stop())
         harness.store.close()
     assert len(threads) == 1
-    assert threads[0].id.startswith("script_")
-    assert threads[0].origin == "script"
+    assert threads[0].id.startswith("exec_")
+    assert threads[0].kind == "exec"
     assert len(runs) == 1
     assert runs[0].status == "succeeded"
     assert durable_output == (TextPart("done"),)
@@ -384,7 +384,7 @@ def test_script_cancellation_cancels_its_owned_run(tmp_path: Path) -> None:
 
     async def scenario() -> None:
         async with harness:
-            thread = harness.threads.create(prefix=ThreadPrefix.SCRIPT)
+            thread = harness.threads.create(kind=ThreadKind.EXEC)
             handle = harness.executor.run(
                 harness.run_spec(
                     thread=thread,

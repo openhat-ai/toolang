@@ -47,8 +47,8 @@ def test_build_run_request_materializes_a_session_snapshot_without_mutation() ->
     )
 
     request = build_run_request(
-        thread_id="term_test",
-        request_id="term_request",
+        thread_id="chat_test",
+        request_id="chat_request",
         input=CallInput({"_": "hello", "tone": "brief"}),
         override=RunOverride(
             runnable="flow:review",
@@ -62,9 +62,9 @@ def test_build_run_request_materializes_a_session_snapshot_without_mutation() ->
     )
 
     assert request == RunRequest(
-        thread_id="term_test",
+        thread_id="chat_test",
         driver="chat",
-        request_id="term_request",
+        request_id="chat_request",
         runnable=RunnableRequest(
             "flow:review", CallInput({"_": "hello", "tone": "brief"})
         ),
@@ -82,8 +82,8 @@ def test_build_run_request_materializes_a_session_snapshot_without_mutation() ->
 def test_run_workdir_override_uses_the_session_workdir_as_its_base() -> None:
     setting = replace(_surface(), workdir="repo://src")
     request = build_run_request(
-        thread_id="term_test",
-        request_id="term_workdir",
+        thread_id="chat_test",
+        request_id="chat_workdir",
         input=CallInput({"_": "inspect"}),
         override=RunOverride(workdir="../tests"),
         setting=setting,
@@ -184,8 +184,8 @@ def test_model_reconciliation_rejects_parameters_without_fallback() -> None:
 
 def test_input_local_effort_change_reuses_session_model_identity() -> None:
     request = build_run_request(
-        thread_id="term_test",
-        request_id="term_request",
+        thread_id="chat_test",
+        request_id="chat_request",
         input=CallInput({"_": "hello"}),
         override=RunOverride(model=ModelOverride(effort="low")),
         setting=SessionSetting(
@@ -212,8 +212,8 @@ def test_input_local_unset_removes_only_the_run_model() -> None:
     )
 
     request = build_run_request(
-        thread_id="term_test",
-        request_id="term_request",
+        thread_id="chat_test",
+        request_id="chat_request",
         input=CallInput({"_": "hello"}),
         override=RunOverride(
             model=ModelOverride(identity="unset"), runnable="flow:review"
@@ -230,8 +230,8 @@ def test_input_local_unset_removes_only_the_run_model() -> None:
 
 def test_build_run_request_materializes_unqualified_runnable_to_exact_ref() -> None:
     request = build_run_request(
-        thread_id="term_test",
-        request_id="term_request",
+        thread_id="chat_test",
+        request_id="chat_request",
         input=CallInput({"_": "hello"}),
         override=RunOverride(runnable="review"),
         setting=_surface(),
@@ -291,8 +291,8 @@ def test_chat_allows_explicit_attempts_with_incomplete_reasoning_metadata(
 def test_run_workdir_override_retains_base_after_relative_session_cd() -> None:
     setting = replace(_surface(), workdir="src", workdir_base="repo://")
     request = build_run_request(
-        thread_id="term_test",
-        request_id="term_pending_cd",
+        thread_id="chat_test",
+        request_id="chat_pending_cd",
         input=CallInput({"_": "inspect"}),
         override=RunOverride(workdir="tests"),
         setting=setting,
@@ -316,8 +316,8 @@ def test_session_runnable_follows_the_current_default_until_explicitly_selected(
     updated_surface = replace(_surface(), runnable="agic:assistant")
 
     request = build_run_request(
-        thread_id="term_test",
-        request_id="term_request",
+        thread_id="chat_test",
+        request_id="chat_request",
         input=CallInput({"_": "hello"}),
         override=RunOverride(),
         setting=defaulted,
@@ -336,8 +336,8 @@ def test_session_runnable_follows_the_current_default_until_explicitly_selected(
     )
     assert not explicitly_selected.runnable_follows_default
     unchanged_request = build_run_request(
-        thread_id="term_test",
-        request_id="term_request_2",
+        thread_id="chat_test",
+        request_id="chat_request_2",
         input=CallInput({"_": "hello"}),
         override=RunOverride(),
         setting=explicitly_selected,

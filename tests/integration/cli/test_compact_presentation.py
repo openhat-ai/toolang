@@ -21,7 +21,7 @@ from toolang.base.types.run import ModelCallResult
 from toolang.cli.common.script_progress import ScriptRunPresenter
 from toolang.cli.toolang.commands.chat.presenter import ChatRunPresenter
 from toolang.execution.events import RunBegin, RunTracer
-from toolang.execution.types import ThreadPrefix
+from toolang.execution.types import ThreadKind
 
 
 class ChatScreen:
@@ -96,7 +96,7 @@ def test_compaction_progress_in_chat_and_script(tmp_path, status, tty, width):
 
     async def scenario():
         async with h:
-            thread = h.threads.create(prefix=ThreadPrefix.CHAT)
+            thread = h.threads.create(kind=ThreadKind.CHAT)
             for text in ("old", "recent"):
                 await h.executor.run(
                     h.run_spec(

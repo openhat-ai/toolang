@@ -236,7 +236,9 @@ agic answer(_: Part[]) -> Part[]:
         assert models.json()["default"] == ("test/scripted")
         assert agics.json()["default"] is None
         assert flows.json()["default"] is None
-        assert thread_id.startswith("script_")
+        assert thread_id.startswith("exec_")
+        assert "origin" not in created.json()["thread"]
+        assert "kind" not in created.json()["thread"]
         assert response.status_code == 200
         assert response.headers["content-type"].startswith("text/event-stream")
         assert response.headers["cache-control"] == "no-cache"
@@ -429,7 +431,7 @@ agic chat(_: Part[]) -> Part[]:
         threads = core.store.list_threads()
         assert len(threads) == 1
         assert threads[0].id == thread_id
-        assert threads[0].origin == "chat"
+        assert threads[0].kind == "chat"
     finally:
         asyncio.run(core.close())
 
@@ -577,15 +579,14 @@ def test_live_relay_preserves_complete_root_run_tree_order(tmp_path) -> None:
         project_run_start(
             store,
             run_id="run_test",
-            thread_id="term_test",
-            origin="chat",
+            thread_id="chat_test",
             input=Message.user("test"),
         )
         relay = Subscriptions(source, store.db_path)
         run_attachment = await relay.reserve()
         thread_attachment = await relay.reserve()
         run = run_attachment.attach(StreamScope(root="run_test"), start="new")
-        thread = thread_attachment.attach(StreamScope(thread="term_test"), start="new")
+        thread = thread_attachment.attach(StreamScope(thread="chat_test"), start="new")
         events = (
             run_begin(
                 run="run_test",
@@ -634,7 +635,7 @@ def test_live_relay_preserves_complete_root_run_tree_order(tmp_path) -> None:
         )
         for event in events:
             with source.publication() as publication:
-                publication.append(event, thread_id="term_test", root_run_id="run_test")
+                publication.append(event, thread_id="chat_test", root_run_id="run_test")
 
         run_events = [event_from_data((await run.receive()).data) for _event in events]
         thread_events = [
@@ -658,11 +659,10 @@ def test_live_relay_accepts_thread_events_from_worker_threads(tmp_path) -> None:
         store = RunStore(tmp_path / "runs.db")
         relay = Subscriptions(source, store.db_path)
         attachment = await relay.reserve()
-        subscription = attachment.attach(StreamScope(thread="term_test"), start="new")
+        subscription = attachment.attach(StreamScope(thread="chat_test"), start="new")
         event = ThreadCreated(
-            thread="term_test",
-            control=ControlRef.for_thread("term_test", 0),
-            origin="chat",
+            thread="chat_test",
+            control=ControlRef.for_thread("chat_test", 0),
             created_at="2026-01-01T00:00:00Z",
         )
 
@@ -694,8 +694,7 @@ def test_existing_run_stream_attaches_to_live_events(tmp_path: Path) -> None:
     project_run_start(
         core.store,
         run_id="run_live",
-        thread_id="script_live",
-        origin="script",
+        thread_id="exec_live",
         input=Message.user("hello"),
     )
     app = create_app(
@@ -723,7 +722,7 @@ def test_existing_run_stream_attaches_to_live_events(tmp_path: Path) -> None:
                     control=ControlRef.for_run("run_live", 0),
                     started_at="2026-01-01T00:00:00Z",
                 ),
-                thread_id="script_live",
+                thread_id="exec_live",
                 root_run_id="run_live",
             )
             publication.append(
@@ -732,7 +731,7 @@ def test_existing_run_stream_attaches_to_live_events(tmp_path: Path) -> None:
                     status="succeeded",
                     finished_at="2026-01-01T00:00:01Z",
                 ),
-                thread_id="script_live",
+                thread_id="exec_live",
                 root_run_id="run_live",
             )
 
@@ -764,8 +763,7 @@ def test_child_run_stream_redirects_client_to_root_run(tmp_path: Path) -> None:
     project_run_start(
         core.store,
         run_id="run_root",
-        thread_id="script_tree",
-        origin="script",
+        thread_id="exec_tree",
         input=Message.user("root"),
     )
     project_step(
@@ -786,10 +784,8 @@ def test_child_run_stream_redirects_client_to_root_run(tmp_path: Path) -> None:
     project_run_start(
         core.store,
         run_id="run_child",
-        thread_id="script_tree",
-        origin="script",
+        thread_id="exec_tree",
         input=Message.user("child"),
-        root_run_id="run_root",
         parent=StepRef.parse("run_root.0"),
     )
     app = create_app(
@@ -859,8 +855,7 @@ def test_sse_generator_close_removes_subscription(tmp_path) -> None:
         project_run_start(
             store,
             run_id="run_test",
-            thread_id="term_test",
-            origin="chat",
+            thread_id="chat_test",
             input=Message.user("test"),
         )
         relay = Subscriptions(source, store.db_path)
@@ -877,7 +872,7 @@ def test_sse_generator_close_removes_subscription(tmp_path) -> None:
                     control=ControlRef.for_run("run_test", 0),
                     started_at="2026-01-01T00:00:00Z",
                 ),
-                thread_id="term_test",
+                thread_id="chat_test",
                 root_run_id="run_test",
             )
 
