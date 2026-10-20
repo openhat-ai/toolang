@@ -30,6 +30,9 @@ and recorded launches, not delivery or live presence.
 
 Hub store schema `4` owns messaging and execution-event data. Incompatible or
 corrupt initialized stores fail closed without resets, mutation, or import.
+All teaming keys use the prerelease `too:teaming:v0` namespace; `v1` is reserved
+for stabilization. Only v0 state is supported; there is no compatibility or
+migration path.
 Hub and clients must use compatible versions and backend data. Restart applies
 configuration changes; Talk must be reopened when its endpoint, backend, or
 human identity changes.
@@ -114,6 +117,35 @@ shows conversation identity, permissions, and member presence. Presence lookup
 failure becomes unknown, not offline, and does not interrupt messaging. Human
 members count as online; agents require live leases. Display names and terminal
 titles never replace canonical identity.
+
+Each directory member receives a `color` when first created. Hub chooses the
+least-used of `red`, `green`, `yellow`, `blue`, `magenta`, and `cyan`, breaking
+ties in that order. Registration, lease updates, and restart preserve it; member
+removal deletes it. Agent and human names and message markers use this color.
+`color` is required and accepts a standard ANSI color name or `#RRGGBB`.
+
+To customize an existing member, atomically edit its JSON in
+`too:teaming:v0:team:members` using `valkey-cli` against the configured backend:
+
+```sh
+valkey-cli EVAL '
+local raw = redis.call("HGET", KEYS[1], ARGV[1])
+if not raw then return redis.error_reply("Unknown team member") end
+local member = cjson.decode(raw)
+member.color = ARGV[2]
+return redis.call("HSET", KEYS[1], ARGV[1], cjson.encode(member))
+' 1 too:teaming:v0:team:members agent:alice magenta
+```
+
+Use a standard ANSI name, including its `bright_` variant, or a quoted
+`'#RRGGBB'` value. Duplicate choices are allowed. Do not replace an earlier
+`HGET` snapshot, which could overwrite a newer lease, or delete a member to
+change its color. Talk refreshes colors and presence through one team snapshot
+loop with a one-second fallback interval; lookup failures retain cached colors
+without blocking delivery. Before committing a batch with unknown senders to
+scrollback, Talk attempts one bounded team refresh for the entire batch.
+Edits affect subsequent rendering; reopening Talk
+applies current colors to retained history without repainting existing scrollback.
 
 Failed sends preserve drafts and require a user retry decision. Transient reads
 reconnect from the committed cursor; terminal errors stop following. One-shot

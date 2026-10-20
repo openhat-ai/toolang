@@ -420,4 +420,162 @@ def test_member_notification_wakes_talk_without_polling_or_reloading_history(
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize(
+    "kind,members",
+    [
+        ("dm", ("agent:alice", "human:bryan")),
+        ("gc", ("human:bryan", "human:other")),
+        ("dm", ("agent:alice", "agent:bob")),
+    ],
+)
+@pytest.mark.parametrize("failure", [False, True])
+def test_startup_reads_one_team_snapshot_before_history(
+    tmp_path, monkeypatch, kind, members, failure
+):
+    from toolang.teaming.errors import BackendUnavailable
+    from toolang.teaming.notifications import Changes
+
+    async def scenario():
+        info = conversation_record(
+            "dm_00000001" if kind == "dm" else "gc_00000001", kind, members
+        )
+        async with talk_app(tmp_path, conversation=info) as (ui, _):
+            ui.prompt.replace_input("keep draft")
+            colors = [{"member": "human:bryan", "color": "magenta", "deadline": None}]
+            ui.client.team.side_effect = (
+                BackendUnavailable("offline") if failure else None
+            )
+            ui.client.team.return_value = colors
+            changes = AsyncMock(spec=Changes)
+
+            async def wait(timeout=None):
+                if timeout is not None:
+                    await asyncio.Event().wait()
+
+            changes.wait.side_effect = wait
+
+            @asynccontextmanager
+            async def subscribe(*args, **kwargs):
+                yield changes
+
+            monkeypatch.setattr(ui.client, "team_changes", subscribe)
+            loaded = asyncio.Event()
+
+            async def history(*args):
+                ui.client.team.assert_awaited_once()
+                assert ui.colors == ({} if failure else {"human:bryan": "magenta"})
+                loaded.set()
+                return []
+
+            ui.client.history.side_effect = history
+
+            async def run(*, pre_run):
+                pre_run()
+                await asyncio.wait_for(loaded.wait(), 1)
+                await ui.app.cancel_and_wait_for_background_tasks()
+
+            monkeypatch.setattr(ui.app, "run_async", run)
+            await ui.run()
+            assert ui.prompt.buffer.text == "keep draft"
+
+    asyncio.run(scenario())
+
+
+def test_team_refresh_keeps_cached_colors_on_failure_and_renders_edits(
+    tmp_path, monkeypatch
+):
+    from toolang.teaming.errors import BackendUnavailable
+
+    async def scenario():
+        async with talk_app(tmp_path) as (ui, _):
+            rows = [{"member": "agent:alice", "color": "green", "deadline": 1}]
+            ui.client.team.side_effect = [
+                rows,
+                BackendUnavailable("offline"),
+                [{**rows[0], "color": "#7aa2f7"}],
+            ]
+            rendered = []
+            render = tui.message_block
+
+            def block(*args, color=None):
+                rendered.append(color)
+                return render(*args, color=color)
+
+            monkeypatch.setattr(tui, "message_block", block)
+            output = StringIO()
+            monkeypatch.setattr(
+                tui,
+                "terminal_console",
+                lambda *, width: Console(file=output, width=width, color_system=None),
+            )
+            message = Message.create("agent:alice", "still delivered")
+            for number, expected in enumerate(("green", "green", "#7aa2f7")):
+                await ui.refresh_team()
+                await ui.show([(f"1-{number}", {"data": message.encode()})])
+                assert rendered[-1] == expected
+                assert (ui.presence is None) == (number == 1)
+            assert output.getvalue().count("still delivered") == 3
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("failure", [False, True])
+def test_unknown_sender_refreshes_once_before_rendering_the_batch(
+    tmp_path, monkeypatch, failure
+):
+    from toolang.teaming.errors import BackendUnavailable
+
+    async def scenario():
+        async with talk_app(tmp_path) as (ui, _):
+            ui.client.team.return_value = [
+                {"member": "agent:alice", "color": "red", "deadline": 1}
+            ]
+            await ui.refresh_team()
+            ui.client.team.reset_mock()
+            ui.client.team.return_value = [
+                {"member": "agent:alice", "color": "red", "deadline": 1},
+                {"member": "agent:bob", "color": "green", "deadline": 1},
+            ]
+            if failure:
+                ui.client.team.side_effect = BackendUnavailable("offline")
+            rendered = []
+            render = tui.message_block
+
+            def block(message, *args, color=None):
+                rendered.append((message.sender, color))
+                return render(message, *args, color=color)
+
+            monkeypatch.setattr(tui, "message_block", block)
+            output = StringIO()
+            monkeypatch.setattr(
+                tui,
+                "terminal_console",
+                lambda *, width: Console(file=output, width=width, color_system=None),
+            )
+            messages = [
+                Message.create("agent:alice", "Known sender"),
+                Message.create("agent:bob", "New sender first message"),
+                Message.create("agent:bob", "New sender second message"),
+            ]
+            await ui.show(
+                [
+                    (f"1-{index}", {"data": message.encode()})
+                    for index, message in enumerate(messages)
+                ]
+            )
+            ui.client.team.assert_awaited_once()
+            assert rendered == [
+                ("agent:alice", "red"),
+                ("agent:bob", None if failure else "green"),
+                ("agent:bob", None if failure else "green"),
+            ]
+            assert ui.cursor == "1-2"
+            assert all(message.body in output.getvalue() for message in messages)
+            if not failure:
+                await ui.show([("1-3", {"data": messages[-1].encode()})])
+                ui.client.team.assert_awaited_once()
+
+    asyncio.run(scenario())
+
+
 pytestmark = pytest.mark.usefixtures("fixed_conversation_ids")

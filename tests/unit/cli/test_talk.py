@@ -774,6 +774,37 @@ print(json.dumps(colors))
     assert len(set(results[0].values())) > 1
 
 
+@pytest.mark.parametrize("sender", ["agent:alice", "human:bryan"])
+@pytest.mark.parametrize("own_message", [False, True])
+@pytest.mark.parametrize("color", ["green", "bright_magenta", "#7aa2f7"])
+def test_member_color_applies_only_to_name_and_marker(sender, own_message, color):
+    console = Console(width=60)
+    message = Message.create(sender, "body text")
+    block = message_block(
+        message,
+        sender if own_message else "human:reader",
+        60,
+        DARK_TERMINAL_SURFACES,
+        color=color,
+    )
+    segments = list(console.render(block))
+    header = next(
+        segment for segment in segments if sender.split(":")[1] in segment.text
+    )
+    marker = next(
+        segment for segment in segments if "•" in segment.text or "▮" in segment.text
+    )
+    body = next(segment for segment in segments if "body text" in segment.text)
+    assert header.style is not None and marker.style is not None
+    assert header.style.color == marker.style.color == Color.parse(color)
+    assert header.style.dim is marker.style.dim is False
+    assert bool(header.style.bold) == sender.startswith("agent:")
+    assert body.style is None or body.style.color is None
+    output = StringIO()
+    Console(file=output, width=60, color_system=None).print(block)
+    assert "\x1b" not in output.getvalue()
+
+
 @pytest.mark.parametrize("identity", ["alice", "bryan"])
 @pytest.mark.parametrize("sender", ["alice", "bob", "bryan", "visitor"])
 def test_message_marker_shares_name_row_and_name_aligns_with_body(identity, sender):
