@@ -24,24 +24,31 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 - `lane`/`lanes` and `time`/`times` both parse, and the formatter writes
   canonical unit spelling and removes leading zeros in those counts.
 
-- Parameters and locals may use keyword names where the grammar allows, and
-  retired flow words are ordinary prose or names.
+- Parameters and locals may use keyword names where the grammar allows.
 
-- **Breaking:** agic and flow headers are closed, so an unknown `key = value`
-  opening line is a syntax error; put assignment-like opening messages in an
-  explicit `user:` text block.
+- **Breaking:** retired flow words are ordinary prose and names instead of
+  errors; rewrite `scatter`/`gather` as `run`, annotating array outputs, `storm`
+  as `generate`, and `settle` as `reduce`, with no automatic conversion.
+  ([#868](https://github.com/openhat-ai/toolang/pull/868))
+
+- **Breaking:** agic and flow directive prefixes are closed, so an unknown
+  `key = value` opening line is a syntax error; put assignment-like opening
+  messages in an explicit `user: key = value` text block in agics and
+  `run: key = value` in flows.
 
 - Cap and chore prefixes accept arbitrary `key = value` properties, with blank
   lines and comments allowed between them, until the first substantive body
   line; supported names stay validated.
 
 - **Breaking:** raw CST consumers read `program` instead of `source_file`,
-  `target` for call targets, `local` for `let` bindings, and `param` and
-  `description` on direct `param_doc` nodes.
+  `target` for call targets, `local` for `let` bindings, `param` and
+  `description` on direct `param_doc` nodes, and `query_value` and
+  `runnable_name` leaves instead of the `directive_value` and `runnable`
+  wrappers.
 
-- **Breaking:** CST text bodies use `content` containers with direct `text`
-  leaves; replace old text wrappers with these paths and `comment_text` with
-  `text`.
+- **Breaking:** CST text values use `content` instead of `text_inline` and
+  `text_body` wrappers, with direct `text` leaves replacing `text_line`,
+  `indented_raw_text`, and `comment_text`.
 
 - **Breaking:** documentation uses peer `program_doc`, `item_doc`, and
   `param_doc` nodes; `program_doc` belongs to `program`, while structural
@@ -49,6 +56,12 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 - **Breaking:** raw CST punctuation, fixed operators, and keywords are anonymous
   terminals, so inspect terminal text instead of named nodes.
+
+- **Breaking:** invalid sources report `invalid_flow_statement` or
+  `invalid_run_target` instead of `invalid_flow_reserved_statement`, and
+  `invalid_agic_message` instead of `invalid_agic_reserved_message`, while any
+  `invalid_*` node is an error even when `has_error` is false.
+  ([#868](https://github.com/openhat-ai/toolang/pull/868))
 
 - `too top` and `too AGENT top` count agent instances separately from root
   Runs: the first summary reads `N running, M total: R resident, V visiting,
