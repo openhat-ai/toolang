@@ -196,6 +196,10 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Fixed
 
+- Pending Runs report their admission time and thread lists order by each
+  thread's latest visible Run change, so recently updated work stays first.
+  ([#874](https://github.com/openhat-ai/toolang/pull/874))
+
 - Thread summaries, status filters, and CLI `steer`/`cancel` selection treat
   pending and running Runs as active, while each Run keeps its actual status.
   ([#874](https://github.com/openhat-ai/toolang/pull/874))
