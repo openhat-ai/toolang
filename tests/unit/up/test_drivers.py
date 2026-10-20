@@ -107,6 +107,7 @@ def test_placement_defaults():
     "requested,running,error",
     [
         (None, ["chat"], None),
+        (None, ["chat", "talk", "chore"], None),
         (frozenset(("chat",)), ["chat"], None),
         (frozenset(("chat", "talk")), ["talk", "chat"], None),
         (frozenset(("chat",)), ["chat", "talk"], "differs"),

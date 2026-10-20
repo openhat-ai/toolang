@@ -88,6 +88,8 @@ belongs to [Drivers](drivers.md#handler-selection).
 Resident/visiting attachment compares all normalized effective executor startup
 bindings, including inferred environment/config/defaults, before preparation.
 Mismatches and unverifiable legacy contracts reject without changing the owner.
+An omitted `--enable` retains the bound drivers for attachment and `start`
+promotion; placement defaults apply when creating an executor.
 Visiting source fetch/materialization occurs only after this check; help and
 read-only history commands do not fetch sources or allocate roaming instances.
 Align `--enable` explicitly when command defaults differ. Run inputs/request model

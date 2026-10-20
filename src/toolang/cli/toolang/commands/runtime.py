@@ -666,12 +666,14 @@ def resolve_startup(
     allow_live: bool = False,
 ) -> LaunchSpec:
     from toolang.up.config import default_drivers, parse_drivers
+    from toolang.up.contract import bound_drivers
 
-    drivers = (
-        user_call(parse_drivers, driver)
-        if driver is not None
-        else default_drivers(target.placement)
-    )
+    if driver is not None:
+        drivers = user_call(parse_drivers, driver)
+    elif allow_live:
+        drivers = user_call(bound_drivers, target)
+    else:
+        drivers = default_drivers(target.placement)
     root, agent = target.root, target.name
     workspaces = resolve_workspaces(
         target, procdir=Path.cwd(), paths=workspace_options or (), workdir=workdir

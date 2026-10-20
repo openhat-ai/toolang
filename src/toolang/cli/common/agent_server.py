@@ -346,7 +346,7 @@ def _prepare_agent_server(
         ):
             raise AgentServerAcquisitionError(f"{required_driver} driver is disabled")
         if not attach_only:
-            from toolang.up.contract import require_compatible
+            from toolang.up.contract import bound_drivers, require_compatible
 
             requested = _resolve_launch(
                 layout,
@@ -356,7 +356,7 @@ def _prepare_agent_server(
                 base_environ=base_environ,
                 compact_override=compact_override,
                 workspace_additions=workspace_additions,
-                drivers=drivers if drivers is not None else policy.client_drivers,
+                drivers=drivers if drivers is not None else bound_drivers(layout),
                 active_port=status.port,
             )
             try:

@@ -8,9 +8,10 @@ from enum import Enum
 from hashlib import sha256
 import json
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from .instance import read_instance
+from .types import ALL_DRIVERS, ExecutionDrivers
 
 if TYPE_CHECKING:
     from toolang.common.layout import AgentLayout
@@ -84,3 +85,16 @@ def require_compatible(layout: AgentLayout, requested: LaunchSpec) -> None:
     )
     if different:
         raise ValueError("startup parameters differ: " + ", ".join(different))
+
+
+def bound_drivers(layout: AgentLayout) -> ExecutionDrivers:
+    """An omitted selection retains the live owner's verified driver binding."""
+    entry = read_instance(layout.runtime_status) or {}
+    raw = entry.get("control", {}).get("drivers")
+    if not isinstance(raw, list) or any(
+        not isinstance(name, str) or name not in ALL_DRIVERS for name in raw
+    ):
+        raise ValueError(
+            "running driver bindings are unverifiable; stop and restart the agent"
+        )
+    return cast(ExecutionDrivers, frozenset(raw))

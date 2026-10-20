@@ -378,7 +378,11 @@ def _open_chat(
         previous = context_layout(ctx)
         continued = _continue_instance(ctx, thread_id=thread_id)
         try:
-            chat_command(ctx, thread=thread_id, driver="chat")
+            chat_command(
+                ctx,
+                thread=thread_id,
+                driver="chat" if continued is not previous else None,
+            )
         finally:
             if continued is not previous:
                 from toolang.up.workload import finish_preparation
