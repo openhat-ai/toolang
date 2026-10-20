@@ -14,7 +14,7 @@ from toolang.common.template import template_root_names, template_dependencies
 from . import ast
 from .errors import ToolangValidationError, source_location
 from .types import RelatedLocation, SourceLocation
-from .text import dedent_text_lines, source_lines
+from .text import dedent_text_lines, source_lines, text_indent_width
 from .validate import _validate_cap_source
 
 _TRIVIA = {
@@ -63,8 +63,8 @@ class _DocComments:
         for row, node in comments.items():
             if block and (
                 row != block[-1].start_point.row + 1
-                or self._indent(lines[row])
-                != self._indent(lines[block[-1].start_point.row])
+                or text_indent_width(lines[row])
+                != text_indent_width(lines[block[-1].start_point.row])
                 or node.type not in {"item_doc", "param_doc"}
             ):
                 self._attach(block, cst=cst, lines=lines, comments=comments)
@@ -83,16 +83,17 @@ class _DocComments:
         comments: dict[int, CstNode],
     ) -> None:
         row = block[-1].start_point.row + 1
-        indent = self._indent(lines[row - 1])
+        indent = text_indent_width(lines[row - 1])
         if (
             row >= len(lines)
             or not lines[row].strip()
             or row in comments
-            or self._indent(lines[row]) != indent
+            or text_indent_width(lines[row]) != indent
         ):
             return
+        column = len(self._indent(lines[row]))
         target = cst.tree.root_node.named_descendant_for_point_range(
-            (row, len(indent)), (row, len(indent) + 1)
+            (row, column), (row, column + 1)
         )
         assert target is not None
         while (

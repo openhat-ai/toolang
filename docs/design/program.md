@@ -107,7 +107,8 @@ flow research:
 ```
 
 `##` documents the immediately following semantic node at the same indentation
-level. Consecutive `##` lines form one newline-separated document:
+level, with tabs measured at eight-column stops. Consecutive `##` lines form one
+newline-separated document:
 
 ```too
 ## Search the web.

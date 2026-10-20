@@ -233,7 +233,7 @@ def _runnable_clause(connector: str, runnable: str) -> str:
 def _format_source_lines(lines: list[str], *, root: Node, tab_size: int) -> list[str]:
     formatted: list[_Line] = []
     text_bodies: dict[int, dict[int, str]] = {}
-    previous_doc_indent: str | None = None
+    previous_doc_indent: int | None = None
 
     for row, raw_line in enumerate(lines):
         bom_size = 0
@@ -242,6 +242,7 @@ def _format_source_lines(lines: list[str], *, root: Node, tab_size: int) -> list
             bom_size = len("\ufeff".encode("utf-8"))
         line = raw_line.rstrip()
         prefix = _leading_whitespace(line)
+        indent_width = text_indent_width(line)
         if not line.strip():
             formatted.append(_Line("", "blank"))
             previous_doc_indent = None
@@ -266,8 +267,7 @@ def _format_source_lines(lines: list[str], *, root: Node, tab_size: int) -> list
                 1
                 for item in ancestors
                 if item.type in {"repeat_stmt", "reduce_stmt"}
-                and text_indent_width(lines[item.start_point.row])
-                < text_indent_width(line)
+                and text_indent_width(lines[item.start_point.row]) < indent_width
             )
         if (
             node.type == "text"
@@ -300,13 +300,15 @@ def _format_source_lines(lines: list[str], *, root: Node, tab_size: int) -> list
                 flow_ancestry=_flow_ancestry(ancestors),
                 text_owner=text.id if text is not None else None,
                 separate=previous_doc_indent is not None
-                and previous_doc_indent != prefix
+                and previous_doc_indent != indent_width
                 and _leading_whitespace(formatted[-1].value) == rendered_prefix,
                 follows_doc=previous_doc_indent is not None
-                and previous_doc_indent == prefix,
+                and previous_doc_indent == indent_width,
             )
         )
-        previous_doc_indent = prefix if node.type in {"item_doc", "param_doc"} else None
+        previous_doc_indent = (
+            indent_width if node.type in {"item_doc", "param_doc"} else None
+        )
 
     return _normalize_blank_lines(
         _order_program_comments(_order_directive_sections(formatted))

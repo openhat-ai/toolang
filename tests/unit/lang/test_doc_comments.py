@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from toolang.lang import Program
+from toolang.lang import Program, format_source
 from toolang.lang.ast import RepeatStmt, program_from_data, to_data
 from toolang.lang.errors import ToolangSyntaxError, ToolangValidationError
 
@@ -324,3 +324,48 @@ def test_leading_bom_preserves_first_documentation_comment(
 def test_leading_bom_does_not_bypass_parameter_validation(comments, error):
     with pytest.raises(ToolangValidationError, match=error):
         Program.from_source(f"\ufeff{comments}agic:\n  pass\n")
+
+
+@pytest.mark.parametrize(
+    "prefixes", [("\t", " " * 8), (" " * 8, "\t"), ("\t\t", " " * 16)]
+)
+@pytest.mark.parametrize("newline", ["\n", "\r\n"])
+@pytest.mark.parametrize("tab_size", [2, 4])
+@pytest.mark.parametrize("kind", ["field", "message", "stmt", "nested"])
+def test_documentation_uses_visual_indentation_and_actual_token_columns(
+    prefixes, newline, tab_size, kind
+):
+    header, member = {
+        "field": ("struct Info:", "value: Text"),
+        "message": ("agic work:", "user: Body."),
+        "stmt": ("flow work:", "run: Body."),
+        "nested": ("flow work:\n  repeat 2 times:", "run: Body."),
+    }[kind]
+    first, second = prefixes
+    source = (
+        f"{header}\n{first}## First.\n{second}## Second.\n{first}{member}\n"
+    ).replace("\n", newline)
+    formatted = format_source(source, tab_size=tab_size)
+    for candidate in (source, formatted):
+        program = Program.from_source(candidate)
+        if kind == "field":
+            node = program.structs[0].fields[0]
+        elif kind == "message":
+            node = program.agics[0].messages[0]
+        elif kind == "nested":
+            repeat = program.flows[0].stmts[0]
+            assert isinstance(repeat, RepeatStmt)
+            node = repeat.stmts[0]
+        else:
+            node = program.flows[0].stmts[0]
+        assert node.doc == "First.\nSecond."
+    assert format_source(formatted, tab_size=tab_size) == formatted
+
+
+@pytest.mark.parametrize("doc_indent,member_indent", [("\t", " "), (" ", "\t")])
+def test_equal_prefix_lengths_do_not_attach_documents_at_different_visual_levels(
+    doc_indent, member_indent
+):
+    source = f"flow work:\n{doc_indent}## Detached.\n{member_indent}run: Body.\n"
+    for candidate in (source, format_source(source)):
+        assert Program.from_source(candidate).flows[0].stmts[0].doc is None
