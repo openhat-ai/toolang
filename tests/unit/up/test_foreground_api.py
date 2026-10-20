@@ -9,6 +9,7 @@ from tests.support.execution_harness import (
 )
 from toolang.base.types.message import Message
 from toolang.base.types.run import ModelCallResult
+from toolang.cli.toolang.main import main
 from toolang.up.core import AgentCore
 from toolang.execution.types import ThreadKind
 from toolang.state.types import StateSyncResult
@@ -24,6 +25,8 @@ def test_shared_foreground_api_observes_and_cancels_the_owning_executor(
 ):
     gate = AsyncGate()
     layout = allocate_roaming(tmp_path / "alice.too", toolang_root=tmp_path)
+    instance_id = layout.instance_id
+    assert instance_id is not None
     harness = ExecutionHarness.create(
         layout.root,
         source="agic work():\n  Do work.\n",
@@ -81,11 +84,34 @@ def test_shared_foreground_api_observes_and_cancels_the_owning_executor(
                             json={},
                         )
                         assert rejected.status_code == 409
-                        accepted = await http.post(
-                            f"/api/v0/runs/{handle.run_id}/cancel",
-                            headers={LAUNCH_HEADER: registration.token},
-                            json={},
+                        assert (
+                            await asyncio.to_thread(
+                                main,
+                                [
+                                    str(layout.source_path),
+                                    "steer",
+                                    "-i",
+                                    instance_id,
+                                    handle.run_id,
+                                    "Continue carefully",
+                                ],
+                            )
+                            == 0
                         )
+                        assert (
+                            await asyncio.to_thread(
+                                main,
+                                [
+                                    str(layout.source_path),
+                                    "cancel",
+                                    "-i",
+                                    instance_id,
+                                    handle.run_id,
+                                ],
+                            )
+                            == 0
+                        )
+                        accepted = await http.get("/api/v0/profile")
                         assert accepted.status_code == 200
                     result = await handle
                     assert result.status == "canceled"

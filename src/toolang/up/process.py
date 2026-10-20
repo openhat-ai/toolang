@@ -260,24 +260,42 @@ class AgentProcess:
             elif report.get("status") in {"preparing", "starting", "running"}:
                 entry = observed
                 operation = (entry or {}).get("control", {}).get("operation")
+                native = (entry or {}).get("control", {}).get(
+                    "sandbox", "host"
+                ) == "host"
+                alive = (
+                    process_alive(report.get("pid"), report.get("process_created"))
+                    if native
+                    else None
+                )
                 if (
                     operation is not None
                     and process_alive(operation.get("pid"), operation.get("created"))
                     is not False
+                    and alive is not True
                 ):
                     status = "preparing"
-                elif (entry or {}).get("control", {}).get("sandbox", "host") != "host":
+                elif not native:
                     # A guest PID has no meaning in this host namespace. Without
                     # its resource reference there is no valid liveness probe.
                     status = "unknown"
                 else:
-                    alive = process_alive(
-                        report.get("pid"), report.get("process_created")
-                    )
                     if alive is False:
                         self.reconcile(entry)
                     elif alive is True:
                         status = str(report.get("status"))
+                        live_endpoint = report.get("endpoint")
+                        if (
+                            report.get("api_version") is not None
+                            and isinstance(live_endpoint, str)
+                            and live_endpoint.strip()
+                        ):
+                            endpoint = live_endpoint.strip()
+                            sandbox = "host"
+                            if check_health and not _health_ready(
+                                f"{endpoint}/healthz"
+                            ):
+                                status = "starting"
                     else:
                         status = "unknown"
             elif report.get("status") == "failed":

@@ -129,11 +129,7 @@ def acquire_agent_server(
                             )
                         )
                     raise
-                if (
-                    not temporary
-                    and layout.placement in {"resident", "visiting"}
-                    and selected_server is not None
-                ):
+                if not temporary and selected_server is not None:
                     try:
                         selected_server, lease = _retain_server(selected_server)
                     except ServerClosingError:
@@ -323,6 +319,8 @@ def _prepare_agent_server(
         and layout.instance_id is not None
         and "startup_contract" not in entry.get("control", {})
         and entry.get("control", {}).get("ref") is None
+        and entry.get("workload", {}).get("status") == "preparing"
+        and not attach_only
     ):
         status = None  # Published identity, before the first workload is launched.
     if status is not None and status.status in {"preparing", "starting"}:

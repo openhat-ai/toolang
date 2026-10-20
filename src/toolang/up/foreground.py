@@ -9,6 +9,7 @@ import uvicorn
 
 from toolang.api.app import create_app
 from toolang.catalog import CapsManager, ChoresManager
+from toolang.plugin.sandboxes.host import host_sandbox_description
 from .core import AgentCore
 from .instance import patch_workload
 from .observation import RuntimeRegistration
@@ -48,6 +49,8 @@ async def foreground_api(
                 registration.token,
                 {
                     "endpoint": endpoint,
+                    "sandbox": "host",
+                    "sandbox_description": host_sandbox_description(),
                     "api_version": 0,
                     "lifetime": "foreground",
                     "resource_counts": core.resource_counts(),
