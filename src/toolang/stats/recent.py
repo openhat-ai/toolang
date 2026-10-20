@@ -35,6 +35,7 @@ def _root_node(row: sqlite3.Row) -> RunNode:
         usage=report.usage if report else None,
         cost=report.cost if report else None,
         cost_approximate=report.cost_approximate if report else False,
+        thread_id=row["thread"],
     )
 
 

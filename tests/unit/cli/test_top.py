@@ -221,6 +221,7 @@ def test_expansion_folding_parallel_boundaries_and_lifetime_identity():
         "openai/gpt-5",
     ]
     assert all(row.root == ROOT for row in rows)
+    assert all(row.thread == "chat_top" for row in rows)
     assert "openai" not in rows[0].status
     view.selected = rows[2].key
     view.left()
@@ -518,7 +519,7 @@ def test_active_root_marker_stays_lightweight_when_expanded_folded_or_listed():
 
     def statuses():
         lines = view.render(snapshot, width=140, height=25).plain.splitlines()
-        start = next(line.index("STATUS") for line in lines if "AGENT RUN" in line)
+        start = next(line.index("STATUS") for line in lines if "AGENT THREAD" in line)
         return [
             line[start:].rstrip()
             for line in lines
@@ -538,7 +539,7 @@ def test_htop_header_selection_and_bottom_bars_cover_the_terminal_width():
     lines = view.render(snapshot, width=160, height=35).split("\n")
     console = Console()
     assert len(lines) == 35 and all(line.cell_len == 160 for line in lines)
-    headings = next(line for line in lines if "AGENT RUN" in line.plain)
+    headings = next(line for line in lines if "AGENT THREAD" in line.plain)
     selected = next(line for line in lines if "+ flow:review" in line.plain)
     for index in range(160):
         heading = headings.get_style_at_offset(console, index)
@@ -620,6 +621,52 @@ def test_large_call_counts_keep_numeric_and_status_columns_aligned():
     parent = next(line for line in lines if "flow:review" in line)
     child = next(line for line in lines if "└─" in line)
     assert parent.index("flow:review") == child.index("└─")
+
+
+@pytest.mark.parametrize("width", [40, 80, 100, 140, 200])
+@pytest.mark.parametrize("list_mode", [False, True])
+@pytest.mark.parametrize("height", [None, 25])
+def test_thread_column_keeps_root_ownership_and_cell_alignment(
+    width, list_mode, height
+):
+    thread = "chat_工具e\u0301"
+    done = root(
+        id="run_done", status="succeeded", finished_at=AT, thread_id="chat_done"
+    )
+    snapshot = frame((root(thread_id="ignored"), step()), completed=(done,))
+    source = snapshot.sources[0]
+    source.live = replace(
+        source.live,
+        trees=(
+            replace(source.live.trees[0], thread_id=thread),
+            LiveTreeSnapshot("run_other", "chat_other", (root(id="run_other"),)),
+        ),
+    )
+    view = TopView(list_mode=list_mode)
+    lines = view.render(snapshot, width=width, height=height).plain.splitlines()
+    heading = next(line for line in lines if line.startswith("AGENT "))
+    assert heading.split()[:3] == ["AGENT", "THREAD", "RUN"]
+    expected = {ROOT: thread, "run_other": "chat_other", "run_done": "chat_done"}
+    rows = [line for line in lines if line.startswith("alice ")]
+    assert len(rows) == (3 if list_mode else 4)
+    for line, row in zip(rows, view.rows, strict=True):
+        assert row.thread == expected[row.root]
+        assert line.split()[:3] == ["alice", row.thread, row.root]
+        assert cell_len(line[: line.index(row.thread)]) == heading.index("THREAD")
+        assert cell_len(line[: line.index(row.root)]) == heading.index("RUN")
+    assert all(cell_len(line) == width for line in lines)
+
+
+def test_completed_thread_missing_from_older_snapshot_is_unknown():
+    snapshot = frame(completed=(root(status="succeeded", finished_at=AT),))
+    data = json.loads(snapshot.model_dump_json())
+    data["sources"][0]["completed"]["roots"][0].pop("thread_id")
+    restored = TopSnapshot.model_validate(data)
+    view = TopView()
+    lines = view.render(restored, width=140).plain.splitlines()
+    row = next(line for line in lines if ROOT in line)
+    assert row.split()[:3] == ["alice", "-", ROOT]
+    assert view.rows[0].thread is None
 
 
 def sorting_frame():
@@ -729,6 +776,8 @@ def test_sort_picker_and_mouse_hit_targets_follow_rendered_rows_and_columns():
     header_y = next(
         i for i, line in enumerate(lines) if "AGENT" in line and "STATUS" in line
     )
+    view.click(lines[header_y].index("THREAD"), header_y)
+    assert view.sort_field is None
     view.click(lines[header_y].index("MODEL"), header_y)
     assert view.sort_field == "MODEL" and view.sort_descending
     lines = view.render(snapshot, width=160, height=20).plain.splitlines()
@@ -891,8 +940,9 @@ def test_non_tty_json_empty_scope_and_refresh_validation(tmp_path):
         assert result.exit_code == 2
 
 
+@pytest.mark.parametrize("output", [None, "--once", "--json"])
 def test_resident_prefix_recovers_offline_completion_without_starting_runtime(
-    tmp_path, capsys
+    tmp_path, capsys, output
 ):
     import toolang.cli.toolang.main as cli
 
@@ -914,13 +964,23 @@ def test_resident_prefix_recovers_offline_completion_without_starting_runtime(
     from unittest.mock import patch
 
     with patch("toolang.up.top.time.time", return_value=NOW):
-        assert cli.main(["--root", str(tmp_path), "alice", "top", "--json"]) == 0
-    data = json.loads(capsys.readouterr().out)
-    assert data["agent"] == "alice" and data["summary"]["resident"] == 1
-    assert data["summary"]["active"] == 0
-    assert data["summary"]["completed"]["total"] == 1
-    assert len(data["sources"]) == 1
-    assert data["sources"][0]["completed"]["roots"][0]["id"] == "run_alice"
+        args = ["--root", str(tmp_path), "alice", "top"]
+        assert cli.main(args + ([output] if output else [])) == 0
+    text = capsys.readouterr().out
+    if output == "--json":
+        data = json.loads(text)
+        assert data["agent"] == "alice" and data["summary"]["resident"] == 1
+        assert data["summary"]["active"] == 0
+        assert data["summary"]["completed"]["total"] == 1
+        assert len(data["sources"]) == 1
+        completed = data["sources"][0]["completed"]["roots"][0]
+        assert completed["id"] == "run_alice" and completed["thread_id"] == "chat_top"
+    else:
+        heading = next(line for line in text.splitlines() if "AGENT" in line)
+        row = next(line for line in text.splitlines() if "run_alice" in line)
+        assert heading.split()[:3] == ["AGENT", "THREAD", "RUN"]
+        assert row.split()[:3] == ["alice", "chat_top", "run_alice"]
+        assert "run_bob" not in text
     assert not list(tmp_path.rglob("stats.db"))
     assert not list(tmp_path.rglob("status.json"))
 

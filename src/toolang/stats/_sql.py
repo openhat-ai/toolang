@@ -62,7 +62,7 @@ ORDER BY finished_at DESC,id LIMIT :limit;
 """
 
 RECENT_ROOTS_BY_IDS = """
-SELECT id,status,created_at,started_at,finished_at,report FROM src.runs
+SELECT id,thread,status,created_at,started_at,finished_at,report FROM src.runs
 WHERE id IN (SELECT value FROM json_each(:ids_json)) AND parent IS NULL
   AND status IN ('succeeded','failed','canceled') AND finished_at IS NOT NULL
   AND finished_at >= :lo_text AND finished_at <= :hi_text;

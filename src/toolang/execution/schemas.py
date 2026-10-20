@@ -100,6 +100,7 @@ class RunNode:
     usage: TokenUsage | None = None
     cost: float | None = None
     cost_approximate: bool = False
+    thread_id: str | None = field(default=None, kw_only=True)
     type: Literal["run"] = field(default="run", kw_only=True)
 
 

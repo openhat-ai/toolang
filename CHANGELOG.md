@@ -9,6 +9,10 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Changed
 
+- `too top` and `too AGENT top` show a THREAD column between AGENT and RUN
+  in live trees, lists, snapshots, and recent completions.
+  ([#869](https://github.com/openhat-ai/toolang/pull/869))
+
 - **Breaking:** reducer initializers use `initial:` instead of `from:` in both
   named and inline reducers. Replace each `from:` clause with `initial:`,
   because an inline `from:` line is now literal text.
