@@ -9,11 +9,21 @@ from toolang.cli.toolang.commands.chat.base import ThreadTitle
 from toolang.cli.toolang.commands.chat.title import ChatTitle, chat_label
 
 
-def test_chat_label_bounds_agent_and_keeps_fallback() -> None:
-    assert chat_label("alice") == "alice"
-    assert chat_label("alice", " a\n topic ") == "alice: a topic"
-    assert chat_label("x" * 20, "topic") == "x" * 11 + "…: topic"
-    assert chat_label("\x07") == "agent"
+@pytest.mark.parametrize(
+    "agent,title,expected",
+    [
+        ("gus", "", "gus>"),
+        ("gus", "hello world", "gus> hello world"),
+        ("alice", " a\n topic ", "alice> a topic"),
+        ("alice", " \n\x07 ", "alice>"),
+        ("x" * 20, "topic", "x" * 11 + "…> topic"),
+        ("\x07", "", "agent>"),
+    ],
+)
+def test_chat_label_marks_input_and_preserves_normalization(
+    agent: str, title: str, expected: str
+) -> None:
+    assert chat_label(agent, title) == expected
 
 
 @pytest.mark.parametrize("failed", [None, "", "\x07\x1b", RuntimeError("offline")])
@@ -41,10 +51,10 @@ def test_lookup_failure_retries_at_normal_event(failed) -> None:
     )
     title.start("term_x")
     title.accept(results.get(timeout=5))
-    assert labels == ["alice"]
+    assert labels == ["alice>"]
     title.refresh()
     title.accept(results.get(timeout=5))
-    assert labels == ["alice", "alice: ready"]
+    assert labels == ["alice>", "alice> ready"]
     title.refresh()
     assert results.empty()
     title.clear()
@@ -82,7 +92,7 @@ def test_pending_and_obsolete_results() -> None:
         released.set()
         title.accept(results.get(timeout=5))
         old = results.get(timeout=5)
-        assert labels == ["alice"]
+        assert labels == ["alice>"]
         labels.clear()
         title.set_thread("term_y")
         title.set_thread("term_x")
@@ -119,7 +129,7 @@ def test_failed_publication_retries_and_disabled_lookup_is_silent() -> None:
     for _ in range(2):
         title.refresh()
         title.accept(results.get(timeout=5))
-    assert writes == ["bob: topic", "bob: topic"]
+    assert writes == ["bob> topic", "bob> topic"]
     title.clear()
 
     def forbidden(*_args):
@@ -159,5 +169,5 @@ def test_lookup_worker_start_failure_retries_at_next_normal_event(monkeypatch):
     assert not labels and results.empty()
     title.refresh()
     title.accept(results.get(timeout=5))
-    assert labels == ["alice: topic"]
+    assert labels == ["alice> topic"]
     title.clear()

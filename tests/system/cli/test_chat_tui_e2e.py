@@ -106,7 +106,7 @@ def test_chat_tui_runs_one_local_exchange_in_a_pseudo_terminal(
             "agic:chat",
             "scripted",
         )
-        session.wait_for_bytes(b"\x1b]0;alice\x07")
+        session.wait_for_bytes(b"\x1b]0;alice>\x07")
         session.send(b"hello from user")
         session.wait_for("hello from user")
         session.send(b"\x1b[O\x1b[I" * 3)
@@ -120,7 +120,7 @@ def test_chat_tui_runs_one_local_exchange_in_a_pseudo_terminal(
         assert "run_" in output
         assert "Traceback" not in output
         assert "[O[I" not in output
-        session.wait_for_bytes(b"\x1b]0;alice: hello from user\x07")
+        session.wait_for_bytes(b"\x1b]0;alice> hello from user\x07")
 
         exit_started = time.monotonic()
         session.send(b"\x04")
@@ -148,7 +148,7 @@ def test_chat_tui_runs_one_remote_exchange_in_a_pseudo_terminal(
         assert "embedded" not in banner
         assert "Toolang Chat" not in banner
         assert "http://runtime.test:7001" not in banner
-        session.wait_for_bytes(b"\x1b]0;alice\x07")
+        session.wait_for_bytes(b"\x1b]0;alice>\x07")
 
         session.send(b"hello remote\r")
         output = session.wait_for(
@@ -158,7 +158,7 @@ def test_chat_tui_runs_one_remote_exchange_in_a_pseudo_terminal(
         )
         assert "run_" in output
         assert "Traceback" not in output
-        session.wait_for_bytes(b"\x1b]0;alice: hello remote\x07")
+        session.wait_for_bytes(b"\x1b]0;alice> hello remote\x07")
 
         session.send(b"\x04")
         assert session.wait_for_exit() == 0, session.output

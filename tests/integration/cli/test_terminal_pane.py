@@ -45,10 +45,11 @@ def wait_for(check):
 @pytest.mark.parametrize(
     "kind,label,agent",
     [
-        ("chat", "alice: topic", "alice"),
+        ("chat", "alice>", "alice"),
+        ("chat", "alice> topic", "alice"),
         ("talk", "#dev", ""),
-        ("top", "top alice", "alice"),
-        ("top", "top team", ""),
+        ("top", "alice top", "alice"),
+        ("top", "top", ""),
         ("serve", "serve alice", "alice"),
         ("serve", "serve hub", ""),
         ("run", "run file.too build", "file"),

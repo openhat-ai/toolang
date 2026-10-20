@@ -57,7 +57,7 @@ def top(
                 "top",
                 root=root,
                 layout=context_layout(ctx) if agent else None,
-                label=f"top {agent}" if agent else "top team",
+                label=f"{agent} top" if agent else "top",
                 context="" if agent else str(root.resolve()),
             ):
                 run_top(observer, view)

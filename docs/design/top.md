@@ -70,7 +70,7 @@ across the whole row, including when selected. Active roots have a leading `+` w
 collapsed. Child rows retain tree branches, and finished roots show only their
 state. The physical cursor stays hidden.
 
-Interactive OSC titles are `top team` or `top AGENT`, using the existing
+Interactive OSC titles are `top` or `AGENT top`, using the existing
 `terminal.title.prefix.top` and `TOOLANG_TITLE_PREFIX_TOP` settings. Top publishes
 its pane identity through the same terminal session and clears both publishers
 on exit. Snapshot and JSON output do not publish titles or pane identity.

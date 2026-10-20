@@ -13,7 +13,7 @@ from .base import ThreadTitle
 def chat_label(agent: str, title: str = "") -> str:
     name = clip_title(agent_label(agent), width=12)
     topic = label_text(title)
-    return f"{name}: {topic}" if topic else name
+    return f"{name}> {topic}" if topic else f"{name}>"
 
 
 class ChatTitle:
