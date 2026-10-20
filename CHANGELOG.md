@@ -7,6 +7,14 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ## [Unreleased]
 
+## [0.4.0a11] - 2026-10-20
+
+### Fixed
+
+- Fresh macOS installs of `0.4.0a10` failed because mstache `0.4.0` produced
+  prerelease metadata that uv rejected; releases now require mstache below
+  `0.4`.
+
 ## [0.4.0a10] - 2026-10-20
 
 ### Changed
@@ -2437,7 +2445,8 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 - The formatter normalizes `exec` statements consistently with other flow
   statements. (#676)
 
-[Unreleased]: https://github.com/openhat-ai/toolang/compare/v0.4.0a10...HEAD
+[Unreleased]: https://github.com/openhat-ai/toolang/compare/v0.4.0a11...HEAD
+[0.4.0a11]: https://github.com/openhat-ai/toolang/compare/v0.4.0a10...v0.4.0a11
 [0.4.0a10]: https://github.com/openhat-ai/toolang/compare/v0.4.0a9...v0.4.0a10
 [0.4.0a9]: https://github.com/openhat-ai/toolang/compare/v0.4.0a8...v0.4.0a9
 [0.4.0a8]: https://github.com/openhat-ai/toolang/compare/v0.4.0a7...v0.4.0a8
