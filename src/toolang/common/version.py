@@ -119,10 +119,11 @@ def repository_source_version(source_root: Path) -> str | None:
 
     from dulwich import porcelain
     from dulwich.errors import NotGitRepository, ObjectMissing
-    from dulwich.repo import Repo
+
+    from ._version_repo import VersionRepo
 
     try:
-        with Repo.discover(source_root) as repository:
+        with VersionRepo.discover(source_root) as repository:
             source_version = porcelain.describe(repository, abbrev=8)
             status = porcelain.status(repository, untracked_files="no")
             if any(status.staged.values()) or status.unstaged:

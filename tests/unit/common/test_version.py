@@ -8,6 +8,9 @@ from types import SimpleNamespace
 
 import pytest
 from dulwich import porcelain
+from dulwich.objects import ObjectID
+from dulwich.refs import Ref
+from dulwich.repo import Repo
 
 import toolang.common.version as version
 
@@ -179,6 +182,28 @@ def test_repository_source_version_uses_tags_and_tracked_dirty_state(
 
     tracked.write_text("dirty\n", encoding="utf-8")
     assert version.repository_source_version(tmp_path) == "v0.3.0*"
+
+
+def test_repository_source_version_does_not_read_unrelated_ref_objects(
+    tmp_path: Path,
+) -> None:
+    with Repo.init(tmp_path) as repository:
+        porcelain.commit(
+            repository,
+            message=b"Initial commit",
+            author=b"Test Author <test@example.com>",
+            committer=b"Test Author <test@example.com>",
+            sign=False,
+            no_verify=True,
+        )
+        porcelain.tag_create(repository, "v0.3.0")
+        # Non-tag refs do not participate in describing HEAD, even when their
+        # objects are unavailable locally.
+        repository.refs[Ref(b"refs/remotes/origin/unrelated")] = ObjectID(b"1" * 40)
+        repository.refs[Ref(b"refs/heads/tags-in-a-branch-name")] = ObjectID(b"2" * 40)
+        repository.refs[Ref(b"refs/codex/unrelated")] = ObjectID(b"3" * 40)
+
+    assert version.repository_source_version(tmp_path) == "v0.3.0"
 
 
 def test_development_source_reads_editable_distribution_metadata(
