@@ -46,6 +46,10 @@ class RecentReader(SourceReader):
         self.connection.execute("BEGIN")
         self.connection.execute(sql.PIN_SOURCE).fetchall()
 
+    def has_unfinished_roots(self) -> bool:
+        """Check physical roots independently of the Recent completion window."""
+        return self.connection.execute(sql.UNFINISHED_ROOT).fetchone() is not None
+
     def usage(self, *, now: int, period: int) -> RecentUsage:
         if not 0 < period <= 8 * 3600:
             raise ValueError("period must be between 1 and 28800 seconds")

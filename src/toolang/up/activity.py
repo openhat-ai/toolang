@@ -24,6 +24,7 @@ def activity_snapshot(
     before: tuple[str, str] | None = None,
     completed_at: int | None = None,
     known_roots: tuple[str, ...] = (),
+    check_idle: bool = False,
     cancelled: Callable[[], bool] | None = None,
 ) -> ActivitySnapshot:
     with recent_source(source, cancelled=cancelled) as reader:
@@ -52,4 +53,5 @@ def activity_snapshot(
                 identity for identity in known_roots if identity not in present
             ),
         )
-    return ActivitySnapshot(live=live, completed=completed, retired=retired)
+        idle = check_idle and not reader.has_unfinished_roots()
+    return ActivitySnapshot(live=live, completed=completed, retired=retired, idle=idle)

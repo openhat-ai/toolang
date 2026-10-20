@@ -236,6 +236,15 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   indentation no longer detaches member documentation or hides it from the
   formatter.
 
+- `too top` reports zero active roots for embedded instances whose pinned local
+  store has no unfinished physical root, while unfinished or unreadable data
+  keeps counts unknown.
+  ([#872](https://github.com/openhat-ai/toolang/pull/872))
+
+- `too top` uses fixed `▵` and `▿` sort markers, so heading labels and
+  numeric columns keep their positions when sorting changes.
+  ([#872](https://github.com/openhat-ai/toolang/pull/872))
+
 ## [0.4.0a9] - 2026-10-18
 
 ### Added
