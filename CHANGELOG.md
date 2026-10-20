@@ -81,6 +81,11 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   can select, not a stuck preparing owner.
   ([#884](https://github.com/openhat-ai/toolang/pull/884))
 
+- Chat and `start` promotion retain the running executor's drivers when
+  `--enable` is omitted, while explicit differences still reject before
+  preparation.
+  ([#884](https://github.com/openhat-ai/toolang/pull/884))
+
 ### Security
 
 - The locked certifi trust store advances to 2026.10.19, resolving trust-store
