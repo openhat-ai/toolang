@@ -249,6 +249,9 @@ sort     sort all items by score in the required ascending or descending order
 repeat   repeat a statement block, optionally bounded by N or until
 ```
 
+The current executor has no human or agent execution bridge for `ask` and
+`seek`: both parse, but execution reports a bridge-required error.
+
 All value statements bind their complete result once. `run` calls once with the
 whole input. `generate N` returns N complete results in an outer array; `map`
 returns one complete result per outer input item. Neither flattens array results.
@@ -269,8 +272,12 @@ returns one complete result per outer input item. Neither flattens array results
   An implicit run may continue across one blank line; two blank lines or a
   structural comment end it.
 - The first complete token of every implicit prose line is checked for
-  lowercase keywords, including continuations. `sort these items` is invalid
-  syntax; `Sort these items.` is prose. `sorter` is not the keyword `sort`.
+  active lowercase boundary keywords, including continuations. `sort these items`
+  is invalid syntax; `Sort these items.` is prose. `sorter` is not the keyword `sort`.
+- Inactive spellings such as `think`, `use`, `thunk`, `rank`, `par`, `top`, and
+  `bottom` are ordinary names or prose, without operation aliases. Replace
+  intended `scatter`/`gather`, `storm`, and `settle` operations with `run`,
+  `generate`, and `reduce`, respectively.
 - Explicit bodies such as `run:`, `map:`, and `until:` preserve literal
   keywords, Markdown, and relative text indentation until the body dedents.
   Text margins use the same eight-column tab stops as parsing. Lowering removes
@@ -314,12 +321,13 @@ returns one complete result per outer input item. Neither flattens array results
   named parameters default to `Text`; `_` defaults to `Part[]`.
   Map/keep/drop/sort/reduce require `_` in the child's signature or inline
   body. Run/generate permit its omission.
-- `ask` evaluates its `Content` for the human owner and returns the owner's
+- With a human bridge, `ask` evaluates its `Content` and returns the owner's
   canonical `Part[]`.
 - A direct `let NAME = BODY` evaluates its `Content` as one `Part[]` local
   with language type `Part[]`, without starting a child run.
 - Inline `keep`, `drop`, and `until` bodies default to `Boolean`; inline
-  `sort` defaults to `Number`. An explicit incompatible return type is rejected.
+  `sort` defaults to `Number`. Keep/drop/sort reject incompatible return
+  annotations; `until` accepts no return annotation, including `-> Boolean`.
 - Named filters and repeat conditions must declare `Boolean`; named scorers
   must declare `Number`. Named conditions accept a bare runnable name, without
   kind/module qualification, arguments, modifiers, or a colon body.
@@ -344,9 +352,7 @@ returns one complete result per outer input item. Neither flattens array results
 | `reduce` without an initializer | A nonempty outer array | Rejects empty input; one item is returned as the seed | N - 1 |
 | `reduce` with an initializer | An outer array | Returns the initializer coerced to the reducer output type | N |
 
-The initializer is stored as `initial` in the AST. The currently published
-grammar still spells the source clause `from:`; the approved rename to
-`initial:` will be introduced with a separate grammar update.
+The source clause is `from:`; the AST stores its Content as `initial`.
 
 Here `U` is the child output type. Zero-call generation, mapping, predicate
 selection, sorting, and initialized reduction still validate the target, its
@@ -372,8 +378,8 @@ are clipped: keep retains everything and drop removes everything.
 - `run RUNNABLE` resolves in the current program. Inline `run` creates an
   inline agic.
 - Bare `TEXT` is shorthand for inline `run` and starts the same child run.
-- `seek AGENT RUNNABLE` resolves in the target agent's program. Inline `seek`
-  sends its body to the target agent.
+- With an agent bridge, `seek AGENT RUNNABLE` resolves in that agent's program.
+  Inline `seek` sends its body to the target agent.
 - `run` calls once, including for empty or nested arrays, and retains the
   complete output type.
 - `generate` starts `N` independent child runs and preserves result order.
@@ -486,14 +492,3 @@ flow research(_, topic) -> Report:
 
   run publish
 ```
-
-
-## Reserved Words
-
-- `think` is reserved for a statically defined model step.
-- `use` is reserved for a statically defined tool step.
-- `thunk` is reserved.
-- Removed `rank`, `par`, `top`, and `bottom` forms are rejected at Flow
-  statement boundaries; they are not compatibility aliases.
-
-The syntax of `think`, `use`, and `thunk` remains undefined.

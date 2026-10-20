@@ -113,6 +113,55 @@ def test_contextual_names_do_not_change_text_or_structure(name):
         assert statement.binding == name and statement.value == "Keep # literal."
 
 
+@pytest.mark.parametrize(
+    "word",
+    [
+        "scatter",
+        "gather",
+        "storm",
+        "settle",
+        "rank",
+        "par",
+        "top",
+        "bottom",
+        "think",
+        "use",
+        "thunk",
+        "call",
+        "do",
+        "unfold",
+        "each",
+        "fold",
+        "head",
+        "tail",
+    ],
+)
+@pytest.mark.parametrize("position", ["statement", "continuation", "binding"])
+def test_inactive_words_remain_prose_and_contextual_names(word, position):
+    prose = f"{word} is ordinary prose."
+    body = {
+        "statement": f"  {prose}\n",
+        "continuation": f"  First line.\n  {prose}\n",
+        "binding": f"  let {word} = {prose}\n",
+    }[position]
+    source = f"flow work({word}: Text):\n{body}"
+    for candidate in (source, format_source(source)):
+        program = Program.from_source(candidate)
+        flow = program.flows[0]
+        assert flow.params[0].name == word
+        assert len(flow.stmts) == 1
+        statement = flow.stmts[0]
+        if position == "binding":
+            assert isinstance(statement, LetStmt)
+            assert statement.binding == word and statement.value == prose
+        else:
+            target = program.find_agic(getattr(statement, "runnable"))
+            assert target is not None
+            assert target.messages[0].content == (
+                f"First line.\n{prose}" if position == "continuation" else prose
+            )
+
+
 def test_program_documentation_and_first_member_ownership():
     source = "#@ Program.\n## Work.\n## @param sort Input.\nflow work(sort: Text):\n  ## First.\n  run: {{sort}}\n  ## Second.\n  run: Done.\n"
     tree = cst.parse(source.encode())

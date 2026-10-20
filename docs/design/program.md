@@ -185,8 +185,7 @@ agic pay:
   Help with the requested wallet funding task.
 ```
 
-The old top-level `use` spelling is not part of this syntax. `use` is reserved
-for a future static tool-call statement.
+Use `with` for cap references. The old top-level `use` form is not accepted.
 
 
 ## Inline Caps

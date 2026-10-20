@@ -99,6 +99,8 @@ def test_repeat_without_condition(count):
         "until agic:ready\n    let value = Body.",
         "until checks::ready\n    let value = Body.",
         "let result = until ready\n    let value = Body.",
+        "until -> Boolean: Done.\n    let value = Body.",
+        "until -> Text: Done.\n    let value = Body.",
     ],
 )
 def test_invalid_repeat_forms_are_rejected(body):
