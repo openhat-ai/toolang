@@ -7,6 +7,13 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ## [Unreleased]
 
+### Added
+
+- `too top` shows host scripts run by `too FILE.too`, including quiet and
+  saved-output runs, reporting their active roots and live rows beside
+  resident agents.
+  ([#882](https://github.com/openhat-ai/toolang/pull/882))
+
 ## [0.4.0a11] - 2026-10-20
 
 ### Fixed
