@@ -7,6 +7,53 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ## [Unreleased]
 
+### Added
+
+- Roaming scripts, Chat, and serve launches each keep a fresh executor and a
+  retained `<source_dir>/.toolang/<agent>@<instance_id>/` root, while
+  `--instance/-i` selects retained history instead of restarting an old root.
+  ([#884](https://github.com/openhat-ai/toolang/pull/884))
+
+- Host scripts expose the full shared Agent API on their existing event loop,
+  restoring Top live activity and generation-fenced controls.
+  ([#884](https://github.com/openhat-ai/toolang/pull/884))
+
+- Roaming reruns and explicit Chat continuations snapshot SQLite into fresh
+  roots, keeping imported history inspectable without duplicate activity,
+  usage, or replayed events.
+  ([#884](https://github.com/openhat-ai/toolang/pull/884))
+
+### Changed
+
+- **Breaking:** Stop every running agent with `too AGENT stop` or Ctrl+C before
+  upgrading or rolling back, because instance layouts and RunStore schema 63
+  are incompatible with older releases.
+  ([#884](https://github.com/openhat-ai/toolang/pull/884))
+
+- **Breaking:** Visiting roots move from `/tmp/toolang-<agent>-<source_id>` to
+  `/tmp/<agent>@v<source_id>`, and legacy directories stay in place for you to
+  retain separately.
+  ([#884](https://github.com/openhat-ai/toolang/pull/884))
+
+- **Breaking:** Legacy roaming shared and nested histories stay put without an
+  automatic migrator, so retain them separately and start fresh roots under
+  `<source_dir>/.toolang/<agent>@<instance_id>/`.
+  ([#884](https://github.com/openhat-ai/toolang/pull/884))
+
+- **Breaking:** Resident and visiting launches with different effective options,
+  including `--enable`, now fail before preparation instead of joining the
+  existing root; align those options or run `too AGENT stop` first.
+  ([#884](https://github.com/openhat-ai/toolang/pull/884))
+
+- Resident ports reuse their previous value only when available, otherwise
+  7002-7999; visiting ports reuse theirs only when available, otherwise an
+  OS-assigned port; roaming launches get a fresh OS-assigned port.
+  ([#884](https://github.com/openhat-ai/toolang/pull/884))
+
+- OpenAPI documents name the former `top` group `activity`, while HTTP paths
+  and contracts stay unchanged.
+  ([#884](https://github.com/openhat-ai/toolang/pull/884))
+
 ## [0.4.0a11] - 2026-10-20
 
 ### Fixed
