@@ -15,6 +15,7 @@ from toolang.common.layout import AgentLayout
 from ...common.context import (
     cli_context,
     context_layout,
+    prepare_agent,
     require_prefix_agent,
     user_call,
 )
@@ -75,6 +76,7 @@ def add_workspace(
     ] = None,
 ) -> None:
     require_prefix_agent(ctx)
+    prepare_agent(ctx)
     configured = ConfiguredWorkspaces(
         _authored_config(context_layout(ctx)),
         lock_path=_workspace_edit_lock(context_layout(ctx)),
@@ -87,9 +89,13 @@ def add_workspace(
 def list_workspaces(ctx: typer.Context) -> None:
     require_prefix_agent(ctx)
     layout = context_layout(ctx)
+    if layout.placement == "visiting":
+        layout = prepare_agent(ctx)
     if layout.placement == "roaming":
         source = cli_context(ctx).source
         assert source is not None
+        if not source.is_file():
+            raise FileNotFoundError(f"agent program not found: {source}")
         config_path = source.parent / "toolang.toml"
     else:
         config_path = layout.config
@@ -131,6 +137,7 @@ def remove_workspace(
     ],
 ) -> None:
     require_prefix_agent(ctx)
+    prepare_agent(ctx)
     configured = ConfiguredWorkspaces(
         _authored_config(context_layout(ctx)),
         lock_path=_workspace_edit_lock(context_layout(ctx)),

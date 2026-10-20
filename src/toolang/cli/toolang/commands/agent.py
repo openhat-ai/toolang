@@ -33,6 +33,7 @@ from ...common.errors import RuntimeClientError
 from ...common.context import (
     ModelCatalogOption,
     cli_context,
+    context_layout,
     context_root,
     require_runtime_agent,
     resolve_model_catalog_option,
@@ -138,6 +139,10 @@ def remove_agent(
     from toolang.up import sandbox as sandbox_runtime
 
     root = context_root(ctx)
+    agent = require_runtime_agent(ctx, agent)
+    selected = cli_context(ctx).layout
+    if selected is not None and selected.placement != "resident":
+        raise typer.BadParameter("remove requires a resident agent", param_hint="AGENT")
     layout = AgentLayout.resident(root, agent)
     try:
         user_call(asyncio.run, sandbox_runtime.remove_agent(layout))
@@ -171,15 +176,20 @@ def list_agents(ctx: typer.Context) -> None:
 
 def info_agent(
     ctx: typer.Context,
-    agent: str | None = typer.Argument(
-        None,
-        help="Agent name, .too path, GitHub ref, or URL",
-        hidden=True,
-    ),
+    agent: Annotated[
+        str,
+        typer.Argument(
+            metavar="AGENT", help="Agent name, .too path, GitHub ref, or URL"
+        ),
+    ],
     model_catalog: ModelCatalogOption = None,
 ) -> None:
     agent_name = require_runtime_agent(ctx, agent)
-    selected_layout = cli_context(ctx).layout
+    selected_layout = (
+        context_layout(ctx)
+        if cli_context(ctx).source is not None
+        else cli_context(ctx).layout
+    )
     layout = selected_layout or AgentLayout.resident(context_root(ctx), agent_name)
     agent_name = layout.name
     process = agents.AgentProcess(layout)
@@ -209,7 +219,9 @@ def info_agent(
             toolang_root=context_root(ctx),
             model_catalog=resolve_model_catalog_option(model_catalog),
             source=cli_context(ctx).source,
-            selector=agent if layout.placement == "visiting" else None,
+            selector=cli_context(ctx).selector
+            if layout.placement == "visiting"
+            else None,
         )
         if status is None:
             status = user_call(process.status, ui_base_url=ui_base_url())

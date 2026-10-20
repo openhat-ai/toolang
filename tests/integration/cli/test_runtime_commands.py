@@ -923,8 +923,8 @@ def test_dev_selects_a_wheel_from_the_invocation_directory(
             [
                 "--root",
                 str(layout.root),
-                "alice",
                 command,
+                "alice",
                 "--sandbox",
                 "docker",
                 *options,
@@ -957,8 +957,8 @@ def test_bare_dev_preserves_host_and_missing_wheel_errors(
             [
                 "--root",
                 str(layout.root),
-                "alice",
                 command,
+                "alice",
                 "--sandbox",
                 sandbox,
                 "--dev",

@@ -91,7 +91,7 @@ settings. The cached
 remote `agent.too` is refetched after one hour. Its source-owned
 `agent.source.json` cache receipt records the acquired ref and byte digest;
 State captures the same Program and provenance. Roaming agents use the source
-file's sibling `.toolang` directory. `too file.too serve` hosts the workload;
+file's sibling `.toolang` directory. `too serve file.too` hosts the workload;
 ordinary host script invocation executes directly without a persistent server.
 Visiting idle shutdown stops its server and automatic Docker container, preserving
 this root and its history. Host control/stage files can be cleaned by the next

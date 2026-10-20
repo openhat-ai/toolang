@@ -72,9 +72,8 @@ def test_model_summary_counts_effective_setup_resources(
 
 @pytest.mark.parametrize("sandbox", ["host", "docker:python:3.13-slim"])
 @pytest.mark.parametrize("placement", ["resident", "roaming", "visiting"])
-@pytest.mark.parametrize("target_first", [False, True])
 def test_running_info_uses_runtime_resources_without_loading_local_sources(
-    tmp_path, monkeypatch, capsys, sandbox, placement, target_first
+    tmp_path, monkeypatch, capsys, sandbox, placement
 ):
 
     monkeypatch.setenv("HOME", str(tmp_path))
@@ -107,7 +106,8 @@ def test_running_info_uses_runtime_resources_without_loading_local_sources(
         )
     arguments = [
         *global_args,
-        *([selector, "info"] if target_first else ["info", selector]),
+        "info",
+        selector,
     ]
     layout.home.mkdir(parents=True)
     if placement == "roaming":
@@ -210,14 +210,13 @@ def test_running_info_formats_driver_metadata(
     monkeypatch.setattr(AgentProcess, "state", lambda _self: metadata)
     monkeypatch.setattr(agent, "_running_resources", lambda *_args, **_kwargs: [])
 
-    assert main(["--root", str(tmp_path), "alice", "info"]) == 0
+    assert main(["--root", str(tmp_path), "info", "alice"]) == 0
     assert f"Drivers: {expected}" in capsys.readouterr().out
 
 
 @pytest.mark.parametrize("placement", ["roaming", "visiting"])
-@pytest.mark.parametrize("target_first", [False, True])
 def test_offline_info_prepares_a_fresh_nonresident_target(
-    tmp_path, monkeypatch, capsys, placement, target_first
+    tmp_path, monkeypatch, capsys, placement
 ):
 
     source = tmp_path / "alice.too"
@@ -253,7 +252,7 @@ def test_offline_info_prepares_a_fresh_nonresident_target(
 
     monkeypatch.setattr(agent, "SetupWatcher", Watcher)
     assert not layout.home.exists()
-    assert main([selector, "info"] if target_first else ["info", selector]) == 0
+    assert main(["info", selector]) == 0
     output = capsys.readouterr()
     assert "not running" in output.out
     assert "Drivers:" not in output.out

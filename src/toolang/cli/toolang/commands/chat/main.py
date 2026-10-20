@@ -40,6 +40,7 @@ from toolang.cli.common.execution_progress.formatting import output_parts
 from toolang.up.types import AgentServerRef
 from toolang.cli.common.context import (
     context_layout,
+    prepare_agent,
     load_runtime_environ,
     resolve_model_catalog_option,
     ui_base_url,
@@ -199,7 +200,7 @@ def _chat_runtime(
     from toolang.up.config import parse_drivers
 
     drivers = user_call(parse_drivers, driver) if driver is not None else None
-    layout = context_layout(ctx)
+    layout = prepare_agent(ctx, complete_preparation=False)
     workspaces = user_call(
         resolve_workspaces,
         layout,

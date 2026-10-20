@@ -129,7 +129,7 @@ def test_offline_info_finishes_ref_progress_before_setup(tmp_path, monkeypatch, 
     monkeypatch.setattr(
         "toolang.cli.toolang.commands.agent.SetupWatcher.refresh", refresh
     )
-    assert main(["--root", str(tmp_path), "dev", "info"]) == 0
+    assert main(["--root", str(tmp_path), "info", "dev"]) == 0
     output = capsys.readouterr()
     assert "not running" in output.out
     assert "Prepared" not in output.err
@@ -166,31 +166,24 @@ def test_remote_cap_inspection_shares_agent_and_cap_progress(
 
 
 @pytest.mark.parametrize("command", ["tools", "models", "providers", "workspace"])
-def test_remote_source_only_route_finishes_before_command_dispatch(
-    tmp_path, monkeypatch, capsys, command
-):
-    from toolang.cli.toolang.routing import dispatch_visiting
+def test_remote_source_help_does_not_prepare(tmp_path, monkeypatch, capsys, command):
+    from toolang.cli.toolang.main import main
 
-    selector = "https://example.test/dev.too"
     monkeypatch.setattr(
-        agent_sources, "_fetch_http_text", lambda _: "flow run():\n  pass\n"
+        agent_sources,
+        "resolve_visiting_layout",
+        lambda *a, **kw: pytest.fail("help must not fetch"),
     )
-    dispatched = []
-
-    def run_app(args, layout):
-        output = capsys.readouterr()
-        assert output.out == ""
-        assert f"{selector} fetching" in output.err
-        assert output.err.count("Prepared agent in ") == 1
-        dispatched.append(layout)
-        return 0
-
     assert (
-        dispatch_visiting(["--root", str(tmp_path), selector, command], run_app=run_app)
+        main(
+            ["--root", str(tmp_path), "https://example.test/dev.too", command, "--help"]
+        )
         == 0
     )
-    assert len(dispatched) == 1
-    assert capsys.readouterr().err == ""
+    output = capsys.readouterr()
+    assert "Usage:" in output.out
+    assert output.err == ""
+    assert not list(tmp_path.iterdir())
 
 
 @pytest.mark.parametrize("quiet", [False, True])

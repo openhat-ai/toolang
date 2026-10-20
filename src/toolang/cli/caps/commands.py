@@ -25,7 +25,13 @@ from toolang.state.prepare import (
     inspect_agent_caps,
     prepare_agent_state,
 )
-from ..common.context import context_agent, context_layout, context_root, user_call
+from ..common.context import (
+    context_agent,
+    context_layout,
+    context_root,
+    prepare_agent,
+    user_call,
+)
 from ..common.output import echo_collection_summary
 from ..common.records import check_output_options, echo_records
 from ..common.routing import (
@@ -198,6 +204,7 @@ def list_caps(
         else AgentLayout.resident(context_root(ctx), agent_name)
     )
     entries, allowed = _cap_entries(
+        ctx,
         layout,
         include_agent=selected_agent is not None,
         kinds=set(CAP_KINDS),
@@ -255,6 +262,7 @@ def _make_cap_list_command(kind: CapKind, title: str) -> Callable[..., None]:
             else AgentLayout.resident(context_root(ctx), agent_name)
         )
         entries, allowed = _cap_entries(
+            ctx,
             layout,
             include_agent=selected_agent is not None,
             kinds={kind},
@@ -465,6 +473,7 @@ def _entry_scope_label(entry: "StateCap", *, agent_name: str) -> CapScope:
 
 
 def _cap_entries(
+    ctx: typer.Context,
     layout: AgentLayout,
     *,
     include_agent: bool,
@@ -487,6 +496,7 @@ def _cap_entries(
                     progress=progress.sink,
                 )
             else:
+                layout = prepare_agent(ctx, progress=progress.sink)
                 result = user_call(
                     inspect_agent_caps, layout, kinds=kinds, progress=progress.sink
                 )

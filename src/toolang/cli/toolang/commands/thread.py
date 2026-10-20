@@ -46,6 +46,7 @@ from toolang.up.types import AgentServerRef
 from ...common.context import (
     ModelCatalogOption,
     context_layout,
+    prepare_agent,
     load_runtime_environ,
     resolve_model_catalog_option,
     user_call,
@@ -176,7 +177,7 @@ def rerun_command(
 ) -> None:
     """Start a new root run from one terminal source invocation."""
 
-    layout = context_layout(ctx)
+    layout = prepare_agent(ctx, complete_preparation=False)
     with open_execution(ctx, required=True) as resources:
         if resources is None:  # pragma: no cover
             raise RuntimeError("execution resources were not opened")

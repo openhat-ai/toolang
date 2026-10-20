@@ -11,6 +11,7 @@ from typer._click import Command, Context
 from typer.core import TyperCommand, TyperGroup
 from typer.models import CompletionItem
 
+from toolang.common.layout import AgentPlacement
 from toolang.common.typer.ui import inherit_ui
 
 from .help import CliCommand
@@ -28,6 +29,7 @@ class LazyCommand(TyperCommand):
         short_help: str | None = None,
         hidden: bool = False,
         rich_help_panel: str | None = None,
+        agent_placements: frozenset[AgentPlacement] = frozenset(),
     ) -> None:
         super().__init__(
             name=name,
@@ -36,6 +38,7 @@ class LazyCommand(TyperCommand):
             hidden=hidden,
             rich_help_panel=rich_help_panel,
         )
+        self.agent_placements = agent_placements
         self._loader = loader
         self._loaded: Command | None = None
 
@@ -100,12 +103,14 @@ def _lazy_command(
     loader: Callable[[], Command],
     kwargs: dict[str, Any],
 ) -> LazyCommand:
+    agent_placements = kwargs.pop("agent_placements", frozenset())
     help_text = kwargs.get("help")
     if not isinstance(help_text, str):
         raise TypeError(f"lazy command requires explicit help: {name}")
     return LazyCommand(
         name,
         loader=loader,
+        agent_placements=agent_placements,
         help=help_text,
         short_help=kwargs.get("short_help"),
         hidden=bool(kwargs.get("hidden", False)),

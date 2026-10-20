@@ -374,6 +374,22 @@ def dispatch(
         return 1
 
 
+def source_command(source_path: Path, source_label: str) -> TyperGroup:
+    """Load the existing script group for native root command lookup."""
+    if not source_path.is_file():
+        raise ClickException(f"script not found: {source_label}")
+    program = Program.from_source(source_path.read_text(encoding="utf-8"))
+    group = _program_command(
+        program,
+        source_path=source_path,
+        source_label=source_label,
+        stdin=sys.stdin,
+    )
+    group.invoke_without_command = _entry_command_name(group) is not None
+    group.no_args_is_help = not group.invoke_without_command
+    return group
+
+
 def _program_command(
     program: Program,
     *,

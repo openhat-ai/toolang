@@ -614,10 +614,12 @@ def test_run_rejects_global_root_overrides(root_args, capsys):
 
 
 @pytest.mark.parametrize("target", ["alice", "demo.too"])
-def test_target_first_run_points_to_serve(target, capsys):
+def test_run_is_only_available_at_the_top_level(target, capsys):
     _source()
     assert cli.main([target, "run"]) == 2
-    assert "serve TARGET" in capsys.readouterr().err
+    assert (
+        "Command 'run' is only available at the top level." in capsys.readouterr().err
+    )
 
 
 def test_script_cannot_select_a_synthetic_runtime_runnable(monkeypatch, capsys):

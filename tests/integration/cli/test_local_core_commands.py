@@ -3545,11 +3545,12 @@ def test_plugin_inventory_commands_have_only_direct_plural_forms(
     nested = _invoke(root, command, "list")
     targeted = _invoke(root, "alice", command)
 
-    assert singular.exit_code == 2
+    assert singular.exit_code == 0
+    assert f"Run and manage agent {command[:-1]}." in singular.stdout
     assert nested.exit_code == 2
     assert "unexpected extra argument" in nested.stderr.lower()
     assert targeted.exit_code == 2
-    assert f"{command} does not accept an agent target here" in targeted.stderr
+    assert f"Command {command!r} is only available at the top level." in targeted.stderr
 
 
 def test_agent_info_builds_state_and_setup_without_server(
@@ -3589,12 +3590,11 @@ def test_agent_info_builds_state_and_setup_without_server(
     assert "not running" in result.stdout
 
 
-@pytest.mark.parametrize("target_first", [False, True])
 @pytest.mark.parametrize(
     "status", ["stopped", "preparing", "starting", "running", "failed", "unknown"]
 )
 def test_agent_info_fields_follow_the_compact_layout(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, target_first: bool, status: str
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, status: str
 ) -> None:
     from toolang.base.types.model import Model, ModelToolang, Provider
     from toolang.plugin.models import query
@@ -3678,8 +3678,7 @@ def test_agent_info_fields_follow_the_compact_layout(
         agent_commands, "echo_pairs_table", lambda rows, **kwargs: captured.extend(rows)
     )
 
-    args = ("alice", "info") if target_first else ("info", "alice")
-    result = _invoke(root, *args)
+    result = _invoke(root, "info", "alice")
 
     assert result.exit_code == 0, result.stderr
     expected = ["Home", "Tools", "Models", "Caps", "Chores", "Workspaces", "Status"]
@@ -3781,7 +3780,7 @@ def test_roaming_agent_info_uses_the_source_layout(
         ),
     )
 
-    result = cli.main([str(source), "info"])
+    result = cli.main(["info", str(source)])
     capsys.readouterr()
 
     assert result == 0
@@ -4016,7 +4015,10 @@ def test_non_execution_commands_reject_workspace_options(
     monkeypatch.setattr(agent_commands, "SetupWatcher", _EmptySetupWatcher)
 
     value = () if option == "--no-auto-workspace" else (str(tmp_path),)
-    result = _invoke(tmp_path, "alice", *command, option, *value)
+    args = (
+        (*command, "alice") if command[0] in {"info", "start"} else ("alice", *command)
+    )
+    result = _invoke(tmp_path, *args, option, *value)
 
     assert result.exit_code == 2
     assert f"No such option: {option}" in strip_ansi(result.stderr)
@@ -4060,7 +4062,7 @@ def test_running_roaming_inspection_preserves_runtime_workspaces(
         }
 
     monkeypatch.setattr(RuntimeClient, "get", get)
-    result = cli.main([str(source), "info"])
+    result = cli.main(["info", str(source)])
     output = capsys.readouterr()
 
     assert result == 0, output.err

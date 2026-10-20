@@ -25,17 +25,7 @@ from toolang.cli.toolang.commands import script
 from toolang.cli.toolang.commands.chat import main as chat_commands
 from toolang.cli.toolang.commands.workspace import workspace_app
 from toolang.execution.types import SessionSetting
-from toolang.cli.toolang.routing import (
-    COMMAND_SPECS,
-    RoutingError,
-    TargetHelp,
-    dispatch_roaming,
-    dispatch_visiting,
-    normalize,
-    select_target_help,
-)
 from toolang.cli.common.agent_server import AgentServerRef
-from toolang.cli.common.routing import extract_root_args
 from toolang.cli.common.lazy import LazyCommand
 
 
@@ -48,20 +38,11 @@ def _call_main(arguments: list[str]) -> int:
             return exc.code if isinstance(exc.code, int) else 1
 
 
-def test_extract_root_args_supports_short_option_and_stops_at_separator() -> None:
-    root_args, body = extract_root_args(
-        ("-r", "/tmp/root", "alice", "chat", "--", "--root", "message")
-    )
-
-    assert root_args == ["-r", "/tmp/root"]
-    assert body == ["alice", "chat", "--", "--root", "message"]
-
-
 def test_cli_command_registry_matches_the_typer_surface() -> None:
     group = typer.main.get_command(cli.app)
 
     assert isinstance(group, TyperGroup)
-    assert set(group.commands) == set(COMMAND_SPECS)
+    assert set(group.commands) == set(cli._REGISTERED_COMMANDS)
 
 
 @pytest.mark.parametrize("target", ["resident", "url", "github", "source"])
@@ -186,64 +167,6 @@ def test_thread_option_registration_keeps_chat_runtime_imports_lazy() -> None:
 
 
 @pytest.mark.parametrize(
-    ("command", "targets", "placements"),
-    (
-        ("new", {"none"}, set()),
-        ("remove", {"after"}, {"resident"}),
-        ("info", {"before", "after"}, {"resident", "roaming", "visiting"}),
-        ("home", {"none", "before"}, {"resident", "visiting", "roaming"}),
-        ("workspace", {"before"}, {"resident", "roaming", "visiting"}),
-        ("skill", {"none", "before"}, {"resident", "roaming", "visiting"}),
-        ("models", {"none", "before"}, {"resident", "roaming", "visiting"}),
-        ("tools", {"none", "before"}, {"resident", "roaming", "visiting"}),
-        ("providers", {"none", "before"}, {"resident", "roaming", "visiting"}),
-        ("adapters", {"none"}, set()),
-        ("sandboxes", {"none"}, set()),
-        ("catalogs", {"none"}, set()),
-        ("toolsets", {"none"}, set()),
-        ("more", {"none"}, set()),
-    ),
-)
-def test_cli_command_registry_declares_target_grammar(
-    command: str,
-    targets: set[str],
-    placements: set[str],
-) -> None:
-    spec = COMMAND_SPECS[command]
-
-    assert spec.targets == targets
-    assert spec.placements == placements
-
-
-def test_cli_normalize_routes_resident_target_before_command() -> None:
-    args, agent = normalize(
-        ["-r", "/tmp/root", "alice", "rerun", "run_1"],
-    )
-
-    assert args == ["-r", "/tmp/root", "rerun", "run_1"]
-    assert agent == "alice"
-
-
-def test_cli_normalize_preserves_a_command_models_catalog_override() -> None:
-    args, agent = normalize(
-        ["alice", "rerun", "run_1", "--catalog", "/tmp/models.json"],
-    )
-
-    assert args == ["rerun", "run_1", "--catalog", "/tmp/models.json"]
-    assert agent == "alice"
-
-
-@pytest.mark.parametrize("target", ["alice", "agent:alice", "agent:models"])
-def test_cli_normalize_routes_resident_models(target: str) -> None:
-    args, agent = normalize(
-        ["-r", "/tmp/root", target, "models", "--catalog", "/tmp/catalog.json"],
-    )
-
-    assert args == ["-r", "/tmp/root", "models", "--catalog", "/tmp/catalog.json"]
-    assert agent == target.removeprefix("agent:")
-
-
-@pytest.mark.parametrize(
     "arguments",
     (
         ["models", "alice"],
@@ -267,26 +190,6 @@ def test_cli_models_rejects_unsupported_target_forms(
     assert not tuple(tmp_path.iterdir())
 
 
-def test_cli_normalize_allows_both_orders_for_agent_self_commands() -> None:
-    prefix_args, prefix_agent = normalize(["alice", "info"])
-    postfix_args, postfix_agent = normalize(["info", "alice"])
-
-    assert (prefix_args, prefix_agent) == (["info", "alice"], None)
-    assert (postfix_args, postfix_agent) == (["info", "alice"], None)
-
-
-def test_cli_normalize_defers_missing_target_to_command_help() -> None:
-    assert normalize(["rerun", "alice", "run_1"]) == (
-        ["rerun", "alice", "run_1"],
-        None,
-    )
-
-
-def test_cli_normalize_rejects_an_invalid_target_order() -> None:
-    with pytest.raises(RoutingError, match="remove requires TARGET after"):
-        normalize(["alice", "remove"])
-
-
 def test_cli_formats_a_routing_error_without_a_panel(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -299,7 +202,7 @@ def test_cli_formats_a_routing_error_without_a_panel(
     assert lines[0].startswith("Error: ")
     assert lines[-1].strip()
     assert "╭" not in stderr
-    assert "remove requires TARGET after the command" in stderr
+    assert "Command 'remove' is only available at the top level." in stderr
 
 
 def test_cli_no_args_still_shows_root_help(
@@ -328,7 +231,9 @@ def test_cli_control_commands_have_consistent_order_and_descriptions() -> None:
 
     assert isinstance(group, TyperGroup)
     context = typer.Context(group)
-    order = tuple(name for name in group.list_commands(context) if name in expected)
+    selected = group.get_command(context, "alice")
+    assert isinstance(selected, TyperGroup)
+    order = tuple(name for name in selected.list_commands(context) if name in expected)
 
     assert order == tuple(expected)
     assert {name: group.commands[name].help for name in expected} == expected
@@ -420,13 +325,10 @@ def test_cli_exposes_plural_list_resources_and_removes_channels() -> None:
     assert expected_help.keys() <= group.commands.keys()
     assert {name: group.commands[name].help for name in expected_help} == expected_help
     assert not group.commands["tools"].hidden
-    assert {
-        name
-        for name in ("catalogs", "adapters", "toolsets", "sandboxes")
-        if group.commands[name].hidden
-    } == {"catalogs", "adapters", "toolsets", "sandboxes"}
+    assert {"catalogs", "adapters", "toolsets", "sandboxes"}.isdisjoint(
+        group.list_commands(typer.Context(group))
+    )
     assert "channel" not in group.commands
-    assert "channel" not in COMMAND_SPECS
 
 
 @pytest.mark.parametrize(
@@ -503,93 +405,6 @@ def test_cli_argument_panels_show_only_metavars_without_type_or_usage_syntax(
     assert syntax_metavar not in row
 
 
-@pytest.mark.parametrize("name", ["rerun", "more"])
-def test_cli_explicit_agent_prefix_resolves_command_name_collision(name: str) -> None:
-    args, agent = normalize([f"agent:{name}", "info"])
-
-    assert args == ["info", name]
-    assert agent is None
-
-
-@pytest.mark.parametrize(
-    ("arguments", "expected"),
-    [
-        (["rerun", "info"], (["rerun", "info"], None)),
-        (["more"], (["more"], None)),
-    ],
-)
-def test_cli_command_name_wins_without_explicit_agent_prefix(
-    arguments: list[str], expected: tuple[list[str], None]
-) -> None:
-    assert normalize(arguments) == expected
-
-
-@pytest.mark.parametrize(
-    ("arguments", "residents", "expected"),
-    (
-        (
-            ["alice"],
-            {"alice"},
-            TargetHelp(selector="alice", label="alice", placement="resident"),
-        ),
-        (
-            ["alice", "--help"],
-            {"alice"},
-            TargetHelp(selector="alice", label="alice", placement="resident"),
-        ),
-        (
-            ["agent:missing"],
-            set(),
-            TargetHelp(
-                selector="agent:missing",
-                label="missing",
-                placement="resident",
-            ),
-        ),
-        (
-            ["agent:alice_too"],
-            set(),
-            TargetHelp(
-                selector="agent:alice_too",
-                label="alice_too",
-                placement="resident",
-            ),
-        ),
-        (
-            ["gh:briceyan/dev"],
-            set(),
-            TargetHelp(
-                selector="gh:briceyan/dev",
-                label="gh:briceyan/dev",
-                placement="visiting",
-            ),
-        ),
-        (
-            ["https://toolang.ai/dev.too"],
-            set(),
-            TargetHelp(
-                selector="https://toolang.ai/dev.too",
-                label="https://toolang.ai/dev.too",
-                placement="visiting",
-            ),
-        ),
-        (["rerun"], {"rerun"}, None),
-        (
-            ["threads"],
-            {"threads"},
-            TargetHelp(selector="threads", label="threads", placement="resident"),
-        ),
-        (["unknown"], set(), None),
-    ),
-)
-def test_cli_selects_only_unambiguous_targets_without_a_command(
-    arguments: list[str],
-    residents: set[str],
-    expected: TargetHelp | None,
-) -> None:
-    assert select_target_help(arguments, residents=residents) == expected
-
-
 @pytest.mark.parametrize(
     "arguments",
     (
@@ -644,9 +459,7 @@ def test_cli_bare_resident_target_shows_its_command_help(
     output = capsys.readouterr()
     stdout = strip_ansi(output.out)
     panels = (
-        "Agent commands",
         "Cap commands",
-        "Runtime commands",
         "Work commands",
         "Inspection commands",
         "Run commands",
@@ -661,11 +474,11 @@ def test_cli_bare_resident_target_shows_its_command_help(
     assert "Teaming commands" not in stdout
     sections = {
         panel: stdout.split(f"{panel}:\n", 1)[1].split("\n\n", 1)[0]
-        for panel in ("Work commands", "Runtime commands", "Inspection commands")
+        for panel in ("Work commands", "Inspection commands")
     }
     assert "workspace" in sections["Work commands"]
-    for command in ("serve", "start", "stop"):
-        assert command in sections["Runtime commands"]
+    for command in ("info", "serve", "start", "stop"):
+        assert command not in stdout
     assert "top" in sections["Inspection commands"]
     assert "talk" not in stdout
     assert "hub" not in stdout
@@ -729,72 +542,23 @@ def test_cli_missing_local_source_syntax_reports_a_script_error(
     assert "Run and manage agent" not in output.out
 
 
-def test_cli_prefix_agent_context_is_isolated_between_threads(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_cli_agent_context_is_isolated_between_threads(monkeypatch):
+    from toolang.cli.common.context import cli_context
+    from toolang.cli.toolang.commands import chat
+
     barrier = Barrier(2)
-    seen: list[str | None] = []
+    seen = []
 
-    def fake_run(_app: typer.Typer, **_kwargs: Any) -> int:
-        barrier.wait()
-        seen.append(cli._PREFIX_AGENT.get())
-        return 0
+    @wraps(chat.chat_command)
+    def invoke(ctx, **kwargs):
+        barrier.wait(timeout=10)
+        seen.append(cli_context(ctx).agent)
 
-    monkeypatch.setattr(cli, "run", fake_run)
-
+    monkeypatch.setattr(chat, "chat_command", invoke)
     with ThreadPoolExecutor(max_workers=2) as pool:
-        results = tuple(
-            pool.submit(
-                cli._run_app,
-                [],
-                agent,
-                prog_name="toolang",
-            )
-            for agent in ("alice", "bob")
-        )
-
-    assert [result.result() for result in results] == [0, 0]
+        results = [pool.submit(cli.main, [name, "chat"]) for name in ("alice", "bob")]
+        assert [result.result() for result in results] == [0, 0]
     assert set(seen) == {"alice", "bob"}
-    assert cli._PREFIX_AGENT.get() is None
-
-
-@pytest.mark.parametrize("runnable", ("demo", "threads", "runs"))
-def test_cli_routes_local_script_to_script_command(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    runnable: str,
-) -> None:
-    source = tmp_path / "demo.too"
-    source.write_text(f"agic {runnable}:\n  Reply directly.\n", encoding="utf-8")
-    captured: dict[str, object] = {}
-
-    def fake_dispatch(
-        global_args: list[str],
-        argv: list[str],
-        *,
-        prog_name: str,
-    ) -> int:
-        captured.update(
-            global_args=global_args,
-            argv=argv,
-            prog_name=prog_name,
-        )
-        return 7
-
-    monkeypatch.setattr(script, "dispatch", fake_dispatch)
-
-    result = dispatch_roaming(
-        [str(source), runnable, "--help"],
-        prog_name="too",
-        run_app=lambda *_args: pytest.fail("Typer app should not run"),
-    )
-
-    assert result == 7
-    assert captured == {
-        "global_args": [],
-        "argv": [str(source), runnable, "--help"],
-        "prog_name": "too",
-    }
 
 
 @pytest.mark.parametrize(
@@ -905,8 +669,8 @@ def test_cli_script_rejects_actual_global_options(
         else [str(source), "--root", str(tmp_path)]
     )
 
-    expected_code = 1 if before_source else 2
-    expected_error = "global CLI options" if before_source else "No such option: --root"
+    expected_code = 2
+    expected_error = "global --root / -r" if before_source else "No such option: --root"
     assert cli.main([*header, "agic:demo", "text"]) == expected_code
     error = strip_ansi(capsys.readouterr().err)
     assert expected_error in error
@@ -928,44 +692,41 @@ def test_cli_script_rejects_inbox_option(
 
 
 @pytest.mark.parametrize(
-    "arguments",
-    (
-        ["info"],
-        ["chat"],
-        ["chat", "--thread"],
-        ["chat", "--thread", "chat_1"],
-        ["chat", "-t", "chat_1"],
-        ["inspect", "run_1"],
-        ["steer", "run_1", "change direction"],
-        ["rerun", "run_1"],
-    ),
+    "command,operands",
+    [
+        ("chat", []),
+        ("chat", ["--thread", "chat_1"]),
+        ("inspect", ["runs"]),
+        ("steer", ["run_1", "change direction"]),
+        ("rerun", ["run_1"]),
+    ],
 )
 def test_cli_routes_roaming_agent_command_to_its_exact_layout(
-    tmp_path: Path,
-    arguments: list[str],
-) -> None:
+    tmp_path, monkeypatch, command, operands
+):
+    from toolang.cli.common.context import cli_context
+
+    module, callback = {
+        "chat": ("chat", "chat_command"),
+        "inspect": ("inspect", "inspect_command"),
+        "steer": ("thread", "steer_command"),
+        "rerun": ("thread", "rerun_command"),
+    }[command]
     source = tmp_path / "demo.too"
-    source.write_text("agic demo:\n  Reply directly.\n", encoding="utf-8")
-    captured: dict[str, object] = {}
+    source.write_text("flow main():\n  pass\n")
+    seen = []
+    owner = import_module(f"toolang.cli.toolang.commands.{module}")
 
-    def fake_run_app(
-        args: list[str], layout: AgentLayout, selected_source: Path
-    ) -> int:
-        captured.update(args=args, layout=layout, source=selected_source)
-        return 9
+    @wraps(getattr(owner, callback))
+    def invoke(ctx, **kwargs):
+        seen.append(cli_context(ctx))
 
-    result = dispatch_roaming(
-        [str(source), *arguments],
-        prog_name="too",
-        run_app=fake_run_app,
-    )
-
-    assert result == 9
-    assert captured == {
-        "args": ["info", source.stem] if arguments == ["info"] else arguments,
-        "layout": AgentLayout.roaming(source),
-        "source": source,
-    }
+    monkeypatch.setattr(owner, callback, invoke)
+    assert cli.main([str(source), command, *operands]) == 0
+    assert len(seen) == 1
+    assert seen[0].source == source
+    assert seen[0].layout == AgentLayout.roaming(source)
+    assert not (tmp_path / ".toolang").exists()
 
 
 def test_cli_opens_roaming_chat_with_its_exact_layout(
@@ -1059,41 +820,6 @@ def test_cli_routes_chat_development_artifact_to_the_exact_layout(
     }
 
 
-def test_cli_routes_visiting_chat_through_materialization(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    selector = "gh:brice/researcher"
-    layout = AgentLayout(
-        root=tmp_path / "visiting",
-        name="researcher",
-        placement="visiting",
-    )
-    captured: dict[str, object] = {}
-
-    def resolve(
-        source: str, *, progress: object, toolang_root: Path | None = None
-    ) -> AgentLayout:
-        captured.update(source=source, progress=progress)
-        return layout
-
-    def run_app(args: list[str], selected: AgentLayout) -> int:
-        captured.update(args=args, layout=selected)
-        return 12
-
-    monkeypatch.setattr(agent_sources, "resolve_visiting_layout", resolve)
-
-    result = dispatch_visiting(
-        [selector, "chat", "--thread", "chat_1"],
-        run_app=run_app,
-    )
-
-    assert result == 12
-    assert captured["source"] == selector
-    assert captured["args"] == ["chat", "--thread", "chat_1"]
-    assert captured["layout"] == layout
-
-
 def test_cli_visiting_failure_uses_the_operational_failure_block(
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
@@ -1115,10 +841,7 @@ def test_cli_visiting_failure_uses_the_operational_failure_block(
 
     monkeypatch.setattr(agent_sources, "resolve_visiting_layout", fail)
 
-    result = dispatch_visiting(
-        ["gh:missing/agent", "chat"],
-        run_app=lambda _args, _layout: pytest.fail("failed resolution must not run"),
-    )
+    result = cli.main(["gh:missing/agent", "chat"])
 
     assert result == 1
     error = capsys.readouterr().err
@@ -1163,94 +886,31 @@ def test_caps_add_failure_uses_the_operational_failure_block(
     assert "Reason: remote skill not found" in error
 
 
-def test_cli_routes_visiting_inspect_without_materialization(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    selector = "gh:brice/researcher"
-    layout = AgentLayout(
-        root=tmp_path / "visiting",
-        name="researcher",
-        placement="visiting",
-    )
-    captured: dict[str, object] = {}
-
-    monkeypatch.setattr(
-        agent_sources, "visiting_layout", lambda source, **kwargs: layout
-    )
+def test_cli_visiting_inspect_does_not_materialize(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(
         agent_sources,
         "resolve_visiting_layout",
-        lambda *_args, **_kwargs: pytest.fail("inspect must not materialize"),
+        lambda *a, **kw: pytest.fail("inspect must not fetch"),
     )
-
-    result = dispatch_visiting(
-        [selector, "inspect", "run_1"],
-        run_app=lambda args, selected: (
-            captured.update(
-                args=args,
-                layout=selected,
-            )
-            or 13
-        ),
+    assert (
+        cli.main(["--root", str(tmp_path), "gh:brice/researcher", "inspect", "runs"])
+        == 1
     )
-
-    assert result == 13
-    assert captured == {
-        "args": ["inspect", "run_1"],
-        "layout": layout,
-    }
+    assert "execution history not found: researcher" in capsys.readouterr().err
+    assert not list(tmp_path.iterdir())
 
 
 @pytest.mark.parametrize("command", ("threads", "runs"))
-def test_cli_does_not_route_removed_history_commands_for_visiting(
-    command: str,
-) -> None:
-    result = dispatch_visiting(
-        ["gh:brice/researcher", command],
-        run_app=lambda *_args: pytest.fail("removed command must not be routed"),
-    )
-
-    assert result is None
-
-
-def test_cli_routes_command_before_visiting_info_without_materialization(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    selector = "gh:brice/researcher"
-    layout = AgentLayout(
-        root=tmp_path / "visiting",
-        name="researcher",
-        placement="visiting",
-    )
-    captured: dict[str, object] = {}
+def test_cli_unknown_visiting_command_uses_agent_help(command, monkeypatch, capsys):
     monkeypatch.setattr(
         agent_sources,
-        "visiting_layout",
-        lambda source, **kwargs: (
-            captured.update(
-                source=source,
-            )
-            or layout
-        ),
+        "resolve_visiting_layout",
+        lambda *a, **kw: pytest.fail("must not fetch"),
     )
-
-    result = dispatch_visiting(
-        ["info", selector],
-        run_app=lambda args, selected: (
-            captured.update(
-                args=args,
-                layout=selected,
-            )
-            or 14
-        ),
-    )
-
-    assert result == 14
-    assert captured["source"] == selector
-    assert captured["args"] == ["info", selector]
-    assert captured["layout"] == layout
+    assert cli.main(["gh:brice/researcher", command]) == 2
+    error = capsys.readouterr().err
+    assert f"No such command '{command}'." in error
+    assert "gh:brice/researcher --help" in error
 
 
 def test_cli_opens_visiting_chat_with_its_exact_layout(
@@ -1302,43 +962,6 @@ def test_cli_opens_visiting_chat_with_its_exact_layout(
     }
 
 
-def test_cli_typed_runnable_prefix_escapes_a_roaming_command_name(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    source = tmp_path / "demo.too"
-    source.write_text("agic demo:\n  Reply directly.\n", encoding="utf-8")
-    captured: dict[str, object] = {}
-
-    def fake_dispatch(
-        global_args: list[str],
-        argv: list[str],
-        *,
-        prog_name: str,
-    ) -> int:
-        captured.update(
-            global_args=global_args,
-            argv=argv,
-            prog_name=prog_name,
-        )
-        return 11
-
-    monkeypatch.setattr(script, "dispatch", fake_dispatch)
-
-    result = dispatch_roaming(
-        [str(source), "runnable:steer", "change direction"],
-        prog_name="too",
-        run_app=lambda *_args: pytest.fail("typed runnable should not be a command"),
-    )
-
-    assert result == 11
-    assert captured["argv"] == [
-        str(source),
-        "runnable:steer",
-        "change direction",
-    ]
-
-
 @pytest.mark.parametrize(
     ("command", "module", "callback", "operands"),
     [
@@ -1380,31 +1003,31 @@ def test_cli_dev_states_reach_each_lazy_command(
         captured.update(kwargs)
 
     monkeypatch.setattr(owner, callback, invoke)
-    assert (
-        cli.main(["--root", str(tmp_path), "alice", command, *operands, *options]) == 0
-    )
+    prefix = [command, "alice"] if command in {"serve", "start"} else ["alice", command]
+    assert cli.main(["--root", str(tmp_path), *prefix, *operands, *options]) == 0
     assert captured["dev"] == expected
     if expected is not None:
         assert isinstance(captured["dev"], Path)
 
 
-@pytest.mark.parametrize("command", ["serve", "start", "chat", "rerun", "rerun"])
+@pytest.mark.parametrize("command", ["serve", "start", "chat", "rerun"])
 def test_cli_bare_dev_keeps_unknown_option_errors(command, tmp_path, capsys):
-    assert (
-        cli.main(["--root", str(tmp_path), "alice", command, "--dev", "--unknown"]) == 2
-    )
+    prefix = [command, "alice"] if command in {"serve", "start"} else ["alice", command]
+    assert cli.main(["--root", str(tmp_path), *prefix, "--dev", "--unknown"]) == 2
     assert "No such option: --unknown" in strip_ansi(capsys.readouterr().err)
 
 
-def test_remote_agent_parse_failure_is_reported_before_command_execution(
-    tmp_path, monkeypatch, capsys
-):
-    from toolang.cli.toolang.routing import dispatch_visiting
+def test_remote_agent_parse_failure_prevents_launch(tmp_path, monkeypatch, capsys):
+    from toolang.cli.toolang.commands import runtime
 
     monkeypatch.setattr(agent_sources, "_fetch_http_text", lambda *_: "flow broken(:\n")
-    result = dispatch_visiting(
-        ["--root", str(tmp_path), "https://example.test/broken.too", "serve"],
-        run_app=lambda *_: pytest.fail("command ran before agent parsed"),
+    monkeypatch.setattr(
+        runtime,
+        "resolve_startup",
+        lambda *a, **kw: pytest.fail("invalid agent must not launch"),
     )
-    assert result == 1
+    assert (
+        cli.main(["--root", str(tmp_path), "serve", "https://example.test/broken.too"])
+        == 1
+    )
     assert "Failed to parse agent" in capsys.readouterr().err

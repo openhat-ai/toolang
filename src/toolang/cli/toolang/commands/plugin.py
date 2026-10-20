@@ -3,14 +3,12 @@
 from __future__ import annotations
 
 
-from toolang.cli.common.context import context_layout
-
 import asyncio
 from typing import Annotated
 
 import typer
 
-from ...common.context import context_agent, context_root
+from ...common.context import context_agent, context_root, prepare_agent
 from ...common.output import echo_collection_summary, echo_table
 from ...common.records import check_output_options, echo_records
 from ...common.progress import make_cli_progress
@@ -51,7 +49,7 @@ def list_tools(
         setup = asyncio.run(
             load_tool_setup(
                 (
-                    context_layout(ctx)
+                    prepare_agent(ctx)
                     if agent is not None
                     else AgentLayout.resident(context_root(ctx), "default")
                 ),

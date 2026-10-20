@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Annotated
 import typer
 from toolang.cli.common.context import (
-    context_layout,
+    prepare_agent,
     context_agent,
     context_root,
     ModelCatalogOption,
@@ -118,7 +118,7 @@ def _layout(ctx: typer.Context) -> tuple[AgentLayout, bool]:
     agent = context_agent(ctx)
     return (
         (
-            context_layout(ctx)
+            prepare_agent(ctx)
             if agent is not None
             else AgentLayout.resident(context_root(ctx), "default")
         ),

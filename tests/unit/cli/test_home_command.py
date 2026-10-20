@@ -435,7 +435,7 @@ def test_home_resident_name_is_available_through_explicit_selector(
 
     assert cli.main(["agent:home", "home"]) == 0
     assert working_directories == [expected_home]
-    assert "shell" not in cli.routing.COMMAND_SPECS
+    assert "shell" not in cli._REGISTERED_COMMANDS
 
 
 @pytest.mark.parametrize("placement", ["roaming", "visiting"])

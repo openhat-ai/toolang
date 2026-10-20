@@ -161,11 +161,11 @@ def test_start_promotes_same_generation_without_fetch_or_driver_changes(tmp_path
         original = AgentProcess(layout).state()
         assert original is not None
         fetched = len(requests)
-        conflict = command(url, "start", "--enable", "chat,talk", success=False)
+        conflict = command("start", url, "--enable", "chat,talk", success=False)
         assert "differs" in conflict.stderr
-        wrong_port = command(url, "start", "--port", "1", success=False)
+        wrong_port = command("start", url, "--port", "1", success=False)
         assert "--port differs" in wrong_port.stderr
-        promoted = command(url, "start")
+        promoted = command("start", url)
         expected = f"Agent {layout.name} running: {original['endpoint']}"
         assert promoted.stdout.strip() == expected
         assert len(requests) == fetched
@@ -187,7 +187,7 @@ def test_start_promotes_same_generation_without_fetch_or_driver_changes(tmp_path
 def test_lease_loss_ends_an_idle_client_without_relaunch(tmp_path):
     with _visiting_chat(tmp_path) as (layout, url, chat, command, _requests):
         client = chat()
-        command(url, "stop")
+        command("stop", url)
         assert client.wait(timeout=25) == 1
         output = (tmp_path / "chat-0.log").read_text()
         assert "retention lease was lost" in output
@@ -209,7 +209,7 @@ def test_lease_loss_ends_a_terminal_client_without_relaunch(tmp_path):
         )
         try:
             session.wait_for("Describe your task", timeout=40)
-            command(url, "stop")
+            command("stop", url)
             assert session.wait_for_exit(timeout=25) == 1
             assert "retention lease was lost" in session.output
             assert "Traceback" not in session.output

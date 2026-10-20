@@ -10,27 +10,15 @@ from typing import TextIO
 import typer
 from typer._click.exceptions import ClickException
 
-from ...common.context import context_agent, context_layout, context_root
-
-
-def should_prepare_target(arguments: list[str]) -> bool:
-    """Defer help, usage errors, and non-TTY calls to normal CLI handling."""
-
-    if arguments not in ([], ["--"]):
-        return False
-    try:
-        _require_interactive_terminal(sys.stdin, sys.stdout)
-    except ClickException:
-        return False
-    return True
+from ...common.context import context_agent, context_root, prepare_agent
 
 
 def home(ctx: typer.Context) -> None:
     """Run the configured interactive shell from the selected directory."""
 
     agent = context_agent(ctx)
-    directory = context_layout(ctx).home if agent else context_root(ctx)
     _require_interactive_terminal(sys.stdin, sys.stdout)
+    directory = prepare_agent(ctx).home if agent else context_root(ctx)
     executable = os.environ.get("SHELL", "/bin/sh")
     destination = "agent home" if agent else "Toolang root"
     typer.echo(f"Entered {destination}. Type exit to return.")

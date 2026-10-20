@@ -16,27 +16,42 @@ formatting conventions. Command help describes their options and output modes.
 | Input | Interpretation |
 | --- | --- |
 | `too new NAME`, `too clone SOURCE [NAME]`, `too remove NAME`, `too list` | Agent catalog commands; command first |
-| `too serve TARGET`, `too TARGET serve` | Foreground server; target can be resident, visiting, or local `.too` |
-| `too start TARGET`, `too stop TARGET` | Background lifecycle for resident/visiting targets; either target order |
-| `too TARGET info` | Agent information; command-first form is also accepted |
+| `too serve TARGET` | Foreground server; target can be resident, visiting, or local `.too` |
+| `too start TARGET`, `too stop TARGET` | Background lifecycle for resident/visiting targets |
+| `too info TARGET` | Agent information |
 | `too TARGET chat`, `too TARGET chore list`, `too TARGET inspect runs` | Targeted work, authoring, and history |
 | `too run FILE [RUNNABLE]`, `too FILE [RUNNABLE]` | Local script execution |
 | `too init DIR` | Create executable `aid.too` and comment-only `toolang.toml` without overwriting |
 
-A command name wins when an unassigned token could name either a command or a
-dynamic target. `agent:NAME` forces a resident target. After a `.too` target,
-`agic:NAME`, `flow:NAME`, and `runnable:NAME` force a colliding runnable name.
-A `.too` suffix selects a local source path even if absent; an explicit resident
-prefix can select a resident name ending in `.too`. Once a command is selected,
-its operands are not rerouted.
+The root Typer group looks up registered commands first. Otherwise a valid
+agent name or explicit source ref selects a native agent group. `agent:NAME`
+selects a resident agent whose name collides with a command. A bare valid name
+shows agent help even when the agent does not exist; existence is checked when
+a command needs it. Invalid refs retain their source error.
 
-A target alone shows its supported commands. An incomplete selected command
-shows command help before target/runtime validation. Remote target help does
-not fetch source. Agent names, explicit remote refs, and placement are defined
-in [Architecture](architecture.md#agent-sources).
+The agent group exposes only commands available for that placement. An unknown
+command reports `No such command`; a known root-only command reports that it is
+only available at the top level. Typer owns all subsequent subcommands, options,
+arguments, and help, with paths such as `too alice chat`. Command help and invalid
+arguments do not fetch sources, write caches, or inspect runtime state. Agent
+preparation belongs to the executable command callback.
 
-Top-level `--root`/`-r` and `TOOLANG_ROOT` select the resident root. Source-local
-scripts use their own layout and do not accept the global root override.
+Each command is registered once. The `agent_placements` metadata declares its
+supported agent contexts; an empty set means top-level only, including `start`,
+`stop`, `serve`, and `info`. Agent groups reuse the same lazy command objects and
+pass their selected agent through `CliContext`, without changing command parameters.
+
+After a local `.too` target, registered commands select agent operations; other
+inputs use the existing script group. `agic:NAME`, `flow:NAME`, and
+`runnable:NAME` escape colliding runnable names. A `.too` suffix selects a local
+source even if absent. Agent names, explicit refs, and placement follow
+[Architecture](architecture.md#agent-sources).
+
+Global `--root`/`-r` options precede the agent or command, as in
+`too -r ROOT alice chat`; `TOOLANG_ROOT` supplies the default root. Options after
+a selected command belong to that command, and tokens after its input boundary
+remain literal. Source-local scripts use their own layout and reject an explicit
+global root override.
 
 ## Script selection and output
 
@@ -71,7 +86,7 @@ logging, recovery, environment capture, and process cleanup.
 
 ## Resource and plugin inspection
 
-`too TARGET info` (also `too info TARGET`) shows enabled `Drivers` immediately
+`too info TARGET` shows enabled `Drivers` immediately
 after `Status` while the agent is running. It reads existing runtime metadata
 and formats selections in `chat,talk,chore` order, with `none` for an empty set
 and `-` for unavailable metadata. Nonrunning agents omit the row.

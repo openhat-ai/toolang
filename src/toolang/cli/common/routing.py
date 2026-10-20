@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Collection, Mapping, Sequence
-from pathlib import Path
+from collections.abc import Mapping
 
 from rich.text import Text
 from typer._click import Context, HelpFormatter, Parameter
@@ -15,69 +14,13 @@ from .parameters import TextType
 from .help import CliCommand, CliGroup, parameter_usage, show_help, write_usage
 
 
-def extract_root_args(
-    argv: Sequence[str],
-    *,
-    extra_value_options: Collection[str] = (),
-    literal_commands: Collection[str] = (),
-) -> tuple[list[str], list[str]]:
-    """Separate root options from command arguments without crossing `--`."""
-
-    value_options = {"--root", "-r", *extra_value_options}
-    long_value_options = {option for option in value_options if option.startswith("--")}
-    root_args: list[str] = []
-    body: list[str] = []
-    index = 0
-    while index < len(argv):
-        token = argv[index]
-        if token == "--" or (not body and token in literal_commands):
-            body.extend(argv[index:])
-            break
-        if token in value_options:
-            step = 2 if index + 1 < len(argv) else 1
-            root_args.extend(argv[index : index + step])
-            index += step
-            continue
-        for option in long_value_options:
-            prefix = f"{option}="
-            if token.startswith(prefix):
-                root_args.extend((option, token.removeprefix(prefix)))
-                index += 1
-                break
-        else:
-            body.append(token)
-            index += 1
-            continue
-        continue
-    return root_args, body
-
-
-def explicit_root(args: Sequence[str]) -> Path | None:
-    """Return the last explicit root value from extracted global arguments."""
-
-    root: Path | None = None
-    index = 0
-    while index < len(args):
-        if args[index] in {"--root", "-r"} and index + 1 < len(args):
-            root = Path(args[index + 1])
-            index += 2
-            continue
-        index += 1
-    return root
-
-
-def explicit_agent(token: str) -> str | None:
-    """Parse one explicit resident target used to escape command names."""
-
-    prefix, separator, name = token.partition(":")
-    if prefix != "agent" or not separator:
-        return None
-    from toolang.common.layout import validate_agent_name
-
-    return validate_agent_name(name)
+def _bound_agent(ctx: Context) -> bool:
+    return isinstance(ctx.obj, CliContext) and ctx.obj.selector is not None
 
 
 def _prefix_usage_path(ctx: Context, metavar: str) -> Text:
+    if _bound_agent(ctx):
+        return Text(ctx.command_path, style="cli.command.name")
     root, _, remainder = ctx.command_path.partition(" ")
     return Text.assemble(
         (root, "cli.command.name"),
@@ -107,9 +50,13 @@ class PrefixAgentCommand(CliCommand):
         )
 
     def get_params(self, ctx: Context) -> list[Parameter]:
+        if _bound_agent(ctx):
+            return self._real_params(ctx)
         return [self._prefix_agent_argument(), *self._real_params(ctx)]
 
     def parse_args(self, ctx: Context, args: list[str]) -> list[str]:
+        if _bound_agent(ctx):
+            return TyperCommand.parse_args(self, ctx, args)
         try:
             return TyperCommand.parse_args(self, ctx, args)
         except MissingParameter:
@@ -127,6 +74,8 @@ class RequiredPrefixAgentGroup(CliGroup):
     argument_help = "Local agent name"
 
     def get_params(self, ctx: Context) -> list[Parameter]:
+        if _bound_agent(ctx):
+            return super().get_params(ctx)
         agent = _HelpOnlyTyperArgument(
             param_decls=["agent"],
             metavar="AGENT",
@@ -171,6 +120,8 @@ class OptionalPrefixAgentGroup(CliGroup):
         )
 
     def get_params(self, ctx: Context) -> list[Parameter]:
+        if _bound_agent(ctx):
+            return self._real_params(ctx)
         return [self._prefix_agent_argument(), *self._real_params(ctx)]
 
     def format_usage(self, ctx: Context, formatter: HelpFormatter) -> None:
@@ -215,57 +166,6 @@ class RequiredPrefixAgentCommand(PrefixAgentCommand):
         if not state.agent:
             show_help(ctx)
         return remaining
-
-
-class RuntimeAgentCommand(CliCommand):
-    """Render one required agent argument before the command name in help."""
-
-    usage_agent_metavar = "<AGENT>"
-    argument_help = "Agent name, .too path, GitHub ref, or URL"
-
-    def _real_params(self, ctx: Context) -> list[Parameter]:
-        return TyperCommand.get_params(self, ctx)
-
-    def _visible_real_params(self, ctx: Context) -> list[Parameter]:
-        return [
-            param
-            for param in self._real_params(ctx)
-            if not getattr(param, "hidden", False)
-        ]
-
-    def _help_agent_argument(self) -> TyperArgument:
-        return _HelpOnlyTyperArgument(
-            param_decls=["agent"],
-            metavar="AGENT",
-            type=TextType(),
-            required=True,
-            default=None,
-            expose_value=False,
-            help=self.argument_help,
-        )
-
-    def get_params(self, ctx: Context) -> list[Parameter]:
-        return [self._help_agent_argument(), *self._real_params(ctx)]
-
-    def format_usage(self, ctx: Context, formatter: HelpFormatter) -> None:
-        prefix_path = _prefix_usage_path(ctx, self.usage_agent_metavar)
-        pieces = [self.options_metavar] if self.options_metavar else []
-        for param in self._visible_real_params(ctx):
-            pieces.extend(parameter_usage(param, ctx))
-        write_usage(formatter, prefix_path, " ".join(pieces))
-
-
-class RunAgentCommand(RuntimeAgentCommand):
-    def format_usage(self, ctx: Context, formatter: HelpFormatter) -> None:
-        pieces = [self.options_metavar] if self.options_metavar else []
-        for param in self._visible_real_params(ctx):
-            pieces.extend(parameter_usage(param, ctx))
-        pieces.append(self.usage_agent_metavar)
-        formatter.write_usage(ctx.command_path, " ".join(pieces))
-
-
-class LocalRuntimeAgentCommand(RuntimeAgentCommand):
-    argument_help = "Local agent name"
 
 
 class _HelpOnlyTyperArgument(TyperArgument):

@@ -243,7 +243,7 @@ def test_root_help_shows_the_source_version_in_dim_parentheses(
         (["prompt", "--help"], 0),
         (["prompt", "new", "--help"], 0),
         (["prompt", "new"], 0),
-        (["serve", "--port", "1234"], 0),
+        (["serve", "--port", "1234"], 2),
         (["workspace", "list"], 0),
         (["prompt", "new", "--unknown"], 2),
     ],
@@ -315,7 +315,7 @@ def test_command_descriptions_match_root_and_command_help(
     assert f"{command} {description}" in rows
     assert too_main(["--root", str(tmp_path), command, "--help"]) == 0
     assert strip_ansi(capsys.readouterr().out).startswith(f"{description}.\n")
-    if command not in {"hub", "talk", "convo"}:
+    if command not in {"hub", "talk", "convo", "start"}:
         assert too_main(["--root", str(tmp_path), "agent:sample", "--help"]) == 0
         rows = " ".join(strip_ansi(capsys.readouterr().out).split())
         assert f"{command} {description}" in rows
@@ -368,14 +368,14 @@ def test_declared_help_omits_final_period():
 @pytest.mark.parametrize(
     ("arguments", "command", "message"),
     [
-        (["help"], "too", "No such command 'help'."),
+        (["??"], "too", "No such command '??'."),
         (["prompt", "missing"], "too prompt", "No such command 'missing'."),
         (
             ["a", "workspace", "missing"],
-            "too workspace",
+            "too a workspace",
             "No such command 'missing'.",
         ),
-        (["stat"], "too", "Did you mean 'start'?"),
+        (["a", "caht"], "too a", "Did you mean 'chat'?"),
     ],
 )
 def test_unknown_command_points_to_group_help(
@@ -477,7 +477,7 @@ def test_additional_commands_keep_theme_and_root_invocation_hint(capsys, monkeyp
     }
     for names in more_panels.values():
         for name, description in names.items():
-            assert root.commands[name].hidden
+            assert name not in root.list_commands(typer.Context(root))
             assert (root.commands[name].help or "").startswith(description)
     assert not root.commands["serve"].hidden
     assert not root.commands["tools"].hidden
@@ -587,33 +587,17 @@ def test_root_help_hint_uses_the_invoked_executable():
         )
 
 
-def test_hidden_is_no_longer_a_command():
-    stderr = StringIO()
+@pytest.mark.parametrize("name", ["hidden", "channel"])
+def test_removed_command_name_can_be_used_as_an_agent(name, tmp_path, capsys):
+    root = typer.main.get_command(app)
+    assert isinstance(root, TyperGroup)
+    assert name not in root.commands
+    assert too_main(["--root", str(tmp_path), name, "--help"]) == 0
+    assert f"Run and manage agent {name}." in capsys.readouterr().out
+    assert too_main(["--root", str(tmp_path), name, "list"]) == 2
     assert (
-        run(
-            app,
-            args=["hidden"],
-            prog_name="too",
-            theme=PLAIN,
-            console=Console(file=StringIO()),
-            error_console=Console(file=stderr),
-        )
-        == 2
+        "Command 'list' is only available at the top level." in capsys.readouterr().err
     )
-    assert "No such command 'hidden'." in stderr.getvalue()
-
-
-@pytest.mark.parametrize(
-    ("args", "error"),
-    [
-        ([], "No such command 'channel'."),
-        (["list"], "list does not accept an agent target here"),
-        (["--help"], "No such command 'channel'."),
-    ],
-)
-def test_channel_command_is_removed(args, error, tmp_path, capsys):
-    assert too_main(["--root", str(tmp_path), "channel", *args]) == 2
-    assert error in strip_ansi(capsys.readouterr().err)
 
 
 @pytest.mark.parametrize("target", ["alice", "agent:alice"])
@@ -629,13 +613,13 @@ def test_chore_clone_command_is_removed(target, tmp_path, capsys):
 @pytest.mark.parametrize(
     ("arguments", "usage"),
     [
-        (["a", "chat"], "too <AGENT> chat [OPTIONS]"),
-        (["a", "prompt", "new"], "too [AGENT] prompt new [OPTIONS] <NAME>"),
-        (["a", "workspace"], "too <AGENT> workspace [OPTIONS] <COMMAND> [ARGUMENTS]"),
+        (["a", "chat"], "too a chat [OPTIONS]"),
+        (["a", "prompt", "new"], "too a prompt new [OPTIONS] <NAME>"),
+        (["a", "workspace"], "too a workspace [OPTIONS] <COMMAND> [ARGUMENTS]"),
         (["serve"], "too serve [OPTIONS] <AGENT>"),
     ],
 )
-def test_virtual_agent_usage_keeps_position_and_normal_weight(
+def test_native_agent_usage_keeps_context_and_option_weight(
     arguments, usage, tmp_path, capsys, monkeypatch
 ):
     monkeypatch.setattr("sys.argv", ["too"])
@@ -652,8 +636,8 @@ def test_virtual_agent_usage_keeps_position_and_normal_weight(
         assert f"Usage: {usage}" in output.plain.splitlines()
         start = output.plain.index("Usage:")
         usage_line = output.plain[start:].splitlines()[0]
-        assert usage_line.count("AGENT") == 1
-        for placeholder in ("AGENT", "[OPTIONS]"):
+        assert usage_line.count("AGENT") == (0 if arguments[0] == "a" else 1)
+        for placeholder in ("[OPTIONS]",):
             offset = output.plain.index(placeholder, start)
             assert not output.get_style_at_offset(Console(), offset).bold
         assert output.get_style_at_offset(
@@ -776,7 +760,7 @@ def test_chat_help_uses_the_canonical_optional_thread_option(
     assert too_main(["--root", str(tmp_path), "a", "chat", *args]) == 0
     output = strip_ansi(capsys.readouterr().out)
     usage = output.partition("Usage:")[2].splitlines()[0].strip()
-    assert usage == "too <AGENT> chat [OPTIONS]"
+    assert usage == "too a chat [OPTIONS]"
     row = next(line for line in output.splitlines() if "[THREAD]" in line)
     assert "--thread" in row and "-t" in row
     assert "-t, --thread [THREAD]" in row
@@ -790,9 +774,10 @@ def test_prompt_help_uses_conventional_metavars(tmp_path, capsys, monkeypatch):
     monkeypatch.setattr("sys.argv", ["too"])
     assert too_main(["--root", str(tmp_path), "a", "prompt", "new", "--help"]) == 0
     output = strip_ansi(capsys.readouterr().out)
-    assert "Usage: too [AGENT] prompt new [OPTIONS] <NAME>" in " ".join(output.split())
+    assert "Usage: too a prompt new [OPTIONS] <NAME>" in " ".join(output.split())
     assert "<str>" not in output
-    for name in ("AGENT", "NAME"):
+    assert "AGENT" not in output
+    for name in ("NAME",):
         row = next(
             line
             for line in output.splitlines()
@@ -806,11 +791,11 @@ def test_prompt_help_uses_conventional_metavars(tmp_path, capsys, monkeypatch):
     ("arguments", "options"),
     [
         (
-            ["a", "serve"],
+            ["serve", "a"],
             ("--sandbox", "--allow", "--limit", "--default", "--compact-model"),
         ),
         (
-            ["a", "start"],
+            ["start", "a"],
             ("--sandbox", "--allow", "--limit", "--default", "--compact-model"),
         ),
         (
@@ -853,21 +838,19 @@ def test_help_uses_semantic_configuration_metavars(
         assert "--help" in option_rows[-1].split()
 
 
-def test_error_usage_preserves_the_virtual_agent_position(
-    tmp_path, capsys, monkeypatch
-):
+def test_error_usage_preserves_the_selected_agent(tmp_path, capsys, monkeypatch):
     monkeypatch.setattr("sys.argv", ["too"])
     assert too_main(["--root", str(tmp_path), "a", "prompt", "new", "--unknown"]) == 2
     output = strip_ansi(capsys.readouterr().err)
     assert output.startswith(
-        "Error: No such option: --unknown\n\nUsage: too [AGENT] prompt new "
+        "Error: No such option: --unknown\n\nUsage: too a prompt new "
     )
-    assert output.count("AGENT") == 1
+    assert "AGENT" not in output
     assert "TEXT" not in output
 
 
 @pytest.mark.parametrize("group", ["workspace", "chore"])
-def test_required_group_agent_is_documented(group, tmp_path: Path, capsys):
+def test_bound_group_does_not_repeat_the_agent_argument(group, tmp_path: Path, capsys):
     assert too_main(["--root", str(tmp_path), "a", group, "--help"]) == 0
     output = strip_ansi(capsys.readouterr().out)
     row = next(
@@ -878,8 +861,9 @@ def test_required_group_agent_is_documented(group, tmp_path: Path, capsys):
         ),
         "",
     )
-    assert "TEXT" not in row and row.lstrip().startswith("* AGENT")
-    assert "[required]" not in row
+    assert row == ""
+    assert f" a {group} [OPTIONS]" in output
+    assert "<AGENT>" not in output
 
 
 class _Mode(str, Enum):

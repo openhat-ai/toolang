@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import os
 from pathlib import Path
-from typing import Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any
 
 from dotenv import dotenv_values
 import typer
@@ -20,6 +20,10 @@ from ..config import load_config
 from ...catalog.errors import CatalogError
 from .help import show_help
 
+if TYPE_CHECKING:
+    from toolang.common.progress import ProgressSink
+    from toolang.up.source import AgentTarget
+
 
 @dataclass(slots=True)
 class CliContext:
@@ -27,6 +31,42 @@ class CliContext:
     agent: str | None = None
     layout: AgentLayout | None = None
     source: Path | None = None
+    selector: str | None = None
+    prepared: bool = False
+
+
+def parse_target(text: str) -> AgentTarget | Path:
+    """Parse a CLI target through its source owner without acquiring it."""
+    from toolang.up import source
+
+    scheme = ":" in text.split("/", 1)[0]
+    if not scheme and (
+        text.endswith(".too") or text.startswith(("./", "../", "/", "~/"))
+    ):
+        path = Path(text).expanduser().resolve()
+        if path.suffix != ".too":
+            raise ValueError(f"agent program must point to a .too file: {text}")
+        return path
+    return source.parse_agent_target(text)
+
+
+def target_context(root: Path, target: AgentTarget | Path) -> CliContext:
+    """Bind a parsed target to one child context without preparing its source."""
+    from toolang.up import source
+
+    if isinstance(target, Path):
+        layout = replace(AgentLayout.roaming(target), toolang_root=root)
+        return CliContext(
+            root=root,
+            agent=layout.name,
+            layout=layout,
+            source=target,
+            selector=str(target),
+        )
+    if target.form == "name":
+        return CliContext(root=root, agent=target.name, selector=target.text)
+    layout = source.visiting_layout(target.text, toolang_root=root)
+    return CliContext(root=root, agent=layout.name, layout=layout, selector=target.text)
 
 
 ModelCatalogOption = Annotated[
@@ -74,15 +114,68 @@ def context_layout(ctx: typer.Context) -> AgentLayout:
 
     state = cli_context(ctx)
     if state.layout is not None:
+        if state.source is not None and not state.prepared:
+            from toolang.up.source import roaming_layout
+
+            return replace(
+                user_call(roaming_layout, state.source), toolang_root=state.root
+            )
         return state.layout
     return AgentLayout.resident(state.root, require_prefix_agent(ctx))
 
 
-def require_runtime_agent(ctx: typer.Context, agent: str | None) -> str:
-    selected = agent or context_agent(ctx)
-    if selected:
-        return selected
-    show_help(ctx)
+def require_runtime_agent(ctx: typer.Context, agent: str) -> str:
+    """Bind a native root command's target to this invocation's context."""
+    try:
+        ctx.obj = target_context(context_root(ctx), parse_target(agent))
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="AGENT", ctx=ctx) from exc
+    state = cli_context(ctx)
+    if state.layout is not None and state.layout.placement != "resident":
+        return state.selector or state.agent or ""
+    assert state.agent is not None
+    return state.agent
+
+
+def prepare_agent(
+    ctx: typer.Context,
+    *,
+    progress: ProgressSink | None = None,
+    complete_preparation: bool = True,
+) -> AgentLayout:
+    """Prepare the selected source only when an executable command needs it."""
+    state = cli_context(ctx)
+    layout = context_layout(ctx)
+    if state.prepared or not (
+        state.source is not None or layout.placement == "visiting" and state.selector
+    ):
+        return layout
+    from toolang.up import source
+    from .progress import make_cli_progress
+
+    if progress is None:
+        report = make_cli_progress(preparation=True)
+        try:
+            with report:
+                selected = prepare_agent(ctx, progress=report.sink)
+                if complete_preparation:
+                    report.complete_preparation()
+                return selected
+        except (OSError, RuntimeError, ToolangError, ValueError) as exc:
+            message = report.failure_message(exc) if report.failure_stage else str(exc)
+            raise ClickException(message) from exc
+    state.layout = (
+        source.materialize_roaming_program(state.source)
+        if state.source is not None
+        else source.resolve_visiting_layout(
+            state.selector or "",
+            toolang_root=state.root,
+            progress=progress,
+        )
+    )
+    state.layout = replace(state.layout, toolang_root=state.root)
+    state.prepared = True
+    return state.layout
 
 
 def resolve_root(

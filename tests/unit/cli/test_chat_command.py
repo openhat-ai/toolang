@@ -215,6 +215,9 @@ def test_chat_latest_uses_selected_history_for_agent_sessions(
         monkeypatch.setattr(
             agent_sources, "resolve_visiting_layout", lambda *_args, **_kwargs: layout
         )
+        monkeypatch.setattr(
+            agent_sources, "visiting_layout", lambda *_args, **_kwargs: layout
+        )
     if placement != "resident":
         with closing(RunStore(chat_layout.run_store)) as store:
             store.create_thread(
@@ -782,6 +785,7 @@ def test_prompt_toolkit_resolves_surfaces_before_starting_the_tui(
     captured: dict[str, object] = {}
 
     monkeypatch.setattr(chat, "context_layout", lambda _ctx: layout)
+    monkeypatch.setattr(chat, "prepare_agent", lambda _ctx, **_kwargs: layout)
     monkeypatch.setattr(
         chat,
         "load_runtime_environ",
@@ -844,6 +848,7 @@ def test_prompt_toolkit_reports_invalid_configuration_before_tui_start(
 ) -> None:
     layout = AgentLayout.resident(tmp_path, "alice")
     monkeypatch.setattr(chat, "context_layout", lambda _ctx: layout)
+    monkeypatch.setattr(chat, "prepare_agent", lambda _ctx, **_kwargs: layout)
     monkeypatch.setattr(
         chat,
         "load_runtime_environ",
@@ -957,6 +962,7 @@ def test_chat_runtime_uses_remote_execution_without_local_environment(
             captured["closed"] = True
 
     monkeypatch.setattr(chat, "context_layout", lambda _ctx: layout)
+    monkeypatch.setattr(chat, "prepare_agent", lambda _ctx, **_kwargs: layout)
     monkeypatch.setattr(chat, "ui_base_url", lambda: "https://ui.test")
     monkeypatch.setattr(chat, "acquire_agent_server", agent_server_context)
     monkeypatch.setattr(chat, "RemoteChatSession", Session)
@@ -1000,6 +1006,7 @@ def test_chat_runtime_does_not_fall_back_after_remote_health_failure(
         raise chat.RemoteChatError("remote chat health failed")
 
     monkeypatch.setattr(chat, "context_layout", lambda _ctx: layout)
+    monkeypatch.setattr(chat, "prepare_agent", lambda _ctx, **_kwargs: layout)
     monkeypatch.setattr(chat, "ui_base_url", lambda: "")
     monkeypatch.setattr(chat, "acquire_agent_server", agent_server_context)
     monkeypatch.setattr(chat, "RemoteChatSession", failed_remote)
@@ -1033,6 +1040,7 @@ def test_chat_lease_loss_reports_the_accepted_run_after_client_cleanup(
             closed.append(True)
 
     monkeypatch.setattr(chat, "context_layout", lambda _ctx: layout)
+    monkeypatch.setattr(chat, "prepare_agent", lambda _ctx, **_kwargs: layout)
     monkeypatch.setattr(chat, "ui_base_url", lambda: "")
     monkeypatch.setattr(chat, "acquire_agent_server", acquire)
     monkeypatch.setattr(chat, "RemoteChatSession", Session)
@@ -1115,6 +1123,7 @@ def test_chat_runtime_forwards_dev_when_acquiring_a_guest(
             pass
 
     monkeypatch.setattr(chat, "context_layout", lambda _ctx: layout)
+    monkeypatch.setattr(chat, "prepare_agent", lambda _ctx, **_kwargs: layout)
     monkeypatch.setattr(chat, "ui_base_url", lambda: "")
     monkeypatch.setattr(chat, "acquire_agent_server", agent_server_context)
     monkeypatch.setattr(chat, "RemoteChatSession", Session)
@@ -1154,6 +1163,7 @@ def test_chat_runtime_exits_acquisition_context_after_initialization_failure(
         raise chat.RemoteChatError("remote initialization failed")
 
     monkeypatch.setattr(chat, "context_layout", lambda _ctx: layout)
+    monkeypatch.setattr(chat, "prepare_agent", lambda _ctx, **_kwargs: layout)
     monkeypatch.setattr(chat, "ui_base_url", lambda: "")
     monkeypatch.setattr(chat, "acquire_agent_server", agent_server_context)
     monkeypatch.setattr(chat, "RemoteChatSession", failed_remote)

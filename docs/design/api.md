@@ -61,7 +61,7 @@ Optional `workdir=NAME://path` validates that location independently of the runt
 default; invalid or unavailable requested locations return HTTP 400. In a guest sandbox,
 availability requires a matching captured mount and an existing guest directory.
 
-`too AGENT info` uses this endpoint while the agent is running and preserves its
+`too info AGENT` uses this endpoint while the agent is running and preserves its
 runtime workspace defaults. `too AGENT workspace list` reads authored workspace
 configuration and checks local directory availability without querying the server
 or preparing State. It excludes implicit `lab` and temporary grants. See

@@ -35,6 +35,7 @@ from toolang.cli.common.parameters import (
 )
 
 from toolang.common.layout import AgentLayout
+from toolang.common.errors import ToolangError
 from toolang.up.types import ServerLifetime
 from toolang.up.config import parse_drivers
 from toolang.cli.common.agent_server import (
@@ -62,6 +63,7 @@ from ....up.logging import (
 from ...common.context import (
     ModelCatalogOption,
     cli_context,
+    prepare_agent,
     context_root,
     require_runtime_agent,
     load_runtime_environ,
@@ -93,11 +95,12 @@ class RuntimeLaunch:
 
 def run(
     ctx: typer.Context,
-    agent: str | None = typer.Argument(
-        None,
-        help="Agent name, .too path, GitHub ref, or URL",
-        hidden=True,
-    ),
+    agent: Annotated[
+        str,
+        typer.Argument(
+            metavar="AGENT", help="Agent name, .too path, GitHub ref, or URL"
+        ),
+    ],
     sandbox: Annotated[
         str | None,
         typer.Option(
@@ -143,7 +146,7 @@ def run(
         with ExitStack() as terminal_scope, progress, cleanup_progress:
             selected_layout = cli_context(ctx).layout
             target = (
-                selected_layout
+                prepare_agent(ctx, progress=progress.sink)
                 if selected_layout is not None
                 else agent_sources.resolve_run_layout(
                     context_root(ctx),
@@ -216,6 +219,7 @@ def run(
     except KeyboardInterrupt:
         raise typer.Exit(130) from None
     except (
+        ToolangError,
         FileExistsError,
         FileNotFoundError,
         OSError,
@@ -223,6 +227,8 @@ def run(
         ValueError,
         ClickException,
     ) as exc:
+        if not launch_started and progress.failure_stage is not None:
+            raise ClickException(progress.failure_message(exc)) from exc
         if isinstance(exc, ClickException) and not launch_started:
             raise
         if launch_started and launch is not None:
@@ -257,9 +263,10 @@ def _report_foreground_ready(
 
 def start(
     ctx: typer.Context,
-    agent: str | None = typer.Argument(
-        None, help="Agent Name or remote Source Ref", hidden=True
-    ),
+    agent: Annotated[
+        str,
+        typer.Argument(metavar="AGENT", help="Agent name, GitHub ref, or URL"),
+    ],
     sandbox: Annotated[
         str | None,
         typer.Option(
@@ -295,6 +302,10 @@ def start(
     from toolang.up import sandbox as sandbox_runtime
 
     selector = require_runtime_agent(ctx, agent)
+    if cli_context(ctx).source is not None:
+        raise typer.BadParameter(
+            "start requires a resident or remote agent", param_hint="AGENT"
+        )
     progress = make_cli_progress(preparation=True)
     launch: RuntimeLaunch | None = None
     launch_started = False
@@ -458,9 +469,10 @@ def _retain_started(
 
 def stop(
     ctx: typer.Context,
-    agent: str | None = typer.Argument(
-        None, help="Agent Name or remote Source Ref", hidden=True
-    ),
+    agent: Annotated[
+        str,
+        typer.Argument(metavar="AGENT", help="Agent name, GitHub ref, or URL"),
+    ],
     force: Annotated[
         bool,
         typer.Option(help="Force-stop when graceful shutdown does not complete"),
@@ -469,8 +481,13 @@ def stop(
     from ...common.progress import make_cli_progress
 
     agent_name = require_runtime_agent(ctx, agent)
+    if cli_context(ctx).source is not None:
+        raise typer.BadParameter(
+            "stop requires a resident or remote agent", param_hint="AGENT"
+        )
     root = context_root(ctx)
     layout = cli_context(ctx).layout or AgentLayout.resident(root, agent_name)
+    agent_name = layout.name
     progress = make_cli_progress()
     try:
         with progress:

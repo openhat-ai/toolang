@@ -146,7 +146,9 @@ def test_directory_lists_conversations_and_interactive_requires_tty(
     assert "CONVERSATION" in output and "2 conversations" in output
     assert cli.main(["--root", str(tmp_path), "talk", "alice"]) == 1
     assert "TTY" in capsys.readouterr().err
-    assert cli.main(["--root", str(tmp_path), "team"]) != 0
+    assert "team" not in cli._REGISTERED_COMMANDS
+    assert cli.main(["--root", str(tmp_path), "team"]) == 0
+    assert "Run and manage agent team." in capsys.readouterr().out
     assert cli.main(["--root", str(tmp_path), "alice,", "hello"]) != 0
 
 

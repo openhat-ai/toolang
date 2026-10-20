@@ -3,9 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from contextvars import ContextVar
-from copy import copy
-from dataclasses import replace
 from pathlib import Path
 import os
 import sys
@@ -13,7 +10,7 @@ from typing import Annotated, Any
 
 import typer
 from rich.text import Text
-from typer._click import Context, HelpFormatter as NativeHelpFormatter
+from typer._click import Command, Context, HelpFormatter as NativeHelpFormatter
 from typer._click.exceptions import ClickException
 from typer.core import TyperGroup
 
@@ -21,34 +18,19 @@ from toolang.common.typer.ui import HelpFormatter, run
 from toolang.cli.common.parameters import RootOption
 from toolang.common.typer.options import BARE_VALUE, OptionalValue, OptionalValueCommand
 
-from ...catalog.agent import LocalAgents
-from ...common.layout import AgentLayout
+from ...common.layout import AgentPlacement
 from ...common import version as _version
 from ..common.context import CliContext, resolve_root
 from ..common.help import CliCommand, CliGroup, HelpContext, show_help
 from ..common.lazy import LazyCommand, lazy_typer_command, lazy_typer_group
-from ..common.output import echo_error
 from ..common.routing import (
     OptionalPrefixAgentCommand,
     OptionalPrefixAgentListCommand,
     OptionalPrefixAgentSetupCommand,
     RequiredPrefixAgentCommand,
-    RunAgentCommand,
-    RuntimeAgentCommand,
-    explicit_root,
-    extract_root_args,
 )
 from . import routing
 
-_PREFIX_AGENT: ContextVar[str | None] = ContextVar(
-    "toolang_cli_prefix_agent", default=None
-)
-_SELECTED_LAYOUT: ContextVar[AgentLayout | None] = ContextVar(
-    "toolang_cli_selected_layout", default=None
-)
-_SELECTED_SOURCE: ContextVar[Path | None] = ContextVar(
-    "toolang_cli_selected_source", default=None
-)
 AGENT_COMMAND_PANEL = "Agent commands"
 WORK_COMMAND_PANEL = "Work commands"
 CAPS_COMMAND_PANEL = "Cap commands"
@@ -81,17 +63,19 @@ _INSPECTION_PANEL_COMMAND_ORDER = (
     "top",
 )
 _SCRIPT_PANEL_COMMAND_ORDER = ("init", "run")
-# Root-hidden run and thread commands stay discoverable in target help.
-_TARGET_HELP_COMMANDS = frozenset(
-    (*_RUN_PANEL_COMMAND_ORDER, *_THREAD_PANEL_COMMAND_ORDER)
-)
 # `too more` collects the commands the root directory omits, grouped by panel.
-_MORE_PANEL_COMMAND_ORDER = (
-    (RUN_COMMAND_PANEL, _RUN_PANEL_COMMAND_ORDER),
-    (THREAD_COMMAND_PANEL, _THREAD_PANEL_COMMAND_ORDER),
-    (PLUGIN_COMMAND_PANEL, ("catalogs", "adapters", "toolsets", "sandboxes")),
-    (LANGUAGE_COMMAND_PANEL, ("parse", "highlight", "fmt")),
+_MORE_COMMAND_ORDER = (
+    *_RUN_PANEL_COMMAND_ORDER,
+    *_THREAD_PANEL_COMMAND_ORDER,
+    "catalogs",
+    "adapters",
+    "toolsets",
+    "sandboxes",
+    "parse",
+    "highlight",
+    "fmt",
 )
+_MORE_COMMANDS = frozenset(_MORE_COMMAND_ORDER)
 _VISIBLE_COMMAND_ORDER = (
     *_AGENT_PANEL_COMMAND_ORDER,
     *_CAPS_PANEL_COMMAND_ORDER,
@@ -109,7 +93,7 @@ _COMMAND_ORDER = (
 _REGISTERED_COMMANDS: dict[str, Callable[[], LazyCommand]] = {}
 
 
-class _ServeCommand(OptionalValueCommand, RunAgentCommand):
+class _RuntimeCommand(OptionalValueCommand, CliCommand):
     optional_values = {"dev": OptionalValue(bare_value=".")}
 
 
@@ -135,14 +119,6 @@ class _ScriptEntryCommand(CliCommand):
             "Omit run if RUNNABLE is not a Toolang command, e.g. "
             f"{ctx.find_root().command_path} aid.too whats_for."
         )
-
-
-class _ResidentVisitingCommand(RuntimeAgentCommand):
-    argument_help = "Agent name, GitHub ref, or URL"
-
-
-class _StartCommand(OptionalValueCommand, _ResidentVisitingCommand):
-    optional_values = {"dev": OptionalValue(bare_value=".")}
 
 
 class _TargetAgentCommand(RequiredPrefixAgentCommand):
@@ -236,7 +212,22 @@ class _ToolangGroup(CliGroup):
         )
         super().__init__(*args, commands=commands, **kwargs)
 
+    def get_command(self, ctx: Context, cmd_name: str) -> Command | None:
+        command = super().get_command(ctx, cmd_name)
+        if command is not None:
+            return command
+        return routing.agent_group(
+            ctx,
+            cmd_name,
+            {name: self.commands[name] for name in self._ordered_commands(ctx)},
+        )
+
     def list_commands(self, ctx: Context) -> list[str]:
+        return [
+            name for name in self._ordered_commands(ctx) if name not in _MORE_COMMANDS
+        ]
+
+    def _ordered_commands(self, ctx: Context) -> list[str]:
         names = TyperGroup.list_commands(self, ctx)
         ordered = [name for name in _COMMAND_ORDER if name in names]
         return [*ordered, *(name for name in names if name not in ordered)]
@@ -260,24 +251,38 @@ app = typer.Typer(
 )
 
 
-def _registered_command(name: str, target: str, **kwargs: Any) -> None:
-    routing.command_spec(name)
+def _registered_command(
+    name: str,
+    target: str,
+    *,
+    agent_placements: frozenset[AgentPlacement] = frozenset(),
+    **kwargs: Any,
+) -> None:
     if name in _REGISTERED_COMMANDS:
         raise RuntimeError(f"top-level command registered more than once: {name}")
 
     def create() -> LazyCommand:
-        return lazy_typer_command(name, target, **kwargs)
+        return lazy_typer_command(
+            name, target, agent_placements=agent_placements, **kwargs
+        )
 
     _REGISTERED_COMMANDS[name] = create
 
 
-def _registered_group(target: str, *, name: str, **kwargs: Any) -> None:
-    routing.command_spec(name)
+def _registered_group(
+    target: str,
+    *,
+    name: str,
+    agent_placements: frozenset[AgentPlacement] = frozenset(),
+    **kwargs: Any,
+) -> None:
     if name in _REGISTERED_COMMANDS:
         raise RuntimeError(f"top-level command registered more than once: {name}")
 
     def create() -> LazyCommand:
-        return lazy_typer_group(name, target, **kwargs)
+        return lazy_typer_group(
+            name, target, agent_placements=agent_placements, **kwargs
+        )
 
     _REGISTERED_COMMANDS[name] = create
 
@@ -306,30 +311,18 @@ def callback(
         configure_logging(spec=None, environ=os.environ)
     except ValueError as exc:
         raise ClickException(str(exc)) from exc
-    root = resolve_root(toolang_root)
-    selected = _SELECTED_LAYOUT.get()
-    ctx.obj = CliContext(
-        root=root,
-        agent=_PREFIX_AGENT.get(),
-        layout=replace(selected, toolang_root=root) if selected is not None else None,
-        source=_SELECTED_SOURCE.get(),
-    )
+    ctx.obj = CliContext(root=resolve_root(toolang_root))
 
 
 class _MoreCommandsCommand(CliCommand):
     def format_help(self, ctx: Context, formatter: NativeHelpFormatter) -> None:
-        root = typer.main.get_command(app)
+        root = ctx.find_root().command
         assert isinstance(root, TyperGroup)
-        commands = {}
-        for panel, names in _MORE_PANEL_COMMAND_ORDER:
-            for name in names:
-                if name not in root.commands:
-                    continue
-                command = copy(root.commands[name])
-                assert isinstance(command, LazyCommand)
-                command.hidden = False
-                command.rich_help_panel = panel
-                commands[name] = command
+        commands = {
+            name: root.commands[name]
+            for name in _MORE_COMMAND_ORDER
+            if name in root.commands
+        }
         group = CliGroup(name="more", commands=commands)
         assert isinstance(formatter, HelpFormatter)
         formatter.write_commands(Context(group))
@@ -384,12 +377,12 @@ _registered_command(
     "toolang.cli.toolang.commands.agent:info_agent",
     help="Show agent information",
     no_args_is_help=True,
-    cls=RuntimeAgentCommand,
     rich_help_panel=AGENT_COMMAND_PANEL,
 )
 _registered_command(
     "home",
     "toolang.cli.toolang.commands.home:home",
+    agent_placements=routing.ALL_AGENTS,
     help="Open a shell in agent home",
     cls=_HomeCommand,
     rich_help_panel=AGENT_COMMAND_PANEL,
@@ -397,6 +390,7 @@ _registered_command(
 _registered_group(
     "toolang.cli.toolang.commands.workspace:workspace_app",
     name="workspace",
+    agent_placements=routing.ALL_AGENTS,
     help="Manage agent workspaces",
     no_args_is_help=True,
     rich_help_panel=WORK_COMMAND_PANEL,
@@ -406,7 +400,7 @@ _registered_command(
     "toolang.cli.toolang.commands.runtime:run",
     help="Run an agent in the foreground",
     no_args_is_help=True,
-    cls=_ServeCommand,
+    cls=_RuntimeCommand,
     rich_help_panel=RUNTIME_COMMAND_PANEL,
 )
 _registered_command(
@@ -414,7 +408,7 @@ _registered_command(
     "toolang.cli.toolang.commands.runtime:start",
     help="Start an agent in the background",
     no_args_is_help=True,
-    cls=_StartCommand,
+    cls=_RuntimeCommand,
     rich_help_panel=RUNTIME_COMMAND_PANEL,
 )
 _registered_command(
@@ -422,12 +416,12 @@ _registered_command(
     "toolang.cli.toolang.commands.runtime:stop",
     help="Stop an agent",
     no_args_is_help=True,
-    cls=_ResidentVisitingCommand,
     rich_help_panel=RUNTIME_COMMAND_PANEL,
 )
 _registered_group(
     "toolang.cli.toolang.commands.chore:chore_app",
     name="chore",
+    agent_placements=routing.RESIDENT,
     help="Manage one-off and scheduled tasks",
     no_args_is_help=True,
     rich_help_panel=WORK_COMMAND_PANEL,
@@ -463,6 +457,7 @@ _registered_group(
 _registered_command(
     "chat",
     "toolang.cli.toolang.commands.chat:chat_command",
+    agent_placements=routing.ALL_AGENTS,
     help="Chat directly with an agent",
     cls=_ChatCommand,
     rich_help_panel=WORK_COMMAND_PANEL,
@@ -470,6 +465,7 @@ _registered_command(
 _registered_command(
     "inspect",
     "toolang.cli.toolang.commands.inspect:inspect_command",
+    agent_placements=routing.ALL_AGENTS,
     help="Inspect agent runs",
     no_args_is_help=True,
     cls=_InspectCommand,
@@ -478,53 +474,54 @@ _registered_command(
 _registered_command(
     "steer",
     "toolang.cli.toolang.commands.thread:steer_command",
+    agent_placements=routing.ALL_AGENTS,
     help="Steer an active run",
     no_args_is_help=True,
     cls=_TargetAgentCommand,
-    hidden=True,
     rich_help_panel=RUN_COMMAND_PANEL,
 )
 _registered_command(
     "cancel",
     "toolang.cli.toolang.commands.thread:cancel_command",
+    agent_placements=routing.ALL_AGENTS,
     help="Cancel an active run",
     no_args_is_help=True,
     cls=_TargetAgentCommand,
-    hidden=True,
     rich_help_panel=RUN_COMMAND_PANEL,
 )
 
 _registered_command(
     "rerun",
     "toolang.cli.toolang.commands.thread:rerun_command",
+    agent_placements=routing.ALL_AGENTS,
     help="Rerun an earlier run as a new one",
     no_args_is_help=True,
     cls=_ThreadRunCommand,
-    hidden=True,
     rich_help_panel=RUN_COMMAND_PANEL,
 )
 _registered_command(
     "rewind",
     "toolang.cli.toolang.commands.thread:rewind_command",
+    agent_placements=routing.ALL_AGENTS,
     help="Rewind a thread to an earlier run",
     no_args_is_help=True,
     cls=_TargetAgentCommand,
-    hidden=True,
     rich_help_panel=THREAD_COMMAND_PANEL,
 )
 _registered_command(
     "fork",
     "toolang.cli.toolang.commands.thread:fork_command",
+    agent_placements=routing.ALL_AGENTS,
     help="Fork a thread from an earlier run",
     no_args_is_help=True,
     cls=_TargetAgentCommand,
-    hidden=True,
     rich_help_panel=THREAD_COMMAND_PANEL,
 )
 
 _registered_command(
     "models",
     "toolang.cli.toolang.commands.model_catalog:models_command",
+    agent_placements=routing.ALL_AGENTS,
     help="List available models",
     cls=_TargetSetupCommand,
     rich_help_panel=INSPECTION_COMMAND_PANEL,
@@ -532,6 +529,7 @@ _registered_command(
 _registered_command(
     "top",
     "toolang.cli.toolang.commands.top:top",
+    agent_placements=routing.RESIDENT,
     help="Monitor active runs",
     cls=_TopCommand,
     rich_help_panel=INSPECTION_COMMAND_PANEL,
@@ -539,6 +537,7 @@ _registered_command(
 _registered_command(
     "providers",
     "toolang.cli.toolang.commands.model_catalog:providers_command",
+    agent_placements=routing.ALL_AGENTS,
     help="List available model providers",
     cls=_TargetSetupCommand,
     rich_help_panel=INSPECTION_COMMAND_PANEL,
@@ -546,6 +545,7 @@ _registered_command(
 _registered_command(
     "tools",
     "toolang.cli.toolang.commands.plugin:list_tools",
+    agent_placements=routing.ALL_AGENTS,
     help="List available tools",
     cls=_TargetSetupCommand,
     rich_help_panel=INSPECTION_COMMAND_PANEL,
@@ -554,30 +554,31 @@ _registered_command(
     "catalogs",
     "toolang.cli.toolang.commands.plugin:list_catalogs",
     help="List installed model catalogs",
-    hidden=True,
+    rich_help_panel=PLUGIN_COMMAND_PANEL,
 )
 _registered_command(
     "adapters",
     "toolang.cli.toolang.commands.plugin:adapters_command",
     help="List installed model adapters",
-    hidden=True,
+    rich_help_panel=PLUGIN_COMMAND_PANEL,
 )
 _registered_command(
     "toolsets",
     "toolang.cli.toolang.commands.plugin:list_toolsets",
     help="List installed toolsets",
-    hidden=True,
+    rich_help_panel=PLUGIN_COMMAND_PANEL,
 )
 _registered_command(
     "sandboxes",
     "toolang.cli.toolang.commands.plugin:list_sandboxes",
     help="List installed sandboxes",
-    hidden=True,
+    rich_help_panel=PLUGIN_COMMAND_PANEL,
 )
 
 _registered_group(
     "toolang.cli.toolang.commands.caps:psyche_app",
     name="psyche",
+    agent_placements=routing.ALL_AGENTS,
     help="Manage psyche caps",
     no_args_is_help=True,
     rich_help_panel=CAPS_COMMAND_PANEL,
@@ -585,6 +586,7 @@ _registered_group(
 _registered_group(
     "toolang.cli.toolang.commands.caps:skill_app",
     name="skill",
+    agent_placements=routing.ALL_AGENTS,
     help="Manage skill caps",
     no_args_is_help=True,
     rich_help_panel=CAPS_COMMAND_PANEL,
@@ -592,6 +594,7 @@ _registered_group(
 _registered_group(
     "toolang.cli.toolang.commands.caps:service_app",
     name="service",
+    agent_placements=routing.ALL_AGENTS,
     help="Manage service caps",
     no_args_is_help=True,
     rich_help_panel=CAPS_COMMAND_PANEL,
@@ -599,6 +602,7 @@ _registered_group(
 _registered_group(
     "toolang.cli.toolang.commands.caps:prompt_app",
     name="prompt",
+    agent_placements=routing.ALL_AGENTS,
     help="Manage prompt caps",
     no_args_is_help=True,
     rich_help_panel=CAPS_COMMAND_PANEL,
@@ -606,6 +610,7 @@ _registered_group(
 _registered_command(
     "caps",
     "toolang.cli.caps.commands:list_caps",
+    agent_placements=routing.ALL_AGENTS,
     help="List available caps",
     cls=_TargetListCommand,
     rich_help_panel=INSPECTION_COMMAND_PANEL,
@@ -616,21 +621,21 @@ _registered_command(
     "fmt",
     "toolang.cli.toolang.commands.program:fmt",
     help="Format .too source",
-    hidden=True,
+    rich_help_panel=LANGUAGE_COMMAND_PANEL,
     no_args_is_help=True,
 )
 _registered_command(
     "parse",
     "toolang.cli.toolang.commands.program:parse_program",
     help="Parse .too source",
-    hidden=True,
+    rich_help_panel=LANGUAGE_COMMAND_PANEL,
     no_args_is_help=True,
 )
 _registered_command(
     "highlight",
     "toolang.cli.toolang.commands.program:highlight_source",
     help="Highlight .too source",
-    hidden=True,
+    rich_help_panel=LANGUAGE_COMMAND_PANEL,
     no_args_is_help=True,
 )
 _registered_command(
@@ -658,122 +663,15 @@ _registered_command(
     rich_help_panel=SCRIPT_COMMAND_PANEL,
 )
 
-routing.validate_command_registration(set(_REGISTERED_COMMANDS))
-
 
 def main(argv: Sequence[str] | None = None) -> int:
-    raw_args = list(argv) if argv is not None else sys.argv[1:]
-    prog_name = _prog_name(sys.argv[0] if sys.argv else "")
-    if routing.is_script_invocation(raw_args):
-        return _run_app(raw_args, None, prog_name=prog_name)
-    routed = routing.dispatch_roaming(
-        raw_args,
-        prog_name=prog_name,
-        run_app=lambda args, layout, source: _run_app(
-            args,
-            layout.name,
-            prog_name=prog_name,
-            layout=layout,
-            source=source,
-        ),
-    )
-    if routed is not None:
-        return routed
-    try:
-        target_help = routing.select_target_help(
-            raw_args,
-            residents=_routing_residents(raw_args),
-        )
-    except ValueError as exc:
-        echo_error(str(exc))
-        return 2
-    if target_help is not None:
-        return _run_target_help(target_help, prog_name=prog_name)
-    routed = routing.dispatch_visiting(
-        raw_args,
-        run_app=lambda args, layout: _run_app(
-            args,
-            layout.name,
-            prog_name=prog_name,
-            layout=layout,
-        ),
-    )
-    if routed is not None:
-        return routed
-    try:
-        args, prefix_agent = routing.normalize(raw_args)
-    except routing.RoutingError as exc:
-        echo_error(str(exc))
-        return 2
-    return _run_app(args, prefix_agent, prog_name=prog_name)
-
-
-def _run_target_help(
-    target: routing.TargetHelp,
-    *,
-    prog_name: str,
-) -> int:
-    root_command = typer.main.get_command(app)
-    if not isinstance(root_command, TyperGroup):
-        raise TypeError("Toolang CLI root must be a command group")
-    commands = {}
-    for name in root_command.list_commands(Context(root_command)):
-        command = root_command.commands[name]
-        if command.hidden and name not in _TARGET_HELP_COMMANDS:
-            continue
-        if not routing.command_spec(name).accepts("before", target.placement):
-            continue
-        if command.hidden:
-            # Root-hidden control commands appear in target help on a copy.
-            command = copy(command)
-            command.hidden = False
-        commands[name] = command
-    group = CliGroup(
-        name=target.selector,
-        commands=commands,
-        help=f"Run and manage agent {target.label}",
-        no_args_is_help=True,
-        rich_markup_mode="rich",
-    )
-    try:
-        group.main(
-            args=["--help"],
-            prog_name=f"{prog_name} {target.selector}",
-            standalone_mode=False,
-        )
-    except typer.Exit as exc:
-        return exc.exit_code
-    return 0
-
-
-def _run_app(
-    args: list[str],
-    prefix_agent: str | None,
-    *,
-    prog_name: str,
-    layout: AgentLayout | None = None,
-    source: Path | None = None,
-) -> int:
-    agent_token = _PREFIX_AGENT.set(prefix_agent)
-    layout_token = _SELECTED_LAYOUT.set(layout)
-    source_token = _SELECTED_SOURCE.set(source)
-    try:
-        return run(app, args=args, prog_name=prog_name)
-    finally:
-        _SELECTED_SOURCE.reset(source_token)
-        _SELECTED_LAYOUT.reset(layout_token)
-        _PREFIX_AGENT.reset(agent_token)
+    args = list(argv) if argv is not None else sys.argv[1:]
+    return run(app, args=args, prog_name=_prog_name(sys.argv[0] if sys.argv else ""))
 
 
 def _prog_name(argv0: str) -> str:
     text = Path(argv0).name.strip()
     return text or "toolang"
-
-
-def _routing_residents(argv: Sequence[str]) -> frozenset[str]:
-    root_args, _body = extract_root_args(argv, literal_commands={"talk"})
-    root = resolve_root(explicit_root(root_args))
-    return frozenset(LocalAgents(root / "agents").list())
 
 
 if __name__ == "__main__":
