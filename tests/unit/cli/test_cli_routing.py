@@ -402,7 +402,7 @@ def test_workspace_commands_follow_the_public_order() -> None:
 def test_cli_exposes_plural_list_resources_and_removes_channels() -> None:
     group = typer.main.get_command(cli.app)
     expected_help = {
-        "inspect": "Inspect runs in detail",
+        "inspect": "Inspect agent runs",
         "home": "Open a shell in agent home",
         "caps": "List available caps",
         "models": "List available models",

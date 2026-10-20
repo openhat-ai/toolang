@@ -2114,7 +2114,7 @@ def test_inspect_display_modes_are_exclusive_and_removed_options_fail(
     assert "No such option: --limit" in strip_ansi(removed.stderr)
     assert help_code == 0
     assert "POINTER" in help_text
-    assert "Inspect runs in detail" in help_text
+    assert "Inspect agent runs" in help_text
     assert "Subject chain;" in help_text
     assert "Subjects:" in help_text
     assert "threads List threads" in compact_help
