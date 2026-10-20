@@ -45,8 +45,8 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   existing root; align those options or run `too AGENT stop` first.
   ([#884](https://github.com/openhat-ai/toolang/pull/884))
 
-- **Breaking:** Roaming `serve` is removed; run `too FILE.too` or
-  `too FILE.too chat` instead.
+- **Breaking:** Roaming `serve` is removed; run `too FILE.too` instead, or
+  `too FILE.too chat --enable chat` for Chat.
   ([#884](https://github.com/openhat-ai/toolang/pull/884))
 
 - Resident ports reuse their previous value only when available, otherwise
@@ -67,6 +67,24 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 - CLI controls attach to foreground roaming executors on their real published
   port, covering steer, cancel, profile, and Top.
+  ([#884](https://github.com/openhat-ai/toolang/pull/884))
+
+- Roaming `fork --chat` and `rewind --chat` enable chat in their fresh
+  continuation executor.
+  ([#884](https://github.com/openhat-ai/toolang/pull/884))
+
+- Copied chore checkpoints and imported Talk receipts stay inert in the new
+  owner: they drive no destination work and never advance live Hub cursors.
+  ([#884](https://github.com/openhat-ai/toolang/pull/884))
+
+- A roaming launch whose registry publication fails ends as a failed root you
+  can select, not a stuck preparing owner.
+  ([#884](https://github.com/openhat-ai/toolang/pull/884))
+
+### Security
+
+- The locked certifi trust store advances to 2026.10.19, resolving trust-store
+  vulnerability GHSA-6q48-6c7w-9gw2.
   ([#884](https://github.com/openhat-ai/toolang/pull/884))
 
 ## [0.4.0a11] - 2026-10-20
