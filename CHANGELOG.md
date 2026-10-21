@@ -233,9 +233,9 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   their target thread are rejected instead of accepted.
   ([#907](https://github.com/openhat-ai/toolang/pull/907))
 
-- Cap and tool lists use the full terminal width without wrapping, shorten
-  descriptions and source locations together ahead of identities and tags, and
-  retain complete JSON records.
+- Cap and tool lists use terminal width with an 80-column minimum, relative
+  local paths, availability STATUS, and single rows; only descriptions and
+  locations shrink, with JSON unchanged.
   ([#910](https://github.com/openhat-ai/toolang/pull/910))
 
 ### Security
