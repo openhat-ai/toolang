@@ -1,7 +1,7 @@
 # Scoped and ordered instance IDs
 
 Status: proposed for user review. This definition builds on merged PR #897 and
-ships no implementation. It replaces the earlier random short-ID proposal.
+ships no implementation. Existing formats and layouts are not supported.
 
 ## Goal and scope
 
@@ -35,7 +35,11 @@ instance_name = agent_name + "@" + instance_id
 The body is 16 characters; the placement marker makes the ID 17 characters.
 An `aid@r...` name is 21 characters. Encode all 80 bits together: 32/48 are bit
 boundaries, not separate Base32 character boundaries. Do not scramble the value.
-Reject noncanonical spellings, invalid characters and out-of-range components.
+Before packing, require strict integer components with `0 <= prefix < 2**32`
+and `0 <= suffix < 2**48`; checking the packed value alone is insufficient.
+Reject noncanonical spellings and invalid characters.
+The generic Base32 decoder normalizes case/whitespace; the instance-ID boundary
+must require that re-encoding the decoded value reproduces the exact input.
 
 For visiting, the same `R,U` pair always produces the same ID. Across roots,
 the URL component stays equal while the root component can differ. Hashes are
@@ -44,12 +48,17 @@ compact tags; full source bindings, not short prefixes, establish ownership.
 For roaming, serialize allocation under the existing source-cache launch lock:
 
 ```text
-timestamp_ms = max(wall_time_ms, greatest_retained_launch_ms + 1)
+timestamp_ms = max(wall_time_ms, greatest_retained_launch_ms_for_P + 1)
 ```
 
-Include compatible legacy startup orders when calculating the lower bound.
 The assigned timestamp is a monotonic logical launch time; record actual wall
-time separately. Fixed-width IDs sort by launch for the same canonical path.
+time separately. Persist `request_order_ns = timestamp_ms * 1_000_000` and
+validate this equality against the decoded suffix on every retained read.
+Only fully validated format-4 records bound to the same full `P` can supply
+the lower bound; missing/corrupt existing ownership is an error, not zero.
+The monotonic guarantee depends on retaining that source's allocation history;
+deleting all of it resets the namespace. Fixed-width IDs sort by launch for
+the same canonical path.
 Across different paths, compare decoded timestamps for chronological sorting:
 whole-ID ordering first compares path tags. A 48-bit millisecond field spans
 approximately 8,920 years; exhaustion fails explicitly and never wraps.
@@ -69,7 +78,12 @@ For agent name `A` and complete instance ID `I`:
 `<agent_home>/.runtime/status.json` remains the authoritative instance file.
 Its control bindings record the complete ID/name, placement, canonical root,
 full source URL or path, and assigned startup order. Claim and verify the full
-visiting source binding before mutating cached programs or history.
+visiting source binding under its home write guard before mutating cached
+programs or history. Existing unbound or unreadable homes must not be adopted.
+Pure layout derivation and inspection do not create homes or claim ownership.
+Recompute hash components from the full bindings on read; a stored ID alone
+does not prove its root or source. Require the name, root/home/status paths and
+discovery filename to agree with that validated identity.
 
 `R/.runtime/instances/A@I.json` remains a discovery reference containing only its
 format version, absolute status-file path and UUID `launch_id`. Residents use
@@ -104,35 +118,41 @@ visiting collision probability depends on the 32-bit root tag alone.
   and registry publication guards. Advance the timestamp on a complete-ID
   collision, up to 128 attempts. Never overwrite a retained root or another
   status binding; exhaustion fails without publishing a provisional instance.
-- Verify owner, private permissions and filesystem bindings for `/tmp/toolang`
-  and its instance roots; reject unexpected symlinks and foreign-owned paths.
-  A shared multi-user parent needs trusted provisioning; do not weaken its
-  permissions to bypass ownership failures. Predictability still permits
-  pre-creation denial of service in shared `/tmp`;
-  do not silently delete or adopt the conflicting directory.
+- Create an absent `/tmp/toolang` atomically as an effective-user-owned `0700`
+  directory. Accept an existing private `0700` directory owned by that user,
+  or an administrator-provisioned root-owned `01777` shared parent. Reject
+  every other owner/mode and all symlinks without chmod, deletion or fallback.
+  Resolve the platform's `/tmp` alias first, then use link-safe operations
+  under the verified parent. Instance roots are user-owned `0700`; records
+  are `0600`. Recheck bindings under the write guard before reuse. Predictable
+  names still permit pre-creation denial of service; fail without adoption.
 - IDs and hashes are public names, not authorization secrets or content
   signatures. Keep credentials out of filenames and normal logs. URL content
   integrity remains governed by source receipts and captured State.
 - Preserve UUID generation fencing. Validate registration/status versions,
   paths and full ownership before use or cleanup. Rejected reads/publications
-  must preserve existing records; stale cleanup must not remove a replacement.
+  must preserve existing records. Run publication-failure cleanup only after
+  attempting this caller's write; fence cleanup by both status path and UUID
+  so a collision cannot remove another owner, even with equal UUID values.
 
-## Compatibility and module boundaries
+## Format cutover and module boundaries
 
-New instances and references use format 4; retain read/selection support for
-format 3. New visiting Base32 bodies can also look hexadecimal, so use the
-recorded version rather than guessing the encoding from its characters.
-Resolve an explicit selector to its record before interpreting legacy fields.
+Read and write only instance/reference format 4. Format 3 and earlier fail
+with an explicit unsupported-format diagnostic; never treat them as absent,
+rewrite them, or clean their references as a side effect of rejection. Update
+all status/reference consumers, including observation fallback paths, together.
 
-Do not rename, delete or automatically rewrite legacy roots. Reuse a verified
-legacy visiting home for its existing source rather than splitting history or
-creating a parallel replacement. New encoding applies to newly created homes;
-legacy history migration is outside this PR. Mixed-format roaming selection
-compares validated startup orders, not raw strings from different formats.
+Use only the names and paths defined above. No older-ID codecs, old-home
+search/reuse, mixed-format ordering, migration or automatic renaming/deletion.
+Stop old workloads before upgrading; retained files can be kept outside the
+new runtime's scope. An overlapping hexadecimal-looking ID spelling does not
+override the required format version or full source/path bindings.
 
 - `common.id_codec`: existing Base32 primitives, unchanged.
 - `common.instance_ids`: pure bit packing, hashing, decoding and comparison.
 - `common.layout`: concrete names and paths; no discovery or runtime I/O.
+- `up.source`: existing URL canonicalization and source preparation; pass
+  resolved inputs to identity code rather than duplicating source parsing.
 - `up.identity`: source ownership, locked allocation and retained selection.
 - `up.instance` and `up.observation`: versioned status/reference parsing,
   publication and generation-safe cleanup.
@@ -146,18 +166,21 @@ CLI boundary tests, [layout](../design/layout.md), [CLI](../design/cli.md),
 ## Acceptance tests
 
 1. Codec round trips cover 32/48-bit boundaries, leading zeroes, malformed
-   values and overflow; body length is 16 and same-path ordering is preserved.
+   values, noncanonical spellings and overflow; body length is 16 and same-path
+   ordering is preserved.
 2. Visiting URL aliases map consistently; root changes affect only the root
    component. Instance names, home paths, selectors and reference names agree.
 3. Roaming path aliases agree; parallel launches, identical clocks and clock
-   rollback produce distinct increasing IDs without depending on file mtime.
+   rollback produce distinct increasing IDs with matching persisted units;
+   other paths and file mtime do not determine a source's lower bound.
 4. Forced tag/full-ID collisions, exhaustion and foreign `/tmp` paths preserve
-   all existing records and never mix source history.
+   all existing records and never mix source history. Direct filesystem tests
+   cover both accepted parent modes, wrong owners/modes and symlink races.
 5. Direct lifecycle tests preserve UUID replacement fencing and reject invalid
    records without destructive cleanup. Observation creates no instances.
-6. Legacy visiting homes are reused, old roaming history remains selectable,
-   mixed-format latest selection works, and ambiguous hexadecimal-looking
-   Base32 values are interpreted using their recorded version.
+6. Old formats/paths are neither adopted nor rewritten; unsupported records
+   remain unchanged and produce explicit errors, including when their ID
+   spelling also matches the new Base32 alphabet.
 7. Hub, Top, JSON and CLI selection expose identical IDs; #897 scope semantics
    remain intact. Default static checks and the offline test suite pass.
 
