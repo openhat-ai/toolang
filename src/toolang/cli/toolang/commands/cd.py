@@ -35,7 +35,12 @@ def cd(ctx: typer.Context) -> None:
     _require_interactive_terminal(sys.stdin, sys.stdout)
     executable = os.environ.get("SHELL", "/bin/sh")
     destination = f"{layout.name}'s home" if layout else "the Toolang root"
-    typer.echo(f"Opening a shell in {destination}: {shorten_home_path(directory)}")
+    try:
+        display_path = shorten_home_path(directory)
+    except (OSError, RuntimeError):
+        # A display label must not prevent the shell from opening.
+        display_path = str(directory.absolute())
+    typer.echo(f"Opening a shell in {destination}: {display_path}")
     typer.echo("Type exit to return.")
     try:
         result = subprocess.run([executable, "-i"], cwd=directory, check=False)

@@ -148,6 +148,50 @@ def test_cd_opens_root_without_an_agent_and_respects_root_precedence(
     assert all(not (root / "agents").exists() for root in roots)
 
 
+@pytest.mark.parametrize("agent", [None, "alice", "visiting", "roaming"])
+@pytest.mark.parametrize(
+    "display_error",
+    [FileNotFoundError, RuntimeError],
+)
+def test_cd_path_display_failure_preserves_shell_launch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    agent: str | None,
+    display_error: type[Exception],
+) -> None:
+    resident_home = _create_agent(tmp_path)
+    context = _context(tmp_path, agent)
+    directory = (
+        context.obj.layout.home
+        if context.obj.layout
+        else resident_home
+        if agent
+        else tmp_path
+    )
+    monkeypatch.setattr(cd_command, "_require_interactive_terminal", lambda *_: None)
+    monkeypatch.setenv("SHELL", "/custom/shell")
+
+    def unavailable_display(_path: Path) -> str:
+        raise display_error("Path display unavailable")
+
+    calls: list[tuple[list[str], dict[str, Any]]] = []
+
+    def run(args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        calls.append((args, kwargs))
+        return subprocess.CompletedProcess(args, 0)
+
+    monkeypatch.setattr(cd_command, "shorten_home_path", unavailable_display)
+    monkeypatch.setattr(cd_command.subprocess, "run", run)
+
+    cd_command.cd(context)
+
+    assert calls == [(["/custom/shell", "-i"], {"cwd": directory, "check": False})]
+    output = capsys.readouterr()
+    assert f": {directory}\nType exit to return.\n" in output.out
+    assert output.err == ""
+
+
 @pytest.mark.parametrize("is_file", [False, True])
 def test_cd_reports_an_unusable_root_without_creating_it(
     tmp_path: Path,
