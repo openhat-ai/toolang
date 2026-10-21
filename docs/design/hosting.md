@@ -89,6 +89,8 @@ Resident/visiting attachment retains the running executor's settings when option
 are omitted. It checks identity, API compatibility, required drivers, and explicit
 requirements without resolving a new launch or preparing/fetching source. Caller
 environment and current local startup configuration do not constrain attachment.
+Saved layout and source identities must match the selected target, including
+attach-only controls; copied runtime status cannot redirect execution to its owner.
 Explicit sandbox selectors must match; a driver-only selector accepts its running
 concrete instance. Explicit `--enable` must match the bound drivers, while omission
 retains them for attachment and `start` promotion.

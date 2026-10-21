@@ -94,3 +94,42 @@ def test_legacy_aggregate_bindings_still_verify_exact_explicit_settings(tmp_path
     )
     with pytest.raises(ValueError, match="workspace_additions.*restart"):
         require_compatible(layout, {"workspace_additions": {"repo": "/one"}})
+
+
+@pytest.mark.parametrize("process_override", [False, True])
+def test_explicit_catalog_matches_effective_dotenv_and_process_inputs(
+    tmp_path, process_override
+):
+    from toolang.cli.common.startup import resolve_attachment_requirements
+
+    layout = AgentLayout.resident(tmp_path, "aid")
+    dotenv_catalog = tmp_path / "dotenv.json"
+    process_catalog = tmp_path / "process.json"
+    spec = asyncio.run(
+        resolve_launch(
+            layout=layout,
+            sandbox="host",
+            port=8123,
+            environ=(
+                {"TOOLANG_MODEL_CATALOG": str(process_catalog)}
+                if process_override
+                else {}
+            ),
+        )
+    )
+    spec = replace(spec, dotenv_envs={"TOOLANG_MODEL_CATALOG": str(dotenv_catalog)})
+    update_instance(
+        layout.runtime_status,
+        lambda entry: entry["control"].update(startup_contract=startup_contract(spec)),
+    )
+    selected = process_catalog if process_override else dotenv_catalog
+    require_compatible(
+        layout,
+        resolve_attachment_requirements(sandbox="host", model_catalog=selected),
+    )
+    other = dotenv_catalog if process_override else process_catalog
+    with pytest.raises(ValueError, match="model_catalog"):
+        require_compatible(
+            layout,
+            resolve_attachment_requirements(sandbox="host", model_catalog=other),
+        )

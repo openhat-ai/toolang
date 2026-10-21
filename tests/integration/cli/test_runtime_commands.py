@@ -646,6 +646,7 @@ def test_repeated_start_preserves_omitted_settings_and_checks_explicit_options(
 ):
     from toolang.cli.common.startup import resolve_runtime_launch
     from toolang.up.contract import startup_contract
+    from toolang.up.identity import identity_bindings
     from toolang.up.instance import read_instance, update_instance
     from toolang.up.process import AgentStatus
 
@@ -667,7 +668,9 @@ def test_repeated_start_preserves_omitted_settings_and_checks_explicit_options(
 
     def record(entry):
         entry["control"].update(
-            startup_contract=startup_contract(spec), drivers=["chat"]
+            **identity_bindings(layout),
+            startup_contract=startup_contract(spec),
+            drivers=["chat"],
         )
         entry["workload"].update(api_version=AGENT_API_VERSION, lifetime="persistent")
 

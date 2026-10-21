@@ -50,7 +50,7 @@ def startup_contract(spec: LaunchSpec) -> dict[str, str]:
         )
     }
     bindings.update(
-        model_catalog=spec.environ.get(MODEL_CATALOG_ENV),
+        model_catalog={**spec.dotenv_envs, **spec.environ}.get(MODEL_CATALOG_ENV),
         development=str(spec.dev_artifact) if spec.dev_artifact else None,
     )
     if spec.dev_artifact is not None:
