@@ -130,7 +130,7 @@ def resolve_provider(
 ) -> Provider:
     """Publish a provider default route without changing its declarations."""
 
-    env = _resolve_env(provider)
+    env = provider_environment(provider)
     satisfied = env if env_is_ready(env, environ=environ) else None
     adapter_name = provider_adapter(provider)
     adapter = adapters.get(adapter_name) if adapter_name is not None else None
@@ -195,7 +195,7 @@ def catalog_environment_names(
     names: set[str] = set()
     templates: list[str | None] = []
     for provider in snapshot.providers.values():
-        names.update(env_names(_resolve_env(provider)))
+        names.update(env_names(provider_environment(provider)))
         adapter = adapters.get(provider_adapter(provider) or "")
         templates.append(_provider_api_template(provider, adapter))
     for model in snapshot.models:
@@ -412,7 +412,9 @@ def env_is_ready(env: ResolvedEnv, *, environ: Mapping[str, str]) -> bool:
     )
 
 
-def _resolve_env(provider: Provider) -> ResolvedEnv:
+def provider_environment(provider: Provider) -> ResolvedEnv:
+    """Return effective credential requirements, including unmet alternatives."""
+
     override = _ENV_OVERRIDES.get(provider.id)
     if override is not None:
         return override

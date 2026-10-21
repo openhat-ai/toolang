@@ -8,20 +8,21 @@ collection query interface. Runnables use exact language references.
 ## Records and output
 
 Human tables are the default; `--human` and `--json` are mutually exclusive.
-JSON output is an array, including `[]` for an empty selection. Headers uppercase
-the record keys without renaming them; JSON and query keys remain lowercase.
+JSON output is an array, including `[]` for an empty selection. Human labels follow
+the table below; JSON and query keys remain unchanged and lowercase.
 `--all` includes unavailable or excluded records; the default view contains
-effective resources. Column order is fixed in both views.
+effective resources. Visible columns retain this order in both views.
 
 | Collection | Identity | Human columns, in order |
 | --- | --- | --- |
 | Models | `ref`: `provider/id` | `REF`, `CONTEXT`, `MAX_OUTPUT`, `PRICE`, `INPUT`, `OUTPUT`, `FEATURES`, `TAGS` |
-| Providers | `id` (external TQ only) | `ID`, `MODELS`, `ADAPTER`, `API`, `ENV` |
+| Providers | `id` (external TQ only) | `PROVIDER`, `MODELS`, `API` (when space permits), `ENV` |
 | Tools | `ref`: `toolset/name` | `REF`, `DESCRIPTION`, `TAGS` |
 | Caps | `cap`: `kind/name` | `CAP`, `DESCRIPTION`, `LOCATION`, `TAGS` |
 
 `REF` and `CAP` are at most 40 display cells wide; longer refs wrap, preferably after `/`,
-without losing characters. Arrays display comma-separated values; missing values
+without losing characters. Except for provider ENV rules, arrays display
+comma-separated values; missing values
 and empty arrays display `-`. Locations remain complete for copying.
 Model REF continuation lines are right-aligned; other fields start on the second
 line when the ref wraps. Model `CONTEXT` and `MAX_OUTPUT` display comma thousands
