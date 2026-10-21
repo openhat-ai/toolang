@@ -8,8 +8,8 @@ implementation. This updates only the presentation decisions in
 
 Make names the primary visual element of `too hub`, with aligned status and
 supplementary fields for both Hub and agents. `too` is an alias for `toolang`.
-Success means consistent columns, distinct instance suffixes, and field-level
-positive/negative styling in terminal output.
+Success means consistent columns, distinct agent types, visually secondary
+instance IDs, and field-level positive/negative styling in terminal output.
 
 Change only snapshot rendering and its acceptance coverage. Keep discovery,
 readiness, version lookup, instance labels, lifecycle commands, exit codes,
@@ -33,12 +33,14 @@ An offline Hub row contains `hub` in column one, `not running` in column two,
 and an empty third column. Empty rosters still use the shared Hub layout and
 retain the existing `no agents` line without a count summary.
 
-- Render `hub` and nonresident agent-name portions in Rich `cyan`; resident
-  agent names use `bright_cyan`. Render the complete `@r…` suffix in
-  `bright_magenta` and the complete `@v…` suffix in `bright_yellow`, including
-  any existing `#…` discriminator. Use no bold or dim on names or suffixes.
-  Derive styled segments from the existing name and label; do not shorten,
-  reformat, or reclassify IDs. Tree branches retain their normal style.
+- Render agent-name portions by placement: roaming uses Rich `bright_magenta`,
+  visiting uses `bright_yellow`, and resident uses `bright_cyan`. Keep `hub`
+  in `cyan`. Names use no bold or dim.
+- Render the complete instance suffix (`@r…` or `@v…`, including any existing
+  `#…` discriminator) in the default terminal foreground with `dim`, without
+  bold or an inherited name color (Rich `default dim`). Derive styled segments
+  from the existing name and label; do not shorten, reformat, or reclassify IDs.
+  Tree branches retain their normal style.
 - Column one has a minimum width of 32 terminal cells, including the four-cell
   agent tree prefix, instead of the current 24. Grow it for complete labels
   when space permits. Keep the Hub name at the root indentation. This moves
@@ -57,8 +59,9 @@ retain the existing `no agents` line without a count summary.
   `no agents`, diagnostics, and tree branches are never dimmed by row state.
 - When the natural layout exceeds terminal width, shrink and wrap all three
   columns without losing text. Share widths and continuation alignment between
-  Hub and agent rows, retain instance colors through wrapping, and preserve
-  existing Unicode-cell measurement, ASCII fallback, and plain-output behavior.
+  Hub and agent rows, retain name colors and dim ID styles through wrapping,
+  and preserve existing Unicode-cell measurement, ASCII fallback, and
+  plain-output behavior.
 
 ## Implementation touchpoints
 
@@ -78,7 +81,7 @@ retain the existing `no agents` line without a count summary.
 | Scenario | Pass condition |
 | --- | --- |
 | Online and offline Hub | Hub status starts at the same cell as agent status; known version shares the Talk column's right edge. Offline Hub has an empty third field. Empty rosters retain the same layout rules. |
-| Colors and intensity | Resident names are bright cyan; `hub` and nonresident names are cyan. Same-name `@r…` and `@v…` instances have bright magenta and bright yellow suffixes. Positive fields are normal; negative and unknown fields are dim without affecting names. |
+| Colors and intensity | Roaming, visiting, and resident names use bright magenta, bright yellow, and bright cyan respectively; `hub` remains cyan. Every instance suffix uses the default foreground with dim and does not inherit the name color. Positive fields are normal; negative and unknown fields are dim without affecting names. |
 | Wide layout | At 80, 120, and 160 cells, short-name status starts at cell offset 34; long names/versions expand their columns when they fit, and rows remain sized to content. |
 | Narrow layout and encoding | At 20, 32, and 40 cells, long versions, IDs, wide Unicode names, and ASCII-escaped names retain all text and field styles within the existing effective minimum width of 20. |
 | Plain terminals | Pipes, `NO_COLOR`, and `TERM=dumb` preserve readable values and alignment without ANSI controls; existing tree fallback remains intact. |
