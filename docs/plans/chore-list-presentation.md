@@ -20,14 +20,17 @@ authoring, scheduler checkpoints, and execution stores.
   `LAST RUN` remains a status;
   `NEXT RUN` retains the current local ISO timestamp and earliest-due selection.
   Preserve `once` and `unsynced` with their current meanings.
-- Shrink `TITLE` first, then `ERROR`, then `LOCATION`, down to their header
-  widths. Clip prose with `…`; clip locations in the middle to retain both ends.
+- Shrink `TITLE`, then `ERROR`, then `LOCATION`, initially retaining at least
+  12, 16, and 12 cells respectively, capped by their natural widths.
+  Clip prose with `…`; clip locations in the middle to retain both ends.
   Keep existing home-relative locations and complete inline source line suffixes;
   reserve enough location width for that suffix and an ellipsis.
 - After shrinking flexible fields, omit `TITLE`, then `LAST RUN` if needed.
   Refit remaining flexible fields after each omission; retain display order and
   use the same columns for all rows. Always retain `CHORE`, `STATUS`, `NEXT RUN`,
   `SCHEDULE`, `ERROR`, and `LOCATION`.
+- If the remaining columns still exceed the budget, shrink `ERROR`, then
+  `LOCATION` further, down to their header widths and protected source suffixes.
 - If the remaining columns still exceed the budget at their minimum widths,
   allow a wider table, following the model-list overflow contract. Keep recurrence
   rules complete and add no continuation rows.

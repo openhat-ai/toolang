@@ -52,10 +52,10 @@ def _entry():
     "width,headers",
     [
         (240, "CHORE TITLE STATUS LAST RUN NEXT RUN SCHEDULE ERROR LOCATION"),
-        (123, "CHORE TITLE STATUS LAST RUN NEXT RUN SCHEDULE ERROR LOCATION"),
-        (122, "CHORE STATUS LAST RUN NEXT RUN SCHEDULE ERROR LOCATION"),
-        (116, "CHORE STATUS LAST RUN NEXT RUN SCHEDULE ERROR LOCATION"),
-        (115, "CHORE STATUS NEXT RUN SCHEDULE ERROR LOCATION"),
+        (145, "CHORE TITLE STATUS LAST RUN NEXT RUN SCHEDULE ERROR LOCATION"),
+        (144, "CHORE STATUS LAST RUN NEXT RUN SCHEDULE ERROR LOCATION"),
+        (131, "CHORE STATUS LAST RUN NEXT RUN SCHEDULE ERROR LOCATION"),
+        (130, "CHORE STATUS NEXT RUN SCHEDULE ERROR LOCATION"),
         (80, "CHORE STATUS NEXT RUN SCHEDULE ERROR LOCATION"),
     ],
 )
@@ -101,6 +101,45 @@ def test_prose_shrinks_before_locations_and_refits_after_omission(capsys):
         assert entry.title not in lines[2]
         assert (entry.runtime.last_run.error in lines[2]) is complete_error
         assert lines[2].rstrip().endswith(entry.path)
+
+
+def test_optional_columns_yield_before_diagnostics_become_header_sized(capsys):
+    _echo_chores([_entry()], width=120)
+
+    lines = capsys.readouterr().out.splitlines()
+    assert "TITLE" not in lines[0] and "LAST RUN" not in lines[0]
+    assert "Provider reques…" in lines[2]
+    assert "chore…nup.md" in lines[2]
+    assert wcswidth(lines[1]) == 120
+
+
+@pytest.mark.parametrize("width", [80, 108, 112, 115, 119, 120])
+def test_diagnostics_shrink_further_after_all_optional_columns_yield(capsys, width):
+    _echo_chores([_entry()], width=width)
+
+    lines = capsys.readouterr().out.splitlines()
+    assert "TITLE" not in lines[0] and "LAST RUN" not in lines[0]
+    assert max(map(wcswidth, lines)) == max(width, 105)
+    assert "Prov" in lines[2]
+
+
+def test_short_values_keep_all_columns_without_extra_minimum_padding(capsys):
+    entry = _entry()
+    entry = replace(
+        entry,
+        title="Clean",
+        schedule=None,
+        runtime=replace(
+            entry.runtime, synced=True, next_scheduled_at=None, last_run=None
+        ),
+    )
+
+    _echo_chores([entry], width=80)
+
+    lines = capsys.readouterr().out.splitlines()
+    assert "TITLE" in lines[0] and "LAST RUN" in lines[0]
+    assert "Clean" in lines[2] and "…" not in lines[2]
+    assert wcswidth(lines[1]) == 79
 
 
 @pytest.mark.parametrize("identity", ["x" * 5000, "运维e\u0301👨‍👩‍👧‍👦" * 40])

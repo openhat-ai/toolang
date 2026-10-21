@@ -860,11 +860,11 @@ def test_chore_list_does_not_resolve_runnables_or_prepare_state(
     [
         ("40", "CHORE STATUS NEXT RUN SCHEDULE ERROR LOCATION", 105),
         ("80", "CHORE STATUS NEXT RUN SCHEDULE ERROR LOCATION", 105),
-        ("120", "CHORE STATUS LAST RUN NEXT RUN SCHEDULE ERROR LOCATION", 120),
+        ("120", "CHORE STATUS NEXT RUN SCHEDULE ERROR LOCATION", 120),
         ("240", "CHORE TITLE STATUS LAST RUN NEXT RUN SCHEDULE ERROR LOCATION", 240),
-        (None, "CHORE STATUS LAST RUN NEXT RUN SCHEDULE ERROR LOCATION", 120),
-        ("invalid", "CHORE STATUS LAST RUN NEXT RUN SCHEDULE ERROR LOCATION", 120),
-        ("0", "CHORE STATUS LAST RUN NEXT RUN SCHEDULE ERROR LOCATION", 120),
+        (None, "CHORE STATUS NEXT RUN SCHEDULE ERROR LOCATION", 120),
+        ("invalid", "CHORE STATUS NEXT RUN SCHEDULE ERROR LOCATION", 120),
+        ("0", "CHORE STATUS NEXT RUN SCHEDULE ERROR LOCATION", 120),
     ],
 )
 def test_chore_list_fits_terminal_and_omits_columns_in_priority_order(
@@ -949,6 +949,8 @@ def test_chore_list_fits_terminal_and_omits_columns_in_priority_order(
     assert "done" in lines[2] and "pending" in lines[3] and "unsynced" in lines[4]
     assert "once" in lines[2] and lines[4].rstrip().endswith(":1")
     assert lines[-2:] == ["", "3 chores"]
+    if expected_width == 120:
+        assert "Provider reques…" in lines[3]
     with closing(ChoreStore(layout.chore_store, read_only=True)) as jobs:
         assert jobs.list() == checkpoints
     assert not layout.agent_state.exists()

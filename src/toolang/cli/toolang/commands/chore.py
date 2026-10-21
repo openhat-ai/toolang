@@ -144,6 +144,16 @@ def _echo_chores(entries: Sequence[ChoreInfo], *, width: int) -> None:
             *(len(f":{entry.line}") + 1 for entry in entries if entry.line is not None),
         )
     )
+    readable_minimums = [
+        min(
+            natural_widths[index],
+            max(
+                minimums[index],
+                {"TITLE": 12, "ERROR": 16, "LOCATION": 12}.get(header, 0),
+            ),
+        )
+        for index, header in enumerate(headers)
+    ]
     indices = list(range(len(headers)))
     for omitted in (None, "TITLE", "LAST RUN"):
         if omitted is not None:
@@ -155,12 +165,19 @@ def _echo_chores(entries: Sequence[ChoreInfo], *, width: int) -> None:
             if index not in indices:
                 continue
             reduction = min(
-                max(0, table_width - width), widths[index] - minimums[index]
+                max(0, table_width - width), widths[index] - readable_minimums[index]
             )
             widths[index] -= reduction
             table_width -= reduction
         if table_width <= width:
             break
+
+    # Only squeeze diagnostics below readable widths after optional columns yield.
+    for column in ("ERROR", "LOCATION"):
+        index = headers.index(column)
+        reduction = min(max(0, table_width - width), widths[index] - minimums[index])
+        widths[index] -= reduction
+        table_width -= reduction
 
     def clip(value: str, index: int, entry: ChoreInfo) -> str:
         if headers[index] != "LOCATION":
