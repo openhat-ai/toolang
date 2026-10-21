@@ -15,7 +15,26 @@ from toolang.plugin.adapters._errors import model_transport_errors
 
 @pytest.mark.parametrize("sdk", [False, True])
 @pytest.mark.parametrize(
-    "status", [400, 401, 403, 404, 408, 409, 422, 429, 500, 502, 503, 504]
+    "status",
+    [
+        400,
+        401,
+        402,
+        403,
+        404,
+        405,
+        408,
+        409,
+        413,
+        415,
+        422,
+        429,
+        500,
+        502,
+        503,
+        504,
+        529,
+    ],
 )
 def test_http_failure_classification(status: int, sdk: bool) -> None:
     response = httpx.Response(
@@ -30,7 +49,7 @@ def test_http_failure_classification(status: int, sdk: bool) -> None:
             "failed", request=response.request, response=response
         )
     )
-    recoverable = status in {408, 409, 429, 500, 502, 503, 504}
+    recoverable = status in {408, 409, 429, 500, 502, 503, 504, 529}
     with pytest.raises(ModelResponseError) as caught:
         with model_transport_errors():
             raise error
@@ -41,7 +60,7 @@ def test_http_failure_classification(status: int, sdk: bool) -> None:
     else:
         assert caught.value.kind == "provider_rejection"
         assert str(caught.value) == str(error)
-    if status in {400, 401, 403, 404, 422, 429}:
+    if status in {400, 401, 402, 403, 404, 405, 413, 415, 422, 429}:
         assert caught.value.usage is not None
         assert caught.value.usage.input_tokens == caught.value.usage.output_tokens == 0
     else:
@@ -172,12 +191,32 @@ def test_explicit_http_retry_rejection_is_respected(permanent: str) -> None:
     assert not caught.value.recoverable
 
 
-def test_http_error_preserves_available_usage_before_zero_fallback() -> None:
+@pytest.mark.parametrize("status", [401, 429, 503])
+def test_http_error_preserves_available_usage_before_zero_fallback(status) -> None:
     response = httpx.Response(
-        429, request=httpx.Request("POST", "https://example.invalid")
+        status, request=httpx.Request("POST", "https://example.invalid")
     )
     usage = ModelUsage(12, 3, input_cache_read_tokens=4)
     with pytest.raises(ModelResponseError) as caught:
         with model_transport_errors(usage=lambda: usage):
             response.raise_for_status()
     assert caught.value.usage is usage
+
+
+@pytest.mark.parametrize("sdk", [False, True])
+@pytest.mark.parametrize("status", [407, 418, 501, 505])
+def test_unclassified_http_failures_preserve_the_original_error(status, sdk):
+    response = httpx.Response(
+        status, request=httpx.Request("POST", "https://example.invalid")
+    )
+    error = (
+        APIStatusError("unclassified", response=response, body=None)
+        if sdk
+        else httpx.HTTPStatusError(
+            "unclassified", request=response.request, response=response
+        )
+    )
+    with pytest.raises(type(error)) as caught:
+        with model_transport_errors():
+            raise error
+    assert caught.value is error
