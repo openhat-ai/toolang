@@ -137,7 +137,10 @@ def step_info(spec: StepSpec | StoredStepSpec) -> StepInfo:
 
 
 def step_summary(
-    report: StepReport, *, exec_runnable: str | None = None
+    report: StepReport,
+    *,
+    exec_runnable: str | None = None,
+    exec_runnable_kind: str = "",
 ) -> StepSummary | None:
     if report is None:
         return None
@@ -154,7 +157,7 @@ def step_summary(
     if isinstance(report, ExecStepReport):
         if exec_runnable is None:
             raise ValueError("exec completion requires its committed runnable")
-        return StepSummary(runnable=exec_runnable)
+        return StepSummary(runnable=exec_runnable, runnable_kind=exec_runnable_kind)
     if isinstance(report, CollectionStepReport):
         return StepSummary(
             total_items=report.total_items, output_items=report.output_items
@@ -195,6 +198,7 @@ def step_end_event(
     error: str | None,
     *,
     exec_runnable: str | None = None,
+    exec_runnable_kind: str = "",
 ) -> StepEnd:
     return StepEnd(
         step=step.id,
@@ -202,7 +206,11 @@ def step_end_event(
         kind=step.kind,
         status=step.status,
         output=output,
-        report=step_summary(step.report, exec_runnable=exec_runnable),
+        report=step_summary(
+            step.report,
+            exec_runnable=exec_runnable,
+            exec_runnable_kind=exec_runnable_kind,
+        ),
         error_source=str(step.error.ref.record)
         if isinstance(step.error, ErrorRef)
         and not (

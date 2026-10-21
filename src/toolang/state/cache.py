@@ -682,8 +682,12 @@ def _decode_modules(
             record = _object(inputs[path], "module source")
             if "error" in record:
                 raise ValueError("module references an excluded source")
-            if name != ("agent" if path == "agent.too" else runnable_module_name(path)):
+            expected = "agent" if path == "agent.too" else runnable_module_name(path)
+            if name not in {expected, f"runnables::{expected}"}:
                 raise ValueError("module name does not match source")
+            name = expected
+            if name in modules:
+                raise ValueError("duplicate State module")
             digest = str(record["sha256"])
         program = program_from_data(item["value"])
         if source is None and program != Program(span=Span(1)):
@@ -710,7 +714,11 @@ def _decode_modules(
         raise ValueError("root State layer cannot contain modules")
     if modules:
         public_runnable_index(modules, sources)
-    return modules, sources, digests
+    return (
+        dict(sorted(modules.items())),
+        dict(sorted(sources.items())),
+        dict(sorted(digests.items())),
+    )
 
 
 def _decode_caps(

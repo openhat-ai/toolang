@@ -169,6 +169,7 @@ async def accept(
                     limits=bound.limits,
                     state=state.revision,
                     runnable=_bound_runnable(bound),
+                    runnable_kind=bound.runnable_kind,
                     model_request=bound.model_request,
                     input=bound.control_input,
                     sandbox=_setup_sandbox(bound.setup),

@@ -221,7 +221,7 @@ agic finish() -> Text:
                 if (entry := harness.store.get_run_control(run_id=r.id, index=0))
                 is not None
                 and isinstance(entry.payload, RunControlPayload)
-                and entry.payload.runnable == "flow:grow"
+                and entry.payload.runnable == "agent::grow"
             )
             steps = harness.store.list_steps(run_id=grow.id)
             assert [s.kind for s in steps] == ["loop", "loop", "exec", "run"]
@@ -486,8 +486,8 @@ flow final():
             assert len(tree.handoffs) == 2
             assert all(boundary.depth == 0 for boundary in tree.handoffs)
             assert [boundary.runnable for boundary in tree.handoffs] == [
-                "flow:second",
-                "flow:final",
+                "agent::second",
+                "agent::final",
             ]
             steps = harness.store.list_steps(run_id=root.id)
             assert tree.step_ordinal(steps[2]) == 0
@@ -741,8 +741,8 @@ flow evolve() -> Text:
                 for c in controls
                 if isinstance(c.payload, ExecControlPayload)
             ] == [
-                ("flow:evolve", harness.state.revision),
-                ("flow:grow", harness.published.revision),
+                ("agent::evolve", harness.state.revision),
+                ("agent::grow", harness.published.revision),
             ]
             runs = harness.store.list_run_tree(root_run_id=root.id)
             assert len(runs) == 3

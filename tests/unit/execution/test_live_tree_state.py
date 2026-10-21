@@ -145,7 +145,7 @@ def test_optional_usage_and_cost_unknowns_are_sticky_across_pruned_steps():
     aggregate = tree.run_report("run_root")
     assert aggregate.usage == TokenUsage(60, 18)
     assert aggregate.cost is None and aggregate.cost_approximate
-    tree.begin_run("run_root", "agic:next", "later")
+    tree.begin_run("run_root", "agent::next", "later", runnable_kind="agic")
     assert tree.run_report("run_root") == aggregate
     root = tree.snapshot().nodes[0]
-    assert isinstance(root, RunNode) and root.runnable == "agic:next"
+    assert isinstance(root, RunNode) and root.runnable == "agent::next"

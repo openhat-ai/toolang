@@ -27,23 +27,24 @@ def _prepare(tmp_path, root_source, module_source):
 
 @pytest.mark.parametrize("kind", ["agic", "flow"])
 @pytest.mark.parametrize("root_entry", [False, True])
-def test_module_filename_cannot_shadow_the_unnamed_entry_alias(
-    tmp_path, kind, root_entry
+@pytest.mark.parametrize("module_name", ["_", "agent"])
+def test_module_filename_cannot_use_reserved_module_names(
+    tmp_path, kind, root_entry, module_name
 ):
     layout = AgentLayout.resident(tmp_path, "alice")
     (layout.home / "runnables").mkdir(parents=True)
     layout.program.write_text("agic:\n  Root.\n" if root_entry else "")
-    (layout.home / "runnables/_.too").write_text(f"{kind}:\n  pass\n")
+    (layout.home / f"runnables/{module_name}.too").write_text(f"{kind}:\n  pass\n")
 
     state = prepare_agent_state(layout)
-    _assert_excluded(state, match="reserved.*unnamed entry")
+    _assert_excluded(state, match="filename is reserved")
     assert state.toolang_root is not None
     error = StateWatcher(
         AgentLayout.resident(state.toolang_root, state.name), initial_state=state
     ).diagnostics()
 
     assert error[0].code == "invalid-runnable-filename"
-    assert error[0].authored_path == "runnables/_.too"
+    assert error[0].authored_path == f"runnables/{module_name}.too"
 
 
 @pytest.mark.parametrize("named", [False, True])
@@ -84,7 +85,7 @@ def test_exported_agic_uses_its_own_history_templates(tmp_path, kind, named, sel
         f"  {kind} = {selection}\n  Work.\n"
     )
     state = _prepare(tmp_path, root, module)
-    assert state.runnable_modules["research"] == "runnables::research"
+    assert state.runnable_modules["research"] == "research"
 
 
 @pytest.mark.parametrize("named", [False, True])

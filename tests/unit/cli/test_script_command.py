@@ -292,7 +292,7 @@ agic alternate(_: Part[]):
 
     assert result == 0
     assert captured["override"] == RunOverride(
-        runnable="agic:alternate",
+        runnable="alternate",
     )
     input = captured["input"]
     assert isinstance(input, CallInput)
@@ -1274,11 +1274,11 @@ agic review:
 
     assert _flow_outline_lines(capsys.readouterr().out) == [
         "[0] Refine the result.",
-        "    Repeat up to 3 times, until agic:<adhoc:9> is true",
+        "    Repeat up to 3 times, until agic: is true",
         "  [0] Revise the draft.",
         "      Run review",
-        "  [1] Repeat until agic:<adhoc:8> is true",
-        "    [0] Run agic:<adhoc:7>",
+        "  [1] Repeat until agic: is true",
+        "    [0] Run agic:",
         "[1] Run pipeline",
         "[2] Repeat 2 times",
         "  [0] Run review",
@@ -1918,7 +1918,7 @@ def test_script_default_is_an_ordinary_runnable_name() -> None:
             "agic demo():\n  pass\nflow default():\n  pass\n"
         ),
     )
-    assert override == RunOverride(runnable="flow:default")
+    assert override == RunOverride(runnable="default")
 
 
 def test_script_materializes_input_local_runnable_refs() -> None:
@@ -1927,7 +1927,7 @@ def test_script_materializes_input_local_runnable_refs() -> None:
         program=script.Program.from_source(_SOURCE),
     )
 
-    assert override == RunOverride(runnable="agic:demo")
+    assert override == RunOverride(runnable="demo")
 
 
 @pytest.mark.parametrize("kind", ["agic", "flow"])
@@ -1937,7 +1937,7 @@ def test_script_materializes_input_local_entry_selector(kind, selector) -> None:
         RunOverride(runnable=selector.format(kind=kind)),
         program=script.Program.from_source(f"{kind}():\n  pass\n"),
     )
-    assert override == RunOverride(runnable=f"{kind}:<entry:1>")
+    assert override == RunOverride(runnable="<entry:1>")
 
 
 def test_script_materializes_input_local_exact_runnable_reference() -> None:
@@ -1946,7 +1946,7 @@ def test_script_materializes_input_local_exact_runnable_reference() -> None:
         program=script.Program.from_source(_SOURCE),
     )
 
-    assert override == RunOverride(runnable="agic:demo")
+    assert override == RunOverride(runnable="demo")
 
 
 def test_remote_script_rejects_mixed_named_input_sources() -> None:

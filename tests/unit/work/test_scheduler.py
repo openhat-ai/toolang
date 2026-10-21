@@ -402,7 +402,7 @@ def test_scheduler_submits_and_awaits_runs_on_the_execution_loop(
             control = harness.store.get_run_control(run_id=runs[0].id, index=0)
             assert control is not None
             assert isinstance(control.payload, RunControlPayload)
-            assert control.payload.runnable == "agic:review"
+            assert control.payload.runnable == "agent::review"
             assert control.payload.input == CallInput(
                 {
                     "_": Array("Part[]", Message.user("Review this.").parts),
@@ -732,10 +732,7 @@ def test_chore_selects_named_handler_before_unnamed_entry(
             name for name in harness.state.runnables if name.startswith("<entry:")
         )
         expected = "chore" if specialized else entry
-        assert spec.bindings.runnable in {
-            f"{runnable_kind}:{expected}",
-            f"flow:{expected}",
-        }
+        assert spec.bindings.runnable == expected
     finally:
         harness.store.close()
 
@@ -797,7 +794,7 @@ def test_chore_handler_selects_invocation_named_or_unnamed_entry(
                 name for name in harness.state.runnables if name.startswith("<entry:")
             )
         )
-        assert spec.bindings.runnable == f"agic:{expected}"
+        assert spec.bindings.runnable == expected
     finally:
         harness.store.close()
 

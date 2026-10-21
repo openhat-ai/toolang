@@ -151,7 +151,7 @@ flow target(_: {type_name}, note: Part[]) -> {type_name}:
                 for run in harness.store.list_runs(limit=None)
                 for control in harness.store.list_run_controls(run_id=run.id)
                 if isinstance(control.payload, (RunControlPayload, ExecControlPayload))
-                and control.payload.runnable == "flow:target"
+                and control.payload.runnable == "agent::target"
             ]
             assert len(controls) == 1
             control = controls[0]
@@ -288,14 +288,13 @@ agic helper() -> Text:
 
             assert root.status == "succeeded", root.error
             assert (
-                route_scopes(harness.adapter.invocations[0].call)[directive]
-                == f"{kind}:main"
+                route_scopes(harness.adapter.invocations[0].call)[directive] == "main"
             )
             child_call = harness.adapter.invocations[1].call
             assert route_scopes(child_call) == {
-                "hands": f"{kind}:main" if directive == "hands" else "ALL",
+                "hands": "main" if directive == "hands" else "ALL",
                 "handoffs": "ALL",
-                "spawns": f"{kind}:main" if directive == "hands" else "ALL",
+                "spawns": "main" if directive == "hands" else "ALL",
             }
             assert without_runtime_snapshots(child_call.messages) == [
                 Message.user("Main.")
@@ -307,7 +306,7 @@ agic helper() -> Text:
             ]
             assert any(
                 isinstance(control.payload, (RunControlPayload, ExecControlPayload))
-                and control.payload.runnable == f"{kind}:main"
+                and control.payload.runnable == "agent::main"
                 for control in controls
             )
             assert root.output is not None
@@ -394,7 +393,7 @@ agic child(_: Text) -> Text:
             )
             assert child_control is not None
             assert isinstance(child_control.payload, RunControlPayload)
-            assert child_control.payload.runnable == "agic:child"
+            assert child_control.payload.runnable == "agent::child"
             followup = harness.adapter.invocations[2].call
             result = last_tool_result(followup)
             assert isinstance(result, ToolResultPart)
@@ -403,14 +402,14 @@ agic child(_: Text) -> Text:
             assert child_control.status == "applied"
             assert not any(m.tag == "run-result" for m in followup.messages)
             assert route_scopes(harness.adapter.invocations[0].call) == {
-                "hands": "agic:child",
+                "hands": "child",
                 "handoffs": "ALL",
-                "spawns": "agic:child",
+                "spawns": "child",
             }
             assert route_scopes(harness.adapter.invocations[1].call) == {
-                "hands": "agic:child",
+                "hands": "child",
                 "handoffs": "ALL",
-                "spawns": "agic:child",
+                "spawns": "child",
             }
             assert "route restrictions, and runtime guards permit it" in (
                 harness.adapter.invocations[1].call.instructions
@@ -501,9 +500,9 @@ flow check(_: Part[]) -> Text:
                 Message.user("Review candidate")
             ]
             assert route_scopes(reviewer_call) == {
-                "hands": "flow:check",
+                "hands": "check",
                 "handoffs": "ALL",
-                "spawns": "flow:check",
+                "spawns": "check",
             }
 
     asyncio.run(scenario())
@@ -561,7 +560,8 @@ flow check(_: Text, threshold: Number) -> Text:
             assert result.error == "missing named inputs for check: threshold"
             assert result.output == {
                 "code": "invalid_runnable_input",
-                "runnable": "flow:check",
+                "runnable": "agent::check",
+                "runnable_kind": "flow",
                 "expected": {
                     "input": {"optional": False, "type": "Text", "documentation": ""},
                     "parameters": [
@@ -805,11 +805,11 @@ agic parent(_: Text, threshold: Number) -> Text:
             result = last_tool_result(harness.adapter.invocations[1].call)
             assert isinstance(result, ToolResultPart)
             assert result.error == (
-                "runtime/run cannot call the current or an ancestor runnable: agic:parent"
+                "runtime/run cannot call the current or an ancestor runnable: parent"
             )
             assert result.output == {}
             for invocation in harness.adapter.invocations:
-                assert route_scopes(invocation.call)["hands"] == "agic:parent"
+                assert route_scopes(invocation.call)["hands"] == "parent"
                 assert route_scopes(invocation.call)["handoffs"] == "ALL"
 
     asyncio.run(scenario())
@@ -877,14 +877,14 @@ flow outer(_: Text) -> Text:
                 if isinstance(part, ToolResultPart) and part.tool_name == "runtime__run"
             )
             assert result.error == (
-                "runtime/run cannot call the current or an ancestor runnable: flow:outer"
+                "runtime/run cannot call the current or an ancestor runnable: outer"
             )
             assert result.output == {}
             for invocation in harness.adapter.invocations:
                 assert route_scopes(invocation.call) == {
-                    "hands": "flow:outer",
+                    "hands": "outer",
                     "handoffs": "ALL",
-                    "spawns": "flow:outer",
+                    "spawns": "outer",
                 }
 
     asyncio.run(scenario())
@@ -985,13 +985,13 @@ flow -> Text:
             )
             assert isinstance(result, ToolResultPart)
             assert result.error == (
-                "runtime/run cannot call the current or an ancestor runnable: flow:outer"
+                "runtime/run cannot call the current or an ancestor runnable: outer"
             )
             for invocation in harness.adapter.invocations:
                 assert route_scopes(invocation.call) == {
-                    "hands": "flow:outer",
+                    "hands": "outer",
                     "handoffs": "ALL",
-                    "spawns": "flow:outer",
+                    "spawns": "outer",
                 }
 
     asyncio.run(scenario())
@@ -1448,7 +1448,7 @@ flow research(brief: Brief, prefix?: Text) -> Text:
             accepted = harness.store.get_run_control(run_id=child.id, index=0)
             assert accepted is not None
             assert isinstance(accepted.payload, RunControlPayload)
-            assert accepted.payload.runnable == "runnables::research::flow:research"
+            assert accepted.payload.runnable == "research::research"
             result = last_tool_result(harness.adapter.invocations[2].call)
             assert isinstance(result, ToolResultPart)
             assert result.error is None
@@ -1533,7 +1533,7 @@ agic target(_: Text) -> Text:
             assert execute.status == "applied"
             assert isinstance(execute.payload, ExecControlPayload)
             assert execute.payload.state == harness.state.revision
-            assert execute.payload.runnable == "agic:target"
+            assert execute.payload.runnable == "agent::target"
             assert execute.triggered_by == steps[1].ref
             assert steps[2].preceded_by == (execute.ref,)
             assert len(execute.payload.input) == 1
@@ -1703,9 +1703,7 @@ agic blocked -> Text:
             result = last_tool_result(harness.adapter.invocations[1].call)
             assert isinstance(result, ToolResultPart)
             assert result.tool_call_id == "blocked-handoff"
-            assert result.error == (
-                "runnable is not authorized by handoffs: agic:blocked"
-            )
+            assert result.error == ("runnable is not authorized by handoffs: blocked")
 
     asyncio.run(scenario())
 
@@ -1912,11 +1910,11 @@ agic target() -> Text:
                 control.payload.runnable
                 for control in controls
                 if isinstance(control.payload, ExecControlPayload)
-            ] == ["agic:target", "agic:caller"]
+            ] == ["agent::target", "agent::caller"]
             assert harness.store.list_run_tree(root_run_id=root.id) == [root]
             for invocation, expected in zip(
                 harness.adapter.invocations,
-                ["agic:target", "agic:caller", "agic:target"],
+                ["target", "caller", "target"],
                 strict=True,
             ):
                 assert route_scopes(invocation.call)["handoffs"] == expected
@@ -1996,8 +1994,8 @@ flow deliver(_: Text) -> Text:
                 for control in controls
                 if isinstance(control.payload, ExecControlPayload)
             ] == [
-                "agic:middle",
-                "flow:deliver",
+                "agent::middle",
+                "agent::deliver",
             ]
 
     asyncio.run(scenario())
@@ -2052,7 +2050,7 @@ agic inner() -> Text:
             result = last_tool_result(harness.adapter.invocations[1].call)
             assert isinstance(result, ToolResultPart)
             assert result.error == (
-                "runtime/run cannot call the current or an ancestor runnable: flow:outer"
+                "runtime/run cannot call the current or an ancestor runnable: outer"
             )
 
     asyncio.run(scenario())
@@ -2356,9 +2354,9 @@ agic other() -> Text:
             assert snapshots[directive] == (
                 "ALL"
                 if selection in (None, "*")
-                else f"{kind}:target"
+                else "target"
                 if allowed
-                else "agic:other"
+                else "other"
                 if selection == "other"
                 else "NONE"
             )
@@ -2408,8 +2406,7 @@ agic other() -> Text:
             else:
                 result = last_tool_result(harness.adapter.invocations[-1].call)
                 assert (
-                    result.error
-                    == f"runnable is not authorized by {directive}: {kind}:target"
+                    result.error == f"runnable is not authorized by {directive}: target"
                 )
                 assert (
                     harness.store.list_run_controls(run_id=root.id, kind="exec") == ()

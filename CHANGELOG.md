@@ -67,6 +67,15 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   and destination path before starting the shell.
   ([#887](https://github.com/openhat-ai/toolang/pull/887))
 
+- **Breaking:** runnable references use `module::runnable`, with builtin module
+  `_`, main module `agent`, and modules named after `runnables/<module>.too`,
+  while `agent.too` and `_.too` are reserved module filenames. Rename a
+  conflicting runnable module and its named export before upgrading.
+
+- **Breaking:** a `runnable` field keeps the runnable's full name, and the
+  separate `runnable_kind` field carries its kind, so API and event consumers
+  read `runnable_kind` instead of parsing the kind from `runnable`.
+
 ### Fixed
 
 - Failed preparation no longer leaves active registrations; runtime references
@@ -103,6 +112,18 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   markers, applies member colors only to agents, and uses a thin dotted
   divider in default dim.
   ([#889](https://github.com/openhat-ai/toolang/pull/889))
+
+- Help describes `top` as "Monitor agent runs", and the Work commands panel
+  lists `chore` immediately above `talk`.
+  ([#891](https://github.com/openhat-ai/toolang/pull/891))
+
+- Agent startup and Chat shutdown no longer leak coroutines, omit running
+  peers' port reservations, or hang waiting on a submission to a stopped loop.
+  ([#892](https://github.com/openhat-ai/toolang/pull/892))
+
+- Automatic compaction binds to builtin `_::compact`, fixing checkpoint
+  ownership failures from the builtin Talk handler, while a user
+  `runnables/compact.too` still runs as `compact::compact`.
 
 ### Security
 

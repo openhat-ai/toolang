@@ -71,9 +71,7 @@ def _reject_materialized_run_unknowns(value: object) -> None:
         if runnable_ref is None and data.get("driver") is None:
             raise ValueError("run request requires a runnable ref or driver")
         if isinstance(runnable_ref, str):
-            _name, kind = parse_public_runnable_ref(runnable_ref)
-            if kind is None:
-                raise ValueError("runnable request requires a kind-qualified ref")
+            parse_public_runnable_ref(runnable_ref)
     model = data.get("model")
     _reject_keys(model, {"ref", "reasoning", "max_output"}, "model request")
     if isinstance(model, Mapping):

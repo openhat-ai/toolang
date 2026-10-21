@@ -46,6 +46,7 @@ class LiveTree:
         *,
         parent: StepRef | None,
         runnable: str,
+        runnable_kind: str = "",
         created_at: str,
         occurrence: Occurrence | None,
     ) -> None:
@@ -62,14 +63,18 @@ class LiveTree:
                 "pending",
                 created_at,
                 occurrence=occurrence,
+                runnable_kind=runnable_kind,
             )
         )
 
-    def begin_run(self, run_id: str, runnable: str, started_at: str) -> None:
+    def begin_run(
+        self, run_id: str, runnable: str, started_at: str, *, runnable_kind: str = ""
+    ) -> None:
         node = self._run(run_id)
         self._nodes[run_id] = replace(
             node,
             runnable=runnable[:240],
+            runnable_kind=runnable_kind or node.runnable_kind,
             status="running",
             started_at=node.started_at or started_at,
         )

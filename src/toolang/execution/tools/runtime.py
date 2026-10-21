@@ -291,7 +291,7 @@ _RUN_PARAMETERS: dict[str, object] = {
     "properties": {
         "runnable": {
             "type": "string",
-            "description": "Exact visible runnable name or ref, including module-qualified private refs.",
+            "description": "Exact visible runnable name or fully qualified name, including private module::runnable names.",
         },
         "input": {
             "type": "object",
@@ -320,7 +320,7 @@ _TOOLS = (
                 "name": {
                     "type": "string",
                     "minLength": 1,
-                    "description": "Exact runnable name or ref, such as review or agic:review. Omit for all visible runnables.",
+                    "description": "Exact runnable name or fully qualified name, such as review or agent::review. Omit for all visible runnables.",
                 }
             },
             "required": [],

@@ -115,7 +115,7 @@ def authored_type(type_name: str) -> str:
 
 @dataclass(frozen=True, slots=True)
 class RunnableRef:
-    """One parsed runnable reference, including optional module and kind."""
+    """One name/FQN or presentation spelling decoded at an input boundary."""
 
     name: str
     kind: str | None = None
@@ -164,6 +164,33 @@ def parse_runnable_ref_parts(value: str) -> RunnableRef:
     return RunnableRef(name=name, kind=kind, module=module)
 
 
+def normalize_module_name(value: str) -> str:
+    """Decode a retained module identity into its current module name."""
+    if value == "runtime::talk":
+        return "_"
+    return value.removeprefix("runnables::")
+
+
+def fully_qualified_runnable(value: str, *, module: str = "agent") -> str:
+    """Return a runnable's module::runnable identity, without its display kind."""
+    if value in {"_:compact", "_::compact"} or value.endswith("::_:compact"):
+        return "_::compact"
+    parsed = parse_runnable_ref_parts(value)
+    return f"{normalize_module_name(parsed.module or module)}::{parsed.name}"
+
+
+def runnable_kind(value: str, kind: str = "") -> str:
+    """Read explicit kind, with decoding support for retained typed spellings."""
+    if kind:
+        return kind
+    if value in {"_:compact", "_::compact"} or value.endswith("::_:compact"):
+        return "compact"
+    try:
+        return parse_runnable_ref_parts(value).kind or ""
+    except ValueError:
+        return ""
+
+
 def parse_public_runnable_ref(value: str) -> tuple[str, str | None]:
     """Parse one exact public runnable reference owned by the language."""
 
@@ -171,7 +198,7 @@ def parse_public_runnable_ref(value: str) -> tuple[str, str | None]:
     return parsed.name, parsed.kind
 
 
-def display_runnable_ref(value: str, *, surface: str) -> str:
+def display_runnable_ref(value: str, *, surface: str, kind: str = "") -> str:
     """Return a surface-specific unnamed/named runnable label.
 
     Unparseable labels are returned unchanged so presentation never fails.
@@ -181,19 +208,12 @@ def display_runnable_ref(value: str, *, surface: str) -> str:
         parsed = parse_runnable_ref_parts(value)
     except ValueError:
         return value
+    kind = kind or parsed.kind or ""
     if parsed.role is None:
-        kind = f"{parsed.kind}:" if parsed.kind else ""
-        return f"{kind}{parsed.name}"
-    kind = parsed.kind or "agic"
-    if surface in {"help", "chat"} and parsed.role == "entry":
-        return f"{kind}:"
-    if surface in {"help", "chat"}:
-        return f"{kind}:<{parsed.role}>"
-    if surface == "progress":
-        if parsed.line is None:
-            return f"{kind}:<{parsed.role}>"
-        return f"{kind}:<{parsed.role}:{parsed.line}>"
-    return value
+        prefix = f"{kind}:" if kind else ""
+        return f"{prefix}{parsed.name}"
+    kind = kind or "agic"
+    return f"{kind}:"
 
 
 def is_unnamed_ref(value: str) -> bool:
@@ -384,6 +404,9 @@ __all__ = [
     "parse_runnable_ref_parts",
     "RunnableRef",
     "display_runnable_ref",
+    "fully_qualified_runnable",
+    "normalize_module_name",
+    "runnable_kind",
     "is_agic_ref",
     "is_generated_ref",
     "is_unnamed_ref",

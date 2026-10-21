@@ -195,8 +195,8 @@ agic helper(_: Text) -> Boolean:
                 "lookup__value",
             }
             initial = harness.adapter.invocations[0].call
-            assert route_scopes(initial)["hands"] == "agic:helper"
-            assert route_scopes(initial)["handoffs"] == "agic:helper"
+            assert route_scopes(initial)["hands"] == "helper"
+            assert route_scopes(initial)["handoffs"] == "helper"
             assert "<output-contract>" not in initial.instructions
             assert "type: Boolean" not in initial.instructions
             assert initial.output_schema == {"type": "boolean"}

@@ -327,7 +327,11 @@ horizon contributes no summary; history reads do not silently execute compaction
 recorded batched compaction loop.
 
 Model preflight initiates compaction when required input exceeds the active
-budget. It is an internal recorded Run, not an ordinary model tool. The compact
+budget. The builtin `_::compact` uses a dedicated executor implementation with
+normal Run/Step persistence, cancellation, limits, and checkpoint recovery.
+Its module is explicitly `_`; it never inherits the caller's module or resolves
+the public name `compact`. A user `runnables/compact.too` defines
+`compact::compact` and cannot replace automatic compaction. The compact
 control adopts a successful summary for later recall; it preserves physical
 history and does not resume old execution.
 

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from functools import cached_property
 from typing import Annotated, Any, Literal, TypeAlias, cast
 
@@ -35,7 +35,16 @@ from toolang.lang.input import (
     parse_input,
     validate_runnable_input_names,
 )
-from toolang.lang.types import Array, Struct, Value, validate_type, value_type
+from toolang.lang.types import (
+    Array,
+    Struct,
+    Value,
+    validate_type,
+    value_type,
+    fully_qualified_runnable,
+    runnable_kind,
+    normalize_module_name,
+)
 from toolang.lang.contracts import OutputContract
 from toolang.common.immutable import freeze_mapping, mutable_data
 
@@ -262,6 +271,27 @@ class LaunchContext:
     result: OutputContract | None
 
     def __post_init__(self) -> None:
+        settings = self.settings
+        object.__setattr__(
+            self,
+            "settings",
+            replace(
+                settings,
+                module=normalize_module_name(settings.module),
+                instruct=replace(
+                    settings.instruct,
+                    module=normalize_module_name(settings.instruct.module),
+                )
+                if settings.instruct is not None
+                else None,
+                context=replace(
+                    settings.context,
+                    module=normalize_module_name(settings.context.module),
+                )
+                if settings.context is not None
+                else None,
+            ),
+        )
         object.__setattr__(self, "workspaces", freeze_mapping(self.workspaces))
         object.__setattr__(self, "iterations", freeze_mapping(self.iterations))
         if self.result is not None:
@@ -301,6 +331,7 @@ class RunControlPayload:
         CallInput[Value | TypedRef],
         PlainSerializer(lambda value: call_input_to_data(value)),
     ]
+    runnable_kind: str = field(default="", kw_only=True)
     model_request: ModelRequest | None = None
     sandbox: str | None = None
     cwd: str = ""
@@ -320,6 +351,10 @@ class RunControlPayload:
     spawn_thread: str | None = None
 
     def __post_init__(self) -> None:
+        object.__setattr__(
+            self, "runnable_kind", runnable_kind(self.runnable, self.runnable_kind)
+        )
+        object.__setattr__(self, "runnable", fully_qualified_runnable(self.runnable))
         if not isinstance(self.runtime_sources, Mapping) or not all(
             isinstance(key, str) and isinstance(value, str)
             for key, value in self.runtime_sources.items()
@@ -328,7 +363,11 @@ class RunControlPayload:
                 "runtime handler sources must map module names to source text"
             )
         object.__setattr__(
-            self, "runtime_sources", freeze_mapping(self.runtime_sources)
+            self,
+            "runtime_sources",
+            freeze_mapping(
+                {normalize_module_name(k): v for k, v in self.runtime_sources.items()}
+            ),
         )
         parse_cwd(self.cwd)
         object.__setattr__(self, "input", _snapshot_control_input(self.input))
@@ -378,7 +417,13 @@ class ExecControlPayload:
         PlainSerializer(lambda value: call_input_to_data(value)),
     ]
 
+    runnable_kind: str = field(default="", kw_only=True)
+
     def __post_init__(self) -> None:
+        object.__setattr__(
+            self, "runnable_kind", runnable_kind(self.runnable, self.runnable_kind)
+        )
+        object.__setattr__(self, "runnable", fully_qualified_runnable(self.runnable))
         _validate_state_revision(self.state, label="exec payload State")
         if not self.runnable or self.runnable != self.runnable.strip():
             raise ValueError("exec payload requires a canonical runnable")
@@ -972,6 +1017,7 @@ def control_payload_from_data(kind: ControlKind, data: object) -> ControlPayload
             limits=limits,
             state=state,
             runnable=runnable,
+            runnable_kind=str(payload.get("runnable_kind", "")),
             input=input_value,
             horizon=history_ref(cast(str, payload["horizon"]))
             if payload.get("horizon") is not None
@@ -1009,6 +1055,7 @@ def control_payload_from_data(kind: ControlKind, data: object) -> ControlPayload
         return ExecControlPayload(
             state=_required_payload_text(payload, "state"),
             runnable=_required_payload_text(payload, "runnable"),
+            runnable_kind=str(payload.get("runnable_kind", "")),
             input=call_input_from_data(payload.get("input")),
         )
     if kind in {"steer", "cancel"}:
@@ -1060,6 +1107,7 @@ def control_payload_to_data(payload: ControlPayloadUnion) -> dict[str, object]:
         return {
             "state": payload.state,
             "runnable": payload.runnable,
+            "runnable_kind": payload.runnable_kind,
             "input": call_input_to_data(payload.input),
         }
     if isinstance(payload, SteerControlPayload | CancelControlPayload):
@@ -1710,6 +1758,7 @@ def _run_payload_data(
         "resources": payload.resources.to_data(),
         "limits": run_limits_to_data(payload.limits),
         "runnable": payload.runnable,
+        "runnable_kind": payload.runnable_kind,
         "model_request": (
             _MODEL_REQUEST_ADAPTER.dump_python(payload.model_request, mode="json")
             if payload.model_request is not None

@@ -88,7 +88,7 @@ agic evolve() -> Text:
             (control,) = harness.store.list_run_controls(run_id=root.id, kind="exec")
             assert isinstance(control.payload, ExecControlPayload)
             assert control.payload.state == harness.published.revision
-            assert control.payload.runnable == "flow:grow"
+            assert control.payload.runnable == "agent::grow"
             steps = harness.store.list_steps(run_id=root.id)
             assert [s.kind for s in steps] == ["loop", "loop", "run", "exec", "run"]
             assert all(s.status == "succeeded" for s in steps)
@@ -163,7 +163,7 @@ def test_model_root_self_exec_keeps_one_run(tmp_path, changed, unnamed):
             assert ("New root." if changed else "Old root.") in str(
                 harness.adapter.invocations[-1].call.messages
             )
-            identity = f"agent::agic:{'<entry:1>' if unnamed else 'grow'}"
+            identity = f"agent::{'<entry:1>' if unnamed else 'grow'}"
             assert execution_snapshot(harness.adapter.invocations[0].call) == {
                 "runnable": identity,
                 "entered_by": "run",

@@ -334,7 +334,8 @@ async def run_defaults(
             runnable = f"flow:{default_flow}"
     if runnable is not None:
         try:
-            runnable = resolve_runnable_reference(state, runnable).ref
+            target = resolve_runnable_reference(state, runnable)
+            runnable = f"{target.executable.kind}:{target.name}"
         except (ToolangError, ValueError) as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
     try:

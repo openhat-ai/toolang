@@ -60,7 +60,7 @@ def test_command_classification_excludes_run_directives(source, expected) -> Non
         "review",
         "agic:review",
         "flow:review",
-        "module::flow:review",
+        "module::review",
         "runnable",
         "agic",
         "flow",

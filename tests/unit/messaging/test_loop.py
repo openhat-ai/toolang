@@ -172,13 +172,14 @@ def test_tool_reply_origin_and_backend_cursor_restart(tmp_path, custom):
                 assert entry is not None and isinstance(
                     entry.payload, RunControlPayload
                 )
-                prefix = "runnables::talk::" if isinstance(custom, str) else ""
+                prefix = "talk::" if isinstance(custom, str) else "agent::"
                 kind = (
                     "flow"
                     if isinstance(custom, str) and custom.startswith("flow-module")
                     else "agic"
                 )
-                assert entry.payload.runnable == f"{prefix}{kind}:talk"
+                assert entry.payload.runnable == f"{prefix}talk"
+                assert entry.payload.runnable_kind == kind
             from toolang.teaming.schemas import Message
 
             stored = Message.decode(

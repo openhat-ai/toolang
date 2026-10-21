@@ -94,6 +94,7 @@ class RunNode:
     runnable: str
     status: RunStatus
     created_at: str
+    runnable_kind: str = field(default="", kw_only=True)
     started_at: str | None = None
     finished_at: str | None = None
     occurrence: Occurrence | None = None
@@ -742,8 +743,7 @@ class RunInfo:
         preparation = run_preparation(run, controls)
         input_text = message_summary(input_parts)
         parsed = parse_runnable_ref_parts(preparation.runnable)
-        kind, name = parsed.kind or "", parsed.name
-        separator = ":" if parsed.kind else ""
+        kind, name = preparation.runnable_kind, parsed.name
         last_message_step = next(
             (
                 step
@@ -768,8 +768,8 @@ class RunInfo:
             parent=run.parent,
             thread_id=str(run.thread),
             root_run_id=root_run_id,
-            runnable_kind=kind if separator else "",
-            runnable_name=name if separator else preparation.runnable,
+            runnable_kind=kind,
+            runnable_name=name,
             call_kind="top" if run.parent is None else "run",
             state=RunControlRefData.from_ref(run.state),
             occurrence=run.occur,

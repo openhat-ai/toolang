@@ -215,9 +215,9 @@ def test_local_script_saves_only_to_an_explicit_destination(
     assert control is not None
     assert isinstance(control.payload, RunControlPayload)
     if entry == "echo":
-        assert control.payload.runnable == "agic:echo"
+        assert control.payload.runnable == "agent::echo"
     elif entry == "implicit":
-        assert control.payload.runnable.startswith("agent::agic:<entry:")
+        assert control.payload.runnable.startswith("agent::<entry:")
     else:
         assert False, entry
 

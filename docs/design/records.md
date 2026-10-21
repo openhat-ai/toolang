@@ -95,6 +95,10 @@ persisted as applied with their committed effects and equal creation/finish time
 In particular, an applied `run` control can refer to a still-pending Run.
 Step adoption and subsequent Run failure never change that control's outcome.
 
+Run and Exec payloads store the accepted runnable FQN and separate
+`runnable_kind`. Retained typed runnable strings are decoded without rewriting
+stored history.
+
 Run, Exec, Steer, and Cancel payloads store flat `input` objects, keyed by
 `_` and argument names. Run entries may also store flat `authored_input` source
 text. Rerun creates a new Run entry. Each persisted

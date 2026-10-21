@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from toolang.lang.types import runnable_kind
+
 from toolang.base.types.message import part_from_data
 
 from toolang.execution.events import ModelStepInfo
@@ -308,7 +310,7 @@ class ProgressProjector:
                 )
             else:
                 lane_owner = owner.lane_owner
-        internal = event.runnable == "_:compact" or (
+        internal = event.runnable == "_::compact" or (
             (event.parent) is not None
             and self._runs[(StepRef.parse(event.parent)).run_id].internal
         )
@@ -316,7 +318,7 @@ class ProgressProjector:
             event,
             None if internal else lane_owner,
             internal=internal,
-            agic=event.runnable.rsplit("::", 1)[-1].startswith("agic:"),
+            agic=runnable_kind(event.runnable, event.runnable_kind) == "agic",
         )
         if internal:
             return None

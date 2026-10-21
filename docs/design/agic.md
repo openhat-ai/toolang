@@ -127,11 +127,12 @@ or ancestors, exec to ancestors, and child self-exec. An authorized root with no
 active descendants can exec itself.
 
 Use `runtime__runnables` to discover targets and complete signatures:
-`{}` returns all module-visible declarations; `{"name":"agic:review"}` or
+`{}` returns all module-visible declarations; `{"name":"agent::review"}` or
 `{"name":"review"}` returns exactly one. Unknown, inaccessible, empty, whitespace,
 and null names fail; there is no wildcard or multi-name query. Results include
 `current`, active `ancestors` ordered root to parent, and sorted `runnables`.
-Each entry has `ref`, `revision`, the full authored `doc`, and a `signature`
+Each entry has `ref`, `name`, `kind`, `full_name` (FQN), `revision`, the full
+authored `doc`, and a `signature`
 containing input, ordered parameters, output, and recursively referenced structs
 with field docs. Public refs omit the module prefix; private refs keep it.
 Docs describe suitability for an already-authorized task and do not authorize

@@ -153,6 +153,7 @@ class ScriptRunPresenter(RunTracer):
                 replace(
                     self._context,
                     runnable=event.runnable or self._context.runnable,
+                    runnable_kind=event.runnable_kind or self._context.runnable_kind,
                 )
             )
             self._context_gap_pending = True

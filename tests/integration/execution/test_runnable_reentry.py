@@ -99,7 +99,7 @@ def test_flow_statements_reject_active_targets_even_after_publication(
             root = await asyncio.wait_for(handle, 2)
             assert root.status == "failed"
             assert root.error is not None
-            assert "current or an ancestor runnable: flow:outer" in (
+            assert "current or an ancestor runnable: outer" in (
                 harness.store.resolve_error(root.error)
             )
             runs = harness.store.list_run_tree(root_run_id=root.id)
@@ -214,7 +214,7 @@ flow outer() -> Text[]:
             assert len(harness.adapter.invocations) == 4
             result = last_tool_result(harness.adapter.invocations[-1].call)
             assert result.error == (
-                f"runtime/{action} cannot call the current or an ancestor runnable: {target}"
+                f"runtime/{action} cannot call the current or an ancestor runnable: {target.partition(':')[2]}"
             )
             for invocation in harness.adapter.invocations[1:]:
                 assert route_scopes(invocation.call) == dict.fromkeys(

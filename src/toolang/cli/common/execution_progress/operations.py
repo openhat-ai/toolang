@@ -47,7 +47,11 @@ def committed_exec_target(operation: StepOperation, end: StepEnd) -> str | None:
     """Read one committed handoff from either native exec or its tool reply."""
 
     if end.report is not None and end.report.runnable is not None:
-        return end.report.runnable
+        from toolang.lang.types import display_runnable_ref
+
+        return display_runnable_ref(
+            end.report.runnable, kind=end.report.runnable_kind, surface="progress"
+        )
     if (
         operation.name == "exec"
         and operation.source == "tool"

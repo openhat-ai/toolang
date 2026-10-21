@@ -563,7 +563,7 @@ class Compaction:
         self.batch = self.batch[:midpoint]
 
 
-RUNNABLE = "_:compact"
+RUNNABLE = "_::compact"
 READ_TOOL = "runtime__compact_read"
 
 

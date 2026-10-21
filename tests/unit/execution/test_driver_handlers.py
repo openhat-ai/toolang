@@ -56,7 +56,7 @@ def test_invocation_can_select_unnamed_or_unrelated_entry(driver: DriverName, ki
         f"{kind}:\n  pass\n{kind} work:\n  pass\n{kind} {driver}:\n  pass\n"
     )
     assert resolve_driver_handler(state, driver, "_")[1].name.startswith("<entry:")
-    assert resolve_driver_handler(state, driver, f"{kind}:work")[1].name == "work"
+    assert resolve_driver_handler(state, driver, "work")[1].name == "work"
 
 
 @pytest.mark.parametrize("driver", ["chat", "talk", "chore"])
@@ -79,7 +79,7 @@ def test_no_runtime_chat_or_chore_handler(driver: DriverName):
 def test_runtime_talk_precedes_unnamed_without_changing_user_state(source):
     state = state_for(source)
     captured, target = resolve_driver_handler(state, "talk")
-    assert target.qualified == f"{RUNTIME_TALK_MODULE}::agic:talk"
+    assert target.qualified == f"{RUNTIME_TALK_MODULE}::talk"
     assert captured.revision == state.revision
     assert captured.runnables == state.runnables
     assert captured.caps_for(target.module) == state.caps_for("agent")
@@ -111,7 +111,7 @@ def test_runtime_talk_source_is_recorded_and_reused_by_rerun(tmp_path, monkeypat
             assert control is not None and isinstance(
                 control.payload, RunControlPayload
             )
-            assert control.payload.runnable == f"{RUNTIME_TALK_MODULE}::agic:talk"
+            assert control.payload.runnable == f"{RUNTIME_TALK_MODULE}::talk"
             source = control.payload.runtime_sources[RUNTIME_TALK_MODULE]
             assert "convo__write" in source
             assert dict(control.payload.input) == {"_": {"messages": ()}}

@@ -74,7 +74,7 @@ def test_authored_default_flow_takes_precedence_over_synthetic_default(
         layout.program.write_text("flow default():\n  pass\n")
     state = prepare_agent_state(layout)
     module, runnable = resolve_state_runnable(state, "default", kind="flow")
-    assert module == ("runnables::default" if exported else "agent")
+    assert module == ("default" if exported else "agent")
     assert runnable.name == (None if exported else "default")
     assert state.runnables["default"].kind == "flow"
 
@@ -109,9 +109,7 @@ def test_unnamed_flow_export_is_locally_entry(tmp_path):
     source.write_text("flow:\n  pass\n")
     state = prepare_agent_state(layout)
     assert state.runnables["research"].name is None
-    assert (
-        state.module_runnable("runnables::research", "_") is state.runnables["research"]
-    )
+    assert state.module_runnable("research", "_") is state.runnables["research"]
 
 
 def test_prepare_reuses_explicit_default_agic_cache(tmp_path, monkeypatch):
@@ -364,7 +362,7 @@ def test_flow_module_keeps_inline_caps_without_agent_program(tmp_path: Path) -> 
 
     state = prepare_agent_state(_layout(toolang_root))
 
-    cap = state.module_caps["runnables::report"][0]
+    cap = state.module_caps["report"][0]
     assert cap.name == "style"
     assert cap.read_content() == "Flow style."
     assert not (home / "agent.too").exists()
@@ -694,7 +692,7 @@ def test_inline_skill_materialization_preserves_source_and_snapshots(
     tmp_path: Path, source_kind: str
 ) -> None:
     layout = _layout(tmp_path / "toolang")
-    module = "runnables::review" if source_kind == "flow" else "agent"
+    module = "review" if source_kind == "flow" else "agent"
     source = layout.home / (
         "runnables/review.too" if source_kind == "flow" else "agent.too"
     )
@@ -774,8 +772,8 @@ def test_inline_skill_precedence_is_module_local(tmp_path: Path, scope: str) -> 
 
     for module, body, expected_scope in (
         ("agent", "Agent guidance.", "here"),
-        ("runnables::review", "Flow guidance.", "here"),
-        ("runnables::other", "Shared guidance.", scope),
+        ("review", "Flow guidance.", "here"),
+        ("other", "Shared guidance.", scope),
     ):
         (entry,) = state.caps_for(module)
         assert entry.read_content() == body
@@ -1187,7 +1185,7 @@ def test_prepare_discovers_and_reloads_runnable_exports(tmp_path, kind, named):
 
     state = prepare_agent_state(layout)
     owner, exported = resolve_state_runnable(state, "research", kind=kind)
-    assert owner == "runnables::research"
+    assert owner == "research"
     assert exported.name == ("research" if named else None)
     assert set(state.runnables) == {"chat", "research"}
     assert state.module_runnable(owner, "helper", kind="agic") is not None
@@ -1218,20 +1216,20 @@ def test_prepare_discovers_independent_flow_module_exports(tmp_path: Path) -> No
     ]
     assert tuple(state.agics) == ()
     assert tuple(state.flows) == ("research",)
-    program = state.modules["runnables::research"]
+    program = state.modules["research"]
     assert not hasattr(state, "program")
-    assert tuple(state.modules) == ("agent", "runnables::research")
-    assert state.module_sources["runnables::research"] == "runnables/research.too"
+    assert tuple(state.modules) == ("agent", "research")
+    assert state.module_sources["research"] == "runnables/research.too"
     assert program.find_agic("helper") is not None
     assert "helper" not in state.runnables
-    helper = state.module_runnable("runnables::research", "helper", kind="agic")
+    helper = state.module_runnable("research", "helper", kind="agic")
     assert helper is not None
     assert helper is program.find_agic("helper")
     exported = state.runnables["research"]
-    assert state.runnable_modules["research"] == "runnables::research"
+    assert state.runnable_modules["research"] == "research"
     assert exported is program.flows[0]
     assert exported.name is None
-    assert state.runnable_modules["research"] == "runnables::research"
+    assert state.runnable_modules["research"] == "research"
 
 
 @pytest.mark.parametrize("kind", ["agic", "flow"])
@@ -1246,8 +1244,8 @@ def test_unnamed_runnable_export_renames_with_its_file(tmp_path: Path, kind) -> 
     first = prepare_agent_state(_layout(toolang_root))
 
     public_module, public = resolve_state_runnable(first, "research", kind=kind)
-    local = resolve_bound_runnable(first, "runnables::research", f"{kind}:research")
-    assert public_module == "runnables::research"
+    local = resolve_bound_runnable(first, "research", f"{kind}:research")
+    assert public_module == "research"
     assert public is local
     assert public.name is local.name is None
 
@@ -1394,19 +1392,15 @@ def test_module_here_caps_are_isolated_and_reload_from_cache(tmp_path: Path) -> 
     state = prepare_agent_state(_layout(toolang_root))
 
     agent_cap = next(item for item in state.caps_for("agent") if item.name == "style")
-    flow_cap = next(
-        item for item in state.caps_for("runnables::research") if item.name == "style"
-    )
+    flow_cap = next(item for item in state.caps_for("research") if item.name == "style")
     assert agent_cap.read_content() == "Agent style."
     assert flow_cap.read_content() == "Flow style."
     assert agent_cap.path != flow_cap.path
-    assert all(
-        item.name != "only_agent" for item in state.caps_for("runnables::research")
-    )
+    assert all(item.name != "only_agent" for item in state.caps_for("research"))
 
     flow_path.write_text("invalid", encoding="utf-8")
     loaded = load_home_layer(_layout(toolang_root), state.home_revision)
-    assert loaded.modules["runnables::research"].flows[0].name is None
+    assert loaded.modules["research"].flows[0].name is None
 
 
 def test_flow_modules_can_reference_the_same_cap(
@@ -1436,8 +1430,8 @@ def test_flow_modules_can_reference_the_same_cap(
 
     state = prepare_agent_state(_layout(toolang_root))
 
-    one = state.module_caps["runnables::one"][0]
-    two = state.module_caps["runnables::two"][0]
+    one = state.module_caps["one"][0]
+    two = state.module_caps["two"][0]
     assert one.ref == two.ref
     assert one.path == two.path
     assert one.read_content() == "Review carefully."

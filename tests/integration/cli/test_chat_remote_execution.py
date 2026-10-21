@@ -50,13 +50,9 @@ class _Snapshot:
         pytest.param("agic:_", False, "_", id="agic-entry-alias"),
         pytest.param("flow:_", False, "_", id="flow-entry-alias"),
         pytest.param("agic:chat", False, "agent::chat", id="module-selector"),
-        pytest.param("agic:chat", False, "agent::agic:chat", id="module-ref"),
-        pytest.param(
-            "flow:chat", True, "runnables::chat::chat", id="file-module-selector"
-        ),
-        pytest.param(
-            "agic:chat", True, "runnables::chat::agic:chat", id="file-module-ref"
-        ),
+        pytest.param("agic:chat", False, "agent::chat", id="module-ref"),
+        pytest.param("flow:chat", True, "chat::chat", id="file-module-selector"),
+        pytest.param("agic:chat", True, "chat::chat", id="file-module-ref"),
     ],
 )
 def test_remote_chat_session_executes_against_the_agent_api(

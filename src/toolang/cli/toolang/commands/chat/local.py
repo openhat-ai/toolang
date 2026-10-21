@@ -610,7 +610,8 @@ class LocalChatSession:
             elif default_flow is not None:
                 runnable = f"flow:{default_flow}"
         if runnable is not None:
-            runnable = resolve_runnable_reference(state, runnable).ref
+            target = resolve_runnable_reference(state, runnable)
+            runnable = f"{target.executable.kind}:{target.name}"
         return SessionSetting(
             model=model,
             runnable=runnable,

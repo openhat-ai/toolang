@@ -24,4 +24,4 @@ def test_live_agent_preparation_keeps_runnable_selection_at_the_call_site(
 
     assert setup.defaults.model is not None
     assert setup.defaults.model.ref == "test/offline"
-    assert resolve_runnable_reference(state, runnable).ref == runnable
+    assert resolve_runnable_reference(state, runnable).ref == runnable.split(":", 1)[1]

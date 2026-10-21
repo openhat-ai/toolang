@@ -324,7 +324,7 @@ def public_runnable_index(
     for name, declaration in program_runnable_index(agent).items():
         add(name, "agent", declaration)
     for module, program in modules.items():
-        if module == "agent" or module == "runtime::talk":
+        if module == "agent" or module == "_":
             continue
         public_name, local_name = runnable_export(module_sources[module], program)
         declaration = program_runnable_index(program)[local_name]
@@ -340,7 +340,7 @@ def module_runnable_index(
     result: dict[str, AgicDecl | FlowDecl] = {}
     for module, program in modules.items():
         for name, declaration in program_runnable_index(program).items():
-            result[_module_runnable_key(module, declaration.kind, name)] = declaration
+            result[_module_runnable_key(module, name)] = declaration
     return result
 
 
@@ -359,8 +359,8 @@ def runnable_export(source: str, program: Program) -> tuple[str, str]:
     return public_name, candidates[0]
 
 
-def _module_runnable_key(module: str, kind: str, local_name: str) -> str:
-    return f"{module}::{kind}:{local_name}"
+def _module_runnable_key(module: str, local_name: str) -> str:
+    return f"{module}::{local_name}"
 
 
 def state_program(
@@ -596,34 +596,26 @@ class AgentState:
             program = self.modules.get(module)
             if program is None:
                 return None
-            adhoc = program.adhoc_lines
             matches = tuple(
                 entry
                 for entry in (*program.agics, *program.flows)
                 if entry.name is None
-                and not (isinstance(entry, AgicDecl) and entry.span.line in adhoc)
+                and not (
+                    isinstance(entry, AgicDecl)
+                    and entry.span.line in program.adhoc_lines
+                )
                 and (kind is None or entry.kind == kind)
             )
-            if len(matches) != 1:
-                return None
-            return matches[0]
-        matches = tuple(
-            entry
-            for candidate_kind in ((kind,) if kind is not None else ("agic", "flow"))
-            if (
-                entry := self.module_runnables.get(
-                    _module_runnable_key(module, candidate_kind, local_name)
-                )
-            )
-        )
-        if len(matches) > 1:  # pragma: no cover - Program namespace invariant
-            raise ValueError(f"Runnable name is not unique: {local_name}")
-        return matches[0] if matches else None
+            return matches[0] if len(matches) == 1 else None
+        entry = self.module_runnables.get(f"{module}::{local_name}")
+        if entry is not None and kind is not None and entry.kind != kind:
+            return None
+        return entry
 
     def caps_for(self, module: str) -> tuple[StateCap, ...]:
         """Return the precomputed effective caps for one executing module."""
 
-        if module == "runtime::talk":
+        if module == "_":
             module = "agent"
         if module in self.caps_by_module:
             return self.caps_by_module[module]
@@ -783,7 +775,7 @@ def validate_program_term(
     if name == "agent":
         if source != "agent.too":
             raise ValueError("agent Program must use agent.too")
-    elif name == "runtime::talk":
+    elif name == "_":
         if source != "runtime/talk.too":
             raise ValueError("runtime Talk Program must use runtime/talk.too")
     elif name != runnable_module_name(source):
@@ -888,15 +880,13 @@ def runnable_module_name(authored_path: str) -> str:
     if len(path.parts) != 2 or path.parts[0] != "runnables" or path.suffix != ".too":
         raise ValueError(f"Runnable module source path is invalid: {authored_path!r}")
     stem = path.stem
-    if stem == "_":
-        raise ValueError(
-            "Runnable module filename is reserved for the unnamed entry alias: '_'"
-        )
+    if stem.casefold() in {"_", "agent"}:
+        raise ValueError(f"Runnable module filename is reserved: {stem!r}")
     if _RUNNABLE_FILENAME_RE.fullmatch(stem) is None:
         raise ValueError(f"Runnable module filename is not portable: {stem!r}")
     if stem.casefold() in _WINDOWS_RESERVED_FILENAMES:
         raise ValueError(f"Runnable module filename is reserved on Windows: {stem!r}")
-    return f"runnables::{stem}"
+    return stem
 
 
 def effective_caps(

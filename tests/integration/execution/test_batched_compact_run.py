@@ -15,8 +15,9 @@ from tests.support.execution_harness import (
     ScriptedModelTurn,
 )
 from tests.support.setup import replace_materialized_setup
-from toolang.base.errors import ModelResponseError
+from toolang.base.errors import ModelResponseError, ToolangError
 from toolang.base.types.message import Message, TextPart
+from toolang.base.types.policy import RunBindings
 from toolang.base.types.run import ModelCallResult, ModelUsage, ToolCall
 from toolang.cli.common.execution_progress import ProgressProjector
 from toolang.execution import compaction, tokens
@@ -33,7 +34,11 @@ from toolang.execution.executor.executor import _Execution
 from toolang.execution.executor.runs import compact as compact_run
 from toolang.execution.executor.steps import model as model_step
 from toolang.execution.inspection.history import RunHistory
-from toolang.execution.records import CompactControlPayload, StoredModelStepSpec
+from toolang.execution.records import (
+    CompactControlPayload,
+    StoredModelStepSpec,
+    RunControlPayload,
+)
 from toolang.execution.store import RunStore
 from toolang.execution.types import (
     ModelStepReport,
@@ -42,6 +47,8 @@ from toolang.execution.types import (
     ToolStepSpec,
     StepRef,
 )
+from toolang.lang.input import CallInput
+from toolang.state.types import RUNTIME_TALK_MODULE
 
 SOURCE = """agic chat(_: Part[]) -> Text:
   context = none
@@ -63,8 +70,8 @@ def harness_at(path):
     )
 
 
-async def seed(h, monkeypatch):
-    thread = h.threads.create(kind=ThreadKind.CHAT)
+async def seed(h, monkeypatch, *, kind=ThreadKind.CHAT):
+    thread = h.threads.create(kind=kind)
     roots = []
     for index in range(4):
         run = await h.executor.run(
@@ -128,21 +135,41 @@ def producers(h, thread):
     ]
 
 
+@pytest.mark.parametrize("driver", ["chat", "talk"])
 def test_batches_and_client_projection_share_the_normal_event_tree(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, driver
 ):
     h = harness_at(tmp_path)
     tracer = RecordingRunTracer()
 
     async def scenario():
         async with h:
-            thread, roots = await seed(h, monkeypatch)
+            thread, roots = await seed(
+                h,
+                monkeypatch,
+                kind=ThreadKind.TALK if driver == "talk" else ThreadKind.CHAT,
+            )
             h.adapter._responses.extend(
                 [reply(f"internal summary {i}") for i in range(3)]
                 + [reply("visible answer")]
             )
-            caller = await current(h, thread, tracer=tracer)
-            assert caller.status == "succeeded", caller.error
+            spec = h.run_spec(
+                thread=thread, runnable="chat", primary=(TextPart("current input"),)
+            )
+            if driver == "talk":
+                spec = replace(
+                    spec,
+                    driver="talk",
+                    bindings=RunBindings(),
+                    input=CallInput({"_": (TextPart('{"messages": []}'),)}),
+                )
+            caller = await h.executor.run(spec, tracer=tracer)
+            assert caller.status == "succeeded", (
+                h.store.resolve_error(caller.error) if caller.error else None
+            )
+            if driver == "talk":
+                entry = h.store.get_run_control(run_id=caller.id, index=0)
+                assert entry.payload.runnable == f"{RUNTIME_TALK_MODULE}::talk"
             (child,) = producers(h, thread)
             outer, following = h.store.list_steps(run_id=caller.id)
             assert child.parent == outer.ref and str(child.thread) == thread
@@ -190,7 +217,8 @@ def test_batches_and_client_projection_share_the_normal_event_tree(
                 for e in tracer.events
                 if isinstance(e, RunBegin) and e.run == child.id
             )
-            assert begin.runnable == "_:compact" and begin.parent == str(outer.ref)
+            assert begin.runnable == "_::compact" and begin.parent == str(outer.ref)
+            assert begin.runnable_kind == "compact"
             assert_replayed(h, tracer.events)
             projector = ProgressProjector()
             text = []
@@ -545,14 +573,14 @@ def test_context_rejection_records_attempt_then_shrinks_only_whole_roots(
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("name", ["_:compact", "<inner>:compact", "inner:compact"])
+@pytest.mark.parametrize("name", ["_::compact", "<inner>:compact", "inner:compact"])
 def test_internal_run_cannot_be_started_publicly(tmp_path, name):
     h = harness_at(tmp_path)
 
     async def scenario():
         async with h:
             thread = h.threads.create(kind=ThreadKind.CHAT)
-            with pytest.raises(ValueError, match="runnable"):
+            with pytest.raises((ValueError, ToolangError), match="runnable|Runnable"):
                 h.executor.run(
                     h.run_spec(
                         thread=thread, runnable=name, primary=(TextPart("input"),)
@@ -912,5 +940,47 @@ def test_compact_result_usage_is_visible_before_part_delivery(
                 result.report is not None and result.report.usage == child.report.usage
             )
             assert child.report.calls.model_calls == 1
+
+    asyncio.run(scenario())
+
+
+def test_user_compact_module_does_not_replace_builtin_compaction(tmp_path, monkeypatch):
+    modules = tmp_path / "agents" / "alice" / "runnables"
+    modules.mkdir(parents=True)
+    (modules / "compact.too").write_text(SOURCE.replace("agic chat", "agic compact"))
+    h = ExecutionHarness.create(
+        tmp_path,
+        source=SOURCE,
+        prepare_state=True,
+        responses=[reply("user compact")] + [reply(f"output {i}") for i in range(4)],
+    )
+
+    async def scenario():
+        async with h:
+            user_thread = h.threads.create(kind=ThreadKind.CHAT)
+            user = await h.executor.run(
+                h.run_spec(
+                    thread=user_thread,
+                    runnable="compact",
+                    primary=(TextPart("user input"),),
+                )
+            )
+            assert user.status == "succeeded", user.error
+            entry = h.store.get_run_control(run_id=user.id, index=0)
+            assert entry is not None and isinstance(entry.payload, RunControlPayload)
+            assert entry.payload.runnable == "compact::compact"
+            assert entry.payload.runnable_kind == "agic"
+            thread, _ = await seed(h, monkeypatch)
+            h.adapter._responses.extend([reply()] * 3 + [reply("visible answer")])
+            caller = await current(h, thread)
+            assert caller.status == "succeeded", caller.error
+            (child,) = producers(h, thread)
+            entry = h.store.get_run_control(run_id=child.id, index=0)
+            assert entry is not None and isinstance(entry.payload, RunControlPayload)
+            assert entry.payload.runnable == "_::compact"
+            assert entry.payload.runnable_kind == "compact"
+            assert child.parent.run_id == caller.id
+            output = RunHistory(h.store).get_compaction(thread)
+            assert output is not None and output.ref == RunRef(child.id)
 
     asyncio.run(scenario())

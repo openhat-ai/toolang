@@ -105,6 +105,9 @@ class _ToolRuntime(ToolRuntime):
         entries = [
             {
                 "ref": runnable_ref(state, target),
+                "name": target.name,
+                "kind": target.executable.kind,
+                "full_name": target.qualified,
                 "revision": state.revision,
                 "doc": target.executable.doc or "",
                 "signature": runnable_signature(

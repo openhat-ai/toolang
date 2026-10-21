@@ -271,9 +271,7 @@ def test_shared_inputs_render_literal_multimodal_input_once(monkeypatch) -> None
         caps=(),
     )
     context, initial, invocations = inputs.rendered_input
-    assert (
-        context == '<toolang:execution runnable="agent::agic:chat" entered_by="run"/>'
-    )
+    assert context == '<toolang:execution runnable="agent::chat" entered_by="run"/>'
     assert not invocations
     assert initial == (Message(role="user", parts=primary),)
     assert inputs.rendered_input is inputs.rendered_input

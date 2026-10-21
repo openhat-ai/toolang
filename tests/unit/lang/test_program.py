@@ -1004,18 +1004,18 @@ def test_parse_runnable_ref_parts_accepts_module_kind_and_unnamed() -> None:
         None,
         None,
     )
-    entry = parse_runnable_ref_parts("agent::agic:<entry:3>")
+    entry = parse_runnable_ref_parts("agent::<entry:3>")
     assert (entry.module, entry.kind, entry.name, entry.role, entry.line) == (
         "agent",
-        "agic",
+        None,
         "<entry:3>",
         "entry",
         3,
     )
-    adhoc = parse_runnable_ref_parts("runnables::research::agic:<adhoc:5>")
+    adhoc = parse_runnable_ref_parts("research::<adhoc:5>")
     assert (adhoc.module, adhoc.kind, adhoc.role, adhoc.line) == (
-        "runnables::research",
-        "agic",
+        "research",
+        None,
         "adhoc",
         5,
     )
@@ -1047,14 +1047,9 @@ def test_inline_agic_stays_unnamed_and_uses_adhoc_ref() -> None:
 def test_display_runnable_ref_uses_surface_specific_unnamed_labels() -> None:
     from toolang.lang.types import display_runnable_ref
 
-    assert display_runnable_ref("agent::agic:<entry:3>", surface="help") == "agic:"
-    assert (
-        display_runnable_ref("agent::agic:<adhoc:5>", surface="chat") == "agic:<adhoc>"
-    )
-    assert (
-        display_runnable_ref("runnables::research::agic:<adhoc:5>", surface="progress")
-        == "agic:<adhoc:5>"
-    )
+    assert display_runnable_ref("agent::<entry:3>", surface="help") == "agic:"
+    assert display_runnable_ref("agent::<adhoc:5>", surface="chat") == "agic:"
+    assert display_runnable_ref("research::<adhoc:5>", surface="progress") == "agic:"
     assert display_runnable_ref("agic:chat", surface="progress") == "agic:chat"
     assert display_runnable_ref("agic:研究", surface="chat") == "agic:研究"
 
@@ -1071,8 +1066,7 @@ def test_entry_display_does_not_change_reference_identity(
 
     assert display_runnable_ref(reference, surface="chat") == f"{kind}:"
     assert display_runnable_ref(reference, surface="help") == f"{kind}:"
-    diagnostic = "<entry>" if name == "_" else name
-    assert display_runnable_ref(reference, surface="progress") == f"{kind}:{diagnostic}"
+    assert display_runnable_ref(reference, surface="progress") == f"{kind}:"
     assert parse_runnable_ref_parts(reference).name == name
     assert parse_runnable_ref_parts(f"{kind}:_").role == "entry"
     with pytest.raises(ValueError):

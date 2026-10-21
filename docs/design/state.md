@@ -203,14 +203,15 @@ rebuilt from authored inputs; historical data is not migrated or converted.
 
 ## Programs And Module Terms
 
-`agent.too` is the special `agent` module term. Each direct
-`runnables/<name>.too` file contributes an independent module term named
-`runnables::<name>`. Prepared Program kinds are `agent` and `runnable`;
-the exported declaration determines whether it executes as an agic or flow.
+The main module `agent` comes from `agent.too`. Each direct
+`runnables/<name>.too` contributes an independent runnable module named `<name>`.
+The builtin module is `_`. [Runnable names](program.md#runnable-names) defines
+FQNs, kinds, lookup, and interface labels. Prepared Program roles remain `agent`
+and `runnable`; the exported declaration determines execution kind.
 
 Runnable filename stems must match `^[A-Za-z_][A-Za-z0-9_-]{0,63}$`, must not be a
-Windows reserved device name or the unnamed-entry alias `_`, and must be unique
-under Unicode `casefold()`.
+Windows reserved device name or the reserved module names `agent` and `_`, and
+must be unique under Unicode `casefold()`.
 A runnable module exports exactly one unnamed or filename-matching agic or flow.
 Renaming an unnamed-entry file therefore renames its public runnable
 without editing its source.
@@ -224,7 +225,7 @@ top-level declaration under the lined lookup key `<entry:LINE>`, applies
 filename-based public exports, and rejects duplicate local or public names across
 both kinds. It indexes the original declarations without mutating their AST names.
 Inline agic bodies stay unnamed and out of the index; they are addressed only as
-`agic:<adhoc:LINE>`. The indexes are derived from Programs and are not duplicated
+`module::<adhoc:LINE>`. The indexes are derived from Programs and are not duplicated
 in `layer.json`. Script help uses the same binding rules.
 
 ## Prepare, Publish, and Load

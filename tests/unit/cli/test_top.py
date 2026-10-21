@@ -110,17 +110,18 @@ def root(**values):
 
 
 @pytest.mark.parametrize(
-    ("value", "expected"),
+    ("value", "kind", "expected"),
     [
-        ("flow:review", "flow:review"),
-        ("agic:_", "agic:"),
-        ("flow:<entry>", "flow:"),
-        ("flow:", "flow:"),
-        ("pkg::agic:review", "agic:review"),
+        ("flow:review", "", "flow:review"),
+        ("agic:_", "", "agic:"),
+        ("flow:<entry>", "", "flow:"),
+        ("flow:", "", "flow:"),
+        ("pkg::review", "agic", "agic:review"),
+        ("pkg::review", "flow", "flow:review"),
     ],
 )
-def test_runnable_labels(value, expected):
-    assert runnable(value) == expected
+def test_runnable_labels(value, kind, expected):
+    assert runnable(value, kind) == expected
 
 
 @pytest.mark.parametrize(

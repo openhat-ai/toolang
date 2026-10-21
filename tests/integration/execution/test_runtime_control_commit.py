@@ -129,7 +129,11 @@ flow child(_: Text) -> Text:
             ) == (
                 source.status,
                 direct_output(source.output),
-                step_summary(source.report, exec_runnable="flow:child"),
+                step_summary(
+                    source.report,
+                    exec_runnable="agent::child",
+                    exec_runnable_kind="flow",
+                ),
                 source.finished_at,
             )
             if operation == "spawn":

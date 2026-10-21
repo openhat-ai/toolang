@@ -31,9 +31,7 @@ def test_automatic_statement_description_is_independent_of_docs(
     statement = MapStmt(
         span=SPAN, runnable="agic:<adhoc:32>", lanes=2, binding="findings", doc=doc
     )
-    description = (
-        "Map each item with agic:<adhoc:32>, up to 2 at once, save result to findings"
-    )
+    description = "Map each item with agic:, up to 2 at once, save result to findings"
 
     assert statement_description(statement) == description
 
@@ -47,7 +45,7 @@ def test_statement_description_covers_inline_binding_and_repeat_forms() -> None:
         statement_description(
             RunStmt(span=SPAN, runnable="agic:<adhoc:12>", binding=None)
         )
-        == "Run agic:<adhoc:12>, discard result"
+        == "Run agic:, discard result"
     )
     assert (
         statement_description(KeepStmt(span=SPAN, position="first", count=1))
@@ -63,7 +61,7 @@ def test_statement_description_covers_inline_binding_and_repeat_forms() -> None:
         statement_description(
             RepeatStmt(span=SPAN, count=3, runnable="agic:<adhoc:20>")
         )
-        == "Repeat up to 3 times, until agic:<adhoc:20> is true"
+        == "Repeat up to 3 times, until agic: is true"
     )
 
 
@@ -85,7 +83,7 @@ def test_statement_description_covers_inline_binding_and_repeat_forms() -> None:
         ),
         (
             SeekStmt(span=SPAN, name="researcher", runnable="agic:<adhoc:4>"),
-            "Ask agent researcher to run agic:<adhoc:4>",
+            "Ask agent researcher to run agic:",
         ),
         (
             AskStmt(span=SPAN, name=None, request="question"),
@@ -101,7 +99,7 @@ def test_statement_description_covers_inline_binding_and_repeat_forms() -> None:
         ),
         (
             RunStmt(span=SPAN, runnable="agic:<adhoc:5>"),
-            "Run agic:<adhoc:5>",
+            "Run agic:",
         ),
         (
             RunStmt(span=SPAN, runnable="synthesize"),
@@ -109,7 +107,7 @@ def test_statement_description_covers_inline_binding_and_repeat_forms() -> None:
         ),
         (
             RunStmt(span=SPAN, runnable="agic:<adhoc:6>"),
-            "Run agic:<adhoc:6>",
+            "Run agic:",
         ),
         (
             ReduceStmt(span=SPAN, runnable="merge_pair"),
@@ -117,7 +115,7 @@ def test_statement_description_covers_inline_binding_and_repeat_forms() -> None:
         ),
         (
             MapStmt(span=SPAN, runnable="agic:<adhoc:7>"),
-            "Map each item with agic:<adhoc:7>",
+            "Map each item with agic:",
         ),
         (
             MapStmt(span=SPAN, runnable="search_web", lanes=1),
@@ -133,11 +131,11 @@ def test_statement_description_covers_inline_binding_and_repeat_forms() -> None:
         ),
         (
             DropStmt(span=SPAN, runnable="agic:<adhoc:8>"),
-            "Drop items where agic:<adhoc:8> is true",
+            "Drop items where agic: is true",
         ),
         (
             SortStmt(span=SPAN, runnable="agic:<adhoc:9>", order="ascending"),
-            "Sort items by agic:<adhoc:9> in ascending order",
+            "Sort items by agic: in ascending order",
         ),
         (
             RepeatStmt(span=SPAN, count=2),
@@ -171,40 +169,40 @@ def test_statement_description_covers_every_statement(
 @pytest.mark.parametrize(
     ("source", "expected"),
     [
-        ("Review the findings.", "Run agic:<adhoc:3>"),
-        ("run: Review the findings.", "Run agic:<adhoc:3>"),
+        ("Review the findings.", "Run agic:"),
+        ("run: Review the findings.", "Run agic:"),
         (
             "seek researcher: Find evidence.",
-            "Ask agent researcher to run agic:<adhoc:3>",
+            "Ask agent researcher to run agic:",
         ),
         (
             "run -> Text[]: Expand the query.",
-            "Run agic:<adhoc:3>",
+            "Run agic:",
         ),
         (
             "generate 3 in 2 lanes: Review the findings.",
-            "Generate into 3 items with agic:<adhoc:3> independently, up to 2 at once",
+            "Generate into 3 items with agic: independently, up to 2 at once",
         ),
         (
             "run: Combine {{_}}.",
-            "Run agic:<adhoc:3>",
+            "Run agic:",
         ),
         (
             "reduce: Merge {{_}}.",
-            "Reduce all items into one with agic:<adhoc:3> sequentially",
+            "Reduce all items into one with agic: sequentially",
         ),
         (
             "let results = map in 2 lanes:\n    Search for {{_}}.",
-            "Map each item with agic:<adhoc:3>, up to 2 at once, save result to results",
+            "Map each item with agic:, up to 2 at once, save result to results",
         ),
-        ("keep if: Check {{_}}.", "Keep items where agic:<adhoc:3> is true"),
+        ("keep if: Check {{_}}.", "Keep items where agic: is true"),
         (
             "let drop if: Check {{_}}.",
-            "Drop items where agic:<adhoc:3> is true, discard result",
+            "Drop items where agic: is true, discard result",
         ),
         (
             "sort descending by: Score {{_}}.",
-            "Sort items by agic:<adhoc:3> in descending order",
+            "Sort items by agic: in descending order",
         ),
     ],
 )

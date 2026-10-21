@@ -77,7 +77,8 @@ authority boundary.
 Chat trims leading/trailing blank lines and horizontal whitespace at the end of
 the final line, preserving indentation and internal input whitespace. Completion
 only edits the draft. A root `/NAME` resolves a runnable after reserved built-in
-names; qualified `/agic:NAME` or `/flow:NAME` can address a colliding name.
+names; `/agic:NAME` or `/flow:NAME` accepts an explicit kind constraint. Runnable
+identity and display labels follow [runnable names](program.md#runnable-names).
 `/runnable NAME`, `/agic NAME`, and `/flow NAME` are not selector forms.
 
 ## Queue and steering

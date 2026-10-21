@@ -175,7 +175,7 @@ def test_real_provider_executes_requested_agic_once_with_chat_history(
             assert "TOOLANG_EXEC_SMOKE" in output
             (control,) = runtime.store.list_run_controls(run_id=run_id, kind="exec")
             assert isinstance(control.payload, ExecControlPayload)
-            assert control.payload.runnable == "agic:test"
+            assert control.payload.runnable == "agent::test"
             assert len(runtime.store.list_run_tree(root_run_id=run_id)) == 1
             from toolang.execution.types import ToolStepSpec
 

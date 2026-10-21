@@ -421,7 +421,7 @@ def test_named_condition_rejects_active_runnable(tmp_path):
     )
     root, steps, runs, _, error = _run(harness)
     assert root.status == "failed"
-    assert "current or an ancestor runnable: flow:main" in str(error)
+    assert "current or an ancestor runnable: main" in str(error)
     assert steps[0].report == LoopStepReport(0, "failed", None)
     assert len(runs) == 1 and not harness.adapter.invocations
 

@@ -67,7 +67,7 @@ def test_qualified_slash_calls_resolve_reserved_public_runnables(
             default_runnable=f"{kind}:{name}",
         )
         assert spec.input == CallInput()
-        assert spec.bindings.runnable == f"{kind}:{name}"
+        assert spec.bindings.runnable == f"{name}"
     finally:
         harness.store.close()
 
@@ -217,21 +217,21 @@ def test_materialized_request_rejects_a_non_exact_model_query(tmp_path) -> None:
         ModelRequest("script*")
 
 
-def test_materialized_request_rejects_an_unqualified_runnable(tmp_path) -> None:
+def test_materialized_request_resolves_an_effective_runnable_name(tmp_path) -> None:
     harness = ExecutionHarness.create(tmp_path, source=_SOURCE, responses=[])
     try:
-        with pytest.raises(ValueError, match="runnable ref must be exact"):
-            resolve_run_request(
-                RunRequest(
-                    thread_id="chat_test",
-                    request_id="request_with_selector",
-                    runnable=RunnableRequest("default", CallInput({"_": "hello"})),
-                    model=ModelRequest("test/scripted"),
-                    policy=RunPolicy(),
-                ),
-                setup=harness.setup,
-                state=harness.state,
-            )
+        spec = resolve_run_request(
+            RunRequest(
+                thread_id="chat_test",
+                request_id="request_with_selector",
+                runnable=RunnableRequest("default", CallInput({"_": "hello"})),
+                model=ModelRequest("test/scripted"),
+                policy=RunPolicy(),
+            ),
+            setup=harness.setup,
+            state=harness.state,
+        )
+        assert spec.bindings.runnable == "default"
     finally:
         harness.store.close()
 
@@ -261,7 +261,7 @@ def test_materialized_request_validates_the_selected_module(
             spec = resolve_run_request(
                 request, setup=harness.setup, state=harness.state
             )
-            assert spec.bindings.runnable == f"{kind}:chat"
+            assert spec.bindings.runnable == "chat"
     finally:
         harness.store.close()
 
@@ -286,7 +286,7 @@ def test_entry_selector_resolves_to_a_lined_run_identity(tmp_path, kind, selecto
             setup=harness.setup,
             state=harness.state,
         )
-        assert spec.bindings.runnable == f"{kind}:<entry:1>"
+        assert spec.bindings.runnable == "<entry:1>"
     finally:
         harness.store.close()
 
@@ -427,7 +427,7 @@ def test_resolve_spec_binds_policy_primary_and_typed_named_inputs(
 
         assert spec.bindings == RunBindings(
             model="test/scripted",
-            runnable="agic:review",
+            runnable="review",
         )
         assert {name: value for name, value in spec.input.items() if name != "_"} == {
             "count": 2
@@ -591,7 +591,7 @@ def test_run_default_selects_the_named_runnable_over_session_binding(
             session_commands=(RunCommand("default", "runnable", "agic:review"),),
         )
 
-        assert spec.bindings.runnable == "agic:default"
+        assert spec.bindings.runnable == "default"
         assert {name: value for name, value in spec.input.items() if name != "_"} == {}
     finally:
         harness.store.close()
@@ -654,17 +654,17 @@ def test_surface_session_and_run_selections_keep_model_defaults(
 
         assert bound.bindings == RunBindings(
             model="test/scripted",
-            runnable="agic:default",
+            runnable="default",
         )
         assert (
             session.bindings.runnable,
             {name: value for name, value in session.input.items() if name != "_"},
         ) == (
-            "agic:review",
+            "review",
             {"count": 2},
         )
-        assert authored.bindings.runnable == "agic:default"
-        assert selected.bindings.runnable == "agic:default"
+        assert authored.bindings.runnable == "default"
+        assert selected.bindings.runnable == "default"
         assert restored_model.model_request == setup.defaults.model
     finally:
         harness.store.close()
@@ -739,10 +739,10 @@ def test_runnable_reference_lookup_never_uses_tq(monkeypatch):
 
     monkeypatch.setattr(Query, "parse", reject_query)
     program = Program.from_source("agic worker:\n  Work.\n")
-    for reference in ("worker", "agic:worker", "agent::agic:worker"):
-        assert resolve_runnable_reference(program, reference).ref == "agic:worker"
+    for reference in ("worker", "agic:worker", "agent::worker"):
+        assert resolve_runnable_reference(program, reference).ref == "worker"
     with pytest.raises(ToolangError, match="Runnable not found"):
-        resolve_runnable_reference(program, "other::agic:worker")
+        resolve_runnable_reference(program, "other::worker")
     for reference in ("*", "worker*", "*[kind=agic]", "worker,missing"):
         with pytest.raises(ValueError, match="invalid public runnable ref"):
             resolve_runnable_reference(program, reference)

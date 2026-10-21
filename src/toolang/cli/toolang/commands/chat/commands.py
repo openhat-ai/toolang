@@ -279,8 +279,8 @@ def run_directive_help() -> CommandOutcome:
         CommandHelpRow("/limit", "FIELD=VALUE...", "Override run limits"),
         CommandHelpRow("/workdir", "PATH", "Override workdir for this run"),
         CommandHelpRow("/RUNNABLE", "[NAME=VALUE...]", "Call a root runnable"),
-        CommandHelpRow("/agic:NAME", "[NAME=VALUE...]", "Call a kind-qualified agic"),
-        CommandHelpRow("/flow:NAME", "[NAME=VALUE...]", "Call a kind-qualified flow"),
+        CommandHelpRow("/agic:NAME", "[NAME=VALUE...]", "Call an agic"),
+        CommandHelpRow("/flow:NAME", "[NAME=VALUE...]", "Call a flow"),
         CommandHelpRow(
             "$PROMPT", "[NAME=VALUE...]", "Expand a prompt (dollar directive)"
         ),
