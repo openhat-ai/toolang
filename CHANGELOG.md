@@ -147,6 +147,10 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   execution stores now replace the legacy call-start index.
   ([#897](https://github.com/openhat-ai/toolang/pull/897))
 
+- Top keeps a stopped agent's confirmed liveness and readable history while a
+  sandbox resource awaits cleanup, so zero active roots stay provable.
+  ([#897](https://github.com/openhat-ai/toolang/pull/897))
+
 ### Security
 
 - The locked certifi trust store advances to 2026.10.19, resolving trust-store
