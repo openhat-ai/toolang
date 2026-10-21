@@ -67,3 +67,8 @@ the derived statistics database.
 Imported replay history is excluded through source ownership views before recent,
 completion, and archival projection. Only newly owned facts count for a destination;
 repeated replay preserves original ownership and never duplicates usage.
+
+Writable execution-store opens upgrade owned time indexes in place without
+changing the record format. Start-time indexes omit the redundant `IS NOT NULL`
+predicate so older SQLite planners can use them. Read-only Stats and Top reads
+observe existing indexes without repairing the source store.

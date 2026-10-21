@@ -3730,6 +3730,15 @@ class RunStore:
             if step_columns != ["run", "id"]:
                 self._conn.execute("DROP INDEX IF EXISTS idx_steps_run")
                 self._conn.execute("CREATE INDEX idx_steps_run ON steps(run,id)")
+            # started_at is already NOT NULL. Older SQLite cannot use the
+            # partial index when its predicate repeats that schema constraint.
+            started_index = self._conn.execute(
+                "SELECT sql FROM sqlite_master WHERE name='idx_steps_call_started'"
+            ).fetchone()
+            if started_index is not None and "STARTED_AT IS NOT NULL" in " ".join(
+                started_index[0].upper().split()
+            ):
+                self._conn.execute("DROP INDEX idx_steps_call_started")
             for statement in (
                 "CREATE INDEX IF NOT EXISTS idx_runs_roots ON runs(id) WHERE parent IS NULL",
                 "CREATE INDEX IF NOT EXISTS idx_runs_closed_roots ON runs(finished_at,id) "
@@ -3738,7 +3747,7 @@ class RunStore:
                 "CREATE INDEX IF NOT EXISTS idx_runs_root_started ON runs(started_at,id) "
                 "WHERE parent IS NULL AND started_at IS NOT NULL",
                 "CREATE INDEX IF NOT EXISTS idx_steps_call_started ON steps(started_at,run) "
-                "WHERE kind IN ('model','tool') AND started_at IS NOT NULL",
+                "WHERE kind IN ('model','tool')",
                 "CREATE INDEX IF NOT EXISTS idx_steps_call_finished ON steps(finished_at,run) "
                 "WHERE kind IN ('model','tool') AND finished_at IS NOT NULL",
             ):
