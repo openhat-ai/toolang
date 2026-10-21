@@ -27,13 +27,14 @@ from toolang.execution.types import RunCommand
 from toolang.lang.input import CallInput
 
 
-def test_parse_authored_run_round_trips_every_request_field() -> None:
+@pytest.mark.parametrize("reference", ["chat", "agent::chat", "agic:chat"])
+def test_parse_authored_run_round_trips_every_request_field(reference) -> None:
     payload = AuthoredRunRequest.model_validate(
         {
             "thread_id": "chat_example",
             "request_id": "chat_request",
             "runnable": {
-                "ref": "agic:chat",
+                "ref": reference,
                 "input": {"_": "hello", "tone": "brief", "audience": "maintainers"},
             },
             "model": {
@@ -62,7 +63,7 @@ def test_parse_authored_run_round_trips_every_request_field() -> None:
         thread_id="chat_example",
         request_id="chat_request",
         runnable=RunnableRequest(
-            "agic:chat",
+            reference,
             CallInput({"_": "hello", "tone": "brief", "audience": "maintainers"}),
         ),
         model=ModelRequest("openai/test", reasoning=Reasoning("high")),
@@ -189,7 +190,7 @@ def test_parse_authored_restart_round_trips_strict_wire_values() -> None:
     [
         {"extra": True},
         {"thread_id": 1},
-        {"runnable": {"ref": "chat", "input": {}}},
+        {"runnable": {"ref": "", "input": {}}},
         {
             "runnable": {
                 "ref": "agic:chat",

@@ -602,6 +602,7 @@ def test_every_control_payload_variant_has_one_canonical_record_shape() -> None:
                 "limits",
                 "state",
                 "runnable",
+                "runnable_kind",
                 "model_request",
                 "input",
                 "cwd",
@@ -636,7 +637,7 @@ def test_every_control_payload_variant_has_one_canonical_record_shape() -> None:
                     {"_": TypedRef(source.select("input", "input", "_"), "Json")}
                 ),
             ),
-            {"state", "runnable", "input"},
+            {"state", "runnable", "runnable_kind", "input"},
         ),
         (
             "steer",
@@ -807,7 +808,7 @@ def test_exec_reports_resolve_their_own_controls_after_reopening(tmp_path):
         assert run is not None
         steps = store.list_steps(run_id=run.id)
         snapshot = RecordSnapshot(store, [run], steps)
-        for step, target in zip(steps, ("flow:middle", "flow:final"), strict=True):
+        for step, target in zip(steps, ("agent::middle", "agent::final"), strict=True):
             assert isinstance(step.report, ExecStepReport)
             assert record_to_data(step)["report"] == {
                 "control": str(step.report.control)

@@ -175,11 +175,13 @@ def _control_bar_lines(
     ]
 
 
-def _run_context(runnable: str, model: str, reasoning: str, width: int) -> str:
+def _run_context(
+    runnable: str, model: str, reasoning: str, width: int, *, kind: str = ""
+) -> str:
     """Fit snapshot fields, shortening the runnable before the model."""
 
     fields = [
-        display_runnable_ref(runnable.rsplit("::", 1)[-1], surface="chat"),
+        display_runnable_ref(runnable, surface="chat", kind=kind),
         model,
         *([reasoning] if reasoning else []),
     ]
@@ -263,6 +265,7 @@ class RunControlBlock(MutableBlock):
     message: str
     input_background: str = DARK_TERMINAL_SURFACES.input_background
     runnable: str = ""
+    runnable_kind: str = ""
     model: str = ""
     reasoning: str = ""
 
@@ -294,6 +297,7 @@ class RunControlBlock(MutableBlock):
             and event.runnable
         ):
             self.runnable = event.runnable
+            self.runnable_kind = event.runnable_kind
 
     def render(self) -> RenderableType:
         return self
@@ -310,7 +314,11 @@ class RunControlBlock(MutableBlock):
                     input_background=self.input_background,
                     width=width,
                     corner=_run_context(
-                        self.runnable, self.model, self.reasoning, max(1, width - 4)
+                        self.runnable,
+                        self.model,
+                        self.reasoning,
+                        max(1, width - 4),
+                        kind=self.runnable_kind,
                     )
                     if self.model
                     else "",

@@ -91,7 +91,7 @@ def test_compaction_progress_in_chat_and_script(tmp_path, status, tty, width):
         async def on_event(self, event):
             await script.on_event(event)
             chat.handle(event, cast(Any, app))
-            if isinstance(event, RunBegin) and event.runnable == "_:compact":
+            if isinstance(event, RunBegin) and event.runnable == "_::compact":
                 rendered.set()
 
     async def scenario():
@@ -156,7 +156,7 @@ def test_compaction_progress_in_chat_and_script(tmp_path, status, tty, width):
                     ("chat", app.text(width)),
                 ):
                     assert "HIDDEN_COMPACT_SUMMARY" not in text
-                    assert "compact_read" not in text and "_:compact" not in text
+                    assert "compact_read" not in text and "_::compact" not in text
                     if status == "succeeded":
                         assert "VISIBLE_FINAL_ANSWER" in text
                         if not tty or surface == "chat":

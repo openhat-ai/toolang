@@ -57,8 +57,8 @@ def test_model_creates_discovers_calls_edits_and_deletes_module(tmp_path, kind, 
     call("before_sync", "runtime__runnables", name="research")
     invoke("before_sync_run", "research", "still first version")
     call("republish", "state__sync")
-    call("rediscover", "runtime__runnables", name=f"{kind}:research")
-    invoke("second", f"{kind}:research", "second result")
+    call("rediscover", "runtime__runnables", name="research")
+    invoke("second", "research", "second result")
     call("break", "state__update", key=key, content=broken, if_digest=updated_digest)
     call("reject", "state__sync")
     call("get_broken", "state__get", key=key)
@@ -75,12 +75,12 @@ def test_model_creates_discovers_calls_edits_and_deletes_module(tmp_path, kind, 
     call(
         "private_discovery",
         "runtime__runnables",
-        name="runnables::research::agic:helper",
+        name="research::helper",
     )
     call(
         "private_run",
         "runtime__run",
-        runnable="runnables::research::agic:helper",
+        runnable="research::helper",
         input={"_": "input"},
     )
     call("delete", "state__delete", key=key, if_digest=updated_digest)
@@ -179,10 +179,10 @@ def test_model_creates_discovers_calls_edits_and_deletes_module(tmp_path, kind, 
             assert not (harness.setup.layout.home / key).exists()
 
             for id in ("unpublished", "discover_deleted"):
-                assert [e["ref"] for e in values[id]["runnables"]] == ["agic:manage"]
+                assert [e["ref"] for e in values[id]["runnables"]] == ["manage"]
             assert {e["ref"] for e in values["discover"]["runnables"]} == {
-                "agic:manage",
-                f"{kind}:research",
+                "manage",
+                "research",
             }
             for id, revision, doc in (
                 ("discover", first_revision, "Research version one."),
@@ -190,7 +190,7 @@ def test_model_creates_discovers_calls_edits_and_deletes_module(tmp_path, kind, 
                 ("rediscover", second_revision, "Research version two."),
             ):
                 entry = next(
-                    e for e in values[id]["runnables"] if e["ref"] == f"{kind}:research"
+                    e for e in values[id]["runnables"] if e["ref"] == "research"
                 )
                 assert entry["revision"] == revision
                 assert entry["doc"] == doc
@@ -198,8 +198,7 @@ def test_model_creates_discovers_calls_edits_and_deletes_module(tmp_path, kind, 
             children = [
                 invocation.call
                 for invocation in harness.adapter.invocations
-                if execution_snapshot(invocation.call)["runnable"]
-                != "agent::agic:manage"
+                if execution_snapshot(invocation.call)["runnable"] != "agent::manage"
             ]
             assert len(children) == 3
             for call, version in zip(children, ("one", "one", "two")):

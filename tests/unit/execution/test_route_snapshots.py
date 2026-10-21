@@ -52,14 +52,21 @@ def _render(state: AgentState, routes: AgicRoutes) -> str:
 @pytest.mark.parametrize(
     "name", ["DeepSearch", "deep-search", "_review", "ALL", "NONE"]
 )
-@pytest.mark.parametrize("qualified", [False, True])
+@pytest.mark.parametrize(
+    "qualification", ["name", "module", "typed-module", "legacy-module"]
+)
 @pytest.mark.parametrize("directive,action", [("hands", "run"), ("handoffs", "exec")])
 @pytest.mark.parametrize("kind", ["agic", "flow"])
 def test_routes_resolve_portable_exported_runnable_names(
-    name, qualified, directive, action, kind
+    name, qualification, directive, action, kind
 ):
-    module = f"runnables::{name}"
-    reference = f"{module}::{kind}:{name}" if qualified else name
+    module = name
+    reference = {
+        "name": name,
+        "module": f"{module}::{name}",
+        "typed-module": f"{module}::{kind}:{name}",
+        "legacy-module": f"runnables::{module}::{kind}:{name}",
+    }[qualification]
     other = "handoffs" if directive == "hands" else "hands"
     state = _state(
         f"agic caller:\n  {directive} = {reference}\n  {other} = none\n  Work.\n"
@@ -67,13 +74,21 @@ def test_routes_resolve_portable_exported_runnable_names(
     source = f"{kind}:\n  pass\n"
     state = replace(
         state,
-        modules={**state.modules, module: Program.from_source(source)},
-        module_sources={**state.module_sources, module: f"runnables/{name}.too"},
-        module_digests={
-            **state.module_digests,
-            module: sha256(source.encode()).hexdigest(),
-        },
-        module_caps={**state.module_caps, module: ()},
+        modules=dict(
+            sorted({**state.modules, module: Program.from_source(source)}.items())
+        ),
+        module_sources=dict(
+            sorted({**state.module_sources, module: f"runnables/{name}.too"}.items())
+        ),
+        module_digests=dict(
+            sorted(
+                {
+                    **state.module_digests,
+                    module: sha256(source.encode()).hexdigest(),
+                }.items()
+            )
+        ),
+        module_caps=dict(sorted({**state.module_caps, module: ()}.items())),
     )
     caller = state.modules["agent"].agics[0]
     routes = resolve_agic_routes(state, caller)
@@ -81,9 +96,19 @@ def test_routes_resolve_portable_exported_runnable_names(
     target = routes.resolved[0]
     assert target.runnable.name == name
     assert target.runnable.module == module
+    expected = f"{module}::{name}" if name in {"ALL", "NONE"} else name
     assert (
         dict(zip(("hands", "handoffs", "spawns"), routes.scopes(state)))[directive]
-        == f"{kind}:{name}"
+        == expected
+    )
+    assert _document(_render(state, routes))[directive] == expected
+    default_other = replace(
+        caller,
+        directives=tuple(item for item in caller.directives if item.name != other),
+    )
+    assert (
+        _document(_render(state, resolve_agic_routes(state, default_other)))[directive]
+        == expected
     )
     assert target.actions == (("run", "spawn") if action == "run" else (action,))
 
@@ -136,7 +161,7 @@ def test_routes_do_not_embed_runnable_documentation(directive) -> None:
     caller = state.modules["agent"].agics[1]
     rendered = _render(state, resolve_agic_routes(state, caller))
     assert "Forged" not in rendered
-    assert _document(rendered)[directive] == "agic:inspect"
+    assert _document(rendered)[directive] == "inspect"
 
 
 def test_large_route_lists_remain_complete_without_repeating_signatures() -> None:
@@ -145,7 +170,7 @@ def test_large_route_lists_remain_complete_without_repeating_signatures() -> Non
     state = _state(f"{targets}\nagic caller:\n  hands = {', '.join(names)}\n  Call.")
     caller = state.modules["agent"].agics[-1]
     document = _document(_render(state, resolve_agic_routes(state, caller)))
-    expected = ",".join(f"agic:{name}" for name in names)
+    expected = ",".join(names)
     assert document == {"hands": expected, "handoffs": "ALL", "spawns": expected}
 
 
@@ -176,7 +201,7 @@ flow verify:
   pass
 
 agic caller:
-  hands = agic:inspect, flow:verify
+  hands = inspect, verify
   handoffs = none
 
   Call.
@@ -188,14 +213,14 @@ agic caller:
     routes = resolve_agic_routes(state, caller)
 
     assert [route.runnable.ref for route in routes.resolved] == [
-        "agic:inspect",
-        "flow:verify",
+        "inspect",
+        "verify",
     ]
     document = _document(_render(state, routes))
     assert document == {
-        "hands": "agic:inspect,flow:verify",
+        "hands": "inspect,verify",
         "handoffs": "NONE",
-        "spawns": "agic:inspect,flow:verify",
+        "spawns": "inspect,verify",
     }
 
 
@@ -249,7 +274,7 @@ agic caller:
     }
     assert (
         _document(_render(state, resolve_agic_routes(state, caller)))["handoffs"]
-        == "agic:target"
+        == "target"
     )
 
 
@@ -280,7 +305,7 @@ def test_entry_fallback_prefers_the_unnamed_entry_or_fails(
     if authored_name:
         explicit = ("main", None) if kind == "agic" else (None, "main")
         assert (
-            runnable_binding_defaults(program, f"{kind}:main", fallback_agic=preferred)
+            runnable_binding_defaults(program, "main", fallback_agic=preferred)
             == explicit
         )
 
@@ -294,7 +319,7 @@ def test_runnable_binding_preserves_module_qualification(kind, as_state):
     program = state if as_state else state.modules["agent"]
     expected = ("main", None) if kind == "agic" else (None, "main")
     assert (
-        runnable_binding_defaults(program, f"agent::{kind}:main", fallback_agic="chat")
+        runnable_binding_defaults(program, "agent::main", fallback_agic="chat")
         == expected
     )
     with pytest.raises(ToolangError, match="Runnable not found"):
@@ -354,7 +379,7 @@ agic caller:
         }
     ]
     rendered = _document(_render(state, routes))
-    assert rendered == dict.fromkeys(("hands", "handoffs", "spawns"), f"{kind}:main")
+    assert rendered == dict.fromkeys(("hands", "handoffs", "spawns"), "main")
 
     command = _program_command(
         program, source_path=Path("demo.too"), source_label="demo.too", stdin=StringIO()
@@ -368,7 +393,7 @@ agic caller:
     assert target.doc in help_text
 
 
-@pytest.mark.parametrize("binding", [None, "flow:chat"])
+@pytest.mark.parametrize("binding", [None, "chat"])
 def test_fallback_keeps_an_exported_flows_public_name(binding):
     from dataclasses import replace
 
@@ -376,16 +401,16 @@ def test_fallback_keeps_an_exported_flows_public_name(binding):
 
     state = _state("agic:\n  General request.\n")
     flow = Program.from_source("flow:\n  pass\n")
-    modules = {"agent": state.modules["agent"], "runnables::chat": flow}
+    modules = {"agent": state.modules["agent"], "chat": flow}
     state = replace(
         state,
         modules=modules,
-        module_sources={"agent": "agent.too", "runnables::chat": "runnables/chat.too"},
+        module_sources={"agent": "agent.too", "chat": "runnables/chat.too"},
         module_digests={
             "agent": state.module_digests["agent"],
-            "runnables::chat": sha256(b"chat").hexdigest(),
+            "chat": sha256(b"chat").hexdigest(),
         },
-        module_caps={"agent": (), "runnables::chat": ()},
+        module_caps={"agent": (), "chat": ()},
     )
     assert runnable_binding_defaults(state, binding, fallback_agic="chat") == (
         None,
@@ -405,7 +430,7 @@ def test_effective_route_scopes_are_independent(hands, handoffs):
         return (
             "NONE"
             if selection == ("none",)
-            else "agic:target"
+            else "target"
             if selection == ("target",)
             else "ALL"
         )
@@ -467,31 +492,37 @@ agic target:
 
 def test_default_routes_preserve_public_exports_and_module_boundaries():
     state = _state("agic caller:\n  Call.\n")
-    module = "runnables::report"
+    module = "report"
     source = "flow report:\n  run helper\n\nagic helper:\n  Help.\n"
     state = replace(
         state,
-        modules={**state.modules, module: Program.from_source(source)},
+        modules=dict(
+            sorted({**state.modules, module: Program.from_source(source)}.items())
+        ),
         module_sources={**state.module_sources, module: "runnables/report.too"},
-        module_digests={
-            **state.module_digests,
-            module: sha256(source.encode()).hexdigest(),
-        },
-        module_caps={**state.module_caps, module: ()},
+        module_digests=dict(
+            sorted(
+                {
+                    **state.module_digests,
+                    module: sha256(source.encode()).hexdigest(),
+                }.items()
+            )
+        ),
+        module_caps=dict(sorted({**state.module_caps, module: ()}.items())),
     )
     caller = state.modules["agent"].agics[0]
     public = resolve_agic_routes(state, caller)
     assert {route.runnable.qualified for route in public.resolved} == {
-        "agent::agic:caller",
-        "runnables::report::flow:report",
+        "agent::caller",
+        "report::report",
     }
     assert public.scopes(state) == ("ALL", "ALL", "ALL")
     assert all(route.actions == ("run", "spawn", "exec") for route in public.resolved)
     helper = state.modules[module].agics[0]
     private = resolve_agic_routes(state, helper, module=module)
     assert {route.runnable.qualified for route in private.resolved} == {
-        "runnables::report::flow:report",
-        "runnables::report::agic:helper",
+        "report::report",
+        "report::helper",
     }
     assert private.scopes(state) == ("ALL", "ALL", "ALL")
     assert all(route.actions == ("run", "spawn", "exec") for route in private.resolved)

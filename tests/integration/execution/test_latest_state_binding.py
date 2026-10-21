@@ -295,7 +295,7 @@ def test_main_calls_unnamed_export_and_flow_calls_private_helper(tmp_path):
                 for e in entries
                 if e is not None
                 and isinstance(e.payload, RunControlPayload)
-                and e.payload.runnable == "runnables::research::agic:helper"
+                and e.payload.runnable == "research::helper"
             ]
             assert {e.state for e in helper} == {state.revision, updated.revision}
             assert "New helper" in str(harness.adapter.invocations[1].call.messages)
@@ -343,7 +343,7 @@ def test_failed_acceptance_has_no_child_and_reports_revisions(tmp_path, change):
             if change == "missing-source":
                 assert "Published Agent State is unavailable" in error
             else:
-                assert "agent::agic:child" in error
+                assert "agent::child" in error
                 assert harness.state.revision in error and candidate.revision in error
 
     asyncio.run(scenario())
@@ -359,9 +359,7 @@ def test_model_frame_is_frozen_but_acceptance_selects_latest(
     gate = AsyncGate()
     call = ModelCallResult(
         tool_calls=(
-            ToolCall(
-                "run", "run", "runtime__run", {"runnable": "flow:worker", "input": {}}
-            ),
+            ToolCall("run", "run", "runtime__run", {"runnable": "worker", "input": {}}),
         )
     )
     harness = ExecutionHarness.create(
@@ -477,7 +475,7 @@ def test_new_target_waits_for_next_model_frame_and_becomes_discoverable(
             result = last_tool_result(harness.adapter.invocations[2].call)
             assert result.error is None
             (target,) = result.output["runnables"]
-            assert target["ref"] == "flow:worker"
+            assert target["ref"] == "worker"
             assert target["revision"] == published.revision
 
     asyncio.run(scenario())
@@ -655,7 +653,7 @@ def test_flow_model_routes_are_local_and_keep_advertised_identity(
                             "delegate",
                             "delegate",
                             f"runtime__{operation}",
-                            {"runnable": "agic:helper"},
+                            {"runnable": "helper"},
                         ),
                     )
                 ),
@@ -683,7 +681,7 @@ def test_flow_model_routes_are_local_and_keep_advertised_identity(
             advertised = route_scopes(harness.adapter.invocations[0].call)
             enabled = "hands" if operation == "run" else "handoffs"
             assert advertised[enabled] == (
-                "ALL" if selector == "*" else "runnables::research::agic:helper"
+                "ALL" if selector == "*" else "research::helper"
             )
             helper_call = harness.adapter.invocations[1].call
             if operation == "run":
@@ -748,14 +746,12 @@ def test_deleted_flow_module_discovery_keeps_only_the_bound_agic(tmp_path, route
             assert before.error is None and after.error is None
             entries = {item["ref"]: item for item in before.output["runnables"]}
             assert set(entries) == {
-                "flow:research",
-                "runnables::research::agic:driver",
-                "runnables::research::agic:helper",
+                "research",
+                "research::driver",
+                "research::helper",
             }
-            assert after.output["runnables"] == [
-                entries["runnables::research::agic:driver"]
-            ]
-            assert after.output["current"] == "runnables::research::agic:driver"
+            assert after.output["runnables"] == [entries["research::driver"]]
+            assert after.output["current"] == "research::driver"
             assert "Bound driver." in str(harness.adapter.invocations[3].call.messages)
 
     asyncio.run(scenario())
@@ -789,8 +785,8 @@ def test_discovery_uses_bound_state_without_publication_source(tmp_path):
             result = last_tool_result(harness.adapter.invocations[1].call)
             assert result.error is None
             assert [item["ref"] for item in result.output["runnables"]] == [
-                "agic:parent",
-                "flow:worker",
+                "parent",
+                "worker",
             ]
             assert {item["revision"] for item in result.output["runnables"]} == {
                 harness.state.revision,

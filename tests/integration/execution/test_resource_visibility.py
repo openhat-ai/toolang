@@ -238,7 +238,7 @@ def test_publication_preserves_bound_psyches_and_runnable_authority(tmp_path):
             assert run.status == "succeeded", run.error
             first, last = (i.call for i in harness.adapter.invocations)
             assert "Resident advice." in first.instructions
-            assert route_scopes(first)["hands"] == "agic:helper"
+            assert route_scopes(first)["hands"] == "helper"
             assert "Resident advice." in last.instructions
             assert route_scopes(last) == route_scopes(first)
             assert not _declarations(harness, run, "psyche")
@@ -301,7 +301,7 @@ def test_publication_cannot_expand_bound_route_authority_and_replays(tmp_path, c
                 hands, handoffs, type_name = versions[0]
                 snapshots = route_scopes(call)
                 for tag, enabled in (("hands", hands), ("handoffs", handoffs)):
-                    assert snapshots[tag] == ("agic:helper" if enabled else "NONE")
+                    assert snapshots[tag] == ("helper" if enabled else "NONE")
                 text = message_text(runtime_message(call).parts)
                 if context == "custom":
                     assert text.index("<toolang:routes ") < text.index(

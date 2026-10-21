@@ -61,7 +61,7 @@ from toolang.lang.input import (
     resolve_runnable_input,
 )
 from toolang.lang.includes import resolve_file_include
-from toolang.lang.types import Array, Value, is_unnamed_ref, is_generated_ref
+from toolang.lang.types import Array, Value, is_generated_ref
 from toolang.plugin.models.query import first_model_ref, resolve_model
 from toolang.plugin.models.resolution import (
     resolve_model_reasoning,
@@ -138,7 +138,6 @@ from ..types import (
 )
 from ..runnables import (
     ResolvedRunnable,
-    parse_runnable_ref,
     runnable_signature,
     resolve_bound_runnable,
     resolve_call_target,
@@ -546,6 +545,7 @@ class RunExecutor:
                 limits=bound.limits,
                 state=bound.state.revision,
                 runnable=_bound_runnable(bound),
+                runnable_kind=bound.runnable_kind,
                 model_request=bound.model_request,
                 input=bound.control_input,
                 sandbox=sandbox,
@@ -676,6 +676,7 @@ class RunExecutor:
                 limits=bound.limits,
                 state=bound.state.revision,
                 runnable=_bound_runnable(bound),
+                runnable_kind=bound.runnable_kind,
                 model_request=bound.model_request,
                 input=bound.control_input,
                 sandbox=sandbox,
@@ -834,6 +835,7 @@ class RunExecutor:
             bound.run_id,
             parent=None,
             runnable=_bound_runnable(bound),
+            runnable_kind=bound.runnable_kind,
             created_at=bound.created_at,
             occurrence=bound.occurrence,
         )
@@ -1241,6 +1243,7 @@ class RunExecutor:
         thread_id: str,
         root_run_id: str,
         exec_runnable: str | None = None,
+        exec_runnable_kind: str = "",
     ) -> tuple[StepRecord, ...]:
         completed: list[StepRecord] = []
         for item in steps:
@@ -1275,6 +1278,7 @@ class RunExecutor:
                         if isinstance(step.error, ErrorMessage)
                         else error_text,
                         exec_runnable=exec_runnable,
+                        exec_runnable_kind=exec_runnable_kind,
                     ),
                     thread_id=thread_id,
                     root_run_id=root_run_id,
@@ -1953,7 +1957,8 @@ class _Execution:
                 str(exc) or type(exc).__name__,
                 details={
                     "code": "invalid_runnable_input",
-                    "runnable": f"{runnable.kind}:{name}",
+                    "runnable": f"{module}::{name}",
+                    "runnable_kind": runnable.kind,
                     "expected": runnable_signature(state, module, runnable),
                     "guidance": (
                         "Retry only when available context provides the required "
@@ -2117,6 +2122,7 @@ class _Execution:
             state=state,
             state_ref=state_ref,
             module=target.module,
+            runnable_kind=target.executable.kind,
             settings=resolve_settings(
                 target.executable,
                 target.module,
@@ -2178,6 +2184,7 @@ class _Execution:
                     run_id=binding.run_id,
                     state=binding.state.revision,
                     runnable=ref,
+                    runnable_kind=binding.runnable_kind,
                     triggered_by=triggered_by,
                     input=binding.control_input,
                     created_at=utc_now(),
@@ -2190,11 +2197,17 @@ class _Execution:
                     thread_id=binding.thread,
                     root_run_id=binding.root_run_id,
                     exec_runnable=ref,
+                    exec_runnable_kind=binding.runnable_kind,
                 )
             if self._root_run is not None:
                 for completed in completed_steps:
                     self._root_run.tree.end_step(completed)
-                self._root_run.tree.begin_run(binding.run_id, ref, binding.created_at)
+                self._root_run.tree.begin_run(
+                    binding.run_id,
+                    ref,
+                    binding.created_at,
+                    runnable_kind=binding.runnable_kind,
+                )
         if self._root_run is not None:
             self._early_ends.update((triggered_by, *(ref for ref, _ in loops)))
         binding = replace(binding, control_index=control.index, state_ref=control.ref)
@@ -2563,7 +2576,7 @@ class _Execution:
             thread=parent.thread,
             bindings=RunBindings(
                 model=parent.bindings.model,
-                runnable=f"{runnable.kind}:{name}",
+                runnable=name,
             ),
             model_request=parent.model_request,
             input=input,
@@ -2573,6 +2586,7 @@ class _Execution:
             setup=parent.setup,
             workspaces=parent.workspaces,
             module=module,
+            runnable_kind=runnable.kind,
             limits=parent.limits,
             ceilings=parent.ceilings,
             resource_ceiling=parent.resource_ceiling,
@@ -2688,6 +2702,7 @@ class _Execution:
                             binding.run_id,
                             parent=binding.parent,
                             runnable=_bound_runnable(binding),
+                            runnable_kind=binding.runnable_kind,
                             created_at=binding.created_at,
                             occurrence=binding.occurrence,
                         )
@@ -3141,6 +3156,7 @@ class _Execution:
                         run=run,
                         control=control.index,
                         runnable=runnable,
+                        runnable_kind=self._active_bindings[run].runnable_kind,
                         parent=str(parent) if parent is not None else None,
                         occurrence=occurrence,
                         started_at=started_at,
@@ -3150,7 +3166,12 @@ class _Execution:
                     root_run_id=self._history_root,
                 )
             if self._root_run is not None:
-                self._root_run.tree.begin_run(run, runnable, started_at)
+                self._root_run.tree.begin_run(
+                    run,
+                    runnable,
+                    started_at,
+                    runnable_kind=self._active_bindings[run].runnable_kind,
+                )
         if self._root_run is not None:
             with self.executor._runs_lock:
                 self.executor._active_runs[run] = self._root_run
@@ -3421,7 +3442,7 @@ class _Execution:
         """Prepare associations without consuming their live state."""
 
         binding = self._active_bindings.get(step.run_id)
-        if binding is not None and binding.bindings.runnable == COMPACT_RUNNABLE:
+        if binding is not None and _bound_runnable(binding) == COMPACT_RUNNABLE:
             return tuple(
                 ref for ref in self._preceding_controls if ref.target == step.run
             )
@@ -3514,7 +3535,7 @@ def _child_binding(
         thread=parent.thread,
         bindings=RunBindings(
             model=parent.bindings.model,
-            runnable=f"{runnable.kind}:{effective_name}",
+            runnable=effective_name,
         ),
         model_request=parent.model_request,
         input=input,
@@ -3524,6 +3545,7 @@ def _child_binding(
         setup=parent.setup,
         workspaces=parent.workspaces,
         module=module,
+        runnable_kind=runnable.kind,
         limits=parent.limits,
         ceilings=parent.ceilings,
         resource_ceiling=parent.resource_ceiling,
@@ -3616,18 +3638,14 @@ def _bind_run(
     if spec.bindings.runnable is None:
         raise ValueError("run spec requires a runnable binding")
     target = resolve_runnable_reference(spec.state, spec.bindings.runnable)
-    runnable_name, module, resolved_runnable = (
-        target.name,
-        target.module,
-        target.executable,
-    )
+    runnable_name, module = target.name, target.module
     control_input = _snapshot_input(input, runnable)
     return BoundRun(
         run_id=run_id,
         root_run_id=run_id,
         thread=spec.thread,
         bindings=RunBindings(
-            runnable=f"{resolved_runnable.kind}:{runnable_name}",
+            runnable=runnable_name,
             model=spec.bindings.model or "none",
         ),
         model_request=spec.model_request,
@@ -3640,6 +3658,7 @@ def _bind_run(
         if spec.launch_context is not None
         else spec.state.workspaces,
         module=module,
+        runnable_kind=runnable.kind,
         limits=spec.limits,
         ceilings=spec.ceilings,
         agent_resources=agent_resources,
@@ -3916,22 +3935,18 @@ def _resolve_stored_input(
 
 
 def _bound_runnable(binding: BoundRun) -> str:
+    """Return the accepted module::runnable identity without its kind."""
+    from toolang.lang.types import fully_qualified_runnable
+
     runnable = binding.bindings.runnable
     if not runnable:
         raise RuntimeError(f"run runnable binding is missing: {binding.run_id}")
-    if "::" in runnable:
-        return runnable
-    if binding.module != "agent" or is_unnamed_ref(runnable):
-        return f"{binding.module}::{runnable}"
-    return runnable
+    return fully_qualified_runnable(runnable, module=binding.module)
 
 
 def _qualified_identity(binding: BoundRun) -> str:
-    """Identify a runnable by module and name, independently of kind/revision."""
-    if not binding.bindings.runnable:
-        raise RuntimeError(f"run runnable binding is missing: {binding.run_id}")
-    name, _ = parse_runnable_ref(binding.bindings.runnable)
-    return f"{binding.module}::{name}"
+    """Identify a runnable independently of its kind and State revision."""
+    return _bound_runnable(binding)
 
 
 def _bound_model(binding: BoundRun) -> str:

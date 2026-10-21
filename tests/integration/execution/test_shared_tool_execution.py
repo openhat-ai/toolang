@@ -366,7 +366,7 @@ flow blocked(_: Text) -> Text:
             }
             assert (
                 results["blocked"].error
-                == "runnable is not authorized by hands: flow:blocked"
+                == "runnable is not authorized by hands: blocked"
             )
             assert results["permitted"].error is None
             assert results["next"].error == results["blocked"].error

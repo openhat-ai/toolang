@@ -12,11 +12,27 @@ from toolang.cli.toolang.commands.inspect import (
     _implicit_pointer_projector,
     _print_human_table,
     _render_human_rows,
+    _runnable_activity,
 )
 from toolang.execution.records import ThreadRecord
 from toolang.execution.schemas import RecordSelection
 from toolang.execution.types import Pointer, value_for_type
 from toolang.lang.types import Array, Struct
+
+
+@pytest.mark.parametrize(
+    "reference,kind,label",
+    [
+        ("agent::chat", "agic", "agic:chat"),
+        ("research::helper", "flow", "flow:helper"),
+        ("agent::<entry:3>", "flow", "flow:"),
+        ("agent::<adhoc:8>", "agic", "agic:"),
+        ("_::compact", "compact", "compact:compact"),
+        ("runnables::research::flow:research", "", "flow:research"),
+    ],
+)
+def test_inspection_runnable_labels_use_binding_kind(reference, kind, label):
+    assert _runnable_activity(reference, kind) == label
 
 
 def test_human_type_labels_use_nullable_suffix() -> None:

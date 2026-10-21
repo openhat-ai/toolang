@@ -173,7 +173,7 @@ def materialize_runnable_list_ref(
     *,
     kind: str | None = None,
 ) -> str:
-    """Resolve one user-facing value to a kind-qualified runnable ref."""
+    """Resolve one selection to a typed UI label with any selected module."""
 
     requested = parse_runnable_ref_parts(selection)
     requested_name, requested_kind = requested.name, requested.kind
@@ -190,6 +190,8 @@ def materialize_runnable_list_ref(
             continue
         item = cast(Mapping[str, object], raw)
         name = _text(item.get("name"))
+        if name is None:
+            continue
         item_kind = _text(item.get("kind")) or requested_kind
         if item_kind not in {"agic", "flow"}:
             continue

@@ -38,20 +38,21 @@ def next_value(values: tuple[int, ...], current: int) -> int:
     return values[(values.index(current) + 1) % len(values)]
 
 
-def runnable(value: str) -> str:
+def runnable(value: str, kind: str = "") -> str:
     try:
         parsed = parse_runnable_ref_parts(value)
     except ValueError:
         return value
     name = "" if parsed.role is not None else parsed.name
-    return f"{parsed.kind}:{name}" if parsed.kind else name
+    kind = kind or parsed.kind or ""
+    return f"{kind}:{name}" if kind else name
 
 
 def operation(node: LiveNode) -> str:
     if isinstance(node, RunNode):
         if node.status in TERMINAL:
             return node.status
-        name = runnable(node.runnable)
+        name = runnable(node.runnable, node.runnable_kind)
         return f"pending · {name}" if node.status == "pending" else name
     if node.kind == "model":
         label = node.name

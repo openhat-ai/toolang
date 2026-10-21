@@ -56,8 +56,8 @@ talk    user talk, else runtime talk
 chore   chore, else unnamed entry, else reported failure
 ```
 
-The chosen user entry may be an agic or a flow. Runtime ships a packaged `talk`
-agic and no Chat or Chore handler. A file export such as `runnables/talk.too`
+The chosen user entry may be an agic or a flow. The builtin module ships a packaged
+`_::talk` agic and no Chat or Chore handler. A file export such as `runnables/talk.too`
 acts as a named public handler even if its declaration is unnamed. Existing
 public-name conflicts with `agent.too` remain errors. Script exposes authored
 declarations only and keeps its existing selection rules.

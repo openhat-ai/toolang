@@ -30,7 +30,7 @@ from toolang.cli.common.execution_progress.facts import (
 )
 from toolang.cli.common.execution_progress.formatting import one_line as _one_line
 from toolang.base.types.message import Part, TextPart, message_text
-from toolang.lang.types import Array
+from toolang.lang.types import Array, display_runnable_ref, runnable_kind
 from toolang.execution.inspection.history import RunHistory
 from toolang.execution.inspection import (
     ChildOccurrenceTotals,
@@ -411,9 +411,20 @@ def _render_execution_tree(
         if isinstance(record, StepRecord)
     }
 
+    entries = {entry.ref: entry.payload for entry in value.entries}
+    kinds = {
+        record.id: getattr(entries.get(record.control), "runnable_kind", "")
+        for record in value.records
+        if isinstance(record, RunRecord)
+    }
     rows: list[tuple[Text | str, ...]] = []
     for node in value.nodes:
-        activity = _tree_activity(node.record_kind, node.step_kind, node.operation)
+        activity = _tree_activity(
+            node.record_kind,
+            node.step_kind,
+            node.operation,
+            kinds.get(node.pointer, ""),
+        )
         occur = _occurrence_index_label(node.occur)
         if node.record_kind == "step":
             step = steps.get(node.pointer)
@@ -449,10 +460,12 @@ def _render_execution_tree(
                 )
             )
         for boundary in value.handoffs_after(node.pointer):
+            kind = getattr(entries.get(boundary.control), "runnable_kind", "")
+            label = _runnable_activity(boundary.runnable, kind)
             rows.append(
                 (
                     "   " * boundary.depth + str(boundary.control),
-                    Text(f"── exec → {boundary.runnable} ──", style="dim"),
+                    Text(f"── exec → {label} ──", style="dim"),
                     "",
                 )
             )
@@ -530,9 +543,10 @@ def _tree_activity(
     record_kind: str,
     step_kind: str | None,
     operation: str,
+    runnable_kind: str = "",
 ) -> str:
     if record_kind == "run":
-        return _runnable_activity(operation)
+        return _runnable_activity(operation, runnable_kind)
     if step_kind is None:  # pragma: no cover - typed tree invariant
         return operation
     content = operation
@@ -553,10 +567,10 @@ def _replace_runnable_tokens(operation: str) -> str:
     )
 
 
-def _runnable_activity(runnable: str) -> str:
-    kind, separator, name = runnable.rsplit("::", 1)[-1].partition(":")
-    if separator and kind in {"flow", "agic"} and name:
-        return f"<{kind}>".ljust(7) + f" {name}"
+def _runnable_activity(runnable: str, kind: str = "") -> str:
+    kind = runnable_kind(runnable, kind)
+    if kind:
+        return display_runnable_ref(runnable, kind=kind, surface="inspect")
     return "<?>".ljust(7) + f" {runnable}"
 
 
@@ -1057,7 +1071,7 @@ def _render_collection(
             rows = [
                 (
                     item.record.id,
-                    _runnable_activity(item.runnable),
+                    _runnable_activity(item.runnable, item.runnable_kind),
                     _display_status(item.record.status),
                     str(item.step_count),
                     item.record.created_at,
@@ -1079,7 +1093,7 @@ def _render_collection(
             rows = [
                 (
                     item.record.id,
-                    _runnable_activity(item.runnable),
+                    _runnable_activity(item.runnable, item.runnable_kind),
                     _display_status(item.record.status),
                     str(item.step_count),
                     str(item.record.parent) if item.record.parent is not None else "-",
@@ -1102,7 +1116,7 @@ def _render_collection(
         rows = [
             (
                 item.record.id,
-                _runnable_activity(item.runnable),
+                _runnable_activity(item.runnable, item.runnable_kind),
                 _display_status(item.record.status),
                 str(item.step_count),
                 str(item.record.thread),

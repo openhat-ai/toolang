@@ -43,7 +43,8 @@ def answer():
 
 
 @pytest.mark.parametrize(
-    "name", [None, "target", "agic:target", "agent::agic:target", "chat"]
+    "name",
+    [None, "target", "agic:target", "agent::target", "agent::agic:target", "chat"],
 )
 def test_named_and_all_discovery_return_full_docs_even_with_no_routes(tmp_path, name):
     doc = 'A long description & "literal" text. ' * 30
@@ -89,16 +90,24 @@ agic chat() -> Text:
             result = last_tool_result(following)
             assert result.error is None
             value = result.output
-            assert value["current"] == "agic:chat" and value["ancestors"] == []
+            assert value["current"] == "chat" and value["ancestors"] == []
             entries = value["runnables"]
             assert [e["ref"] for e in entries] == (
-                ["agic:chat", "agic:target", "flow:empty"]
+                ["chat", "empty", "target"]
                 if name is None
-                else ["agic:chat" if name == "chat" else "agic:target"]
+                else ["chat" if name == "chat" else "target"]
             )
+            identities = {
+                "chat": ("chat", "agic", "agent::chat"),
+                "empty": ("empty", "flow", "agent::empty"),
+                "target": ("target", "agic", "agent::target"),
+            }
+            assert [(e["name"], e["kind"], e["full_name"]) for e in entries] == [
+                identities[e["ref"]] for e in entries
+            ]
             assert {e["revision"] for e in entries} == {harness.state.revision}
             if name != "chat":
-                entry = next(e for e in entries if e["ref"] == "agic:target")
+                entry = next(e for e in entries if e["ref"] == "target")
                 assert entry["doc"] == doc.strip()
                 signature = entry["signature"]
                 assert signature["input"] == {
@@ -137,7 +146,7 @@ agic chat() -> Text:
                 ]
                 assert "Do not return this source body." not in str(value)
             if name is None:
-                empty = entries[-1]["signature"]
+                empty = next(e for e in entries if e["ref"] == "empty")["signature"]
                 assert empty["input"] is None and empty["parameters"] == []
             assert route_scopes(first) == dict.fromkeys(
                 ("hands", "handoffs", "spawns"), "NONE"
@@ -188,7 +197,7 @@ agic chat() -> Text:
         {"name": "ALL"},
         {"name": "chat "},
         {"names": ["chat"]},
-        {"name": "runnables::hidden::agic:private"},
+        {"name": "hidden::private"},
     ],
 )
 def test_invalid_or_inaccessible_queries_fail_without_broadening(tmp_path, arguments):
@@ -253,11 +262,11 @@ agic target():
             )
             assert run.status == "succeeded", run.error
             calls = [i.call for i in harness.adapter.invocations]
-            for call, current in ((calls[1], "agic:worker"), (calls[3], "agic:target")):
+            for call, current in ((calls[1], "worker"), (calls[3], "target")):
                 value = last_tool_result(call).output
                 assert value["current"] == current
-                assert value["ancestors"] == ["flow:outer", "flow:inner"]
-                assert {"flow:outer", "flow:inner", current} <= {
+                assert value["ancestors"] == ["outer", "inner"]
+                assert {"outer", "inner", current} <= {
                     e["ref"] for e in value["runnables"]
                 }
 
@@ -305,15 +314,13 @@ def test_current_uses_bound_declaration_and_others_use_tool_step_state(
             entries = {
                 e["ref"]: e for e in last_tool_result(calls[1]).output["runnables"]
             }
-            assert set(entries) == {"agic:chat", "flow:target"}
-            assert entries["agic:chat"]["doc"] == "Bound current doc."
-            assert entries["agic:chat"]["revision"] == harness.state.revision
-            assert entries["agic:chat"]["signature"]["input"] is None
-            assert entries["flow:target"]["doc"] == "New target doc."
-            assert entries["flow:target"]["revision"] == harness.published.revision
-            assert last_tool_result(calls[2]).output["runnables"] == [
-                entries["agic:chat"]
-            ]
+            assert set(entries) == {"chat", "target"}
+            assert entries["chat"]["doc"] == "Bound current doc."
+            assert entries["chat"]["revision"] == harness.state.revision
+            assert entries["chat"]["signature"]["input"] is None
+            assert entries["target"]["doc"] == "New target doc."
+            assert entries["target"]["revision"] == harness.published.revision
+            assert last_tool_result(calls[2]).output["runnables"] == [entries["chat"]]
 
     asyncio.run(scenario())
     assert_replayed(harness, tracer.events)
@@ -440,8 +447,8 @@ def test_private_module_discovery_retains_aliases_and_hides_other_private_docs(
         program=state.modules["agent"],
         responses=[
             query(),
-            query({"name": "runnables::research::agic:worker"}, id="local"),
-            query({"name": "flow:research"}, id="alias"),
+            query({"name": "research::worker"}, id="local"),
+            query({"name": "research"}, id="alias"),
             answer(),
         ],
     )
@@ -458,11 +465,17 @@ def test_private_module_discovery_retains_aliases_and_hides_other_private_docs(
             values = [
                 last_tool_result(i.call).output for i in harness.adapter.invocations[1:]
             ]
-            assert values[0]["current"] == "runnables::research::agic:worker"
-            assert values[0]["ancestors"] == ["flow:main", "flow:research"]
+            assert values[0]["current"] == "research::worker"
+            assert values[0]["ancestors"] == ["main", "research"]
             assert [e["ref"] for e in values[0]["runnables"]] == [
-                "flow:research",
-                "runnables::research::agic:worker",
+                "research",
+                "research::worker",
+            ]
+            assert [
+                (e["name"], e["kind"], e["full_name"]) for e in values[0]["runnables"]
+            ] == [
+                ("research", "flow", "research::research"),
+                ("worker", "agic", "research::worker"),
             ]
             assert "Private secret description." not in str(values)
             assert values[1]["runnables"] == [values[0]["runnables"][1]]
@@ -511,7 +524,7 @@ agic target():
             first, target, _ = [i.call for i in harness.adapter.invocations]
             assert route_scopes(first) == {
                 "hands": "NONE",
-                "handoffs": "agic:target",
+                "handoffs": "target",
                 "spawns": "NONE",
             }
             assert route_scopes(target) == dict.fromkeys(
@@ -522,7 +535,7 @@ agic target():
             assert 'hands="NONE"' in message_text(runtime_message(first).parts)
             assert (
                 last_tool_result(harness.adapter.invocations[2].call).output["current"]
-                == "agic:target"
+                == "target"
             )
 
     asyncio.run(scenario())
@@ -551,8 +564,8 @@ def test_all_discovery_has_no_64_target_limit(tmp_path):
             result = last_tool_result(harness.adapter.invocations[1].call)
             assert result.error is None
             assert [e["ref"] for e in result.output["runnables"]] == [
-                "agic:chat",
-                *(f"flow:action_{i:03d}" for i in range(80)),
+                *(f"action_{i:03d}" for i in range(80)),
+                "chat",
             ]
 
     asyncio.run(scenario())

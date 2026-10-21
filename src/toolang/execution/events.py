@@ -101,6 +101,7 @@ class StepSummary:
 
     summary: str = ""
     runnable: str | None = None
+    runnable_kind: str = field(default="", kw_only=True)
     iterations: int | None = None
     termination: (
         Literal["exhausted", "satisfied", "exec", "failed", "canceled"] | None
@@ -221,6 +222,7 @@ class RunBegin:
     occurrence: Occurrence | None = None
     started_at: str = ""
     thread_id: str = ""
+    runnable_kind: str = field(default="", kw_only=True)
     type: Literal["run_begin"] = field(default="run_begin", kw_only=True)
 
     def __post_init__(self) -> None:

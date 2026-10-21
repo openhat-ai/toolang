@@ -163,9 +163,7 @@ def test_same_name_candidates_from_distinct_sources_remain_separate(
     assert {item["ref"] for item in layer["caps"]} == {"prompt/style"}
     assert len(layer["materialized"]) == 2
     assert [cap.read_content() for cap in state.caps_for("agent")] == ["First."]
-    assert [cap.read_content() for cap in state.caps_for("runnables::check")] == [
-        "Second."
-    ]
+    assert [cap.read_content() for cap in state.caps_for("check")] == ["Second."]
     validate_agent_revision(layout, state.revision)
 
 
@@ -278,7 +276,7 @@ def test_conflicting_module_acquisitions_exclude_only_the_conflicting_program(
     monkeypatch.setattr(source_owner, "reusable", lambda *args: True)
     state = prepare_agent_state(layout)
     assert set(state.runnables) == {"work", "first", "other"}
-    assert state.caps_for("runnables::first")[0].read_content() == "First."
+    assert state.caps_for("first")[0].read_content() == "First."
     rejected = next(file for file in state.files if not file.accepted)
     assert rejected.key == "runnables/second.too"
     assert rejected.message and "conflicting acquired files" in rejected.message
@@ -635,3 +633,29 @@ def test_repeated_with_declarations_keep_one_cap_and_the_first_location(
         == "Be concise."
     )
     validate_agent_revision(layout, state.revision)
+
+
+@pytest.mark.parametrize("module", ["research", "DeepSearch", "_helper"])
+def test_retained_runnable_module_names_decode_without_rewriting_sources(
+    tmp_path, module
+):
+    from toolang.state.cache import _decode_modules
+
+    layout = layout_at(tmp_path)
+    modules = layout.home / "runnables"
+    modules.mkdir()
+    source = modules / f"{module}.too"
+    source.write_text("flow():\n  pass\n")
+    state = prepare_agent_state(layout)
+    layer = document(layout, state)
+    entry = next(item for item in layer["modules"] if item["ref"] == module)
+    entry["ref"] = f"runnables::{module}"
+    layer["modules"].sort(key=lambda item: item["ref"])
+    programs, sources, digests = _decode_modules(layer)
+    assert list(programs) == sorted(programs)
+    assert list(sources) == sorted(sources)
+    assert list(digests) == sorted(digests)
+    assert set(programs) == {"agent", module}
+    assert sources[module] == f"runnables/{module}.too"
+    assert entry["ref"] == f"runnables::{module}"
+    assert source.read_text() == "flow():\n  pass\n"

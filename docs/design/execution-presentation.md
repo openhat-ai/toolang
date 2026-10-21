@@ -46,6 +46,12 @@ the background tree. Independent spawned roots aggregate separately.
 
 ## Root context
 
+Runnable labels use `kind:name` from the accepted binding, including an empty
+name for an unnamed entry. FQNs remain available in structured records and API
+data; human Run lists, execution trees, and handoff labels use the same display
+format. Authored statements and saved tool summaries describe intent and retain
+their own text.
+
 Script commits one dim context header to stderr at root `RunBegin`, identifying
 the resolved runnable and initial model/reasoning setting. Unnamed entries appear
 as `agic:` or `flow:`. Child Runs may select other models; they do not repeat
@@ -88,9 +94,10 @@ Compact additionally reports its running elapsed time and final duration.
 
 A model-requested Run opens its divider at the child's `RunBegin`, accumulates
 child metrics at `RunEnd`, and closes at the enclosing `StepEnd`. The header
-identifies the resolved runnable; the footer reports the enclosing operation's
-status, complete direct child Run ID, and child-tree facts. Failure before
-acceptance has no invented child identity or metrics.
+identifies the accepted child binding when no saved tool summary is present;
+it does not reuse an unresolved request spelling. The footer reports the
+enclosing operation's status, complete direct child Run ID, and child-tree facts.
+Failure before acceptance has no invented child identity or metrics.
 
 Dynamic boundaries stay flat while the child retains its own Agic or numbered
 Flow grammar. Calls inside parallel lanes remain lane activity. A confirmed

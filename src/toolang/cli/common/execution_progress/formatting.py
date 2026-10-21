@@ -93,13 +93,13 @@ def count(value: int, noun: str) -> str:
     return f"{value} {noun}{'' if value == 1 else 's'}"
 
 
-def runnable_label(value: object) -> str:
+def runnable_label(value: object, *, kind: str = "") -> str:
     """Format a runnable target already extracted by operation normalization."""
 
     if not isinstance(value, str):
         return ""
     safe = "".join(character if character.isprintable() else " " for character in value)
-    safe = display_runnable_ref(safe, surface="progress")
+    safe = display_runnable_ref(safe, kind=kind, surface="progress")
     return one_line(safe)[:240]
 
 

@@ -273,6 +273,10 @@ referenced key returns 422 rather than reading the server filesystem. See
 This keeps TUI and WebUI clients on the same run protocol
 without adding a chat-specific server vocabulary.
 
+Runnable requests resolve effective names or explicit `module::runnable` FQNs;
+kind is separate from identity. Accepted controls and events expose FQNs with
+`runnable_kind` metadata.
+
 The separate non-interactive `POST /api/v0/runs/stream` endpoint continues to
 accept a selected runnable and canonical input Parts such as:
 
@@ -445,7 +449,7 @@ Authored requests may supply `driver` (`chat`, `talk`, or `chore`) with
 normal validation and take precedence. A displayed default does not pin an
 automatic request to that handler; input source-revision checks still apply.
 
-The following request assumes an existing thread and an `agic:chat` declaration
+The following request assumes an existing thread and an agic named `chat`
 with a named `audience` parameter, plus an available route accepting high effort:
 
 ```json
@@ -453,7 +457,7 @@ with a named `audience` parameter, plus an available route accepting high effort
   "thread_id": "chat_example",
   "request_id": "example_request",
   "runnable": {
-    "ref": "agic:chat",
+    "ref": "chat",
     "input": {
       "_": "Summarize these notes.",
       "audience": "maintainers"

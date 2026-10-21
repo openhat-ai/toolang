@@ -151,6 +151,7 @@ class BoundRun:
     workspaces: Mapping[str, str] = field(default_factory=dict)
     model_request: ModelRequest | None = None
     module: str = "agent"
+    runnable_kind: str = field(default="", kw_only=True)
     control_index: int = 0
     limits: RunLimits = RunLimits()
     ceilings: tuple[AgentCeiling, ...] = ()

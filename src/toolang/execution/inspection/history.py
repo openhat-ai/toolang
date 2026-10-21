@@ -303,7 +303,7 @@ class RunHistory:
                 or raw is None
             ):
                 raise ValueError("compact horizon requires a successful summary Run")
-            if run.parent is not None and control.payload.runnable != "_:compact":
+            if run.parent is not None and control.payload.runnable != "_::compact":
                 raise ValueError("compact child must be an internal compaction Run")
             request = control.payload.input
             if any(
@@ -326,7 +326,7 @@ class RunHistory:
                     if s.kind == "model" and s.status == "succeeded"
                 ]
                 if (
-                    control.payload.runnable != "_:compact"
+                    control.payload.runnable != "_::compact"
                     or not successful
                     or successful[-1].ref != ref
                     or successful[-1].output is None
@@ -373,7 +373,7 @@ class RunHistory:
                     )
                 }:
                     raise ValueError("compact Step boundary is not visible")
-            if control.payload.runnable == "_:compact":
+            if control.payload.runnable == "_::compact":
                 from ..compaction import validate_producer
 
                 validate_producer(self._store, run, roots, result.summary)

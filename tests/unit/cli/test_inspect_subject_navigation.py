@@ -114,14 +114,14 @@ def test_projector_registry_uses_distinct_run_and_step_vocabulary() -> None:
 
 def test_tree_activity_preserves_run_statement_operands_and_aligns_tags() -> None:
     assert inspect_commands._tree_activity("run", None, "flow:parent") == (
-        "<flow>  parent"
+        "flow:parent"
     )
     assert inspect_commands._tree_activity("step", "model", "openai/gpt-5") == (
         "[model] openai/gpt-5"
     )
     assert (
         inspect_commands._tree_activity("step", "run", "scatter 6 agic:expand_queries")
-        == "[run]   scatter 6 <agic>  expand_queries"
+        == "[run]   scatter 6 agic:expand_queries"
     )
 
 

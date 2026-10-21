@@ -45,7 +45,7 @@ def compact_runs(harness, thread):
         for r in harness.store.list_thread_runs_chronological(thread_id=thread)
         if r.parent is not None
         and harness.store.get_run_control(run_id=r.id, index=0).payload.runnable
-        == "_:compact"
+        == "_::compact"
     ]
 
 

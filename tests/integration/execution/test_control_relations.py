@@ -91,7 +91,7 @@ agic inner() -> Text:
                 if isinstance(part, ToolResultPart)
             )
             assert result.error == (
-                f"runtime/{action} cannot call the current or an ancestor runnable: agic:inner"
+                f"runtime/{action} cannot call the current or an ancestor runnable: inner"
             )
 
     asyncio.run(scenario())

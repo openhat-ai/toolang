@@ -198,6 +198,9 @@ class RecordSnapshot(StructuralSnapshot):
                     run.occur,
                     run.started_at or "",
                     str(run.thread),
+                    runnable_kind=control.payload.runnable_kind
+                    if control and isinstance(control.payload, RunControlPayload)
+                    else "",
                 ),
                 run._begin_cursor,
             )
@@ -232,6 +235,7 @@ class RecordSnapshot(StructuralSnapshot):
             self.children[step.parent or step.run_id].append(step.ref)
             if step.status != "running":
                 exec_runnable = None
+                exec_runnable_kind = ""
                 if isinstance(step.report, ExecStepReport):
                     control = store.get_control(
                         target=str(step.report.control.target),
@@ -244,6 +248,7 @@ class RecordSnapshot(StructuralSnapshot):
                             f"exec control is missing: {step.report.control}"
                         )
                     exec_runnable = control.payload.runnable
+                    exec_runnable_kind = control.payload.runnable_kind
                 self.ends[step.ref] = (
                     step_end_event(
                         step,
@@ -254,6 +259,7 @@ class RecordSnapshot(StructuralSnapshot):
                         if step.error is not None
                         else None,
                         exec_runnable=exec_runnable,
+                        exec_runnable_kind=exec_runnable_kind,
                     ),
                     step._end_cursor,
                 )

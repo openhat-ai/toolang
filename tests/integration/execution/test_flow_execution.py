@@ -302,7 +302,7 @@ def test_run_executor_persists_before_tracing(tmp_path: Path) -> None:
     run_control = store.get_run_control(run_id=record.id, index=0)
     assert run_control is not None and run_control.status == "applied"
     assert isinstance(run_control.payload, RunControlPayload)
-    assert run_control.payload.runnable == "flow:pipeline"
+    assert run_control.payload.runnable == "agent::pipeline"
     assert run_control.payload.model_request is None
     assert run_control.payload.limits == _setup(tmp_path).limits
     assert run_control.payload.input == {}

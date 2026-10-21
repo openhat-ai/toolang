@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Literal, TypeAlias
 
 from toolang.base.errors import ToolangError
@@ -12,7 +12,11 @@ from toolang.lang.ast import (
     Program,
     StructDecl,
 )
-from toolang.lang.types import parse_runnable_ref_parts, unnamed_runnable_name
+from toolang.lang.types import (
+    parse_runnable_ref_parts,
+    unnamed_runnable_name,
+    normalize_module_name,
+)
 from toolang.state.state import (
     AgentState,
     program_runnable_index,
@@ -57,15 +61,15 @@ class ResolvedRunnable:
 
     @property
     def ref(self) -> str:
-        """Return the kind-qualified runnable reference."""
+        """Return the effective name used for State lookup."""
 
-        return f"{self.executable.kind}:{self.name}"
+        return self.name
 
     @property
     def qualified(self) -> str:
         """Return the stable State-local runnable identity."""
 
-        return f"{self.module}::{self.ref}"
+        return f"{self.module}::{self.name}"
 
 
 RouteAction: TypeAlias = Literal["run", "spawn", "exec"]
@@ -94,7 +98,9 @@ class AgicRoutes:
             if not references or references == ("*",):
                 return "ALL"
             refs = (
-                runnable_ref(state, route.runnable)
+                route.runnable.qualified
+                if route.runnable.name in {"ALL", "NONE"}
+                else runnable_ref(state, route.runnable)
                 for route in self.resolved
                 if action in route.actions
             )
@@ -121,6 +127,8 @@ def resolve_public_runnable(
     """Resolve one public runnable with its effective name and owner module."""
 
     parsed = parse_runnable_ref_parts(name)
+    if parsed.module is not None:
+        parsed = replace(parsed, module=normalize_module_name(parsed.module))
     if kind is not None and parsed.kind is not None and kind != parsed.kind:
         raise ToolangError(f"Runnable kind does not match: {name}")
     module, executable = resolve_state_runnable(
@@ -163,7 +171,10 @@ def resolve_agic_routes(
                 if any(
                     item.name == ref.name
                     and (ref.kind is None or item.executable.kind == ref.kind)
-                    and (ref.module is None or item.module == ref.module)
+                    and (
+                        ref.module is None
+                        or item.module == normalize_module_name(ref.module)
+                    )
                     for ref in refs
                 )
             )
@@ -215,6 +226,7 @@ def bound_runnable(state: AgentState, module: str, reference: str) -> ResolvedRu
     """Resolve a captured binding without adopting a newer declaration."""
 
     parsed = parse_runnable_ref_parts(reference)
+    module = normalize_module_name(parsed.module or module)
     executable = resolve_bound_runnable(state, module, reference)
     return ResolvedRunnable(parsed.name, module, executable)
 
@@ -277,6 +289,8 @@ def resolve_runnable_reference(
 ) -> ResolvedRunnable:
     """Resolve an exact name, kind, module, or line-qualified reference."""
     parsed = parse_runnable_ref_parts(reference)
+    if parsed.module is not None:
+        parsed = replace(parsed, module=normalize_module_name(parsed.module))
     if not isinstance(state, Program) and parsed.module == RUNTIME_TALK_MODULE:
         name, entry = resolve_module_runnable(
             state, parsed.module, parsed.name, kind=parsed.kind
@@ -378,6 +392,8 @@ def resolve_bound_runnable(
     """Resolve a stored effective ref back to its Program declaration."""
 
     parsed = parse_runnable_ref_parts(ref)
+    if parsed.module is not None:
+        parsed = replace(parsed, module=normalize_module_name(parsed.module))
     name, kind = parsed.name, parsed.kind
     if parsed.module is not None:
         module_name = parsed.module
@@ -406,6 +422,8 @@ def resolve_call_target(
     """Resolve an authored call within its module or the root's public catalog."""
 
     parsed = parse_runnable_ref_parts(reference)
+    if parsed.module is not None:
+        parsed = replace(parsed, module=normalize_module_name(parsed.module))
     if parsed.module is None or parsed.module == module:
         try:
             name, runnable = resolve_module_runnable(
@@ -422,7 +440,7 @@ def resolve_call_target(
 
 
 def parse_runnable_ref(value: str) -> tuple[str, str | None]:
-    """Split one optional kind-qualified runnable reference."""
+    """Decode a name and an optional input kind constraint."""
 
     parsed = parse_runnable_ref_parts(value)
     return parsed.name, parsed.kind
@@ -510,9 +528,7 @@ def resolve_driver_handler(
         state = with_runtime_handlers(
             state, {RUNTIME_TALK_MODULE: talk_handler_source()}
         )
-        return state, resolve_runnable_reference(
-            state, f"{RUNTIME_TALK_MODULE}::agic:talk"
-        )
+        return state, resolve_runnable_reference(state, f"{RUNTIME_TALK_MODULE}::talk")
     return state, resolve_runnable_reference(
         state, runnable_fallback(state, preferred=driver)
     )

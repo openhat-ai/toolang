@@ -7,6 +7,7 @@ from tests.support.observations import run_begin, run_end, step_begin, step_end
 
 
 from io import StringIO
+from dataclasses import replace
 import re
 from typing import Literal
 
@@ -1201,7 +1202,7 @@ def test_dynamic_header_normalizes_untrusted_runnable_text() -> None:
         run_begin(
             run="run_child",
             control=ControlRef.for_run("run_child", 0),
-            runnable="flow:missing",
+            runnable="flow:\x00missing\nname" + "x" * 300,
             parent=path,
         )
     )
@@ -1211,6 +1212,46 @@ def test_dynamic_header_normalizes_untrusted_runnable_text() -> None:
     assert "\x00" not in caption
     assert "\n" not in caption
     assert len(caption.removeprefix("Run ")) == 240
+
+
+@pytest.mark.parametrize("source", ["flow", "tool"])
+@pytest.mark.parametrize(
+    "reference,kind,label",
+    [
+        ("research::research", "flow", "flow:research"),
+        ("research::helper", "agic", "agic:helper"),
+        ("agent::<entry:3>", "flow", "flow:"),
+    ],
+)
+def test_dynamic_header_uses_the_accepted_child_binding(source, reference, kind, label):
+    projector = ProgressProjector(show_boundaries=False)
+    parent_step = StepRef.parse("run_root.0")
+    projector.handle(run_begin("run_root", 0, runnable="agic:parent"))
+    projector.handle(
+        step_begin(
+            step=parent_step,
+            kind="run" if source == "flow" else "tool",
+            spec=(
+                _run_stmt("research")
+                if source == "flow"
+                else ToolStepSpec(
+                    plugin="runtime",
+                    call=ToolCall(
+                        "call", "call", "runtime__run", {"runnable": "research"}
+                    ),
+                )
+            ),
+        )
+    )
+
+    update = projector.handle(
+        replace(
+            run_begin("run_child", 0, runnable=reference, parent=parent_step),
+            runnable_kind=kind,
+        )
+    )
+
+    assert update.committed[0].rows[0].text == f"Run {label}"
 
 
 def test_script_and_chat_render_dynamic_boundaries_identically() -> None:

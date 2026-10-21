@@ -85,8 +85,7 @@ class _ToolRuntime(ToolRuntime):
         current = target_for(binding)
         current_ref = runnable_ref(binding.state, current)
         if name is None:
-            # An exported flow alias can share its name with a private agic.
-            # Discovery must retain both kinds even if execution identities match.
+            # The accepted current declaration stays pinned across publications.
             targets = {
                 target.qualified: (self.discovery_state, target)
                 for target in visible_runnables(self.discovery_state, binding.module)
@@ -105,6 +104,9 @@ class _ToolRuntime(ToolRuntime):
         entries = [
             {
                 "ref": runnable_ref(state, target),
+                "name": target.name,
+                "kind": target.executable.kind,
+                "full_name": target.qualified,
                 "revision": state.revision,
                 "doc": target.executable.doc or "",
                 "signature": runnable_signature(

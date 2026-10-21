@@ -120,6 +120,8 @@ Every call adds one runtime user message ordered `workspace`, `workdir`, optiona
 `routes`, optional `context`, then `execution`. Authored roles and multimodal parts
 remain separate. In routes, `hands` limits run, `handoffs` limits exec, and `spawns`
 follows hands. Each attribute is `ALL`, `NONE`, or comma-separated canonical refs.
+Restricted targets named `ALL` or `NONE` use FQNs to distinguish their names
+from the protocol's unrestricted and disabled sentinels.
 All three attributes are present if any scope is restricted; otherwise the tag is
 omitted. Absence in the newest runtime message means ALL, regardless of older tags.
 Scopes do not filter active-path targets: runtime guards still reject run to self
@@ -127,11 +129,12 @@ or ancestors, exec to ancestors, and child self-exec. An authorized root with no
 active descendants can exec itself.
 
 Use `runtime__runnables` to discover targets and complete signatures:
-`{}` returns all module-visible declarations; `{"name":"agic:review"}` or
+`{}` returns all module-visible declarations; `{"name":"agent::review"}` or
 `{"name":"review"}` returns exactly one. Unknown, inaccessible, empty, whitespace,
 and null names fail; there is no wildcard or multi-name query. Results include
 `current`, active `ancestors` ordered root to parent, and sorted `runnables`.
-Each entry has `ref`, `revision`, the full authored `doc`, and a `signature`
+Each entry has `ref`, `name`, `kind`, `full_name` (FQN), `revision`, the full
+authored `doc`, and a `signature`
 containing input, ordered parameters, output, and recursively referenced structs
 with field docs. Public refs omit the module prefix; private refs keep it.
 Docs describe suitability for an already-authorized task and do not authorize

@@ -1,10 +1,11 @@
 # Program
 
-A Mod is a `.too` module; its parsed representation is `Program`. This document
-describes semantic representation, validation, and declarations. [Flow](flow.md)
-owns evaluation and [Content](content.md) owns content parsing. Follow the
-[authoring conventions](../authoring.md) for source style, type annotations,
-and documentation comments.
+A module owns runnable declarations. Authored `.too` modules and the packaged
+Talk handler have a parsed `Program`; builtin compaction has a native
+implementation. This document describes semantic representation, validation,
+and declarations. [Flow](flow.md) owns evaluation and [Content](content.md) owns
+content parsing. Follow the [authoring conventions](../authoring.md) for source
+style, type annotations, and documentation comments.
 
 
 Examples are declaration or body excerpts unless explicitly identified as
@@ -73,20 +74,56 @@ Every file has its own declarations and private type namespace. State compositio
 also validates main-module calls to exported runnables. An extension cannot use
 structs, contexts, instructs, caps, agics, or flows declared in another file.
 
-The agent module publicly exports all of its agics and flows. Each runnable
+The main module publicly exports all of its agics and flows. Each runnable
 module exports exactly one agic or flow whose name is absent or exactly matches
 the filename stem. An unnamed entry and a filename-matching declaration are
 ambiguous, even across kinds. State uses the filename as the public name and
 binds unnamed declarations locally as `<entry:LINE>`. Renaming an unnamed
 entry's file renames its public runnable; a named entry must also be renamed.
 Other declarations remain private helpers for flow statements and model routing.
-For example, `runnables/talk.too` containing `agic(_: Json):` exports `agic:talk`.
+For example, `runnables/talk.too` containing `agic(_: Json):` exports the
+effective name `talk` and FQN `talk::talk`.
 
-Public runnable names must be unique across the complete home. The filename
-`_.too` is rejected because `_` refers to the root's unnamed entry. Direct files
-under `runnables/` are discovered. Other HOME-level `.too` files, `flows/`,
-`agics/`, nested files, non-`.too` files, and Toolang-root modules are ignored.
+Accepted public runnable names must be unique in effective State. A layout may
+contain both `agent::talk` and `talk::talk`; a duplicate public export excludes
+all source files contributing that name during preparation, including
+`agent.too`. Unrelated valid modules remain available. The filenames `_.too`
+and `agent.too` under `runnables/` are reserved for builtin and main module names.
+Direct files under `runnables/` are discovered.
+Other HOME-level `.too` files, `flows/`, `agics/`, nested files, non-`.too` files,
+and Toolang-root modules are ignored.
 There is no compatibility discovery or automatic source migration.
+
+
+## Runnable Names
+
+A runnable has a `name` and a `kind` (`agic` or `flow` for authored code).
+Its **fully qualified name (FQN)** is `module::runnable`, unique within a layout;
+kind is not part of that identity. Module names have three sources:
+
+| Term | Module name | Definition |
+| --- | --- | --- |
+| builtin module | `_` | Runtime-owned definitions, including `_::talk` and `_::compact` |
+| main module | `agent` | `agent.too`, or the selected script |
+| runnable module | Filename stem | `runnables/<module>.too`, for example `talk::talk` and `talk::helper` |
+
+Layout declarations can coexist even when State acceptance or handler precedence
+shadows one. A valid State guarantees unique effective public names; calls resolve
+by name within module visibility. An explicit FQN preserves its owning module
+but does not expose excluded modules or private declarations to other modules.
+Existing typed input spellings check kind separately at input boundaries; they
+do not define another identity or naming term.
+
+The interface displays `kind:name`, such as `agic:chat` or `flow:deep_search`.
+An unnamed entry displays `agic:` or `flow:`. This is a label derived from the
+accepted binding and its captured State, not a second identity format. Durable
+entry/adhoc locators retain source positions; filename exports keep their
+effective public names.
+
+Accepted Run/Exec controls and Run events carry the FQN and separate
+`runnable_kind`. Retained names using former module/kind spellings are decoded
+without rewriting history. A captured State revision pins the declaration used
+by inspection and rerun.
 
 
 ## Documentation Comments
@@ -266,8 +303,8 @@ agic [NAME] [(PARAMS)] [-> T]:
 flow [NAME] [(PARAMS)] [-> T]:
 ```
 
-In the agent or Script module, an omitted agic or flow name is the module's
-unnamed entry:
+In the main module, including a script, an omitted agic or flow name is the
+module's unnamed entry:
 
 ```too
 agic:
@@ -502,8 +539,8 @@ selection replaces inherited routes independently of resource restrictions:
 
 ```too
 agic coordinate(_: Text) -> Report:
-  hands = agic:research, flow:verify
-  handoffs = flow:deliver
+  hands = research, verify
+  handoffs = deliver
 
   Coordinate the work.
 ```

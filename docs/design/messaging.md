@@ -234,7 +234,7 @@ messages, handling results, or reply receipts.
 
 The default handling instructions belong to the runtime handler's `.too` Program;
 the driver supplies only the JSON batch. Run records capture the runtime source
-under a distinct qualified identity for inspection and restart. No global
+under the builtin module with FQN `_::talk` for inspection and restart. No global
 runnable configuration selects a different messaging entry.
 
 An independent heartbeat renews a backend presence deadline. Expired leases

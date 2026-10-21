@@ -275,7 +275,7 @@ class PromptInputs:
     @cached_property
     def execution_message(self) -> str:
         """Identify the active invocation independently of authored context."""
-        runnable = attribute(f"{self.module}::{self.agic.kind}:{self.runnable_name}")
+        runnable = attribute(f"{self.module}::{self.runnable_name}")
         source = ""
         if self.conversation is not None:
             source = " " + attributes(

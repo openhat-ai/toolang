@@ -159,10 +159,10 @@ async def invoke(state: _AgicState, step: StepRef) -> dict[str, Any]:
                         run_id=saved.id
                         if saved
                         else execution.executor.ids.issue_run(),
-                        bindings=RunBindings(
-                            model=model.ref, runnable=compaction.RUNNABLE
-                        ),
+                        bindings=RunBindings(model=model.ref, runnable="compact"),
                         model_request=request,
+                        module="_",
+                        runnable_kind="compact",
                         input=spec.input(),
                         control_input=spec.input(),
                         state=agent_state,

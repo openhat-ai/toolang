@@ -555,7 +555,8 @@ def test_exec_payload_round_trips_source_pointing_locals() -> None:
     source = FieldRef.from_path(StepRef.parse("run_1.2"), "output", "value", 1)
     payload = ExecControlPayload(
         state="a" * 64,
-        runnable="_flow_deliver$flow:deliver",
+        runnable="deliver::deliver",
+        runnable_kind="flow",
         input=CallInput(
             {
                 "_": TypedRef(source.select("input", "input", "_"), "Json"),

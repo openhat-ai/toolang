@@ -83,12 +83,12 @@ def test_exec_successor_declares_current_identity_with_chat_history(
             calls = [invocation.call for invocation in harness.adapter.invocations]
             for call in calls[:2]:
                 assert execution_snapshot(call) == {
-                    "runnable": f"agent::agic:{caller}",
+                    "runnable": f"agent::{caller}",
                     "entered_by": "run",
                 }
             for call in calls[2:]:
                 assert execution_snapshot(call) == {
-                    "runnable": "agent::agic:test",
+                    "runnable": "agent::test",
                     "entered_by": "exec",
                 }
                 text = "\n".join(message_text(m.parts) for m in call.messages)

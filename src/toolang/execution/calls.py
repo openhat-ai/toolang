@@ -61,22 +61,6 @@ class RestartSpec:
     limits: RunLimits
 
 
-def _is_alias_ref(value: str, resolved: object) -> bool:
-    """Accept an unnamed selector for its concrete lined target."""
-
-    from toolang.lang.types import parse_runnable_ref_parts
-
-    try:
-        parsed = parse_runnable_ref_parts(value)
-    except ValueError:
-        return False
-    if parsed.line is not None or parsed.role not in {"entry", "adhoc"}:
-        return False
-    executable = getattr(resolved, "executable", None)
-    target_kind = getattr(executable, "kind", None)
-    return parsed.kind is None or parsed.kind == target_kind
-
-
 def resolve_run_request(
     request: RunRequest,
     *,
@@ -112,15 +96,6 @@ def resolve_run_request(
         resolved_runnable = resolve_runnable_reference(state, reference)
     else:
         raise ValueError("run request requires a runnable ref or driver")
-    if (
-        reference is not None
-        and reference not in {resolved_runnable.ref, resolved_runnable.qualified}
-        and not _is_alias_ref(reference, resolved_runnable)
-    ):
-        raise ValueError(
-            f"run runnable ref must be exact: {request.runnable.ref!r} resolves to "
-            f"{resolved_runnable.ref!r}"
-        )
     model_request = require_exact_model_request(
         request.model,
         setup=setup,

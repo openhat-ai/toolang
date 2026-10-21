@@ -89,6 +89,8 @@ Canonical run progress event names are:
 - `step_end`
 - `run_end`
 
+`RunBegin.runnable` is the accepted FQN; `runnable_kind` carries kind separately.
+Clients render `kind:name` without inferring kind from the FQN.
 Run/Step IDs are scalar strings. `StepBegin` includes owning `run`, parent Step ID
 and `index`; its `spec.type` selects compact `model`, `tool` or `flow` information.
 Model metadata contains only the model identity. Calls, Flow ASTs, State/input

@@ -33,6 +33,13 @@ class InspectedRun:
             )
         return payload.runnable
 
+    @property
+    def runnable_kind(self) -> str:
+        payload = self.entry.payload
+        if not isinstance(payload, RunControlPayload):
+            raise ValueError("run preparation control is missing")
+        return payload.runnable_kind
+
 
 @dataclass(frozen=True, slots=True)
 class ChildOccurrenceTotals:

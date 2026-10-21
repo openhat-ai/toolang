@@ -7051,7 +7051,7 @@ def test_chat_status_and_run_context_use_compact_entry_labels(kind: str) -> None
     from toolang.cli.toolang.commands.chat.widgets import _chat_runnable_label
 
     assert _chat_runnable_label(f"agent::{kind}:<entry:3>") == f"{kind}:"
-    assert _chat_runnable_label("agent::agic:<adhoc:5>") == "agic:<adhoc>"
+    assert _chat_runnable_label("agent::<adhoc:5>") == "agic:"
     assert _chat_runnable_label("agic:chat") == "agic:chat"
     assert (
         _run_context(f"agent::{kind}:<entry:3>", "openai/gpt-5", "", 200)

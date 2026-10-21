@@ -114,11 +114,11 @@ def test_remote_script_uses_an_exec_thread_and_native_progress(
         assert control is not None
         assert isinstance(control.payload, RunControlPayload)
         if runnable == "agic:echo":
-            assert control.payload.runnable == "agic:echo"
+            assert control.payload.runnable == "agent::echo"
         elif runnable == "agic:_":
-            assert control.payload.runnable.startswith("agent::agic:<entry:")
+            assert control.payload.runnable.startswith("agent::<entry:")
         else:
-            assert control.payload.runnable.startswith("agent::flow:<entry:")
+            assert control.payload.runnable.startswith("agent::<entry:")
         output = capsys.readouterr()
         assert output.out == ""
         label = "agic:echo" if runnable == "agic:echo" else runnable.removesuffix("_")

@@ -106,6 +106,11 @@ sort descending by:
   Score {{_}} by priority.
 ```
 
+Runnable names resolve through effective State. The FQN is `module::runnable`;
+the interface displays `kind:name`. Module names are `_` for builtin definitions,
+`agent` for `agent.too`, and the filename stem for `runnables/<module>.too`. See
+[runnable names](design/program.md#runnable-names) for binding and visibility.
+
 ## Documentation Comments
 
 Use `##` when the text is documentation that a consumer may display. Place it

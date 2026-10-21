@@ -74,6 +74,7 @@ def admission(
                 limits=binding.limits,
                 state=binding.state.revision,
                 runnable=_bound_runnable(binding),
+                runnable_kind=binding.runnable_kind,
                 model_request=binding.model_request,
                 input=binding.control_input,
                 sandbox=None,
@@ -135,6 +136,7 @@ def admission(
                 binding.run_id,
                 parent=binding.parent,
                 runnable=_bound_runnable(binding),
+                runnable_kind=binding.runnable_kind,
                 created_at=binding.created_at,
                 occurrence=binding.occurrence,
             )

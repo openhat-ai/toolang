@@ -26,7 +26,6 @@ from toolang.base.types.model import ModelRequest
 from toolang.base.types.run import ModelCall
 from toolang.common.files import file_write_lock
 from toolang.lang.input import PromptInvocation, CallInput
-from toolang.lang.types import is_agic_ref
 from toolang.lang.types import Array, Struct, Value
 from toolang.base.types.tool import ToolDefinition
 from toolang.base.types.policy import RunLimits
@@ -609,6 +608,7 @@ class RunStore:
         limits: RunLimits,
         state: str | None,
         runnable: str,
+        runnable_kind: str = "",
         model_request: ModelRequest | None = None,
         input: CallInput[Value | TypedRef],
         sandbox: str | None,
@@ -735,6 +735,7 @@ class RunStore:
                     limits=limits,
                     state=state,
                     runnable=runnable,
+                    runnable_kind=runnable_kind,
                     model_request=model_request,
                     input=input,
                     horizon=horizon,
@@ -799,6 +800,7 @@ class RunStore:
         limits: RunLimits,
         state: str,
         runnable: str,
+        runnable_kind: str = "",
         model_request: ModelRequest | None,
         input: CallInput[Value | TypedRef],
         sandbox: str,
@@ -894,6 +896,7 @@ class RunStore:
                 limits=limits,
                 state=state,
                 runnable=runnable,
+                runnable_kind=runnable_kind,
                 model_request=model_request,
                 input=input,
                 sandbox=sandbox,
@@ -944,6 +947,7 @@ class RunStore:
         run_id: str,
         state: str,
         runnable: str,
+        runnable_kind: str = "",
         triggered_by: StepRef,
         input: CallInput[Value | TypedRef],
         created_at: str,
@@ -957,6 +961,7 @@ class RunStore:
         payload = ExecControlPayload(
             state=state,
             runnable=runnable,
+            runnable_kind=runnable_kind,
             input=input,
         )
         if triggered_by.run_id != run_id:
@@ -1263,7 +1268,7 @@ class RunStore:
                         _load_json(str(preparation_row["payload"])),
                     )
                     if not isinstance(preparation, RunControlPayload) or not (
-                        is_agic_ref(preparation.runnable)
+                        preparation.runnable_kind == "agic"
                     ):
                         raise ValueError("steer controls require an agic run")
                 row = self._conn.execute(

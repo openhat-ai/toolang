@@ -28,13 +28,14 @@ class RunContext:
 
     runnable: str
     model: ModelRequest | None
+    runnable_kind: str = ""
 
     def __rich_console__(
         self, console: Console, options: ConsoleOptions
     ) -> RenderResult:
         width = max(1, options.max_width - PROGRESS_RIGHT_INSET)
         runnable = _context_text(
-            display_runnable_ref(self.runnable, surface="chat")
+            display_runnable_ref(self.runnable, surface="chat", kind=self.runnable_kind)
             or "runnable unspecified"
         )
         fields = ["model unspecified"]

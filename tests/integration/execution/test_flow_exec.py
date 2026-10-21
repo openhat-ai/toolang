@@ -221,7 +221,7 @@ agic finish() -> Text:
                 if (entry := harness.store.get_run_control(run_id=r.id, index=0))
                 is not None
                 and isinstance(entry.payload, RunControlPayload)
-                and entry.payload.runnable == "flow:grow"
+                and entry.payload.runnable == "agent::grow"
             )
             steps = harness.store.list_steps(run_id=grow.id)
             assert [s.kind for s in steps] == ["loop", "loop", "exec", "run"]
@@ -437,6 +437,12 @@ def test_repeated_handoffs_have_run_aligned_boundaries_and_reset_display_numbers
 ):
     from toolang.cli.common.execution_progress import ProgressProjector
     from toolang.execution.inspection.trees import build_execution_tree, tree_to_data
+    from toolang.cli.toolang.commands.inspect import (
+        _InspectSubject,
+        _render_execution_tree,
+    )
+    from io import StringIO
+    from rich.console import Console
 
     harness = ExecutionHarness.create(
         tmp_path,
@@ -486,9 +492,15 @@ flow final():
             assert len(tree.handoffs) == 2
             assert all(boundary.depth == 0 for boundary in tree.handoffs)
             assert [boundary.runnable for boundary in tree.handoffs] == [
-                "flow:second",
-                "flow:final",
+                "agent::second",
+                "agent::final",
             ]
+            output = StringIO()
+            _render_execution_tree(
+                Console(file=output, width=120), _InspectSubject(kind="run"), tree
+            )
+            assert "exec → flow:second" in output.getvalue()
+            assert "exec → flow:final" in output.getvalue()
             steps = harness.store.list_steps(run_id=root.id)
             assert tree.step_ordinal(steps[2]) == 0
             if not empty:
@@ -741,8 +753,8 @@ flow evolve() -> Text:
                 for c in controls
                 if isinstance(c.payload, ExecControlPayload)
             ] == [
-                ("flow:evolve", harness.state.revision),
-                ("flow:grow", harness.published.revision),
+                ("agent::evolve", harness.state.revision),
+                ("agent::grow", harness.published.revision),
             ]
             runs = harness.store.list_run_tree(root_run_id=root.id)
             assert len(runs) == 3
