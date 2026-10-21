@@ -10,7 +10,7 @@ one discoverable set of agent homes. Resident history must remain observable
 without a running instance. Reopening Top must not change that set when the
 homes and registrations are unchanged.
 
-This replaces the membership, departed-source retention and summary ordering in
+This replaces the membership, departed-source retention and summary layout in
 [Top recent activity](top-recent-activity.md). Preserve the existing
 [window, accounting, paging and presentation contracts](../design/top.md)
 except for the explicit changes below.
@@ -49,17 +49,21 @@ Hub's runtime-only inventory.
 
 ## Summaries and table
 
-Use this order, with the existing right-aligned captions and numeric styling:
+Use this order, with left-hand names and right-aligned time ranges:
 
 ```text
-2 resident, 0 visiting, 0 roaming                                                               agents right now
-191 model calls, 198 tool calls, 100k input, 80k cached, 10k output, $1.0000                       stats last 4h
-0 active, 0 completed: 0 succeeded, 0 failed, 0 canceled                                            runs last 5m
+agents: 2 resident, 0 visiting, 0 roaming                                                   right now
+stats: 191 model calls, 198 tool calls, 100k input, 80k cached, 10k output, $1.0000    in the last 4h
+runs: 0 active, 0 succeeded, 0 failed, 0 canceled                                      in the last 5m
 AGENT THREAD RUN MODEL TOOL INPUT CACHED OUTPUT SPEND TIME+ STATUS
 ```
 
-The `agents right now` line counts scoped source identities by placement. Remove
-its `running` and `total` prefix: "right now" describes membership at observation
+Render `agents:`, `stats:` and `runs:` in normal intensity, without dim or bold.
+The right column contains only `right now` or `in the last <window>`, in dim;
+retain the existing numeric coloring and width-dependent wrapping rules.
+
+The agents line counts scoped source identities by placement. Remove its
+`running` and `total` prefix: "right now" describes membership at observation
 time, not whether every member has a running instance.
 
 The stats line aggregates that scope with the independent Period setting (`4h`
@@ -69,6 +73,11 @@ root Runs of any age plus terminal roots completed within Recent. Child Runs
 remain part of their owning tree, without inflating root counts. Loaded pages,
 folds and selection never change summary totals. Keep row consumption as
 lifetime values; changing Period does not filter rows.
+
+Omit the aggregate `N completed:` from the runs line; show active, succeeded,
+failed and canceled counts directly. Keep the completion total in JSON and
+paging logic. "Usage" includes model/tool invocation counts, tokens and spend;
+the displayed line name remains `stats:`.
 
 Keep active-root proof and unknown-coverage rules: instance departure never
 invents a terminal Run status, and unreadable live/history state never becomes
@@ -95,8 +104,8 @@ Build on the reader separation in
 - `up.top` schedules reads for scoped bindings, reconciles removal/rebinding,
   and rejects obsolete worker results. `up.schemas` derives summary coverage
   and counts from that roster without performing discovery or I/O.
-- `cli.common.top_view` renders the scope-only agents line and orders the stats
-  and runs lines. Update current design/help text and generate the user-visible
+- `cli.common.top_view` renders the named summaries, dim time ranges and reduced
+  runs line. Update current design/help text and generate the user-visible
   changelog entry when implementing.
 
 Likely tests: `tests/unit/up/test_scope.py`, reader and observer unit tests,
@@ -119,10 +128,11 @@ Likely tests: `tests/unit/up/test_scope.py`, reader and observer unit tests,
 5. Home enumeration and registration errors retain unknown coverage; corrupt
    databases and lost established history remain unavailable. No alternate
    source catalog or observation side effects are created.
-6. Header order is agents, stats, runs, table at wide and narrow widths. The
-   `agents right now` line shows placement counts only; runs and table share
-   Recent while usage keeps Period. JSON retains its keys/types and exposes the
-   scoped roster.
+6. At wide and narrow widths, verify agents, stats, runs, table order; normal
+   left-hand names with colons; dim time ranges only at the right; placement
+   counts only for agents; and no aggregate completed count in the runs text.
+   Runs and table share Recent while usage keeps Period. JSON retains its
+   keys/types, including completion totals, and exposes the scoped roster.
 
 ## Risks and approval
 
