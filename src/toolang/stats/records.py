@@ -11,6 +11,7 @@ import sqlite3
 import tempfile
 
 from . import _sql as sql
+from .source import prepare_source
 from .projection import project_root, project_step
 from .types import (
     Contribution,
@@ -88,6 +89,7 @@ class StatsRecords:
                 "ATTACH DATABASE ? AS src",
                 (self.source.resolve().as_uri() + "?mode=ro",),
             )
+            prepare_source(connection)
             connection.execute("BEGIN")
             connection.execute(sql.PIN_STATS).fetchone()
             connection.execute(sql.PIN_SOURCE).fetchall()

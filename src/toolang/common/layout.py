@@ -53,6 +53,11 @@ class AgentLayout:
     managed_membership: bool | None = None
     toolang_root: Path | None = field(default=None, compare=False)
     source_id: str | None = None
+    instance_id: str | None = None
+    source_path: Path | None = field(default=None, compare=False)
+    source_ref: str | None = field(default=None, compare=False)
+    source_edit_lock: Path | None = field(default=None, compare=False)
+    request_order_ns: int | None = field(default=None, compare=False)
     program_acquisition: AcquiredSource | None = field(
         default=None, compare=False, repr=False
     )
@@ -62,6 +67,15 @@ class AgentLayout:
         name = validate_agent_name(self.name)
         if self.placement not in {"resident", "visiting", "roaming"}:
             raise ValueError(f"invalid agent placement: {self.placement!r}")
+        if self.instance_id is not None:
+            pattern = (
+                r"v[0-9a-f]{16}" if self.placement == "visiting" else r"r[0-9a-f]{32}"
+            )
+            if (
+                self.placement == "resident"
+                or re.fullmatch(pattern, self.instance_id) is None
+            ):
+                raise ValueError("instance ID does not match its placement")
         if self.instance is not None and (
             not self.instance or not self.instance.isalnum()
         ):
@@ -97,24 +111,39 @@ class AgentLayout:
         identity = f"{toolang_root.expanduser().resolve()}\0{source}"
         digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:16]
         return cls(
-            root=Path("/tmp") / f"toolang-{name}-{digest}",
+            root=Path("/tmp") / f"{name}@v{digest}",
             name=name,
             placement="visiting",
             toolang_root=toolang_root,
             source_id=digest,
+            instance_id=f"v{digest}",
+            source_ref=source,
         )
 
     @classmethod
-    def roaming(cls, source: Path) -> AgentLayout:
+    def roaming(cls, source: Path, *, instance_id: str | None = None) -> AgentLayout:
         """Create the source-local layout for one roaming program."""
 
         source = source.expanduser().resolve()
         return cls(
-            root=source.parent / ".toolang",
+            root=source.parent
+            / ".toolang"
+            / f"{derive_agent_name(source.stem)}@{instance_id}"
+            if instance_id is not None
+            else source.parent / ".toolang",
             name=derive_agent_name(source.stem),
             placement="roaming",
             source_id=hashlib.sha256(str(source).encode("utf-8")).hexdigest()[:16],
+            instance_id=instance_id,
+            source_path=source,
+            request_order_ns=int(instance_id[1:17], 16)
+            if instance_id is not None
+            else None,
         )
+
+    @property
+    def instance_name(self) -> str:
+        return f"{self.name}@{self.instance_id}" if self.instance_id else self.name
 
     @property
     def home(self) -> Path:
@@ -154,7 +183,13 @@ class AgentLayout:
 
     @property
     def root_edit_lock(self) -> Path:
-        return root_edit_lock_path(self.root)
+        if self.source_edit_lock is not None:
+            return self.source_edit_lock
+        return root_edit_lock_path(
+            (self.source_path.parent / ".toolang").resolve()
+            if self.source_path is not None
+            else self.root
+        )
 
     @property
     def home_edit_lock(self) -> Path:
@@ -166,8 +201,7 @@ class AgentLayout:
 
     @property
     def runtime(self) -> Path:
-        base = self.home / ".runtime"
-        return base / "instances" / self.instance if self.instance is not None else base
+        return self.home / ".runtime"
 
     @property
     def runtime_status(self) -> Path:
@@ -214,8 +248,7 @@ class AgentLayout:
 
     @property
     def sandbox_home(self) -> Path:
-        base = self.root / ".sandbox" / self.name
-        return base / "instances" / self.instance if self.instance is not None else base
+        return self.root / ".sandbox" / self.name
 
     @property
     def sandbox_stage(self) -> Path:

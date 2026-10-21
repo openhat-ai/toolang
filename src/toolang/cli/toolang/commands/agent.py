@@ -12,6 +12,7 @@ from typing import Annotated, cast
 import typer
 from typer._click.exceptions import ClickException
 
+from toolang.cli.common.parameters import InstanceOption
 from toolang.cli.common.parameters import TextType
 
 from toolang.catalog.chore import AuthoredChores
@@ -24,8 +25,7 @@ from toolang.up import process as agents
 from toolang.up.config import format_drivers
 from toolang.up.types import ALL_DRIVERS, ExecutionDrivers
 from toolang.catalog import templates
-from toolang.setup import AgentSetup, SetupWatcher
-from toolang.state.prepare import prepare_agent_state
+from toolang.setup import AgentSetup
 from toolang.state.state import AgentState
 from toolang.state.schemas import WorkspaceInspection
 from ...common.client import RuntimeClient
@@ -177,6 +177,7 @@ def info_agent(
         hidden=True,
     ),
     model_catalog: ModelCatalogOption = None,
+    instance: InstanceOption = None,
 ) -> None:
     agent_name = require_runtime_agent(ctx, agent)
     selected_layout = cli_context(ctx).layout
@@ -275,44 +276,41 @@ def _local_resources(
     source: Path | None = None,
     selector: str | None = None,
 ) -> list[tuple[str, str]]:
-    progress = make_cli_progress(preparation=True)
+    from toolang.up.instance import read_instance
+    from toolang.state.prepare import load_agent_state
+
+    entry = read_instance(layout.runtime_status) or {}
+    counts = entry.get("workload", {}).get("resource_counts", {})
+    if not isinstance(counts, dict):
+        counts = {}
+
+    def count(key, singular):
+        value = counts.get(key)
+        return _count(value, singular) if isinstance(value, int) else "-"
+
+    caps = workspaces = chores = "-"
+    if isinstance(counts.get("caps"), dict):
+        caps = _cap_counts_summary(counts["caps"])
+    if isinstance(counts.get("workspaces"), list):
+        workspaces = ", ".join(counts["workspaces"])
+    if isinstance(counts.get("chores"), int):
+        chores = count("chores", "chore")
     try:
-        with progress:
-            if source is not None:
-                user_call(agent_sources.materialize_roaming_program, source)
-            elif selector is not None:
-                user_call(
-                    agent_sources.resolve_visiting_layout,
-                    selector,
-                    toolang_root=toolang_root,
-                    progress=progress.sink,
-                )
-            state = cast(
-                AgentState,
-                user_call(
-                    prepare_agent_state,
-                    layout,
-                    progress=progress.sink,
-                ),
-            )
-            progress.complete_preparation()
-            watcher = (
-                SetupWatcher(layout, model_catalog=model_catalog)
-                if model_catalog is not None
-                else SetupWatcher(layout)
-            )
-            setup = asyncio.run(watcher.refresh(progress=progress.sink))
-            return [
-                ("Tools", _tools_summary(setup, progress=progress.sink)),
-                ("Models", _models_summary(setup, progress=progress.sink)),
-                ("Caps", _caps_summary(state)),
-                ("Chores", _chores_summary(layout)),
-                ("Workspaces", ", ".join(setup.workspace_grants(state.workspaces))),
-            ]
-    except Exception as exc:
-        if progress.failure_stage is not None:
-            raise ClickException(progress.failure_message(exc)) from exc
-        raise
+        state = load_agent_state(layout)
+    except (OSError, ValueError, RuntimeError):
+        pass
+    else:
+        if caps == "-":
+            caps = _caps_summary(state)
+        if chores == "-":
+            chores = _count(len(state.chores), "chore")
+    return [
+        ("Tools", f"{count('tools', 'tool')}, {count('toolsets', 'toolset')}"),
+        ("Models", f"{count('models', 'model')}, {count('providers', 'provider')}"),
+        ("Caps", caps),
+        ("Chores", chores),
+        ("Workspaces", workspaces),
+    ]
 
 
 def _running_resources(

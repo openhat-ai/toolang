@@ -1,6 +1,6 @@
 # Unified agent instances
 
-- Definition only; human approval required before implementation. Replaces [draft #882](https://github.com/openhat-ai/toolang/pull/882).
+- Approved in [#883](https://github.com/openhat-ai/toolang/pull/883). Replaces [draft #882](https://github.com/openhat-ai/toolang/pull/882).
 - Goal: one global registry, uniform layouts, isolated roaming execution, correct Top activity, retained offline history.
 
 ## Identity and layout
@@ -43,7 +43,7 @@ instance_id = "r" + hex16(request_order_ns) + SHA256(canonical_source_path_utf8 
 - Default roaming selection: maximum validated local ID for that canonical source, including failed/exited instances. Latest means startup request; completion/mtime never reorder. Corrupt/ambiguous metadata fails.
 - Pin root/identity/generation once per command. `steer`/`cancel` require that live owner; never launch a replacement.
 - `fork`/`rewind`: existing live API; offline `ThreadManager` transactions only after guarded native/sandbox death checks. Preserve idle/head/anchor rules; unknown/starting/stopping owners reject writes.
-- New roaming script/Chat/serve always creates a fresh instance; `-i` cannot revive retained roots.
+- New roaming script/Chat always creates a fresh instance; `-i` cannot revive retained roots. Roaming has no `serve`/`start`/`stop`; the caller owns shutdown.
 
 ```sh
 too /work/demo/aid.too inspect -i r18e0b5f817d00000e2c7a0f23d51a9c6 runs
@@ -67,4 +67,4 @@ too /work/demo/aid.too inspect -i r18e0b5f817d00000e2c7a0f23d51a9c6 runs
 - Checks: deterministic offline tests/fake sandboxes; opt-in Docker validation. Implementation runs default repository verification; docs-only runs source/link/example checks and `git diff --check`.
 - Upgrade/rollback: stop old workloads; reject unverifiable owners; retain old roots for explicit migration. Old writers cannot open schema 63.
 - Risks: stricter defaults, preparation/snapshot disk cost, retained roots, OS visiting-root cleanup, existing guest trust. No general history merge or cleanup in scope.
-- Update current designs/changelog with implementation. Open questions: none pending; approval remains required.
+- Update current designs/changelog with implementation. Open questions: none pending.

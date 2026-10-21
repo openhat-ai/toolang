@@ -1,16 +1,12 @@
 # Current and recent activity
 
-`too top` observes the selected root's validated local resident, visiting and
-roaming inventory. `too alice top` scopes discovery to that resident's status and
-matching registration references, including its temporary instances. Unrelated
-agents and registry entries cannot invalidate its totals; stopped or unresolved
-instances still registered to that resident remain part of its scope.
-Observation neither starts agents nor acquires server leases. Discovery refreshes
-every five seconds; known source paths remain in memory for eight hours after
-their last discovery.
-Each new team Top session starts from the resident list and current validated
-instance registrations. It does not recover previously deregistered
-visiting/roaming instances from an earlier session or persist an additional source registry.
+`too top` discovers only active references in the selected Toolang root's
+`.runtime/instances/`. `too alice top` selects that resident's exact instance name;
+other placements with the same agent name are excluded. Installed/stopped homes
+are not scanned. Observation starts no runtime and acquires no server lease.
+Discovery refreshes every five seconds; already observed sources remain in memory
+for eight hours to supply historical windows. A new session starts from current
+registrations only and creates no second source registry.
 These retained sources contribute historical completions and usage only; their
 departure stops polling the old live endpoint and does not make current
 active-root coverage unavailable. Queued live requests are canceled; running
@@ -58,7 +54,7 @@ change these values. THREAD appears between AGENT and RUN and shows the full
 owning root's thread ID on every row, or `-` when unavailable. RUN always shows
 the full owning physical root ID. Terminal Runs show
 only their state. AGENT shows the existing instance name
-(for example, `aid@r70200d1f`) without the appended `#runtime_instance` ID.
+(for example, `aid@r18e03d00e6223810692a4880f56a5894`).
 
 Interactive Top fills the terminal: a green table heading, deep cyan selected
 row, and one cyan function-key bar anchored at the bottom. Fn numbers use
@@ -101,7 +97,7 @@ known totals/rows and remain in JSON without a global notice.
 
 The read-only agent adapter exposes:
 
-- `GET /api/v0/top/snapshot?recent=300`: live trees and the first 100 completed
+- `GET /api/v0/top/snapshot?recent=300` (OpenAPI group `activity`): live trees and the first 100 completed
   roots, with terminal counts over the whole interval. Hosting pins a source
   snapshot and captures LiveTree under the executor publication gate, then releases
   the gate before scanning. Page with both `before_time` and `after_id`, using the

@@ -90,7 +90,7 @@ COMMAND_SPECS: Mapping[str, CommandSpec] = {
             "serve",
             "before",
             "after",
-            placements=_ALL_PLACEMENTS,
+            placements=_HOSTED,
             prepare="program",
             preparation_owner="command",
         ),
@@ -276,6 +276,8 @@ def dispatch_roaming(
         spec = command_spec(command)
         if not spec.accepts(position, "roaming"):
             return _unsupported_target(command, "roaming", position)
+        layout = None
+        owns_preparation = False
         try:
             prepare = _preparation(spec, body, position)
             if command == "workspace" and (
@@ -285,18 +287,107 @@ def dispatch_roaming(
                 if not source.is_file():
                     raise FileNotFoundError(f"agent program not found: {source}")
                 prepare = "layout"
-            layout = _roaming_layout(source, prepare)
-        except (OSError, ValueError) as exc:
+            body, instance_id = _instance_option(body, command)
+            if command in {
+                "info",
+                "inspect",
+                "steer",
+                "cancel",
+                "fork",
+                "rewind",
+                "rerun",
+            }:
+                from toolang.up.identity import select_roaming
+
+                try:
+                    layout = select_roaming(source, instance_id)
+                except FileNotFoundError:
+                    if not {"--help", "-h"}.intersection(body):
+                        raise
+                    from toolang.up import source as agent_sources
+
+                    layout = agent_sources.roaming_layout(source)
+            elif command == "chat" and {"--help", "-h"}.intersection(body):
+                from toolang.up import source as agent_sources
+
+                layout = agent_sources.roaming_layout(source)
+            elif command == "chat":
+                from toolang.up.identity import allocate_roaming
+                from ..common.context import resolve_root
+                from toolang.up import source as agent_sources
+
+                if not source.is_file():
+                    raise FileNotFoundError(f"agent program not found: {source}")
+                continuation = None
+                if command == "chat" and any(
+                    token in {"--thread", "-t"} or token.startswith("--thread=")
+                    for token in body
+                ):
+                    from toolang.up.identity import select_roaming
+
+                    try:
+                        continuation = select_roaming(source)
+                    except FileNotFoundError:
+                        pass
+                if continuation is not None and continuation.run_store.is_file():
+                    from toolang.up.replay import prepare_continuation
+
+                    thread_selector = "latest"
+                    for index, token in enumerate(body):
+                        if token.startswith("--thread="):
+                            thread_selector = token.partition("=")[2]
+                        elif (
+                            token in {"--thread", "-t"}
+                            and index + 1 < len(body)
+                            and not body[index + 1].startswith("-")
+                        ):
+                            thread_selector = body[index + 1]
+                    layout = prepare_continuation(
+                        continuation,
+                        toolang_root=resolve_root(None),
+                        source_thread=thread_selector,
+                    )
+                    owns_preparation = True
+                else:
+                    layout = allocate_roaming(source, toolang_root=resolve_root(None))
+                    owns_preparation = True
+                    agent_sources.materialize_roaming_program(source, layout=layout)
+            else:
+                if instance_id is not None:
+                    raise ValueError(
+                        "--instance only applies to existing-instance commands"
+                    )
+                layout = _roaming_layout(source, prepare)
+        except (OSError, ValueError, ToolangError, RuntimeError) as exc:
+            if owns_preparation:
+                _finish_roaming_preparation(layout, str(exc))
             echo_error(str(exc))
             return 1
-        return run_app(
-            _selected_command_args(body, position, target=layout.name),
-            layout,
-            source,
-        )
+        except KeyboardInterrupt:
+            if owns_preparation:
+                _finish_roaming_preparation(layout, "preparation interrupted")
+            return 130
+        try:
+            return run_app(
+                _selected_command_args(body, position, target=layout.name),
+                layout,
+                source,
+            )
+        finally:
+            if owns_preparation:
+                _finish_roaming_preparation(
+                    layout, "command ended before runtime startup"
+                )
     from .commands import script
 
     return script.dispatch(global_args, body, prog_name=prog_name)
+
+
+def _finish_roaming_preparation(layout: AgentLayout | None, message: str) -> None:
+    from toolang.up.workload import finish_preparation
+
+    if layout is not None:
+        finish_preparation(layout, message)
 
 
 def dispatch_visiting(
@@ -320,7 +411,27 @@ def dispatch_visiting(
     spec = command_spec(command)
     if not spec.accepts(position, "visiting"):
         return _unsupported_target(command, "visiting", position)
-    prepare = _preparation(spec, body, position)
+    try:
+        body, instance_id = _instance_option(body, command)
+    except ValueError as exc:
+        echo_error(str(exc))
+        return 1
+    prepare = (
+        "layout"
+        if command
+        in {
+            "info",
+            "inspect",
+            "steer",
+            "cancel",
+            "fork",
+            "rewind",
+            "chat",
+            "rerun",
+            "serve",
+        }
+        else _preparation(spec, body, position)
+    )
     progress = make_cli_progress(
         enabled=prepare == "program",
         preparation=True,
@@ -336,6 +447,8 @@ def dispatch_visiting(
                 if prepare == "program"
                 else agent_sources.visiting_layout(selector, toolang_root=toolang_root)
             )
+            if instance_id is not None and instance_id != layout.instance_id:
+                raise ValueError("instance does not match the visiting target")
             if spec.preparation_owner == "routing":
                 progress.complete_preparation()
             return run_app(
@@ -526,3 +639,44 @@ def _unsupported_target(
 def _unsupported_global_options() -> int:
     echo_error("too <path>.too does not support global CLI options")
     return 1
+
+
+def _instance_option(body: list[str], command: str) -> tuple[list[str], str | None]:
+    """Strip the shared selector before command-specific parsers run."""
+    result: list[str] = []
+    instance_id = None
+    index = 0
+    while index < len(body):
+        token = body[index]
+        if token in {"--", "-"}:
+            result.extend(body[index:])
+            break
+        if token in {"-i", "--instance"} or token.startswith("--instance="):
+            if instance_id is not None:
+                raise ValueError("--instance may only be specified once")
+            if "=" in token:
+                instance_id = token.partition("=")[2]
+            else:
+                index += 1
+                if index == len(body):
+                    raise ValueError("--instance requires a value")
+                instance_id = body[index]
+            if command not in {
+                "info",
+                "inspect",
+                "steer",
+                "cancel",
+                "fork",
+                "rewind",
+                "rerun",
+                "stop",
+            }:
+                raise ValueError(
+                    "--instance only applies to existing-instance commands"
+                )
+            if not instance_id:
+                raise ValueError("--instance requires a value")
+        else:
+            result.append(token)
+        index += 1
+    return result, instance_id

@@ -61,3 +61,7 @@ archive_after_seconds = 86400
 Keep the original `runs.db` records: exact partial-minute boundaries still read
 their fields. Replacing the source or changing archived records requires rebuilding
 the derived statistics database.
+
+Imported replay history is excluded through source ownership views before recent,
+completion, and archival projection. Only newly owned facts count for a destination;
+repeated replay preserves original ownership and never duplicates usage.

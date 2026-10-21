@@ -19,7 +19,8 @@ drivers. Only `serve`, `start`, and
 run lifecycle. Neither accepts a driver option.
 
 Chat rejects a selection without chat before starting; roaming Chat still requires
-an explicit selection containing chat. For an existing runtime,
+an explicit selection containing chat. `fork --chat` and `rewind --chat` select
+chat for their new continuation executor. For an existing runtime,
 an omitted selection preserves its drivers; an explicit selection must match.
 A mismatch or disabled chat fails with restart guidance without changing the
 running agent. Runtime profile, status, and startup logs report enabled drivers.

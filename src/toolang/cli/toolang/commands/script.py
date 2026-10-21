@@ -69,6 +69,7 @@ if TYPE_CHECKING:
     from toolang.common.layout import AgentLayout
     from toolang.execution.executor import LocalRunHandle
     from toolang.execution.remote import RemoteRunClient
+    from toolang.up.workload import ForegroundWorkload
     from toolang.execution.records import RunRecord
     from toolang.execution.store import RunStore
     from toolang.execution.types import RunOverride, SessionSetting
@@ -685,7 +686,7 @@ def _run(
     from toolang.execution.store import RunStore
     from toolang.state.prepare import prepare_agent_state
     from toolang.up import source as agent_sources
-    from toolang.up.observation import RuntimeRegistration
+    from toolang.up.workload import ForegroundWorkload
     from toolang.cli.common.context import resolve_root
     from toolang.up.logging import configure_logging_plan, resolve_agent_logging
 
@@ -700,9 +701,10 @@ def _run(
     accepted: list[str] = []
     runnable_ref = f"{runnable_kind}:{runnable}"
     try:
-        layout = replace(
-            agent_sources.materialize_roaming_program(source_path), instance=uuid4().hex
-        )
+        from toolang.up.identity import allocate_roaming
+
+        layout = allocate_roaming(source_path, toolang_root=resolve_root(None))
+        agent_sources.materialize_roaming_program(source_path, layout=layout)
         workspaces = resolve_workspaces(
             layout,
             procdir=Path.cwd(),
@@ -744,8 +746,8 @@ def _run(
                 terminal.set_run(run)
 
             if server is None:
-                runtime_scope.enter_context(
-                    RuntimeRegistration(
+                workload = runtime_scope.enter_context(
+                    ForegroundWorkload(
                         layout,
                         toolang_root=layout.toolang_root or resolve_root(None),
                         drivers=frozenset(),
@@ -783,6 +785,7 @@ def _run(
                             session_override=session_override,
                             quiet=quiet,
                             progress=progress,
+                            workload=workload,
                         )
                     )
             else:
@@ -803,6 +806,13 @@ def _run(
                 )
                 run_id = accepted[0] if accepted else None
     except KeyboardInterrupt:
+        if layout is not None:
+            from toolang.up.workload import fail_preparation
+            from toolang.up.instance import read_instance
+
+            entry = read_instance(layout.runtime_status)
+            if entry is not None and entry["workload"].get("status") == "preparing":
+                fail_preparation(layout, RuntimeError("script interrupted"))
         if run_id is None and accepted:
             run_id = accepted[0]
         progress.close()
@@ -816,6 +826,10 @@ def _run(
             typer.echo(f"Log: {log_path}", err=True)
         return 130
     except (OSError, ValueError, ToolangError, RuntimeError) as exc:
+        if layout is not None:
+            from toolang.up.workload import fail_preparation
+
+            fail_preparation(layout, exc)
         progress.close()
         message = (
             progress.failure_message(exc)
@@ -1201,15 +1215,15 @@ async def _execute(
     session_override: RunOverride,
     quiet: bool,
     progress: CliProgress | None = None,
+    workload: ForegroundWorkload | None = None,
 ) -> RunRecord:
     from toolang.base.types.policy import RunBindings
     from toolang.execution.calls import resolve_spec
-    from toolang.execution.executor import RunExecutor
-    from toolang.execution.threads import ThreadManager
+    from toolang.up.core import AgentCore
+    from toolang.up.lifecycle import ServerLifecycle
+    from toolang.up.foreground import foreground_api
     from toolang.execution.types import ThreadKind
     from toolang.lang.includes import resolve_file_include
-    from toolang.setup import SetupWatcher
-    from toolang.state.watcher import StateWatcher
 
     from ...common.policy import (
         resolve_ceiling_overrides,
@@ -1223,30 +1237,22 @@ async def _execute(
 
     environ = load_runtime_environ(layout, base_environ=os.environ)
     allow_overrides = resolve_ceiling_overrides(environ)
-    setup_watcher = SetupWatcher(
+    core = AgentCore(
         layout,
         sandbox=sandbox,
-        allow_overrides={
-            name: value
-            for name, value in allow_overrides.items()
-            if name in {"models", "tools"}
-        },
-        default_overrides={
-            **resolve_default_overrides(environ),
-        },
+        drivers=frozenset(),
+        store=store,
+        ids=ids,
+        initial_state=state,
+        start_executor=False,
+        workspace_additions=state.workspace_additions,
+        lifecycle=ServerLifecycle(workload.token, "foreground") if workload else None,
+        ceiling_overrides=allow_overrides,
+        default_overrides=resolve_default_overrides(environ),
         limit_overrides=resolve_limit_overrides(environ),
         compact_override=resolve_compact_override(environ),
     )
-    state_watcher = StateWatcher(
-        layout,
-        allow_overrides={
-            name: value
-            for name, value in allow_overrides.items()
-            if name in {"psyches", "skills", "services", "prompts"}
-        },
-        initial_state=state,
-        workspace_additions=state.workspace_additions,
-    )
+    setup_watcher, state_watcher = core.setup, core.state
     sink = progress.sink if progress is not None else None
     if progress is not None:
         progress.complete_preparation()
@@ -1255,13 +1261,7 @@ async def _execute(
     models = setup.models_effective(progress=sink)
     setup.tools(progress=sink)
     fallback_model = first_model_ref(models) if setup.defaults.model is None else None
-    executor = RunExecutor(
-        store,
-        ids,
-        setup=setup_watcher.current,
-        state=state_watcher.current,
-        sync_state=state_watcher.sync,
-    )
+    executor = core.executor
     spec = resolve_spec(
         override,
         input,
@@ -1287,7 +1287,7 @@ async def _execute(
         else resolve_terminal_surfaces(environment=environ, output_stream=sys.stderr)
     )
     client_id = f"client_{uuid4().hex}"
-    thread = ThreadManager(store, ids).create(
+    thread = core.threads.create(
         kind=ThreadKind.EXEC,
         client_id=client_id,
         request_id=f"request_{uuid4().hex}",
@@ -1309,17 +1309,22 @@ async def _execute(
     stop_watching = asyncio.Event()
     watching = asyncio.create_task(state_watcher.run(stop_signal=stop_watching))
     try:
-        handle = executor.run(
-            spec,
-            run_id=run_id,
-            tracer=tracer,
-            client_id=client_id,
-            request_id=f"request_{uuid4().hex}",
-        )
-        return await await_script_run(handle)
+        from contextlib import AsyncExitStack
+
+        async with AsyncExitStack() as scope:
+            if workload is not None:
+                await scope.enter_async_context(foreground_api(core, workload))
+            handle = executor.run(
+                spec,
+                run_id=run_id,
+                tracer=tracer,
+                client_id=client_id,
+                request_id=f"request_{uuid4().hex}",
+            )
+            return await await_script_run(handle)
     finally:
         try:
-            await executor.stop()
+            await core.close()
         finally:
             stop_watching.set()
             try:

@@ -37,10 +37,11 @@ then the bundled catalog. Within a layer, `plugin.model_catalog.models_dev.path`
 precedes `toolang.catalog.json`. A project file named `catalog.json` is ignored.
 Resident agents retain their root/home `catalog.json` convention.
 
-Generated state stays in `srcdir/.toolang/`. It can be deleted while the runtime
-is stopped; this removes local history, caches, and `.lab` output. Roaming scripts
-use process/container environment variables and do not load project `.env` files
-or settings from the resident `~/.toolang` root.
+Each invocation owns `<srcdir>/.toolang/<agent>@<instance_id>/`; agent home is
+`<agent_root>/agents/<agent>`. Status, stores, State, logs, and tool rooms are
+isolated. Published roots survive exit/failure; runtime cleanup never deletes them.
+Roaming scripts use process/container environment variables; they do not load
+project `.env` files or resident-root dotenv files. Source-owned edit guards remain shared.
 
 ## Runnable input and help
 

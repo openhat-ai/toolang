@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import ExitStack
-from dataclasses import dataclass
+from dataclasses import replace
 import os
 import sys
 import json
@@ -23,8 +23,8 @@ from toolang.cli.common.terminal_title import agent_label
 
 import typer
 from typer._click.exceptions import ClickException
-from typer._click.core import ParameterSource
 
+from toolang.cli.common.parameters import InstanceOption
 from toolang.cli.common.parameters import (
     AllowOptions,
     CompactModelOption,
@@ -45,6 +45,7 @@ from toolang.cli.common.agent_server import (
 
 import httpx
 
+from toolang.base.errors import ToolangError
 from toolang.plugin.catalogs.models_dev.path import MODEL_CATALOG_ENV
 from toolang.cli.common.policy import (
     resolve_default_overrides,
@@ -54,11 +55,7 @@ from toolang.cli.common.policy import (
 )
 from toolang.up import source as agent_sources
 from toolang.up import process as agents
-from ....up.logging import (
-    LoggingPlan,
-    configure_logging_plan,
-    resolve_agent_logging,
-)
+from ...common.startup import resolve_runtime_launch
 from ...common.context import (
     ModelCatalogOption,
     cli_context,
@@ -81,14 +78,6 @@ if TYPE_CHECKING:
     from toolang.up.sandbox import LaunchSpec
 
 from ...common.progress import CliProgress, runtime_startup_failure_message
-
-
-@dataclass(frozen=True, slots=True)
-class RuntimeLaunch:
-    target: AgentLayout
-    startup: LaunchSpec
-    environ: dict[str, str]
-    log_plan: LoggingPlan
 
 
 def run(
@@ -137,7 +126,7 @@ def run(
     selector = require_runtime_agent(ctx, agent)
     progress = make_cli_progress(preparation=True)
     cleanup_progress = make_cli_progress(leading_gap=True)
-    launch: RuntimeLaunch | None = None
+    launch: LaunchSpec | None = None
     launch_started = False
     try:
         with ExitStack() as terminal_scope, progress, cleanup_progress:
@@ -177,12 +166,18 @@ def run(
                 workspace_options=workspace,
                 workdir=single_workdir(workdir),
             )
+            prepared = agent_sources.prepare_visiting_layout(
+                target,
+                toolang_root=context_root(ctx),
+                progress=progress.sink,
+            )
+            if prepared is not target:
+                launch = replace(launch, serve=replace(launch.serve, layout=prepared))
             with progress.suspended():
-                warn_development_package_source(launch.startup)
+                warn_development_package_source(launch)
             launch_started = True
-            if launch.startup.sandbox == "host":
+            if launch.sandbox == "host":
                 from toolang.up.server import serve as serve_agent
-                from dataclasses import replace
                 from toolang.plugin.sandboxes.host import (
                     host_sandbox_description,
                     HOST_SANDBOX_DESCRIPTION_ENV,
@@ -192,12 +187,12 @@ def run(
                 environ[HOST_SANDBOX_DESCRIPTION_ENV] = host_sandbox_description()
                 user_call(
                     sandbox_runtime.prepare_launch_state,
-                    launch.startup,
+                    launch,
                     progress=progress.sink,
                 )
                 exit_code = user_call(
                     serve_agent,
-                    replace(launch.startup.serve, toolang_root=context_root(ctx)),
+                    replace(launch.serve, toolang_root=context_root(ctx)),
                     environ=environ,
                     sandbox="host",
                 )
@@ -205,9 +200,9 @@ def run(
                 exit_code = user_call(
                     asyncio.run,
                     sandbox_runtime.run(
-                        launch.startup,
+                        launch,
                         on_ready=lambda state: _report_foreground_ready(
-                            launch.target.name, state, progress
+                            launch.serve.layout.name, state, progress
                         ),
                         progress=progress.sink,
                         cleanup_progress=cleanup_progress.sink,
@@ -220,22 +215,25 @@ def run(
         FileNotFoundError,
         OSError,
         RuntimeError,
+        ToolangError,
         ValueError,
         ClickException,
     ) as exc:
+        if not launch_started and progress.failure_stage is not None:
+            raise ClickException(progress.failure_message(exc)) from exc
         if isinstance(exc, ClickException) and not launch_started:
             raise
         if launch_started and launch is not None:
             if cleanup_progress.failure_stage is not None:
                 message = cleanup_progress.failure_message(
                     exc,
-                    log_path=launch.target.runtime_log,
+                    log_path=launch.serve.layout.runtime_log,
                 )
             else:
                 message = runtime_startup_failure_message(
                     progress,
                     exc,
-                    dev_artifact=launch.startup.dev_artifact,
+                    dev_artifact=launch.dev_artifact,
                     development_build=development_source()[0],
                 )
             raise ClickException(message) from exc
@@ -296,7 +294,7 @@ def start(
 
     selector = require_runtime_agent(ctx, agent)
     progress = make_cli_progress(preparation=True)
-    launch: RuntimeLaunch | None = None
+    launch: LaunchSpec | None = None
     launch_started = False
     try:
         with progress, ExitStack() as locks:
@@ -326,14 +324,15 @@ def start(
                 limits=limits,
                 port=port,
                 endpoint_host=endpoint_host,
+                host=host,
             ):
                 return
-            if target.placement == "visiting":
-                target = agent_sources.resolve_visiting_layout(
-                    selector,
-                    toolang_root=context_root(ctx),
-                    progress=progress.sink,
-                )
+            target = agent_sources.prepare_visiting_layout(
+                target,
+                toolang_root=context_root(ctx),
+                source_ref=selector,
+                progress=progress.sink,
+            )
             launch = resolve_startup(
                 target,
                 toolang_root=context_root(ctx),
@@ -351,12 +350,12 @@ def start(
                 background=True,
             )
             with progress.suspended():
-                warn_development_package_source(launch.startup)
+                warn_development_package_source(launch)
             launch_started = True
             handle = user_call(
                 asyncio.run,
-                agents.AgentProcess(launch.target).start(
-                    launch.startup,
+                agents.AgentProcess(launch.serve.layout).start(
+                    launch,
                     progress=progress.sink,
                 ),
             )
@@ -377,12 +376,12 @@ def start(
             runtime_startup_failure_message(
                 progress,
                 exc,
-                log_path=launch.target.runtime_log,
-                dev_artifact=launch.startup.dev_artifact,
+                log_path=launch.serve.layout.runtime_log,
+                dev_artifact=launch.dev_artifact,
                 development_build=development_source()[0],
             )
         ) from exc
-    typer.echo(f"Agent {launch.target.name} started: {handle.state.ref.endpoint}")
+    typer.echo(f"Agent {launch.serve.layout.name} started: {handle.state.ref.endpoint}")
 
 
 def _retain_started(
@@ -399,6 +398,7 @@ def _retain_started(
     limits: list[str] | None,
     port: int | None,
     endpoint_host: str | None,
+    host: str = "127.0.0.1",
 ) -> bool:
     from toolang.up import sandbox as sandbox_runtime
 
@@ -409,20 +409,26 @@ def _retain_started(
             status = process.wait_ready(status, ui_base_url=ui_base_url(), timeout=30)
         if status is None or status.status != "running":
             return False
-        if (
-            allows
-            or defaults
-            or limits
-            or endpoint_host is not None
-            or ctx.get_parameter_source("host") == ParameterSource.COMMANDLINE
-        ):
-            raise ClickException(
-                "startup options cannot be verified on attachment; stop and restart the agent"
-            )
-        if port is not None and port != status.port:
-            raise ClickException(
-                "--port differs from the running agent; stop and restart it"
-            )
+        from toolang.up.contract import require_compatible
+
+        requested = resolve_startup(
+            layout,
+            toolang_root=context_root(ctx),
+            model_catalog=model_catalog,
+            sandbox=sandbox,
+            allows=allows,
+            defaults=defaults,
+            limits=limits,
+            port=port,
+            host=host,
+            endpoint_host=endpoint_host,
+            dev=dev,
+            background=True,
+            compact_model=compact_model,
+            driver=driver,
+            allow_live=True,
+        )
+        require_compatible(layout, requested)
         try:
             with acquire_agent_server(
                 layout,
@@ -465,12 +471,19 @@ def stop(
         bool,
         typer.Option(help="Force-stop when graceful shutdown does not complete"),
     ] = False,
+    instance: InstanceOption = None,
 ) -> None:
     from ...common.progress import make_cli_progress
 
     agent_name = require_runtime_agent(ctx, agent)
     root = context_root(ctx)
     layout = cli_context(ctx).layout or AgentLayout.resident(root, agent_name)
+    from toolang.up.instance import read_instance
+
+    entry = read_instance(layout.runtime_status)
+    expected_launch_id = cli_context(ctx).launch_id or (
+        entry["launch_id"] if entry else None
+    )
     progress = make_cli_progress()
     try:
         with progress:
@@ -479,6 +492,11 @@ def stop(
                 agents.AgentProcess(layout).stop(
                     force=force,
                     progress=progress.sink,
+                    **(
+                        {"expected_launch_id": expected_launch_id}
+                        if expected_launch_id is not None
+                        else {}
+                    ),
                 ),
             )
     except (OSError, RuntimeError, ClickException) as exc:
@@ -536,6 +554,17 @@ def serve(
     runtime_instance: Annotated[
         str | None, typer.Option("--runtime-instance", hidden=True)
     ] = None,
+    instance_id: Annotated[
+        str | None, typer.Option("--instance-id", hidden=True)
+    ] = None,
+    placement: Annotated[str, typer.Option("--placement", hidden=True)] = "resident",
+    source_path: Annotated[
+        Path | None, typer.Option("--source-path", hidden=True)
+    ] = None,
+    store_schema: Annotated[int, typer.Option("--store-schema", hidden=True)] = 63,
+    source_edit_lock: Annotated[
+        Path | None, typer.Option("--source-edit-lock", hidden=True)
+    ] = None,
     workspace_bindings: Annotated[
         str, typer.Option("--workspace-bindings", hidden=True)
     ] = "{}",
@@ -558,11 +587,27 @@ def serve(
         or lifetime not in {"persistent", "foreground", "automatic"}
     ):
         raise ClickException("invalid workload startup inputs")
+    from toolang.execution.store import RUN_STORE_SCHEMA
+    from typing import cast
+    from toolang.common.layout import AgentPlacement
+
+    if store_schema != RUN_STORE_SCHEMA or placement not in {
+        "resident",
+        "visiting",
+        "roaming",
+    }:
+        raise ClickException(
+            "workload requires a compatible Toolang runtime/store schema"
+        )
+    if runtime_instance is not None:
+        raise ClickException("legacy runtime instances cannot be resumed")
     layout = AgentLayout(
         agent_root or context_root(ctx),
         agent,
-        "resident",
-        instance=runtime_instance,
+        cast(AgentPlacement, placement),
+        instance_id=instance_id,
+        source_path=source_path,
+        source_edit_lock=source_edit_lock,
         project_inputs=source_policy == "project",
         managed_membership=membership == "managed",
     )
@@ -618,17 +663,17 @@ def resolve_startup(
     driver: str | None = None,
     workspace_options: list[str] | None = None,
     workdir: str | None = None,
-) -> RuntimeLaunch:
-    from toolang.up import sandbox as sandbox_runtime
-    from toolang.cli.common.ports import agent_port
-
+    allow_live: bool = False,
+) -> LaunchSpec:
     from toolang.up.config import default_drivers, parse_drivers
+    from toolang.up.contract import bound_drivers
 
-    drivers = (
-        user_call(parse_drivers, driver)
-        if driver is not None
-        else default_drivers(target.placement)
-    )
+    if driver is not None:
+        drivers = user_call(parse_drivers, driver)
+    elif allow_live:
+        drivers = user_call(bound_drivers, target)
+    else:
+        drivers = default_drivers(target.placement)
     root, agent = target.root, target.name
     workspaces = resolve_workspaces(
         target, procdir=Path.cwd(), paths=workspace_options or (), workdir=workdir
@@ -636,7 +681,11 @@ def resolve_startup(
     if target.placement == "resident" and not target.home.is_dir():
         raise ClickException(f"Agent {agent} not found")
     existing = agents.AgentProcess(target).status(ui_base_url=ui_base_url())
-    if existing is not None and existing.status in {"running", "preparing", "starting"}:
+    if (
+        not allow_live
+        and existing is not None
+        and existing.status in {"running", "preparing", "starting"}
+    ):
         raise ClickException(active_agent_error(existing))
     environ = load_runtime_environ(target, base_environ=os.environ)
     toolang_root = (
@@ -644,56 +693,25 @@ def resolve_startup(
         or target.toolang_root
         or Path(environ.get("TOOLANG_ROOT", str(root)))
     )
-    environ["TOOLANG_ROOT"] = str(toolang_root)
-    port = user_call(agent_port, target, port, environ=environ)
-    if model_catalog := resolve_model_catalog_option(model_catalog):
-        environ[MODEL_CATALOG_ENV] = str(model_catalog)
-    log_plan = resolve_agent_logging(
-        mode="start" if background else "run",
+    return user_call(
+        resolve_runtime_launch,
+        target,
+        toolang_root=toolang_root,
         environ=environ,
-        agent_log_path=target.runtime_log,
+        drivers=drivers,
+        lifetime="persistent" if background else "foreground",
+        background=background,
+        sandbox=sandbox,
+        dev=dev,
+        model_catalog=resolve_model_catalog_option(model_catalog),
+        host=host,
+        endpoint_host=endpoint_host,
+        port=port,
+        active_port=existing.port if allow_live and existing is not None else None,
+        allows=allows,
+        defaults=defaults,
+        limits=limits,
+        compact_override=user_call(resolve_compact_override, {}, compact_model),
+        workspace_additions=workspaces.additions,
+        workdir=workspaces.workdir,
     )
-    if not background:
-        configure_logging_plan(log_plan)
-    ceiling_overrides = user_call(
-        resolve_ceiling_overrides,
-        log_plan.environ,
-        allows,
-    )
-    default_overrides = user_call(
-        resolve_default_overrides,
-        log_plan.environ,
-        defaults,
-    )
-    limit_overrides = user_call(
-        resolve_limit_overrides,
-        log_plan.environ,
-        limits,
-    )
-    startup = user_call(
-        asyncio.run,
-        sandbox_runtime.resolve_launch(
-            layout=target,
-            drivers=drivers,
-            lifetime="persistent" if background else "foreground",
-            host=host,
-            endpoint_host=endpoint_host,
-            port=port,
-            sandbox=sandbox,
-            ceiling_overrides=ceiling_overrides,
-            default_overrides=default_overrides,
-            compact_override=user_call(
-                resolve_compact_override, log_plan.environ, compact_model
-            ),
-            limit_overrides=limit_overrides,
-            dev=dev,
-            log_spec=log_plan.spec,
-            output="file" if background else "inherit",
-            log_path=log_plan.path,
-            toolang_root=toolang_root,
-            environ=log_plan.environ,
-            workspace_additions=workspaces.additions,
-            workdir=workspaces.workdir,
-        ),
-    )
-    return RuntimeLaunch(target, startup, log_plan.environ, log_plan)

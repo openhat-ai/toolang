@@ -173,6 +173,41 @@ def test_existing_live_batch_is_only_observed(tmp_path, server, monkeypatch, sta
     asyncio.run(scenario())
 
 
+def test_imported_batch_cannot_handle_messages_or_advance_the_live_cursor(
+    tmp_path, server, monkeypatch
+):
+    harness = harness_with_msg(
+        tmp_path, server, [ModelCallResult(message=ModelMessage.assistant("Done."))]
+    )
+
+    async def scenario():
+        async with (
+            harness,
+            make_client(server) as alice,
+            make_client(server, "human:owner") as human,
+        ):
+            await prepare(alice, human)
+            await human.send("gc_00000001", body="Handle once.")
+            advance = AsyncMock(side_effect=BackendUnavailable("cursor unavailable"))
+            monkeypatch.setattr(alice, "advance_talk_cursor", advance)
+            await make_loop(tmp_path, alice, harness).poll()
+            (run,) = harness.store.list_runs()
+            with harness.store.write_transaction():
+                harness.store._conn.execute(
+                    "INSERT INTO imported_runs(run,owner) VALUES(?,?)", (run.id, "old")
+                )
+            advance.reset_mock()
+            loop = make_loop(tmp_path, alice, harness)
+            loop.handle = AsyncMock()
+            await loop.poll()
+            loop.handle.assert_not_awaited()
+            advance.assert_not_awaited()
+            assert await alice.talk_cursor("gc_00000001") == "0-0"
+            assert len(harness.adapter.invocations) == 1
+
+    asyncio.run(scenario())
+
+
 @pytest.mark.parametrize("saved", [False, True])
 def test_cursor_save_failure_and_lost_ack_do_not_repeat_dispatch(
     tmp_path, server, monkeypatch, saved

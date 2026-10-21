@@ -155,17 +155,22 @@ def test_visiting_clients_share_until_the_final_client_exits(tmp_path, killed):
         assert layout.run_store.exists()
 
 
-def test_start_promotes_same_generation_without_fetch_or_driver_changes(tmp_path):
+@pytest.mark.parametrize("explicit_drivers", [False, True])
+def test_start_promotes_same_generation_without_fetch_or_driver_changes(
+    tmp_path, explicit_drivers
+):
     with _visiting_chat(tmp_path) as (layout, url, chat, command, requests):
         client = chat()
         original = AgentProcess(layout).state()
         assert original is not None
         fetched = len(requests)
         conflict = command(url, "start", "--enable", "chat,talk", success=False)
-        assert "differs" in conflict.stderr
+        assert "drivers" in conflict.stderr
         wrong_port = command(url, "start", "--port", "1", success=False)
-        assert "--port differs" in wrong_port.stderr
-        promoted = command(url, "start")
+        assert "port" in wrong_port.stderr
+        promoted = command(
+            url, "start", *(["--enable", "chat"] if explicit_drivers else [])
+        )
         expected = f"Agent {layout.name} running: {original['endpoint']}"
         assert promoted.stdout.strip() == expected
         assert len(requests) == fetched
@@ -173,7 +178,7 @@ def test_start_promotes_same_generation_without_fetch_or_driver_changes(tmp_path
         assert current is not None and current["launch_id"] == original["launch_id"]
         assert current["drivers"] == original["drivers"]
         assert current["lifetime"] == "persistent"
-        assert command("start", url).stdout.strip() == expected
+        assert command("start", url, "--enable", "chat").stdout.strip() == expected
         client.stdin.close()
         assert client.wait(timeout=10) == 0
         endpoint = original["endpoint"]
@@ -182,6 +187,22 @@ def test_start_promotes_same_generation_without_fetch_or_driver_changes(tmp_path
         assert len(requests) == fetched
         status = AgentProcess(layout).status(ui_base_url="")
         assert status is not None and status.status == "stopped"
+
+
+def test_chat_reuses_default_hosted_drivers_without_relaunch(tmp_path):
+    with _visiting_chat(tmp_path) as (layout, url, chat, command, requests):
+        command(url, "start")
+        original = AgentProcess(layout).state()
+        assert original is not None and original["drivers"] == ["chat", "talk"]
+        fetched = len(requests)
+        client = chat()
+        client.stdin.close()
+        assert client.wait(timeout=10) == 0
+        current = AgentProcess(layout).state()
+        assert current is not None
+        assert current["launch_id"] == original["launch_id"]
+        assert current["drivers"] == original["drivers"]
+        assert len(requests) == fetched
 
 
 def test_lease_loss_ends_an_idle_client_without_relaunch(tmp_path):

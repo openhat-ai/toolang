@@ -10,7 +10,7 @@ from typing import Any, cast
 import pytest
 import httpx
 
-from toolang.cli.common import agent_server
+from toolang.cli.common import agent_server, startup
 from toolang.common.layout import AgentLayout
 from toolang.up.logging import LoggingPlan
 from toolang.up.process import AgentStatus
@@ -92,6 +92,32 @@ def _set_status(
     layout: AgentLayout,
     status: AgentStatus | None,
 ) -> None:
+    if status is not None and status.status == "running":
+        from toolang.up.instance import update_instance
+        from toolang.up.contract import startup_contract
+
+        update_instance(
+            layout.runtime_status,
+            lambda entry: entry["control"].update(
+                last_successful={"sandbox": status.sandbox, "endpoint": status.endpoint}
+            ),
+        )
+        startup = agent_server._resolve_launch(
+            layout,
+            sandbox=status.sandbox,
+            dev=None,
+            model_catalog=None,
+            base_environ=None,
+            drivers=frozenset({"chat"}),
+            active_port=status.port,
+        )
+        update_instance(
+            layout.runtime_status,
+            lambda entry: entry["control"].update(
+                startup_contract=startup_contract(startup), drivers=["chat"]
+            ),
+        )
+
     class Process:
         def __init__(self, selected: AgentLayout) -> None:
             assert selected == layout
@@ -103,6 +129,122 @@ def _set_status(
             return status
 
     monkeypatch.setattr(agent_server.agents, "AgentProcess", Process)
+
+
+def test_visiting_reuse_validates_effective_parameters_before_fetch(
+    tmp_path, monkeypatch
+):
+    layout = AgentLayout.visiting(
+        "https://example.test/strict.too", "strict", toolang_root=tmp_path
+    )
+    _set_status(
+        monkeypatch,
+        layout,
+        _status(value="running", endpoint="http://localhost:8123", sandbox="host"),
+    )
+    prepared = []
+    monkeypatch.setattr(
+        "toolang.up.source.resolve_visiting_layout",
+        lambda *_args, **_kwargs: prepared.append(layout) or layout,
+    )
+    with pytest.raises(
+        agent_server.AgentServerAcquisitionError, match="startup parameters differ"
+    ):
+        with agent_server.acquire_agent_server(
+            layout,
+            sandbox=None,
+            ui_base_url="https://ui.test",
+            compact_override=ModelOverride(identity="test/different"),
+            show_progress=False,
+        ):
+            pytest.fail("mismatched attachment was accepted")
+    assert not prepared
+    with agent_server.acquire_agent_server(
+        layout, sandbox=None, ui_base_url="https://ui.test", show_progress=False
+    ) as ref:
+        assert ref is not None
+    assert prepared == [layout]
+
+
+@pytest.mark.parametrize("placement", ["resident", "visiting", "roaming"])
+@pytest.mark.parametrize("attach_only", [False, True])
+def test_only_stable_placements_reuse_an_executor(
+    tmp_path, monkeypatch, placement, attach_only
+):
+    from toolang.up.identity import allocate_roaming
+
+    if placement == "resident":
+        layout = AgentLayout.resident(tmp_path, "alice")
+    elif placement == "visiting":
+        layout = AgentLayout.visiting(
+            "https://example.test/alice.too", "alice", toolang_root=tmp_path
+        )
+    else:
+        source = tmp_path / "alice.too"
+        source.write_text("flow main():\n  pass\n")
+        layout = allocate_roaming(source, toolang_root=tmp_path)
+    _set_status(
+        monkeypatch,
+        layout,
+        _status(value="running", endpoint="http://localhost:8123", sandbox="host"),
+    )
+    monkeypatch.setattr(
+        "toolang.up.source.resolve_visiting_layout", lambda *_args, **_kwargs: layout
+    )
+    if placement == "roaming" and not attach_only:
+        with pytest.raises(agent_server.AgentServerAcquisitionError, match="fresh"):
+            with agent_server.acquire_agent_server(
+                layout, sandbox=None, ui_base_url="https://ui.test", show_progress=False
+            ):
+                pytest.fail("a roaming executor was reused")
+    else:
+        with agent_server.acquire_agent_server(
+            layout,
+            sandbox=None,
+            ui_base_url="https://ui.test",
+            show_progress=False,
+            attach_only=attach_only,
+        ) as server:
+            assert server is not None and server.endpoint == "http://localhost:8123"
+
+
+@pytest.mark.parametrize("phase", ["stopped", "failed", "preparing"])
+def test_roaming_requires_its_callers_unstarted_identity(tmp_path, monkeypatch, phase):
+    from toolang.up.identity import allocate_roaming
+    from toolang.up.instance import update_instance
+
+    source = tmp_path / "alice.too"
+    source.write_text("flow main():\n  pass\n")
+    layout = allocate_roaming(source, toolang_root=tmp_path)
+    _set_status(
+        monkeypatch,
+        layout,
+        _status(value="running", endpoint="http://localhost:8123", sandbox="host"),
+    )
+
+    def retained(entry):
+        entry["workload"].update(status=phase, pid=0 if phase == "preparing" else None)
+        if phase != "stopped":
+            entry["control"].pop("startup_contract", None)
+
+    update_instance(layout.runtime_status, retained)
+    monkeypatch.setattr(
+        agent_server.agents,
+        "AgentProcess",
+        lambda *_args: SimpleNamespace(
+            status=lambda **_kwargs: _status(value=phase, sandbox="host")
+        ),
+    )
+
+    async def launch(*_args, **_kwargs):
+        pytest.fail("a retained roaming root was restarted")
+
+    monkeypatch.setattr(agent_server.sandbox_runtime, "launch", launch)
+    with pytest.raises(agent_server.AgentServerAcquisitionError, match="fresh"):
+        with agent_server.acquire_agent_server(
+            layout, sandbox=None, ui_base_url="https://ui.test", show_progress=False
+        ):
+            pytest.fail("a retained roaming root was acquired")
 
 
 @pytest.mark.parametrize(
@@ -122,7 +264,7 @@ def test_startup_override_cannot_be_silently_ignored_by_an_existing_runtime(
         _status(value="running", endpoint="http://localhost:7001", sandbox="host"),
     )
     with pytest.raises(
-        agent_server.AgentServerAcquisitionError, match="only applies when starting"
+        agent_server.AgentServerAcquisitionError, match="startup parameters differ"
     ):
         with agent_server.acquire_agent_server(
             layout,
@@ -147,17 +289,10 @@ def test_agent_server_attaches_to_a_compatible_running_agent(
             sandbox="docker:python:3.13-slim",
         ),
     )
-    monkeypatch.setattr(
-        agent_server,
-        "_resolve_inactive_launch",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            AssertionError("a running agent must not resolve another launch")
-        ),
-    )
 
     with agent_server.acquire_agent_server(
         layout,
-        sandbox="docker",
+        sandbox="docker:python:3.13-slim",
         ui_base_url="https://ui.test",
     ) as selected:
         assert selected == AgentServerRef(
@@ -325,7 +460,9 @@ def test_managed_attachment_checks_its_profile_instead_of_waiting_for_health(
         return server, None
 
     monkeypatch.setattr(agent_server, "_retain_server", retain)
-    with agent_server.acquire_agent_server(layout, sandbox=None, show_progress=False):
+    with agent_server.acquire_agent_server(
+        layout, sandbox=None, show_progress=False, attach_only=True
+    ):
         assert retained == ["launch"]
 
 
@@ -365,7 +502,7 @@ def test_agent_server_rejects_dev_for_an_attached_agent(
 
     with pytest.raises(
         agent_server.AgentServerAcquisitionError,
-        match="only applies when starting a new guest",
+        match="(startup parameters differ|development|wheel|dist)",
     ):
         with agent_server.acquire_agent_server(
             layout,
@@ -543,7 +680,7 @@ def test_agent_server_launches_with_the_requested_lifecycle(
         assert kwargs["dev"] == development
         return launch
 
-    monkeypatch.setattr(agent_server, "_resolve_inactive_launch", resolve_launch)
+    monkeypatch.setattr(agent_server, "_resolve_launch", resolve_launch)
     progress = _Progress(enabled=False)
     shutdown_progress = _Progress(enabled=False)
     presenters = iter((progress, shutdown_progress))
@@ -616,7 +753,7 @@ def test_agent_server_warns_when_a_development_cli_uses_the_package_index(
     launch = SimpleNamespace(sandbox="docker", dev_artifact=None)
     monkeypatch.setattr(
         agent_server,
-        "_resolve_inactive_launch",
+        "_resolve_launch",
         lambda *_args, **_kwargs: launch,
     )
     monkeypatch.setattr(
@@ -696,7 +833,7 @@ def test_agent_server_startup_failure_uses_structured_package_guidance(
     )
     monkeypatch.setattr(
         agent_server,
-        "_resolve_inactive_launch",
+        "_resolve_launch",
         lambda *_args, **_kwargs: SimpleNamespace(
             sandbox="docker",
             dev_artifact=development,
@@ -747,7 +884,7 @@ def test_agent_server_cleanup_does_not_hide_a_body_failure(
     )
     monkeypatch.setattr(
         agent_server,
-        "_resolve_inactive_launch",
+        "_resolve_launch",
         lambda *_args, **_kwargs: SimpleNamespace(
             sandbox="docker",
             dev_artifact=None,
@@ -810,7 +947,7 @@ def test_agent_server_cleans_up_a_launched_guest_with_invalid_identity(
     )
     monkeypatch.setattr(
         agent_server,
-        "_resolve_inactive_launch",
+        "_resolve_launch",
         lambda *_args, **_kwargs: SimpleNamespace(
             sandbox="docker",
             dev_artifact=None,
@@ -878,7 +1015,7 @@ def test_inactive_launch_wraps_environment_errors(
     with pytest.raises(
         agent_server.AgentServerAcquisitionError, match="could not read dotenv"
     ):
-        agent_server._resolve_inactive_launch(
+        agent_server._resolve_launch(
             layout,
             sandbox="docker",
             dev=None,
@@ -926,10 +1063,10 @@ def test_inactive_launch_uses_fresh_environment_and_file_logging(
         return SimpleNamespace(sandbox="docker")
 
     monkeypatch.setattr(agent_server, "load_runtime_environ", load_environ)
-    monkeypatch.setattr(agent_server, "resolve_agent_logging", logging_plan)
+    monkeypatch.setattr(startup, "resolve_agent_logging", logging_plan)
     monkeypatch.setattr(agent_server.sandbox_runtime, "resolve_launch", resolve_launch)
 
-    result = agent_server._resolve_inactive_launch(
+    result = agent_server._resolve_launch(
         layout,
         sandbox="docker",
         dev=development,
@@ -959,6 +1096,9 @@ def test_inactive_launch_uses_fresh_environment_and_file_logging(
         "workspace_additions": None,
         "layout": layout,
         "sandbox": "docker",
+        "host": "127.0.0.1",
+        "endpoint_host": None,
+        "workdir": None,
         "port": None,
         "dev": development,
         "output": "file",
@@ -987,12 +1127,32 @@ def test_sandbox_match_accepts_driver_or_exact_spec() -> None:
 
 @pytest.mark.parametrize(
     "requested,compatible",
-    [(None, True), ({}, False), ({"repo": "/one"}, True), ({"repo": "/two"}, False)],
+    [(None, False), ({}, False), ({"repo": "/one"}, True), ({"repo": "/two"}, False)],
 )
 def test_running_server_cannot_rebind_workspace_names(
     tmp_path, monkeypatch, requested, compatible
 ):
     layout = AgentLayout.resident(tmp_path, "alice")
+
+    from toolang.up.contract import startup_contract
+    from toolang.up.instance import update_instance
+
+    spec = agent_server._resolve_launch(
+        layout,
+        sandbox="host",
+        dev=None,
+        model_catalog=None,
+        base_environ=None,
+        workspace_additions={"repo": "/one"},
+        active_port=7001,
+        drivers=frozenset({"chat"}),
+    )
+    update_instance(
+        layout.runtime_status,
+        lambda entry: entry["control"].update(
+            startup_contract=startup_contract(spec), drivers=["chat"]
+        ),
+    )
 
     class Process:
         def __init__(self, selected):
@@ -1014,7 +1174,8 @@ def test_running_server_cannot_rebind_workspace_names(
             assert server is not None
     else:
         with pytest.raises(
-            agent_server.AgentServerAcquisitionError, match="bindings differ"
+            agent_server.AgentServerAcquisitionError,
+            match="startup parameters differ: workspace_additions",
         ):
             with agent_server.acquire_agent_server(
                 layout, sandbox=None, workspace_additions=requested
@@ -1048,17 +1209,21 @@ def test_persistent_acquisition_waits_for_an_existing_startup(
     )
     monkeypatch.setattr(
         agent_server,
-        "_resolve_inactive_launch",
+        "_resolve_launch",
         lambda *a, **k: pytest.fail("must not launch a second runtime"),
     )
     if outcome == "running":
-        with agent_server.acquire_agent_server(layout, sandbox="host") as server:
+        with agent_server.acquire_agent_server(
+            layout, sandbox="host", attach_only=True
+        ) as server:
             assert server == AgentServerRef(
                 sandbox="host", endpoint="http://localhost:7001"
             )
     else:
         with pytest.raises(agent_server.AgentServerAcquisitionError, match="ready"):
-            with agent_server.acquire_agent_server(layout, sandbox="host"):
+            with agent_server.acquire_agent_server(
+                layout, sandbox="host", attach_only=True
+            ):
                 pytest.fail("unready runtime acquired")
 
     if outcome == "timeout":
@@ -1077,9 +1242,7 @@ def test_persistent_host_survives_command_completion_and_failure(
         agent_server.sandbox_runtime, "resolve_selection", lambda *a, **k: "host"
     )
     launch = SimpleNamespace(sandbox="host", dev_artifact=None)
-    monkeypatch.setattr(
-        agent_server, "_resolve_inactive_launch", lambda *a, **k: launch
-    )
+    monkeypatch.setattr(agent_server, "_resolve_launch", lambda *a, **k: launch)
     handle = agent_server.sandbox_runtime.SandboxHandle(
         cast(Any, None),
         SandboxState(
@@ -1145,7 +1308,7 @@ def test_persistent_acquisition_waits_for_http_after_running_report(
     monkeypatch.setattr(agent_server, "AGENT_READY_TIMEOUT_SEC", 1 if ready else 0)
     monkeypatch.setattr(
         agent_server,
-        "_resolve_inactive_launch",
+        "_resolve_launch",
         lambda *_a, **_kw: pytest.fail("must not start a competing runtime"),
     )
     # A direct serve process publishes this report before HTTP starts listening.
@@ -1154,12 +1317,16 @@ def test_persistent_acquisition_waits_for_http_after_running_report(
     assert not probes
 
     if ready:
-        with agent_server.acquire_agent_server(layout, sandbox="host") as server:
+        with agent_server.acquire_agent_server(
+            layout, sandbox="host", attach_only=True
+        ) as server:
             assert server == AgentServerRef(sandbox="host", endpoint=ref.endpoint)
         assert probes == [f"{ref.endpoint}/healthz"] * 2
     else:
         with pytest.raises(agent_server.AgentServerAcquisitionError, match="ready"):
-            with agent_server.acquire_agent_server(layout, sandbox="host"):
+            with agent_server.acquire_agent_server(
+                layout, sandbox="host", attach_only=True
+            ):
                 pytest.fail("unready runtime acquired")
         assert probes == [f"{ref.endpoint}/healthz"]
     assert SandboxState.load(layout.runtime_status) == SandboxState(
@@ -1208,9 +1375,7 @@ def test_startup_warning_suspends_the_lock_wait_presenter(tmp_path, monkeypatch)
         agent_server.sandbox_runtime, "resolve_selection", lambda *a, **k: "docker"
     )
     launch = SimpleNamespace(sandbox="docker", dev_artifact=None)
-    monkeypatch.setattr(
-        agent_server, "_resolve_inactive_launch", lambda *a, **k: launch
-    )
+    monkeypatch.setattr(agent_server, "_resolve_launch", lambda *a, **k: launch)
     observed = []
 
     def warn(_launch):

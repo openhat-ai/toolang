@@ -15,6 +15,16 @@ ALL_DRIVERS: ExecutionDrivers = frozenset(("chat", "talk", "chore"))
 ServerLifetime = Literal["persistent", "foreground", "automatic"]
 
 
+@dataclass(frozen=True, slots=True)
+class PlacementPolicy:
+    """The execution defaults and reuse boundary that vary by placement."""
+
+    reuse_executor: bool
+    hosted_drivers: ExecutionDrivers
+    client_drivers: ExecutionDrivers
+    client_lifetime: ServerLifetime
+
+
 class TopPeriod(StrEnum):
     hour = "1h"
     four_hours = "4h"
@@ -82,16 +92,13 @@ class RuntimeInstance:
     def label(self) -> str:
         """Return a stable display name that distinguishes placements and instances."""
         if self.placement == "resident":
-            return (
-                self.name
-                if self.runtime_instance is None
-                else f"{self.name}#{self.runtime_instance}"
-            )
+            return self.name
+        if self.identity.startswith(f"{self.name}@"):
+            return self.identity
+        # Activity wire identities remain opaque for existing API consumers.
         marker = "v" if self.placement == "visiting" else "r"
         value = f"{self.name}@{marker}{self.identity[:8]}"
-        if self.runtime_instance is not None:
-            value += f"#{self.runtime_instance}"
-        return value
+        return value + (f"#{self.runtime_instance}" if self.runtime_instance else "")
 
 
 @dataclass(frozen=True, slots=True)

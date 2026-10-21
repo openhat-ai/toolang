@@ -14,6 +14,7 @@ from tests.support.setup import materialized_setup
 from toolang.base.types.model import Model, ModelToolang, Provider
 from toolang.cli.toolang.commands import agent
 from toolang.common.layout import AgentLayout
+from toolang.up.identity import allocate_roaming
 from toolang.plugin.models import query
 from toolang.plugin.toolsets.collections import ToolCollection
 from toolang.setup import AgentSetup
@@ -85,7 +86,7 @@ def test_running_info_uses_runtime_resources_without_loading_local_sources(
         source = tmp_path / "alice.too"
         source.write_text("invalid Toolang!!!")
         (tmp_path / "toolang.toml").write_text("invalid TOML!!!")
-        layout = AgentLayout.roaming(source)
+        layout = allocate_roaming(source, toolang_root=tmp_path)
         selector, global_args = str(source), []
         monkeypatch.setattr(
             agent_sources,
@@ -109,7 +110,7 @@ def test_running_info_uses_runtime_resources_without_loading_local_sources(
         *global_args,
         *([selector, "info"] if target_first else ["info", selector]),
     ]
-    layout.home.mkdir(parents=True)
+    layout.home.mkdir(parents=True, exist_ok=True)
     if placement == "roaming":
         layout.program.symlink_to(source)
     else:
@@ -216,46 +217,28 @@ def test_running_info_formats_driver_metadata(
 
 @pytest.mark.parametrize("placement", ["roaming", "visiting"])
 @pytest.mark.parametrize("target_first", [False, True])
-def test_offline_info_prepares_a_fresh_nonresident_target(
+def test_offline_info_does_not_materialize_a_fresh_nonresident_target(
     tmp_path, monkeypatch, capsys, placement, target_first
 ):
-
     source = tmp_path / "alice.too"
     source.write_text("flow run():\n  pass\n")
     selector = str(source)
     layout = AgentLayout.roaming(source)
     if placement == "visiting":
-        selector = "gh:acme/alice"
-        layout = AgentLayout(
-            root=tmp_path / "visiting", name="alice", placement="visiting"
-        )
+        selector = "https://example.com/alice.too"
+        layout = AgentLayout.visiting(selector, "alice", toolang_root=tmp_path)
         monkeypatch.setattr(
-            agent_sources, "visiting_layout", lambda _, **kwargs: layout
+            agent_sources, "visiting_layout", lambda *args, **kwargs: layout
         )
-
-        def fetch(selected, *, progress, toolang_root=None):
-            assert selected == selector
-            assert progress is not None
-            assert not layout.program.exists()
-            layout.home.mkdir(parents=True)
-            layout.program.write_text(source.read_text())
-            return layout
-
-        monkeypatch.setattr(agent_sources, "resolve_visiting_layout", fetch)
-    setup = _setup(tmp_path, ())
-
-    class Watcher:
-        def __init__(self, selected):
-            assert selected == layout
-
-        async def refresh(self, *, progress):
-            return setup
-
-    monkeypatch.setattr(agent, "SetupWatcher", Watcher)
-    assert not layout.home.exists()
-    assert main([selector, "info"] if target_first else ["info", selector]) == 0
-    output = capsys.readouterr()
-    assert "not running" in output.out
-    assert "Drivers:" not in output.out
-    assert layout.program.is_file()
-    assert layout.agent_state.is_dir()
+    monkeypatch.setattr(
+        agent_sources,
+        "resolve_visiting_layout",
+        lambda *args, **kwargs: pytest.fail("history query fetched source"),
+    )
+    monkeypatch.setattr(
+        agent_sources,
+        "materialize_roaming_program",
+        lambda *args, **kwargs: pytest.fail("history query materialized source"),
+    )
+    assert main([selector, "info"] if target_first else ["info", selector]) == 1
+    assert not layout.agent_state.exists()

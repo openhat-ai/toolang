@@ -47,13 +47,32 @@ records, optionally replays retained events, and then observes the live suffix.
 
 Persistence makes completed history available after process restart and for
 later model calls. Toolang does not resume an unfinished run after its owner
-process exits. The execution store reads and writes only schema 62. Older schemas
-are rejected without modification, including read-only opens; writable opens also
-reject adjacent legacy `ids.json` files. There is no migration or old-record
-compatibility path. Stop old writers, preserve any required old runtime data
-separately, and start with fresh storage. See
-[terminal usage and cost records](#terminal-usage-and-cost-records) for the current
-Report fields.
+process exits. RunStore writes schema 63 and atomically migrates schema 62 by adding imported
+ownership and replay provenance tables. Read-only opens support both versions;
+unsupported schemas remain unchanged. Writable opens still reject adjacent legacy
+`ids.json`. Stop old writers before upgrade/rollback; older versions cannot write
+schema 63. See [terminal usage and cost records](#terminal-usage-and-cost-records)
+for captured Report fields.
+
+## Isolated replay
+
+- Roaming rerun seeds a fresh instance through a complete SQLite backup, preserving
+  typed/content references, thread views, allocator high-water marks, and immutable
+  State. Run/thread selectors and control heads resolve within the sealed snapshot.
+  Current project inputs/grants govern new execution.
+- Imported Runs retain original ownership across repeated replay. They remain
+  inspectable, but supply no destination live activity, controls, events, usage,
+  completions, or archive totals. Mutable workspaces/tools and `stats.db` are not copied.
+  New owners discard copied chore checkpoints; imported Talk receipts cannot
+  drive message handling or advance Hub cursors.
+- Replay provenance and accepted destination Run are linked atomically by request ID.
+  Incomplete seeds cannot execute or seed another instance; failure retains source
+  and destination roots for inspection.
+- Offline fork/rewind uses guarded `ThreadManager` transactions after native/sandbox
+  death checks; missing global registration alone is insufficient.
+- `fork --chat` / `rewind --chat` commits the edit before fresh roaming continuation;
+  Chat failure cannot undo it. Resident/visiting retain stable homes.
+
 
 
 ## IDs And Indexes
@@ -390,9 +409,8 @@ per-call records and make the aggregate USD amount unknown. Unknown optional
 token/cost contributions remain unknown; known zero stays zero. These are captured
 values, not a historical statistics index.
 
-This format requires Store schema 62 and fresh storage. Older schemas are rejected
-for both reads and writes; no migration or compatibility decoder is provided.
-Retain any required old runtime data separately, then use a fresh runtime database.
-Record/event consumers must adopt `spec`/`report` and matching `Spec`/`Report`
+The current format uses Store schema 63, with additive migration/read-only support
+for schema 62. Other older formats require explicit migration or retained separate
+storage. Record/event consumers must adopt `spec`/`report` and matching `Spec`/`Report`
 types, then reconnect subscriptions. See the [canonical record fields and Pointer
 paths](records.md) for the complete contract.

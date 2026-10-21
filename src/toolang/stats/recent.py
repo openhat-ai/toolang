@@ -13,6 +13,7 @@ from toolang.execution.schemas import RunNode
 from toolang.execution.types import CallCounters
 
 from . import _sql as sql
+from .source import prepare_source
 from .errors import StatsUnavailable
 from .projection import project_step
 from .query import SourceReader
@@ -133,6 +134,7 @@ def recent_source(
         connection.execute(
             "ATTACH DATABASE ? AS src", (source.resolve().as_uri() + "?mode=ro",)
         )
+        prepare_source(connection)
         connection.execute("PRAGMA query_only=ON")
         yield RecentReader(connection)
     except (OSError, sqlite3.Error, TypeError, ValueError) as exc:

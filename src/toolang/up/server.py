@@ -7,6 +7,8 @@ import asyncio
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass, field
+from dataclasses import replace
+import errno
 import logging
 import json
 import os
@@ -24,15 +26,12 @@ import uvicorn
 from uvicorn.main import STARTUP_FAILURE
 
 from toolang.api.version import AGENT_API_VERSION
-from toolang.api.app import create_app
 from toolang.base.model_settings import format_model_body
 from toolang.base.types.model import ModelOverride
 from toolang.base.types.policy import AgentCeiling
-from toolang.catalog import CapsManager, ChoresManager
 from toolang.common.config import resolve_ui_base_url
 from toolang.common.env_logger import PY_LOG_ENV_VAR
 from toolang.common.layout import AgentLayout
-from toolang.common.config_sources import config_sources
 from toolang.execution.executor.resources import validate_agent_ceiling
 from toolang.plugin.sandboxes.host import HOST_SANDBOX_DESCRIPTION_ENV
 from toolang.setup import AgentSetup
@@ -40,8 +39,6 @@ from toolang.plugin.models.query import filter_models
 from toolang.setup.config import load_setup_config
 from toolang.state import watcher as state_watcher
 from toolang.state.state import AgentState
-from toolang.stats.config import stats_config
-from toolang.stats.service import StatsService
 from toolang.up import process as agents
 from toolang.up.config import (
     default_drivers,
@@ -51,6 +48,7 @@ from toolang.up.config import (
 from toolang.up.types import ALL_DRIVERS, ExecutionDrivers, ServerLifetime
 from toolang.up.lifecycle import ServerLifecycle
 from toolang.up.core import AgentCore
+from toolang.up.application import create_agent_application, application_statistics
 from toolang.up.logging import (
     DEFAULT_LOG_LEVEL,
     build_uvicorn_log_config,
@@ -92,6 +90,7 @@ class ServeSpec:
     log_spec: str | None = None
     workspace_additions: Mapping[str, str] = field(default_factory=dict)
     workdir: str | None = None
+    automatic_port: bool = False
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -149,6 +148,7 @@ def resolve_serve(
         toolang_root=toolang_root or layout.toolang_root or layout.root,
         launch_id=launch_id,
         lifetime=lifetime,
+        automatic_port=port is None,
         drivers=default_drivers(layout.placement) if drivers is None else drivers,
         workspace_additions=dict(workspace_additions or {}),
         workdir=workdir,
@@ -177,6 +177,7 @@ def build_serve_argv(
     host: str | None = None,
     sandbox: str = "host",
     location: str = "host",
+    source_edit_lock: Path | None = None,
 ) -> tuple[str, ...]:
     """Build explicit argv for the hidden AgentServer entrypoint."""
 
@@ -205,8 +206,18 @@ def build_serve_argv(
         format_drivers(spec.drivers),
     ]
     command.extend(["--lifetime", spec.lifetime])
-    if spec.layout.instance is not None:
-        command.extend(["--runtime-instance", spec.layout.instance])
+    command.extend(["--placement", spec.layout.placement, "--store-schema", "63"])
+    if spec.layout.instance_id is not None:
+        command.extend(["--instance-id", spec.layout.instance_id])
+    if spec.layout.source_path is not None:
+        command.extend(
+            [
+                "--source-path",
+                str(spec.layout.source_path),
+                "--source-edit-lock",
+                str(source_edit_lock or spec.layout.root_edit_lock),
+            ]
+        )
     if spec.launch_id is not None:
         command.extend(["--launch-id", spec.launch_id])
     if spec.workspace_additions:
@@ -243,6 +254,54 @@ def serve(
     launch_id: str | None = None,
     location: str = "host",
 ) -> int:
+    """Retry automatic host binds only after releasing each failed generation."""
+    owns_control = location == "host" and not (launch_id or spec.launch_id)
+    for attempt in range(3):
+        try:
+            return _serve_once(
+                spec,
+                environ=environ,
+                sandbox=sandbox,
+                launch_id=launch_id,
+                location=location,
+            )
+        except OSError as exc:
+            if not owns_control or exc.errno != errno.EADDRINUSE:
+                raise
+            from .instance import SandboxState
+            from .sandbox import _clear_state
+
+            owner = SandboxState.load(
+                spec.layout.runtime_status, instance=spec.layout.instance
+            )
+            if (
+                owner is not None
+                and owner.ref.runtime_kind == "process"
+                and owner.ref.runtime_id == str(os.getpid())
+            ):
+                _clear_state(spec.layout, expected=owner)
+            if not spec.automatic_port or attempt == 2:
+                raise
+            spec = replace(
+                spec,
+                port=resolve_runtime_port(
+                    host=spec.host,
+                    explicit_port=None,
+                    layout=spec.layout,
+                    temporary=spec.layout.placement != "resident",
+                ),
+            )
+    raise RuntimeError("automatic host bind attempts exhausted")
+
+
+def _serve_once(
+    spec: ServeSpec,
+    *,
+    environ: Mapping[str, str],
+    sandbox: str,
+    launch_id: str | None,
+    location: str,
+) -> int:
     """Run one AgentServer as the current process's primary workload."""
 
     from toolang.up.sandbox import register_host_server
@@ -255,7 +314,11 @@ def serve(
     host_ref = (
         asyncio.run(
             register_host_server(
-                spec.layout, endpoint=spec.endpoint, launch_id=launch_id, spec=spec
+                spec.layout,
+                endpoint=spec.endpoint,
+                launch_id=launch_id,
+                spec=spec,
+                environ=environ,
             )
         )
         if location == "host"
@@ -360,11 +423,6 @@ def serve(
             ceiling=ceiling,
         )
         shutdown_signal = threading.Event()
-        caps_manager = CapsManager(spec.layout)
-        chores_manager = ChoresManager(spec.layout)
-        statistics_config = stats_config(
-            config_sources(spec.layout), home=spec.layout.config
-        )
 
         @asynccontextmanager
         async def lifespan(app: FastAPI):
@@ -373,12 +431,9 @@ def serve(
             tasks: list[asyncio.Task[None]] = []
             scheduler: ChoreDriver | None = None
             teaming: TeamingLoop | None = None
-            statistics = StatsService(
-                core.store.db_path, spec.layout.stats_store, config=statistics_config
-            )
+            statistics = application_statistics(app)
             try:
                 statistics.start()
-                app.state.stats = statistics
                 agents.write_runtime_state(
                     spec.layout,
                     endpoint=spec.endpoint,
@@ -394,6 +449,7 @@ def serve(
                     lifetime=spec.lifetime,
                     api_version=AGENT_API_VERSION,
                     workspace_additions=spec.workspace_additions,
+                    resource_counts=core.resource_counts(),
                     process_created=psutil.Process().create_time(),
                     sandbox_description=environ.get(HOST_SANDBOX_DESCRIPTION_ENV),
                     sandbox_instance=environ.get("TOOLANG_SANDBOX_INSTANCE"),
@@ -483,10 +539,8 @@ def serve(
                     failure = failure or str(exc) or type(exc).__name__
                     raise
 
-        app = create_app(
+        app = create_agent_application(
             core,
-            caps_manager,
-            chores_manager,
             lifespan=lifespan,
             cors_allowed_origins=cors_allowed_origins,
         )
@@ -704,7 +758,11 @@ def _run_uvicorn_app(
     if on_starting is not None:
         on_starting()
     try:
-        server.run()
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+            listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            listener.bind((host, port))
+            listener.listen()
+            server.run(sockets=[listener])
     except KeyboardInterrupt:
         pass
     if not server.started:
@@ -769,12 +827,12 @@ def resolve_runtime_port(
         if explicit_port < 1 or explicit_port > 65535:
             raise ValueError(f"invalid runtime port: {explicit_port}")
         return explicit_port
-    if temporary:
+    if temporary or layout.placement == "roaming":
         return _pick_temporary_runtime_port(host)
     preferred = agents.preferred_runtime_port(layout)
     assigned = agents.assigned_runtime_ports(
-        layout.root,
-        exclude_agent=layout.name,
+        layout.toolang_root or layout.root,
+        exclude_agent=layout.instance_name,
     )
     # Reassign pre-upgrade agent records on the default Hub port.
     if (
@@ -784,6 +842,8 @@ def resolve_runtime_port(
         and _port_is_available(host, preferred)
     ):
         return preferred
+    if layout.placement == "visiting":
+        return _pick_temporary_runtime_port(host)
     for port in range(AUTO_RUNTIME_PORT_MIN, AUTO_RUNTIME_PORT_MAX + 1):
         if port not in assigned and _port_is_available(host, port):
             return port

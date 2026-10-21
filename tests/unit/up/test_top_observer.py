@@ -1,5 +1,7 @@
 """Observation generations, discovery retention and slow scans stay independent."""
 
+from toolang.up.workload import ForegroundWorkload
+
 from concurrent.futures import Future
 from contextlib import closing
 from threading import Event
@@ -13,6 +15,7 @@ from tests.support.execution_fixtures import project_run_start
 from toolang.base.types.message import Message
 
 from toolang.common.layout import AgentLayout
+from toolang.up.identity import allocate_roaming
 from toolang.execution.schemas import LiveSnapshot, LiveTreeSnapshot, RunNode, StepNode
 from toolang.execution.store import RunStore
 from toolang.execution.types import RunReport
@@ -20,7 +23,7 @@ from toolang.stats.errors import StatsUnavailable
 from toolang.stats.schemas import CompletedRoots, CompletionCounts, RecentUsage
 from toolang.stats.types import Metrics, timestamp
 from toolang.up import top
-from toolang.up.observation import RuntimeInventory, RuntimeRegistration, RuntimeSource
+from toolang.up.observation import RuntimeInventory, RuntimeSource
 from toolang.up.schemas import ActivitySnapshot, SourceActivity
 from toolang.up.types import RuntimeInstance, RuntimeInstanceSnapshot
 
@@ -220,15 +223,16 @@ def test_session_retains_departed_history_but_fresh_top_discovers_only_current_s
             "https://example.com/worker.too", "worker", toolang_root=tmp_path
         )
         if placement == "visiting"
-        else replace(AgentLayout.roaming(tmp_path / "worker.too"), instance="one")
+        else allocate_roaming(tmp_path / "worker.too", toolang_root=tmp_path)
     )
     with (
         closing(RunStore(resident.run_store)),
+        ForegroundWorkload(resident, toolang_root=tmp_path, drivers=frozenset()),
         closing(
             top.TopObserver(tmp_path, agent=None, period=3600, recent=300, refresh=60)
         ) as observer,
     ):
-        with RuntimeRegistration(layout, toolang_root=tmp_path, drivers=frozenset()):
+        with ForegroundWorkload(layout, toolang_root=tmp_path, drivers=frozenset()):
             with closing(RunStore(layout.run_store)) as store:
                 project_run_start(
                     store,
@@ -293,6 +297,7 @@ def test_slow_usage_never_blocks_live_or_marks_new_window_with_old_metrics(
     source = binding(tmp_path)
     now = [NOW]
     release = Event()
+    next_release = Event()
     scans = []
     live_calls = []
     monkeypatch.setattr(top.time, "time", lambda: now[0])
@@ -306,7 +311,7 @@ def test_slow_usage_never_blocks_live_or_marks_new_window_with_old_metrics(
 
     def slow_usage(source, period, cancelled=None):
         scans.append(period)
-        assert release.wait(3)
+        assert (release if period == 3600 else next_release).wait(3)
         return usage(period)
 
     def live(source, recent, before=None, completed_at=None, **kwargs):
@@ -353,12 +358,14 @@ def test_slow_usage_never_blocks_live_or_marks_new_window_with_old_metrics(
         now[0] += 1
         observer.tick()
         assert state.usage is not None
+        next_release.set()
         state.usage.result(timeout=1)
         total = observer.tick().usage_total()
         assert total is not None and total.model_calls == 76
         assert scans == [3600, 14400]
     finally:
         release.set()
+        next_release.set()
         observer.close()
 
 
@@ -958,12 +965,11 @@ def test_page_from_a_previous_epoch_cannot_restore_old_rows_or_cursor(tmp_path):
 
 
 @pytest.mark.parametrize("mode", ["new", "empty", "corrupt"])
-def test_inactive_agent_history_is_empty_only_when_uninitialized(tmp_path, mode):
+def test_unregistered_history_never_enters_fresh_top(tmp_path, mode):
     layout = AgentLayout.resident(tmp_path, "alice")
     layout.home.mkdir(parents=True)
     if mode == "empty":
-        with closing(RunStore(layout.run_store)):
-            pass
+        RunStore(layout.run_store).close()
     elif mode == "corrupt":
         layout.run_store.parent.mkdir(parents=True)
         layout.run_store.write_text("not sqlite")
@@ -971,22 +977,10 @@ def test_inactive_agent_history_is_empty_only_when_uninitialized(tmp_path, mode)
         top.TopObserver(tmp_path, agent=None, period=3600, recent=300, refresh=60)
     ) as observer:
         snapshot = observer.once()
-        summary = snapshot.summary
-        assert summary.running == 0 and summary.total == 1 and summary.active == 0
-        if mode == "corrupt":
-            assert summary.completed is None and summary.usage is None
-            assert (
-                snapshot.sources[0].activity_error and snapshot.sources[0].usage_error
-            )
-        else:
-            assert summary.completed is not None and summary.completed.total == 0
-            assert summary.usage == Metrics()
-            assert (
-                not snapshot.sources[0].activity_error
-                and not snapshot.sources[0].usage_error
-            )
-        assert layout.run_store.exists() == (mode != "new")
-        assert not layout.stats_store.exists()
+    assert snapshot.summary.total == snapshot.summary.running == 0
+    assert snapshot.sources == ()
+    assert layout.run_store.exists() == (mode != "new")
+    assert not layout.stats_store.exists()
 
 
 def test_lost_history_never_becomes_empty_after_a_successful_read(tmp_path):
@@ -1282,7 +1276,7 @@ def test_failed_docker_batch_keeps_membership_and_readable_history(
     layout.home.mkdir(parents=True)
     with (
         closing(RunStore(layout.run_store)),
-        RuntimeRegistration(
+        ForegroundWorkload(
             layout, toolang_root=tmp_path, drivers=frozenset()
         ) as registration,
     ):
@@ -1339,22 +1333,21 @@ def test_agent_scope_isolates_discovery_but_preserves_its_own_failures(
     with ExitStack() as stack:
         for name in ("alice", "bob"):
             layout = AgentLayout.resident(tmp_path, name)
-            layout.home.mkdir(parents=True)
             stack.enter_context(closing(RunStore(layout.run_store)))
-        alice = AgentLayout.resident(tmp_path, "alice")
-        temporary = replace(alice, instance="one")
-        stack.enter_context(closing(RunStore(temporary.run_store)))
-        own_registration = stack.enter_context(
-            RuntimeRegistration(temporary, toolang_root=tmp_path, drivers=frozenset())
+            registration = stack.enter_context(
+                ForegroundWorkload(layout, toolang_root=tmp_path, drivers=frozenset())
+            )
+            if name == "alice":
+                own_registration = registration
+        alice, bob = (
+            AgentLayout.resident(tmp_path, "alice"),
+            AgentLayout.resident(tmp_path, "bob"),
         )
-        bob = AgentLayout.resident(tmp_path, "bob")
-        stack.enter_context(
-            RuntimeRegistration(bob, toolang_root=tmp_path, drivers=frozenset())
-        )
-        if fault == "peer":
-            document = json.loads(bob.runtime_status.read_text())
-            document["instances"]["bad"] = []
-            bob.runtime_status.write_text(json.dumps(document))
+        if fault in {"peer", "own_metadata"}:
+            target = bob.runtime_status if fault == "peer" else alice.runtime_status
+            original = target.read_bytes()
+            target.write_text("not json")
+            stack.callback(target.write_bytes, original)
         elif fault == "registry":
             (tmp_path / ".runtime" / "instances" / "broken.json").write_text("invalid")
         elif fault == "own_reference":
@@ -1362,48 +1355,33 @@ def test_agent_scope_isolates_discovery_but_preserves_its_own_failures(
             reference["status"] = str(bob.runtime_status)
             own_registration.path.write_text(json.dumps(reference))
         elif fault == "same_name_roaming":
-            roaming = AgentLayout.roaming(tmp_path / "alice.too")
-            stack.enter_context(closing(RunStore(roaming.run_store)))
+            roaming = allocate_roaming(tmp_path / "alice.too", toolang_root=tmp_path)
             registration = stack.enter_context(
-                RuntimeRegistration(roaming, toolang_root=tmp_path, drivers=frozenset())
+                ForegroundWorkload(roaming, toolang_root=tmp_path, drivers=frozenset())
             )
-            reference = json.loads(registration.path.read_text())
-            reference["version"] = -1
-            registration.path.write_text(json.dumps(reference))
+            registration.path.write_text("invalid")
         elif fault == "enumeration":
-            original_iterdir = type(tmp_path).iterdir
+            original = type(tmp_path).iterdir
 
-            def denied_iterdir(path):
+            def denied(path):
                 if path == tmp_path / "agents":
-                    raise PermissionError("cannot enumerate resident peers")
-                return original_iterdir(path)
+                    raise PermissionError("no resident scan allowed")
+                return original(path)
 
-            monkeypatch.setattr(type(tmp_path), "iterdir", denied_iterdir)
-        else:
-            original_stat = type(tmp_path).stat
-
-            def denied_stat(path, *args, **kwargs):
-                if path == alice.home:
-                    raise PermissionError("selected home is unreadable")
-                return original_stat(path, *args, **kwargs)
-
-            monkeypatch.setattr(type(tmp_path), "stat", denied_stat)
+            monkeypatch.setattr(type(tmp_path), "iterdir", denied)
         with closing(
             top.TopObserver(tmp_path, agent=agent, period=3600, recent=300, refresh=60)
         ) as observer:
             snapshot = observer.once()
-        if agent is None or fault in ("own_metadata", "own_reference"):
-            assert snapshot.summary.total is None and snapshot.inventory.diagnostics
-        else:
-            assert not snapshot.inventory.diagnostics
-            assert snapshot.summary.total == snapshot.summary.resident == 2
-            assert snapshot.summary.running == 1
-            assert snapshot.summary.completed == CompletionCounts()
-            assert snapshot.summary.usage == Metrics()
-            assert {source.label for source in snapshot.sources} == {
-                "alice",
-                "alice#one",
-            }
+        partial = fault in {"own_metadata", "own_reference"} or (
+            agent is None and fault in {"peer", "registry", "same_name_roaming"}
+        )
+        assert snapshot.inventory.partial == partial
+        if not partial:
+            assert snapshot.summary.running == (1 if agent else 2)
+            assert {source.label for source in snapshot.sources} == (
+                {"alice"} if agent else {"alice", "bob"}
+            )
 
 
 @pytest.mark.parametrize("agent", [None, "alice"])
@@ -1416,69 +1394,65 @@ def test_scopes_agree_on_registered_residents_when_status_changes(
     from toolang.up.instance import update_instance
 
     layout = AgentLayout.resident(tmp_path, "alice")
-    layout.home.mkdir(parents=True)
-    instance = replace(layout, instance="one")
     with (
         closing(RunStore(layout.run_store)),
-        closing(RunStore(instance.run_store)),
-        RuntimeRegistration(instance, toolang_root=tmp_path, drivers=frozenset()),
+        ForegroundWorkload(layout, toolang_root=tmp_path, drivers=frozenset()),
     ):
-        original = instance.runtime_status.read_bytes()
+        original = layout.runtime_status.read_bytes()
         try:
-            if state in ("stopped", "linked_stopped"):
+            if state in {"stopped", "linked_stopped"}:
                 update_instance(
-                    instance.runtime_status,
+                    layout.runtime_status,
                     lambda entry: entry["workload"].update(status="stopped", pid=None),
-                    instance="one",
                 )
                 if state == "linked_stopped":
-                    target = instance.runtime_status.with_name("linked-status.json")
-                    instance.runtime_status.rename(target)
-                    instance.runtime_status.symlink_to(target)
+                    target = layout.runtime_status.with_name("linked-status.json")
+                    layout.runtime_status.rename(target)
+                    layout.runtime_status.symlink_to(target)
             elif state == "missing_document":
-                instance.runtime_status.unlink()
+                layout.runtime_status.unlink()
             else:
                 document = json.loads(original)
-                document["instances"].pop("one")
-                instance.runtime_status.write_text(json.dumps(document))
+                document["instances"].pop("default")
+                layout.runtime_status.write_text(json.dumps(document))
             with closing(
                 top.TopObserver(
                     tmp_path, agent=agent, period=3600, recent=300, refresh=60
                 )
             ) as observer:
                 snapshot = observer.once()
-            assert snapshot.summary.total == snapshot.summary.resident == 2
-            assert snapshot.summary.running == (
-                0 if state in ("stopped", "linked_stopped") else None
-            )
-            assert snapshot.summary.completed == CompletionCounts()
-            assert snapshot.summary.usage == Metrics()
-            assert {source.label for source in snapshot.sources} == {
-                "alice",
-                "alice#one",
-            }
+            if state in {"stopped", "linked_stopped"}:
+                assert snapshot.summary.total == snapshot.summary.running == 0
+                assert not snapshot.sources
+            else:
+                assert snapshot.inventory.partial
+                assert snapshot.summary.total == 1
+                assert {source.label for source in snapshot.sources} == {"alice"}
         finally:
-            instance.runtime_status.write_bytes(original)
+            layout.runtime_status.write_bytes(original)
 
 
 @pytest.mark.parametrize("agent", [None, "alice"])
-def test_resident_scope_excludes_roaming_instances_with_the_same_home(tmp_path, agent):
+def test_resident_scope_excludes_roaming_instances_with_the_same_name(tmp_path, agent):
     root = tmp_path / ".toolang"
     resident = AgentLayout.resident(root, "alice")
-    resident.home.mkdir(parents=True)
-    roaming = replace(AgentLayout.roaming(tmp_path / "alice.too"), instance="inline")
-    assert resident.home == roaming.home
+    roaming = allocate_roaming(tmp_path / "alice.too", toolang_root=root)
+    assert resident.home != roaming.home
     with (
         closing(RunStore(resident.run_store)),
         closing(RunStore(roaming.run_store)),
-        RuntimeRegistration(roaming, toolang_root=root, drivers=frozenset()),
+        ForegroundWorkload(resident, toolang_root=root, drivers=frozenset()),
+        ForegroundWorkload(roaming, toolang_root=root, drivers=frozenset()),
         closing(
             top.TopObserver(root, agent=agent, period=3600, recent=300, refresh=60)
         ) as observer,
     ):
         snapshot = observer.once()
-    assert snapshot.summary.total == (2 if agent is None else 1)
-    assert snapshot.summary.running == (1 if agent is None else 0)
+    assert (
+        snapshot.summary.total
+        == snapshot.summary.running
+        == (2 if agent is None else 1)
+    )
     assert {source.placement for source in snapshot.sources} == (
         {"resident", "roaming"} if agent is None else {"resident"}
     )

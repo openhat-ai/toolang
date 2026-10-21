@@ -62,6 +62,7 @@ DEFAULT_CORS_ORIGINS = (
     "https://too.run",
 )
 OPENAPI_TAGS = [
+    {"name": "activity", "description": "Live execution activity."},
     {
         "name": "agent",
         "description": "Agent profile, health, and operational update endpoints.",

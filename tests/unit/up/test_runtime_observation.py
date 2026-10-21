@@ -1,3 +1,4 @@
+from toolang.up.workload import ForegroundWorkload
 from dataclasses import replace
 import asyncio
 import hashlib
@@ -7,6 +8,7 @@ import os
 import pytest
 
 from toolang.common.layout import AgentLayout
+from toolang.up.identity import allocate_roaming
 from toolang.execution.store import RunStore
 from toolang.up.observation import (
     RuntimeRegistration,
@@ -16,25 +18,26 @@ from toolang.up.observation import (
 )
 
 
+def _roaming(source):
+    return allocate_roaming(source, toolang_root=source.parent)
+
+
 def test_reference_names_use_stable_host_source_identity(tmp_path):
     root = tmp_path / "toolang"
     resident = AgentLayout.resident(root, "gus")
     source = "https://example.com/lex.too"
     visiting = AgentLayout.visiting(source, "lex", toolang_root=root)
     visiting_hash = hashlib.sha256(f"{root.resolve()}\0{source}".encode()).hexdigest()
-    roaming = AgentLayout.roaming(tmp_path / "aid.too")
-    roaming_hash = hashlib.sha256(
-        str((tmp_path / "aid.too").resolve()).encode()
-    ).hexdigest()
+    roaming = _roaming(tmp_path / "aid.too")
 
     assert instance_filename(resident) == "gus.json"
     assert instance_filename(visiting) == f"lex@v{visiting_hash[:16]}.json"
-    assert visiting.root.name == f"toolang-lex-{visiting_hash[:16]}"
+    assert visiting.root.name == f"lex@v{visiting_hash[:16]}"
     assert visiting.source_id == visiting_hash[:16]
-    assert instance_filename(roaming) == f"aid@r{roaming_hash[:16]}.json"
+    assert instance_filename(roaming) == f"aid@{roaming.instance_id}.json"
     assert instance_filename(replace(roaming)) == instance_filename(roaming)
     assert instance_filename(
-        AgentLayout.roaming(tmp_path / "other" / "aid.too")
+        _roaming(tmp_path / "other" / "aid.too")
     ) != instance_filename(roaming)
     assert instance_filename(
         AgentLayout.visiting(source, "lex", toolang_root=root / "other")
@@ -51,9 +54,10 @@ def test_source_path_aliases_preserve_reference_identity(tmp_path):
     source.touch()
     alias = tmp_path / "alias.too"
     alias.symlink_to(source)
-    assert instance_filename(AgentLayout.roaming(alias)) == instance_filename(
-        AgentLayout.roaming(source)
-    )
+    original = _roaming(source)
+    assert instance_filename(
+        AgentLayout.roaming(alias, instance_id=original.instance_id)
+    ) == instance_filename(original)
     root_alias = tmp_path / "root-alias"
     root_alias.symlink_to(project, target_is_directory=True)
     url = "https://example.com/lex.too"
@@ -73,10 +77,10 @@ def test_relaunch_reuses_reference_name_and_preserves_new_registration(
             "https://example.com/lex.too", "lex", toolang_root=tmp_path
         )
         if placement == "visiting"
-        else AgentLayout.roaming(tmp_path / "aid.too")
+        else _roaming(tmp_path / "aid.too")
     )
-    old = RuntimeRegistration(layout, toolang_root=tmp_path, drivers=frozenset())
-    current = RuntimeRegistration(layout, toolang_root=tmp_path, drivers=frozenset())
+    old = ForegroundWorkload(layout, toolang_root=tmp_path, drivers=frozenset())
+    current = ForegroundWorkload(layout, toolang_root=tmp_path, drivers=frozenset())
     with old, current:
         assert old.path == current.path
         assert old.token != current.token
@@ -99,7 +103,7 @@ def test_reference_names_cannot_alias_agent_names_with_markers(tmp_path):
 
 def test_discovery_ignores_non_object_references_and_cleanup_tolerates_them(tmp_path):
     layout = AgentLayout.resident(tmp_path, "gus")
-    registration = RuntimeRegistration(
+    registration = ForegroundWorkload(
         layout, toolang_root=tmp_path, drivers=frozenset()
     )
     registration.__enter__()
@@ -111,7 +115,7 @@ def test_discovery_ignores_non_object_references_and_cleanup_tolerates_them(tmp_
 
 def test_discovery_does_not_adopt_previous_reference_names(tmp_path):
     layout = AgentLayout.resident(tmp_path, "gus")
-    with RuntimeRegistration(
+    with ForegroundWorkload(
         layout, toolang_root=tmp_path, drivers=frozenset()
     ) as registration:
         old_path = registration.path.with_name("gus-resident-0123456789abcdef.json")
@@ -122,7 +126,7 @@ def test_discovery_does_not_adopt_previous_reference_names(tmp_path):
 @pytest.mark.parametrize("instances", [None, [], "invalid", 123])
 def test_discovery_ignores_invalid_status_instances(tmp_path, instances):
     layout = AgentLayout.resident(tmp_path, "gus")
-    with RuntimeRegistration(layout, toolang_root=tmp_path, drivers=frozenset()):
+    with ForegroundWorkload(layout, toolang_root=tmp_path, drivers=frozenset()):
         before = layout.runtime_status.read_bytes()
         try:
             layout.runtime_status.write_text(
@@ -139,8 +143,8 @@ def test_discovery_rejects_noncurrent_formats_without_mutation(
     tmp_path, owner, version
 ):
     root = tmp_path / "toolang"
-    layout = AgentLayout.roaming(tmp_path / "aid.too")
-    with RuntimeRegistration(
+    layout = _roaming(tmp_path / "aid.too")
+    with ForegroundWorkload(
         layout, toolang_root=root, drivers=frozenset()
     ) as registration:
         assert len(running_instances(root)) == 1
@@ -163,7 +167,7 @@ def test_discovery_rejects_noncurrent_formats_without_mutation(
 @pytest.mark.parametrize("invalid", [None, [], "invalid", {"launch_id": "bad"}])
 def test_discovery_preserves_valid_entries_beside_a_malformed_peer(tmp_path, invalid):
     layout = AgentLayout.resident(tmp_path, "gus")
-    with RuntimeRegistration(layout, toolang_root=tmp_path, drivers=frozenset()):
+    with ForegroundWorkload(layout, toolang_root=tmp_path, drivers=frozenset()):
         before = layout.runtime_status.read_bytes()
         try:
             document = json.loads(before)
@@ -179,7 +183,7 @@ def test_discovery_reads_do_not_wait_for_reference_updates(tmp_path):
     from toolang.common.files import file_write_lock
 
     layout = AgentLayout.resident(tmp_path, "gus")
-    with RuntimeRegistration(
+    with ForegroundWorkload(
         layout, toolang_root=tmp_path, drivers=frozenset()
     ) as registration:
         with ThreadPoolExecutor(max_workers=1) as pool:
@@ -193,13 +197,13 @@ def test_independent_script_instances_share_status_and_keep_separate_execution_s
     tmp_path,
 ) -> None:
     source = tmp_path / "app.too"
-    one = replace(AgentLayout.roaming(source), instance="one")
-    two = replace(one, instance="two")
-    assert one.home == two.home
+    one = _roaming(source)
+    two = _roaming(source)
+    assert one.home != two.home
     assert one.run_store != two.run_store
     assert one.chore_store == one.run_store
     assert one.chore_store != two.chore_store
-    assert one.runtime_status == two.runtime_status
+    assert one.runtime_status != two.runtime_status
     store = RunStore(one.run_store)
     store.create_thread(thread_id="talk_existing")
     store.close()
@@ -215,8 +219,8 @@ def test_independent_script_instances_share_status_and_keep_separate_execution_s
 
 def test_stale_registration_and_replaced_owner_are_safe(tmp_path) -> None:
     layout = AgentLayout.resident(tmp_path, "alice")
-    old = RuntimeRegistration(layout, toolang_root=tmp_path, drivers=frozenset())
-    current = RuntimeRegistration(
+    old = ForegroundWorkload(layout, toolang_root=tmp_path, drivers=frozenset())
+    current = ForegroundWorkload(
         layout, toolang_root=tmp_path, drivers=frozenset(("chat",))
     )
     old.__enter__()
@@ -255,7 +259,7 @@ def test_guest_discovery_uses_host_sandbox_ownership_not_guest_pid(
         "docker_container_states",
         lambda ids: {identity: alive for identity in ids},
     )
-    with RuntimeRegistration(
+    with ForegroundWorkload(
         layout, toolang_root=tmp_path, drivers=frozenset({"chore"})
     ) as registration:
         SandboxState(
@@ -286,7 +290,7 @@ def test_unbound_guest_discovery_preserves_unknown_workload(tmp_path):
     from toolang.up.instance import patch_workload, update_instance
 
     layout = AgentLayout.resident(tmp_path, "guest")
-    with RuntimeRegistration(
+    with ForegroundWorkload(
         layout, toolang_root=tmp_path, drivers=frozenset()
     ) as registration:
         update_instance(
@@ -301,25 +305,20 @@ def test_unbound_guest_discovery_preserves_unknown_workload(tmp_path):
         assert layout.runtime_status.read_bytes() == before
 
 
-def test_short_lived_scripts_share_one_register_lock_and_readable_references(tmp_path):
-    scope = tmp_path / "toolang"
-    layout = AgentLayout.roaming(tmp_path / "echo.too")
-    directory = scope / ".runtime" / "instances"
-    assert running_instances(scope) == ()
-    assert not directory.exists()
-    for index in range(20):
-        with RuntimeRegistration(
-            replace(layout, instance=f"script{index}"),
-            toolang_root=scope,
-            drivers=frozenset(),
-        ) as registration:
-            assert registration.path.name.startswith(f"echo@r{layout.source_id}@")
-            assert registration.path.name.endswith(f"@script{index}.json")
-    assert tuple(path.name for path in directory.iterdir()) == ("register.lock",)
-    from toolang.up.instance import read_document
+def test_short_lived_scripts_keep_local_status_and_share_registry_lock(tmp_path):
+    from toolang.up.instance import read_instance
 
-    document = read_document(layout.runtime_status)
-    assert document is not None and document["instances"] == {}
+    scope = tmp_path / "toolang"
+    directory = scope / ".runtime" / "instances"
+    for _ in range(20):
+        layout = allocate_roaming(tmp_path / "echo.too", toolang_root=scope)
+        with ForegroundWorkload(
+            layout, toolang_root=scope, drivers=frozenset()
+        ) as registration:
+            assert registration.path.name == f"{layout.instance_name}.json"
+        entry = read_instance(layout.runtime_status)
+        assert entry is not None and entry["workload"]["status"] == "stopped"
+    assert tuple(path.name for path in directory.iterdir()) == ("register.lock",)
 
 
 @pytest.mark.parametrize("legacy_guard", ["update.lock", None])
@@ -329,7 +328,7 @@ def test_cleanup_creates_register_guard_for_an_existing_reference(
     from toolang.up.process import stop_runtime_state
 
     layout = AgentLayout.resident(tmp_path, "gus")
-    registration = RuntimeRegistration(
+    registration = ForegroundWorkload(
         layout, toolang_root=tmp_path, drivers=frozenset()
     )
     registration.__enter__()
@@ -365,12 +364,10 @@ def test_register_guard_keeps_a_new_reference_when_old_cleanup_races(tmp_path):
     from toolang.up.instance import update_instance
 
     layout = AgentLayout.resident(tmp_path, "gus")
-    old = RuntimeRegistration(layout, toolang_root=tmp_path, drivers=frozenset())
+    old = ForegroundWorkload(layout, toolang_root=tmp_path, drivers=frozenset())
     old.__enter__()
     guard = old.path.parent / "register.lock"
-    current = RuntimeRegistration(
-        layout, toolang_root=tmp_path, drivers=frozenset(), launch_id="new"
-    )
+    current = RuntimeRegistration(layout, toolang_root=tmp_path, launch_id="new")
     entered = Event()
 
     def close_old():
@@ -404,9 +401,9 @@ def test_placement_free_workload_cleans_the_reference_using_control_bindings(
             "https://example.com/alice.too", "alice", toolang_root=tmp_path
         )
         if placement == "visiting"
-        else AgentLayout.roaming(tmp_path / "alice.too")
+        else _roaming(tmp_path / "alice.too")
     )
-    with RuntimeRegistration(
+    with ForegroundWorkload(
         layout, toolang_root=tmp_path / "toolang", drivers=frozenset()
     ) as registration:
         ref = SandboxState(
@@ -415,7 +412,9 @@ def test_placement_free_workload_cleans_the_reference_using_control_bindings(
             registration.token,
         )
         ref.save(layout.runtime_status)
-        runtime_layout = replace(layout, placement="resident", source_id=None)
+        runtime_layout = replace(
+            layout, placement="resident", source_id=None, instance_id=None
+        )
         _clear_state(runtime_layout, expected=ref)
         assert not registration.path.exists()
 
@@ -426,12 +425,11 @@ def test_discovery_reads_a_shared_agent_document_once_per_refresh(
     from toolang.up import observation, instance as records
     from contextlib import ExitStack
 
-    layout = AgentLayout.roaming(tmp_path / "echo.too")
     with ExitStack() as scope:
         for index in range(10):
             scope.enter_context(
-                RuntimeRegistration(
-                    replace(layout, instance=f"script{index}"),
+                ForegroundWorkload(
+                    _roaming(tmp_path / "echo.too"),
                     toolang_root=tmp_path,
                     drivers=frozenset(),
                 )
@@ -447,14 +445,14 @@ def test_discovery_reads_a_shared_agent_document_once_per_refresh(
         monkeypatch.setattr(records, "read_document", count_read)
         monkeypatch.setattr(observation, "read_document", count_read)
         assert len(running_instances(tmp_path)) == 10
-        assert reads == 1
+        assert reads == 10
 
 
 def test_agent_removal_retains_home_used_by_an_independent_script(tmp_path):
     from toolang.up.sandbox import remove_agent
 
     layout = AgentLayout.resident(tmp_path, "alice")
-    with RuntimeRegistration(
+    with ForegroundWorkload(
         replace(layout, instance="script"), toolang_root=tmp_path, drivers=frozenset()
     ):
         with pytest.raises(ValueError, match="execution instance"):
@@ -471,19 +469,19 @@ def test_runtime_snapshot_lists_residents_and_registered_placements_once(tmp_pat
     visiting = AgentLayout.visiting(
         "https://example.com/alice.too", "alice", toolang_root=root
     )
-    roaming = AgentLayout.roaming(tmp_path / "alice.too")
+    roaming = _roaming(tmp_path / "alice.too")
 
     with (
-        RuntimeRegistration(
+        ForegroundWorkload(
             resident, toolang_root=root, drivers=frozenset({"chat", "talk"})
         ),
-        RuntimeRegistration(visiting, toolang_root=root, drivers=frozenset({"chat"})),
-        RuntimeRegistration(roaming, toolang_root=root, drivers=frozenset()),
+        ForegroundWorkload(visiting, toolang_root=root, drivers=frozenset({"chat"})),
+        ForegroundWorkload(roaming, toolang_root=root, drivers=frozenset()),
     ):
         snapshot = runtime_snapshot(root)
 
     assert not snapshot.partial
-    assert len(snapshot.instances) == 4
+    assert len(snapshot.instances) == 3
     running = [item for item in snapshot.instances if item.state == "running"]
     assert len(running) == 3
     assert (
@@ -497,8 +495,7 @@ def test_runtime_snapshot_lists_residents_and_registered_placements_once(tmp_pat
     )
     assert len({item.label for item in running}) == 3
     assert len({item.identity for item in running}) == 3
-    stopped = next(item for item in snapshot.instances if item.name == "bob")
-    assert stopped.state == "not running" and stopped.drivers is None
+    assert all(item.name != "bob" for item in snapshot.instances)
 
 
 def test_runtime_snapshot_reports_starting_and_invalid_drivers_as_partial(tmp_path):
@@ -507,7 +504,7 @@ def test_runtime_snapshot_reports_starting_and_invalid_drivers_as_partial(tmp_pa
     root = tmp_path / "toolang"
     layout = AgentLayout.resident(root, "alice")
     layout.home.mkdir(parents=True)
-    with RuntimeRegistration(
+    with ForegroundWorkload(
         layout, toolang_root=root, drivers=frozenset({"chat", "talk"})
     ) as registration:
         update_instance(
@@ -546,7 +543,7 @@ def test_runtime_snapshot_reads_a_shared_status_document_once(tmp_path, monkeypa
     root = tmp_path / "toolang"
     layout = AgentLayout.resident(root, "alice")
     layout.home.mkdir(parents=True)
-    with RuntimeRegistration(layout, toolang_root=root, drivers=frozenset({"talk"})):
+    with ForegroundWorkload(layout, toolang_root=root, drivers=frozenset({"talk"})):
         original = observation.read_document
         reads = []
 
@@ -560,21 +557,14 @@ def test_runtime_snapshot_reads_a_shared_status_document_once(tmp_path, monkeypa
         assert reads.count(layout.runtime_status.resolve()) == 1
 
 
-def test_runtime_snapshot_keeps_valid_residents_beside_malformed_peer(tmp_path):
+def test_unregistered_residents_do_not_enter_inventory(tmp_path):
     valid = AgentLayout.resident(tmp_path, "alice")
     valid.home.mkdir(parents=True)
     malformed = AgentLayout.resident(tmp_path, "bob")
-    malformed.home.mkdir(parents=True)
-    malformed.runtime_status.parent.mkdir(parents=True, exist_ok=True)
+    malformed.runtime_status.parent.mkdir(parents=True)
     malformed.runtime_status.write_text("not json")
-
     snapshot = runtime_snapshot(tmp_path)
-
-    alice = next(item for item in snapshot.instances if item.name == "alice")
-    bob = next(item for item in snapshot.instances if item.name == "bob")
-    assert alice.state == "not running"
-    assert bob.state == "unknown" and bob.diagnostic is not None
-    assert snapshot.partial
+    assert snapshot.instances == () and not snapshot.partial
 
 
 def test_runtime_snapshot_caps_independent_liveness_probes_at_eight(
@@ -590,7 +580,7 @@ def test_runtime_snapshot_caps_independent_liveness_probes_at_eight(
     for index in range(20):
         layout = AgentLayout.resident(root, f"agent{index}")
         layout.home.mkdir(parents=True)
-        registration = RuntimeRegistration(
+        registration = ForegroundWorkload(
             layout, toolang_root=root, drivers=frozenset({"talk"})
         )
         registration.__enter__()
@@ -634,7 +624,7 @@ def test_runtime_snapshot_batches_docker_liveness_references(tmp_path, monkeypat
     for index in range(3):
         layout = AgentLayout.resident(root, f"agent{index}")
         layout.home.mkdir(parents=True)
-        registration = RuntimeRegistration(
+        registration = ForegroundWorkload(
             layout, toolang_root=root, drivers=frozenset({"talk"})
         )
         registration.__enter__()
@@ -680,25 +670,19 @@ def test_runtime_snapshot_batches_docker_liveness_references(tmp_path, monkeypat
     assert maximum <= 3
 
 
-def test_runtime_snapshot_preserves_distinct_temporary_instance_labels(tmp_path):
-    from dataclasses import replace
-
-    root = tmp_path / "toolang"
-    base = AgentLayout.visiting(
-        "https://example.com/alice.too", "alice", toolang_root=root
-    )
-    one = replace(base, instance="one")
-    two = replace(base, instance="two")
+def test_runtime_snapshot_preserves_distinct_roaming_instance_labels(tmp_path):
+    one = _roaming(tmp_path / "alice.too")
+    two = _roaming(tmp_path / "alice.too")
     with (
-        RuntimeRegistration(one, toolang_root=root, drivers=frozenset({"talk"})),
-        RuntimeRegistration(two, toolang_root=root, drivers=frozenset({"talk"})),
+        ForegroundWorkload(one, toolang_root=tmp_path, drivers=frozenset()),
+        ForegroundWorkload(two, toolang_root=tmp_path, drivers=frozenset()),
     ):
-        snapshot = runtime_snapshot(root)
-
+        snapshot = runtime_snapshot(tmp_path)
     assert len(snapshot.instances) == 2
-    assert {item.runtime_instance for item in snapshot.instances} == {"one", "two"}
-    assert len({item.label for item in snapshot.instances}) == 2
-    assert all("@v" in item.label and "#" in item.label for item in snapshot.instances)
+    assert {item.identity for item in snapshot.instances} == {
+        one.instance_name,
+        two.instance_name,
+    }
 
 
 @pytest.mark.parametrize("terminal_state", ["stopped", "failed"])
@@ -714,10 +698,10 @@ def test_runtime_snapshot_keeps_failed_residents_and_excludes_finished_visitors(
         "https://example.com/visitor.too", "visitor", toolang_root=root
     )
     with (
-        RuntimeRegistration(
+        ForegroundWorkload(
             resident, toolang_root=root, drivers=frozenset({"talk"})
         ) as resident_run,
-        RuntimeRegistration(
+        ForegroundWorkload(
             visiting, toolang_root=root, drivers=frozenset({"talk"})
         ) as visiting_run,
     ):
@@ -733,10 +717,7 @@ def test_runtime_snapshot_keeps_failed_residents_and_excludes_finished_visitors(
             )
         snapshot = runtime_snapshot(root)
 
-    assert len(snapshot.instances) == 1
-    assert snapshot.instances[0].name == "alice"
-    assert snapshot.instances[0].state == "not running"
-    assert snapshot.instances[0].drivers is None
+    assert snapshot.instances == ()
 
 
 @pytest.mark.parametrize("placement", ["visiting", "roaming"])
@@ -752,7 +733,7 @@ def test_first_liveness_probe_excludes_a_departed_temporary_instance(
             "https://example.com/worker.too", "worker", toolang_root=tmp_path
         )
         if placement == "visiting"
-        else replace(AgentLayout.roaming(tmp_path / "worker.too"), instance="one")
+        else replace(_roaming(tmp_path / "worker.too"), instance="one")
     )
     monkeypatch.setattr(
         AgentProcess,
@@ -761,8 +742,6 @@ def test_first_liveness_probe_excludes_a_departed_temporary_instance(
             self.layout.name, "stopped", None, None, None, None
         ),
     )
-    with RuntimeRegistration(temporary, toolang_root=tmp_path, drivers=frozenset()):
+    with ForegroundWorkload(temporary, toolang_root=tmp_path, drivers=frozenset()):
         snapshot = runtime_snapshot(tmp_path)
-        assert len(snapshot.instances) == 1
-        assert snapshot.instances[0].placement == "resident"
-        assert snapshot.instances[0].state == "not running"
+        assert snapshot.instances == ()

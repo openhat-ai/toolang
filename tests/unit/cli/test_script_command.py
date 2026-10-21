@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import replace
 
 import asyncio
 from contextlib import contextmanager
@@ -1679,7 +1678,8 @@ def test_script_routes_quiet_execution_through_a_remote_runtime(
 
     @contextmanager
     def agent_server_context(selected: AgentLayout, **kwargs):
-        assert replace(selected, instance=None) == layout
+        assert selected.source_path == source.resolve()
+        assert selected.instance_id is not None
         captured["runtime"] = kwargs
         yield AgentServerRef(
             sandbox="docker:python:3.13-slim",
@@ -1703,7 +1703,7 @@ def test_script_routes_quiet_execution_through_a_remote_runtime(
     monkeypatch.setattr(
         agent_sources,
         "materialize_roaming_program",
-        lambda _source: layout,
+        lambda _source, **kwargs: kwargs.get("layout", layout),
     )
     monkeypatch.setattr(
         "toolang.cli.common.agent_server.acquire_agent_server", agent_server_context
@@ -1778,7 +1778,7 @@ def test_embedded_script_prepare_failure_uses_the_operational_failure_block(
     monkeypatch.setattr(
         agent_sources,
         "materialize_roaming_program",
-        lambda _source: layout,
+        lambda _source, **kwargs: kwargs.get("layout", layout),
     )
     monkeypatch.setattr(
         "toolang.cli.common.agent_server.acquire_agent_server", embedded_server

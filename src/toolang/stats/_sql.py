@@ -46,19 +46,19 @@ SELECT id FROM src.runs LIMIT 1;
 """
 
 UNFINISHED_ROOT = """
-SELECT 1 FROM src.runs
+SELECT 1 FROM local_runs
 WHERE parent IS NULL AND status IN ('pending','running') LIMIT 1;
 """
 
 RECENT_ROOT_COUNTS = """
-SELECT status,COUNT(*) AS count FROM src.runs
+SELECT status,COUNT(*) AS count FROM local_runs
 WHERE parent IS NULL AND status IN ('succeeded','failed','canceled')
   AND finished_at IS NOT NULL AND finished_at >= :lo_text AND finished_at <= :hi_text
 GROUP BY status;
 """
 
 RECENT_ROOT_PAGE = """
-SELECT id,thread,status,created_at,started_at,finished_at,report FROM src.runs
+SELECT id,thread,status,created_at,started_at,finished_at,report FROM local_runs
 WHERE parent IS NULL AND status IN ('succeeded','failed','canceled')
   AND finished_at IS NOT NULL AND finished_at >= :lo_text AND finished_at <= :hi_text
   AND (:before_time IS NULL OR finished_at < :before_time
@@ -67,7 +67,7 @@ ORDER BY finished_at DESC,id LIMIT :limit;
 """
 
 RECENT_ROOTS_BY_IDS = """
-SELECT id,thread,status,created_at,started_at,finished_at,report FROM src.runs
+SELECT id,thread,status,created_at,started_at,finished_at,report FROM local_runs
 WHERE id IN (SELECT value FROM json_each(:ids_json)) AND parent IS NULL
   AND status IN ('succeeded','failed','canceled') AND finished_at IS NOT NULL
   AND finished_at >= :lo_text AND finished_at <= :hi_text;
@@ -77,7 +77,7 @@ ARCHIVE_CANDIDATES = """
 -- cutoff_text = canonical UTC text for pass_time - archive_after_seconds.
 -- Exclude receipts before reading Steps; no started_at/lower finished_at cursor.
 SELECT r.id,r.finished_at
-FROM src.runs AS r
+FROM local_runs AS r
 WHERE r.parent IS NULL AND r.status IN ('succeeded','failed','canceled')
   AND r.finished_at IS NOT NULL AND r.finished_at < :cutoff_text
   AND NOT EXISTS (SELECT 1 FROM main.roots AS a WHERE a.root_run_id = r.id)
@@ -86,14 +86,14 @@ ORDER BY r.finished_at,r.id;
 
 UNARCHIVED_ROOTS = """
 SELECT r.id,r.parent,r.thread,r.status,r.started_at,r.finished_at
-FROM src.runs AS r
+FROM local_runs AS r
 WHERE r.parent IS NULL
   AND NOT EXISTS (SELECT 1 FROM main.roots AS a WHERE a.root_run_id = r.id)
 ORDER BY r.id;
 """
 
 HAS_ARCHIVE_WORK = """
-SELECT 1 FROM src.runs AS r
+SELECT 1 FROM local_runs AS r
 WHERE r.parent IS NULL AND r.status IN ('succeeded','failed','canceled')
   AND r.finished_at IS NOT NULL AND r.finished_at < :cutoff_text
   AND NOT EXISTS (SELECT 1 FROM main.roots AS a WHERE a.root_run_id = r.id)
@@ -102,17 +102,17 @@ LIMIT 1;
 
 ROOT_BY_ID = """
 SELECT r.id,r.parent,r.thread,r.status,r.started_at,r.finished_at
-FROM src.runs AS r WHERE r.id = :root_id AND r.parent IS NULL;
+FROM local_runs AS r WHERE r.id = :root_id AND r.parent IS NULL;
 """
 
 OWNED_RUNS = """
 -- parent is a launching StepRef: run_id + '.' + local_step_path.
 WITH RECURSIVE tree(id,parent,thread,status,started_at,finished_at) AS (
     SELECT id,parent,thread,status,started_at,finished_at
-    FROM src.runs WHERE id = :root_id AND parent IS NULL
+    FROM local_runs WHERE id = :root_id AND parent IS NULL
     UNION ALL
     SELECT c.id,c.parent,c.thread,c.status,c.started_at,c.finished_at
-    FROM tree AS p JOIN src.runs AS c
+    FROM tree AS p JOIN local_runs AS c
       ON c.parent >= p.id || '.' AND c.parent < p.id || '/'
 )
 SELECT * FROM tree;
@@ -120,7 +120,7 @@ SELECT * FROM tree;
 
 HAS_OPEN_STEPS = """
 -- Check each owned Run before publishing an archive, including non-call Steps.
-SELECT 1 FROM src.steps
+SELECT 1 FROM local_steps
 WHERE run = :run_id
   AND (status NOT IN ('succeeded','failed','canceled') OR finished_at IS NULL)
 LIMIT 1;
@@ -129,7 +129,7 @@ LIMIT 1;
 SOURCE_STEP_PAGE = """
 -- after_id='' for the first page. lo_text/hi_text are both NULL for all-time.
 SELECT id,run,kind,spec,report,started_at,finished_at
-FROM src.steps
+FROM local_steps
 WHERE run = :run_id AND id > :after_id
   AND kind IN ('model','tool') AND status IN ('succeeded','failed','canceled')
   AND finished_at IS NOT NULL
@@ -142,12 +142,12 @@ ORDER BY id LIMIT :page_size;
 TIME_STEP_IDS = """
 -- For recent-only startup reads or archived partial-minute edges.
 -- UNION deduplicates a Step selected by both of its timestamps.
-SELECT id,run FROM src.steps
+SELECT id,run FROM local_steps
 WHERE kind IN ('model','tool') AND status IN ('succeeded','failed','canceled')
   AND started_at IS NOT NULL
   AND started_at >= :lo_text AND started_at < :hi_text
 UNION
-SELECT id,run FROM src.steps
+SELECT id,run FROM local_steps
 WHERE kind IN ('model','tool') AND status IN ('succeeded','failed','canceled')
   AND finished_at IS NOT NULL
   AND finished_at >= :lo_text AND finished_at < :hi_text;
@@ -155,19 +155,19 @@ WHERE kind IN ('model','tool') AND status IN ('succeeded','failed','canceled')
 
 STEPS_BY_IDS = """
 SELECT id,run,kind,spec,report,started_at,finished_at
-FROM src.steps WHERE id IN (SELECT value FROM json_each(:ids_json));
+FROM local_steps WHERE id IN (SELECT value FROM json_each(:ids_json));
 """
 
 RUNS_BY_IDS = """
 -- Resolve roots by source-owned StepRef.parse(parent).run_id, memoizing Run IDs.
 SELECT id,parent,thread,status,started_at,finished_at
-FROM src.runs WHERE id IN (SELECT value FROM json_each(:ids_json));
+FROM local_runs WHERE id IN (SELECT value FROM json_each(:ids_json));
 """
 
 ROOT_STARTS_BY_TIME = """
 -- archived=1 for cold edges; archived=0 for recent source projections.
 SELECT r.id,r.parent,r.thread,r.status,r.started_at,r.finished_at
-FROM src.runs AS r
+FROM local_runs AS r
 WHERE r.parent IS NULL AND r.started_at IS NOT NULL
   AND r.started_at >= :lo_text AND r.started_at < :hi_text
   AND (EXISTS (SELECT 1 FROM main.roots AS a WHERE a.root_run_id = r.id))

@@ -107,6 +107,7 @@ def test_placement_defaults():
     "requested,running,error",
     [
         (None, ["chat"], None),
+        (None, ["chat", "talk", "chore"], None),
         (frozenset(("chat",)), ["chat"], None),
         (frozenset(("chat", "talk")), ["talk", "chat"], None),
         (frozenset(("chat",)), ["chat", "talk"], "differs"),
@@ -117,10 +118,30 @@ def test_placement_defaults():
 def test_chat_reuse_preserves_running_selection(
     tmp_path, monkeypatch, requested, running, error
 ):
+    from toolang.cli.common.progress import make_cli_progress
+
     layout = AgentLayout.resident(tmp_path, "alice")
     state = {"drivers": running}
     status = SimpleNamespace(
-        status="running", sandbox="host", endpoint="http://127.0.0.1:7001"
+        status="running", sandbox="host", endpoint="http://127.0.0.1:7001", port=7001
+    )
+    from toolang.up.contract import startup_contract
+    from toolang.up.instance import update_instance
+
+    spec = agent_server._resolve_launch(
+        layout,
+        sandbox="host",
+        dev=None,
+        model_catalog=None,
+        base_environ={},
+        drivers=frozenset(running),
+        active_port=7001,
+    )
+    update_instance(
+        layout.runtime_status,
+        lambda entry: entry["control"].update(
+            startup_contract=startup_contract(spec), drivers=running
+        ),
     )
     monkeypatch.setattr(
         agent_server.agents,
@@ -133,7 +154,7 @@ def test_chat_reuse_preserves_running_selection(
         model_catalog=None,
         ui_base_url="",
         base_environ={},
-        progress=None,
+        progress=make_cli_progress(enabled=False),
         compact_override=None,
         workspace_additions=None,
         temporary=False,

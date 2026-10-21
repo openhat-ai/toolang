@@ -92,7 +92,8 @@ def test_script_publishes_basename_and_actual_allocated_run(
         return SimpleNamespace(id=run_id)
 
     monkeypatch.setattr(
-        "toolang.up.source.materialize_roaming_program", lambda _: layout
+        "toolang.up.source.materialize_roaming_program",
+        lambda _, **kwargs: kwargs["layout"],
     )
     monkeypatch.setattr("toolang.cli.common.agent_server.acquire_agent_server", acquire)
     monkeypatch.setattr(
@@ -235,7 +236,7 @@ def test_agent_serve_publishes_once_at_outer_cli(tmp_path, monkeypatch, publicat
         runtime,
         "resolve_startup",
         lambda *a, **kw: SimpleNamespace(
-            startup=SimpleNamespace(sandbox="fake"), target=layout
+            sandbox="fake", serve=SimpleNamespace(layout=layout)
         ),
     )
     monkeypatch.setattr(runtime, "warn_development_package_source", lambda _: None)

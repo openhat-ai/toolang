@@ -78,3 +78,24 @@ DriverOption = Annotated[
         help="Enable only these drivers, replacing defaults: chat,talk,chore or none",
     ),
 ]
+
+
+def _selected_instance(ctx: typer.Context, value: str | None) -> str | None:
+    if value is not None:
+        from .context import context_layout
+
+        if context_layout(ctx).instance_id != value:
+            raise typer.BadParameter("instance does not match the selected target")
+    return value
+
+
+InstanceOption = Annotated[
+    str | None,
+    typer.Option(
+        "--instance",
+        "-i",
+        metavar="INSTANCE",
+        callback=_selected_instance,
+        help="Select a retained v… or r… instance; default: latest startup",
+    ),
+]

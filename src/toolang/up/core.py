@@ -13,6 +13,7 @@ from toolang.execution.store import RunStore
 from toolang.execution.threads import ThreadManager
 from toolang.setup import SetupWatcher
 from toolang.state.watcher import StateWatcher
+from toolang.state.state import AgentState
 from .types import ALL_DRIVERS, ExecutionDrivers
 from .lifecycle import ServerLifecycle
 
@@ -31,6 +32,8 @@ class AgentCore:
         "state",
         "store",
         "threads",
+        "_owns_store",
+        "_closed",
     )
 
     def __init__(
@@ -46,15 +49,23 @@ class AgentCore:
         compact_override: ModelOverride | None = None,
         workspace_additions: Mapping[str, str] | None = None,
         workdir: str | None = None,
+        store: RunStore | None = None,
+        ids: IdIssuer | None = None,
+        initial_state: AgentState | None = None,
+        start_executor: bool = True,
     ) -> None:
         from .source import restore_program_acquisition
+        from .replay import require_complete_seed
 
+        require_complete_seed(layout)
         layout = restore_program_acquisition(layout)
         self.layout = layout
         self.lifecycle = lifecycle
         self.drivers = drivers
-        self.store = RunStore(layout.run_store)
-        self.ids = IdIssuer(layout.run_store, agent_name=layout.name)
+        self._owns_store = store is None
+        self._closed = False
+        self.store = store or RunStore(layout.run_store)
+        self.ids = ids or IdIssuer(layout.run_store, agent_name=layout.name)
         self.history = RunHistory(self.store)
         allow_overrides = dict(ceiling_overrides or {})
         self.setup = SetupWatcher(
@@ -71,6 +82,7 @@ class AgentCore:
         )
         self.state = StateWatcher(
             layout,
+            initial_state=initial_state,
             workspace_additions=workspace_additions,
             allow_overrides={
                 name: value
@@ -88,10 +100,34 @@ class AgentCore:
             admission=lifecycle.admit if lifecycle is not None else None,
         )
         self.threads = ThreadManager(self.store, self.ids, stream=self.executor.stream)
-        self.executor.start()
+        if start_executor:
+            self.executor.start()
+
+    def resource_counts(self) -> dict[str, object]:
+        """Save non-sensitive summaries for inspection after source removal."""
+        setup, state = self.setup.current(), self.state.current()
+        tools = setup.tools()
+        return {
+            "models": len(setup.models_effective()),
+            "providers": len(setup.providers_effective()),
+            "tools": len(tools),
+            "toolsets": len({ref.partition("/")[0] for ref in tools.refs()}),
+            "caps": {
+                kind + "s": sum(item.kind == kind for item in state.caps_for("agent"))
+                for kind in ("psyche", "skill", "service", "prompt")
+            },
+            "chores": len(state.chores),
+            "workspaces": list(setup.workspace_grants(state.workspaces)),
+        }
 
     async def close(self) -> None:
         """Stop local execution and close durable storage."""
 
-        await self.executor.stop()
-        self.store.close()
+        if self._closed:
+            return
+        self._closed = True
+        try:
+            await self.executor.stop()
+        finally:
+            if self._owns_store:
+                self.store.close()

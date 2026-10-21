@@ -612,6 +612,7 @@ def test_hosted_lifespan_starts_and_stops_messaging(
     layout = AgentLayout.resident(tmp_path, "alice")
     layout.home.mkdir(parents=True)
     core = MagicMock()
+    core.layout = layout
     core.close = AsyncMock()
     core.state.run = AsyncMock()
     core.setup.run = AsyncMock()
@@ -676,7 +677,7 @@ def test_hosted_lifespan_starts_and_stops_messaging(
     monkeypatch.setattr(server.agents, "stop_runtime_state", MagicMock())
     monkeypatch.setattr(server, "MessagingLoop", message_loop)
     monkeypatch.setattr(server, "TeamingLoop", Lifecycle)
-    monkeypatch.setattr(server, "create_app", create_app)
+    monkeypatch.setattr("toolang.up.application.create_app", create_app)
     monkeypatch.setattr(server, "_run_uvicorn_app", run_server)
     assert (
         server.serve(

@@ -1,5 +1,7 @@
 """Generation, merge, retention, and query correction acceptance checks."""
 
+from toolang.up.workload import ForegroundWorkload
+
 from dataclasses import replace
 import json
 import os
@@ -449,12 +451,11 @@ def test_next_control_operation_recovers_only_abandoned_temporary_runtimes(
 ):
     import asyncio
     from toolang.up import sandbox
-    from toolang.up.observation import RuntimeRegistration
 
     base = AgentLayout.resident(tmp_path, "alice")
     old = replace(base, instance="old")
     current = replace(base, instance="new")
-    registration = RuntimeRegistration(old, toolang_root=tmp_path, drivers=frozenset())
+    registration = ForegroundWorkload(old, toolang_root=tmp_path, drivers=frozenset())
     registration.__enter__()
     state = SandboxState(
         "docker:image",
@@ -495,11 +496,10 @@ def test_next_control_operation_recovers_only_abandoned_temporary_runtimes(
 def test_owned_bootstrap_is_not_mistaken_for_unreferenced_staging(tmp_path):
     import asyncio
     from toolang.up import sandbox
-    from toolang.up.observation import RuntimeRegistration
 
     base = AgentLayout.resident(tmp_path, "alice")
     old = replace(base, instance="running")
-    registration = RuntimeRegistration(old, toolang_root=tmp_path, drivers=frozenset())
+    registration = ForegroundWorkload(old, toolang_root=tmp_path, drivers=frozenset())
     registration.__enter__()
     stage = base.sandbox_stage / "owned"
     stage.mkdir(parents=True)

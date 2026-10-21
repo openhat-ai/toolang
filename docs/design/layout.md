@@ -33,7 +33,7 @@ ${TOOLANG_ROOT}/
     instances/
       gus.json                       # Resident
       lex@v<source-hash>.json         # Visiting
-      aid@r<source-hash>.json         # Roaming server
+      aid@<instance_id>.json         # Roaming
       register.lock
   hub/
   human/
@@ -76,7 +76,7 @@ Each resident agent lives under:
 Visiting agents fetched by Chat, start, or serve use a stable temporary agent
 root derived from the resolved Toolang root and Source Ref:
 
-- `/tmp/toolang-<agent>-<hash:16>/`
+- `/tmp/<agent>@v<hash:16>/`
 
 Agent Names are bounded to 64 ASCII characters; the complete 16-character
 source hash is retained without shortening either component. See
@@ -90,9 +90,10 @@ migration. Temporary directory cleanup can remove its state and remembered
 settings. The cached
 remote `agent.too` is refetched after one hour. Its source-owned
 `agent.source.json` cache receipt records the acquired ref and byte digest;
-State captures the same Program and provenance. Roaming agents use the source
-file's sibling `.toolang` directory. `too file.too serve` hosts the workload;
-ordinary host script invocation executes directly without a persistent server.
+State captures the same Program and provenance. Each roaming execution gets a
+fresh root below the source file's sibling `.toolang`, with independent State and
+history. Host scripts serve the shared Agent API beside their foreground workload
+on one event loop; neither executor nor history is shared with another launch.
 Visiting idle shutdown stops its server and automatic Docker container, preserving
 this root and its history. Host control/stage files can be cleaned by the next
 management call.
@@ -119,8 +120,8 @@ state, and runtime path from that identity.
 | Placement | Root calculation |
 | --- | --- |
 | `resident` | The explicit Toolang root |
-| `visiting` | `/tmp/toolang-<agent>-<toolang-root-and-source-hash:16>/` |
-| `roaming` | `<source-directory>/.toolang/` |
+| `visiting` | `/tmp/<agent>@v<toolang-root-and-source-hash:16>/` |
+| `roaming` | `<source-directory>/.toolang/<agent>@<instance_id>/` |
 
 All three placements use the same layout below their calculated root:
 `agents/<agent>/` is the agent home, Agent State uses `.state/`, and durable
@@ -145,33 +146,34 @@ Discovery references live under `${TOOLANG_ROOT}/.runtime/instances/`:
 | --- | --- |
 | Resident | `gus.json` |
 | Visiting | `lex@v<hash>.json` |
-| Roaming server | `aid@r<hash>.json` |
+| Roaming | `aid@<instance_id>.json` |
 
-The hash is the first 16 hex characters of SHA-256. Visiting uses the same key
-as its agent root: the canonical Toolang root, a NUL separator, and the Source
-Ref target. GitHub prefix aliases normalize before hashing; shorthand targets
-do not require resolving a branch. Complete URL targets retain their spelling.
-The temporary root and discovery reference use that same 16-character hash.
-Roaming uses the canonical host absolute `.too` source path. The host saves
-`source_id` with its control bindings so guest mounts cannot change identity.
-Changing ports, sandbox, launch IDs, or source contents does not change this hash.
-Agent Names contain neither `@` nor `-`; placement markers remain unambiguous.
-
-An isolated temporary execution appends `@<execution-id>` before `.json`;
-its source hash remains stable and parallel
-executions remain independently visible. Repeated invocations of the same source
-and config reuse prepared Agent State; execution histories remain separate.
+- Visiting IDs are `v` plus the existing 16-hex source hash: canonical Toolang root,
+  NUL, canonical Source Ref; alias normalization is unchanged.
+- Roaming IDs are `r` plus 16 hex digits of startup order and 16 hex digits of a
+  SHA-256 prefix over canonical source path, NUL, and a fresh UUID nonce.
+- Startup order is `max(time_ns(), highest_retained_order_ns + 1)` under the source
+  cache's `.state/launch.lock`. Publish identity/status before preparation;
+  hidden staging is unselectable. Compare complete IDs lexically.
+- `instance_name` is agent name plus `@<instance_id>` for nonresidents; resident
+  names stay unchanged. Top ownership uses the complete instance name.
+- `launch_id` remains a private UUID4 workload-generation fence for every placement.
+  It selects neither agent roots nor CLI instances; replacement workloads renew it.
+- Only global active registrations supply discovery. No resident or project scans
+  supplement them; deleting references loses no history and proves no process death.
 
 Each reference contains only its version, absolute authoritative status path,
 and launch ID. `RuntimeRegistration` publishes into one Toolang root and uses
 one shared `instances/register.lock` for publication and conditional removal.
+It does not initialize or stop workloads; removing a reference changes no
+authoritative lifecycle state.
 The guard is released before starting or waiting for a workload. Pure reads
 neither acquire nor create it. Cleanup of an existing reference creates a missing
 guard, including when only an old guard remains after an upgrade; cleanup of an
 absent reference creates no files. Old guards are retained. For example:
 
 ```json
-{"version": 1, "status": "/project/.toolang/agents/aid/.runtime/status.json", "launch_id": "<fresh-launch-id>"}
+{"version": 3, "status": "/project/.toolang/aid@<instance_id>/agents/aid/.runtime/status.json", "launch_id": "<fresh-launch-id>"}
 ```
 
 Each agent runtime stores operational state under:
@@ -182,7 +184,7 @@ Key paths:
 
 | Path           | Purpose                                                      |
 | -------------- | ------------------------------------------------------------ |
-| `status.json` | Version 3 authoritative control and workload entries, keyed by execution instance |
+| `status.json` | Version 3 authoritative control/workload data in the `default` entry |
 | `agent.log`    | Runtime log                                                  |
 | `logs/<agic>/<run_id>.log` | Per-run script logs when `PY_LOG` is set |
 | `runs.db` | Threads, controls, runs, steps, model inputs, chore checkpoints, and ID sequences |
@@ -197,12 +199,11 @@ Host and guest merge their owned fields through one short shared-file claim,
 validating the launch ID before atomic replacement. Management ownership lives
 in the record; no lock is held across startup, execution, or shutdown.
 
-Successful stop retains the persistent record, remembered endpoint/sandbox,
-and database/log history. Successfully finalized temporary entries are removed.
-Existing isolated script databases/logs remain under `.runtime/instances/<id>/`;
-all their lifecycle entries share the agent's `status.json`. Interrupted entries
-and unreleased resource references remain recoverable. [Hosting](hosting.md#runtime-recovery-and-logs)
-owns restart and cleanup behavior.
+Stop, exit, and failure retain every published root, agent home, status, and
+history. Only process/container/bootstrap resources and matching global references
+are released. Runtime paths never add an execution-instance subdirectory. Old
+shared roots and nested histories remain untouched for explicit migration.
+[Hosting](hosting.md#runtime-recovery-and-logs) owns resource recovery.
 
 Docker mounts the target agent home read-write, necessary inputs/workspaces,
 and bootstrap materials read-only. Discovery references and entire roots are
@@ -212,7 +213,7 @@ it does not isolate control fields from arbitrary guest file writes.
 Human Talk stores accepted input history at
 `<root>/human/talk-input/<conversation-id>.jsonl`, shared by human viewers of the
 same conversation in one root. Chat uses the selected agent runtime's
-`chat-input.jsonl`, including its instance directory. These are input recall,
+`chat-input.jsonl` in the selected instance's agent home. These are input recall,
 separate from the conversation message store and execution history. Unsent
 drafts remain in memory and are not saved to draft files.
 
@@ -237,7 +238,7 @@ no content change. Read-only operations never create edit locks or their parent
 directories: they acquire an existing guard, or read optimistically and retry
 under the guard if the first writer creates it during the read. An unchanged
 roaming configuration projection also leaves an absent edit lock absent.
-Shared roaming `toolang.toml` edits use the roaming root edit lock; projected
+Shared roaming `toolang.toml` edits use `<srcdir>/.toolang/.state/root/edit.lock`; projected
 home configuration uses its home edit lock. Release edit locks before refreshing
 State. The watcher uses source-change detection independently of edit locks.
 Roaming projection verifies its root inputs again after releasing the home guard

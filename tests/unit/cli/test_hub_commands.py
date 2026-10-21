@@ -1,5 +1,6 @@
 """Bare Hub status output and concrete port resolution for lifecycle commands."""
 
+from toolang.up.workload import ForegroundWorkload
 from types import SimpleNamespace
 import os
 
@@ -12,7 +13,6 @@ from toolang.cli.toolang.commands import hub
 from toolang.cli.common.ports import agent_port
 from toolang.common.layout import AgentLayout
 from toolang.up.config import resolve_port_override
-from toolang.up.observation import RuntimeRegistration
 from toolang.teaming.discovery import HubDiscovery
 
 
@@ -55,7 +55,7 @@ def test_hub_status_shows_server_version_inline(
     )
     layout = AgentLayout.resident(tmp_path, "alice")
     layout.home.mkdir(parents=True)
-    with RuntimeRegistration(
+    with ForegroundWorkload(
         layout, toolang_root=tmp_path, drivers=frozenset({"chat", "talk"})
     ):
         assert cli.main(["--root", str(tmp_path), "hub"]) == 0
@@ -138,8 +138,8 @@ def test_hub_inspection_failure_keeps_local_agents_visible(tmp_path, capsys):
     assert cli.main(["--root", str(tmp_path), "hub"]) == 0
     output = capsys.readouterr().out
     assert "hub not running" in output
-    assert "1 agents, 0 running, 0 talk enabled, partial" in output
-    assert "Hub" in output and "alice" in output
+    assert "no agents" in output
+    assert "Hub" in output and "alice" not in output
     assert "partial: Hub: record inspection failed" in output
 
 
