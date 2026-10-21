@@ -10,6 +10,7 @@ import pytest
 from toolang.common.layout import AgentLayout
 from toolang.up.identity import allocate_roaming
 from toolang.execution.store import RunStore
+from tests.support.runtime_observation import binding
 from toolang.up.observation import (
     RuntimeRegistration,
     instance_filename,
@@ -21,6 +22,52 @@ from toolang.up.observation import (
 
 def _roaming(source):
     return allocate_roaming(source, toolang_root=source.parent)
+
+
+@pytest.mark.parametrize("state", ["current", "removed", "replaced"])
+def test_source_registration_checks_its_launch_without_changing_metadata(
+    tmp_path, state
+):
+    source = binding(tmp_path, registered=True)
+    if state == "removed":
+        source.registration.unlink()
+    elif state == "replaced":
+        reference = json.loads(source.registration.read_text())
+        source.registration.write_text(json.dumps(dict(reference, launch_id="new")))
+    before = source.registration.read_bytes() if source.registration.exists() else None
+    assert source.is_current() == (state == "current")
+    assert (
+        source.registration.read_bytes() if source.registration.exists() else None
+    ) == before
+
+
+@pytest.mark.parametrize("fault", ["json", "version", "incomplete", "permission"])
+def test_source_registration_does_not_treat_unreadable_metadata_as_departure(
+    tmp_path, monkeypatch, fault
+):
+    source = binding(tmp_path, registered=True)
+    if fault == "json":
+        source.registration.write_text("not json")
+    elif fault in {"version", "incomplete"}:
+        reference = json.loads(source.registration.read_text())
+        if fault == "version":
+            reference["version"] = -1
+        else:
+            reference.pop("launch_id")
+        source.registration.write_text(json.dumps(reference))
+    before = source.registration.read_bytes()
+    if fault == "permission":
+        original = type(source.registration).read_text
+
+        def denied(path, *args, **kwargs):
+            if path == source.registration:
+                raise PermissionError("registration denied")
+            return original(path, *args, **kwargs)
+
+        monkeypatch.setattr(type(source.registration), "read_text", denied)
+    with pytest.raises(PermissionError if fault == "permission" else ValueError):
+        source.is_current()
+    assert source.registration.read_bytes() == before
 
 
 def test_reference_names_use_stable_host_source_identity(tmp_path):

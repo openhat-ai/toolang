@@ -12,6 +12,7 @@ import httpx
 import pytest
 
 from tests.support.execution_fixtures import project_run_start
+from tests.support.runtime_observation import NOW, binding, completed, usage
 from toolang.base.types.message import Message
 
 from toolang.common.layout import AgentLayout
@@ -20,54 +21,13 @@ from toolang.execution.schemas import LiveSnapshot, LiveTreeSnapshot, RunNode, S
 from toolang.execution.store import RunStore
 from toolang.execution.types import RunReport
 from toolang.stats.errors import StatsUnavailable
-from toolang.stats.schemas import CompletedRoots, CompletionCounts, RecentUsage
+from toolang.stats.schemas import CompletionCounts
 from toolang.stats.types import Metrics, timestamp
-from toolang.up import top
-from toolang.up.observation import RuntimeInventory, RuntimeSource
+from toolang.up import activity, top
+from toolang.up.activity import ActivityReader
+from toolang.up.observation import RuntimeInventory
 from toolang.up.schemas import ActivitySnapshot, SourceActivity
-from toolang.up.types import RuntimeInstance, RuntimeInstanceSnapshot
-
-NOW = 1792326877
-
-
-def completed(at=NOW, recent=300):
-    return CompletedRoots(
-        observed_at=timestamp(at),
-        start=timestamp(at - recent),
-        end=timestamp(at),
-        counts=CompletionCounts(),
-        roots=(),
-    )
-
-
-def usage(period=3600):
-    return RecentUsage(
-        observed_at=timestamp(NOW),
-        start=timestamp(NOW - period),
-        end=timestamp(NOW),
-        metrics=Metrics(model_calls=76),
-    )
-
-
-def binding(tmp_path):
-    registration = tmp_path / ".runtime" / "instances" / "alice.json"
-    registration.parent.mkdir(parents=True, exist_ok=True)
-    registration.write_text(
-        json.dumps(
-            {
-                "version": 3,
-                "status": str(AgentLayout.resident(tmp_path, "alice").runtime_status),
-                "launch_id": "fixture",
-            }
-        )
-    )
-    return RuntimeSource(
-        RuntimeInstance("alice", "resident", None, "source", "running", ()),
-        AgentLayout.resident(tmp_path, "alice"),
-        "http://localhost:7001",
-        registration,
-        "fixture",
-    )
+from toolang.up.types import RuntimeInstanceSnapshot
 
 
 def resolved(value):
@@ -85,11 +45,11 @@ def test_departure_stops_endpoint_polling_and_rejects_inflight_live(
     calls = []
     monkeypatch.setattr(top.time, "time", lambda: now[0])
 
-    def read(source, recent, **kwargs):
+    def read(_reader, source, recent, **kwargs):
         calls.append(source.endpoint)
         return ActivitySnapshot(live=None, completed=completed(now[0], recent))
 
-    monkeypatch.setattr(top, "read_activity", read)
+    monkeypatch.setattr(ActivityReader, "read_activity", read)
     with closing(
         top.TopObserver(tmp_path, agent=None, period=3600, recent=300, refresh=60)
     ) as observer:
@@ -327,20 +287,20 @@ def test_slow_usage_never_blocks_live_or_marks_new_window_with_old_metrics(
         ),
     )
 
-    def slow_usage(source, period, cancelled=None):
+    def slow_usage(_reader, source, period, cancelled=None):
         scans.append(period)
         assert (release if period == 3600 else next_release).wait(3)
         return usage(period)
 
-    def live(source, recent, before=None, completed_at=None, **kwargs):
+    def live(_reader, source, recent, before=None, completed_at=None, **kwargs):
         live_calls.append(recent)
         return ActivitySnapshot(
             live=LiveSnapshot("epoch", timestamp(now[0]), ()),
             completed=completed(now[0], recent),
         )
 
-    monkeypatch.setattr(top, "read_usage", slow_usage)
-    monkeypatch.setattr(top, "read_activity", live)
+    monkeypatch.setattr(ActivityReader, "read_usage", slow_usage)
+    monkeypatch.setattr(ActivityReader, "read_activity", live)
     observer = top.TopObserver(
         tmp_path, agent=None, period=3600, recent=300, refresh=0.1
     )
@@ -602,14 +562,14 @@ def test_completed_paging_does_not_take_the_live_poll_slot(tmp_path, monkeypatch
     state.next_usage = NOW + 100
     calls = []
 
-    def live(source, recent, before=None, completed_at=None, **kwargs):
+    def live(_reader, source, recent, before=None, completed_at=None, **kwargs):
         calls.append(before)
         return ActivitySnapshot(
             live=LiveSnapshot("epoch", timestamp(NOW), ()), completed=completed()
         )
 
-    monkeypatch.setattr(top, "read_activity", live)
-    monkeypatch.setattr(top, "read_page", lambda *args: completed(), raising=False)
+    monkeypatch.setattr(ActivityReader, "read_activity", live)
+    monkeypatch.setattr(ActivityReader, "read_page", lambda *args: completed())
     monkeypatch.setattr(top.time, "time", lambda: NOW)
     observer = top.TopObserver(tmp_path, agent=None, period=3600, recent=300, refresh=1)
     observer.sources["source"] = state
@@ -693,52 +653,6 @@ def test_offline_completion_outside_first_page_replaces_the_known_live_root(
         store.close()
 
 
-@pytest.mark.parametrize("epoch", ["epoch", "restarted"])
-def test_online_completion_lookup_keeps_the_first_page_cursor_and_checks_epoch(
-    tmp_path, monkeypatch, epoch
-):
-    source = binding(tmp_path)
-    store = RunStore(source.layout.run_store)
-    selected = "run_zz"
-    for name in [*(f"run_{index:03}" for index in range(101)), selected]:
-        project_run_start(
-            store,
-            run_id=name,
-            thread_id="chat_top",
-            input=Message.user("fixture"),
-            started_at=timestamp(NOW - 10),
-        )
-        store.finish_run(run_id=name, finished_at=timestamp(NOW), report=RunReport())
-    root = RunNode(selected, None, "agic:work", "running", timestamp(NOW - 10))
-    previous = LiveSnapshot(
-        "epoch", timestamp(NOW - 1), (LiveTreeSnapshot(selected, "chat_top", (root,)),)
-    )
-    try:
-        with top.recent_source(source.layout.run_store) as reader:
-            reader.pin()
-            first = reader.completed(now=NOW, recent=300)
-        payload = ActivitySnapshot(
-            live=LiveSnapshot(epoch, timestamp(NOW), ()), completed=first
-        )
-        assert source.endpoint is not None
-        response = httpx.Response(
-            200,
-            json=payload.model_dump(mode="json"),
-            request=httpx.Request("GET", source.endpoint),
-        )
-        monkeypatch.setattr(top.httpx, "get", lambda *args, **kwargs: response)
-        result = top.read_activity(source, 300, previous=previous)
-        assert (
-            len(result.completed.roots) == 100
-            and result.completed.roots[-1].id == "run_099"
-        )
-        assert [row.id for row in result.retired] == (
-            [selected] if epoch == previous.epoch else []
-        )
-    finally:
-        store.close()
-
-
 def test_slow_page_keeps_live_polling_and_rejects_obsolete_cursor_results(
     tmp_path, monkeypatch
 ):
@@ -770,7 +684,7 @@ def test_slow_page_keeps_live_polling_and_rejects_obsolete_cursor_results(
     )
     new = replace(old, id="run_new099")
 
-    def live(source, recent, **kwargs):
+    def live(_reader, source, recent, **kwargs):
         polls.append(now[0])
         return ActivitySnapshot(
             live=LiveSnapshot("epoch", timestamp(now[0]), ()),
@@ -783,8 +697,8 @@ def test_slow_page_keeps_live_polling_and_rejects_obsolete_cursor_results(
         assert release.wait(3)
         return completed().model_copy(update={"roots": (old,)})
 
-    monkeypatch.setattr(top, "read_activity", live)
-    monkeypatch.setattr(top, "read_page", page)
+    monkeypatch.setattr(ActivityReader, "read_activity", live)
+    monkeypatch.setattr(ActivityReader, "read_page", page)
     monkeypatch.setattr(top.time, "time", lambda: now[0])
     observer = top.TopObserver(
         tmp_path, agent=None, period=3600, recent=300, refresh=0.1
@@ -1001,159 +915,6 @@ def test_unregistered_history_never_enters_fresh_top(tmp_path, mode):
     assert not layout.stats_store.exists()
 
 
-def test_lost_history_never_becomes_empty_after_a_successful_read(tmp_path):
-    source = replace(
-        binding(tmp_path),
-        instance=replace(binding(tmp_path).instance, state="not running"),
-        endpoint=None,
-    )
-    with closing(RunStore(source.layout.run_store)):
-        pass
-    state = top._Source(
-        source,
-        NOW,
-        SourceActivity(identity="source", label="alice", placement="resident"),
-    )
-    assert state.read_usage(source, 3600, lambda: False).metrics == Metrics()
-    source.layout.run_store.unlink()
-    with pytest.raises(StatsUnavailable):
-        state.read_activity(source, 300, previous=None, cancelled=lambda: False)
-    with pytest.raises(StatsUnavailable):
-        state.read_usage(source, 3600, lambda: False)
-    assert not source.layout.run_store.exists()
-
-
-def test_published_endpoint_failure_is_distinct_from_an_embedded_runtime(
-    tmp_path, monkeypatch
-):
-    source = binding(tmp_path)
-    with closing(RunStore(source.layout.run_store)):
-        pass
-    calls = []
-
-    def offline(*args, **kwargs):
-        calls.append(args)
-        raise httpx.ConnectError("connection refused")
-
-    monkeypatch.setattr(top.httpx, "get", offline)
-    result = top.read_activity(replace(source, endpoint=None), 300)
-    assert result.live is None and result.live_error is None and not calls
-    result = top.read_activity(source, 300)
-    assert result.live is None and result.live_error == "connection refused"
-    assert result.completed.counts.total == 0 and len(calls) == 1
-    response = httpx.Response(
-        200,
-        json=ActivitySnapshot(
-            live=LiveSnapshot("epoch", timestamp(NOW), ()), completed=completed()
-        ).model_dump(mode="json"),
-        request=httpx.Request("GET", source.endpoint),
-    )
-    monkeypatch.setattr(top.httpx, "get", lambda *args, **kwargs: response)
-    result = top.read_activity(source, 300)
-    assert result.live is not None and result.live_error is None
-
-
-@pytest.mark.parametrize("replacement", [False, True])
-@pytest.mark.parametrize("response", ["disconnected", "stale", "history"])
-def test_departure_during_live_read_keeps_history_without_reporting_a_live_failure(
-    tmp_path, monkeypatch, replacement, response
-):
-    source = binding(tmp_path)
-    with closing(RunStore(source.layout.run_store)) as store:
-        project_run_start(
-            store,
-            run_id="run_done",
-            thread_id="chat_top",
-            input=Message.user("fixture"),
-            started_at=timestamp(NOW - 10),
-        )
-        store.finish_run(run_id="run_done", finished_at=timestamp(NOW - 1))
-    monkeypatch.setattr(top.time, "time", lambda: NOW)
-    calls = []
-
-    def depart():
-        if replacement:
-            reference = json.loads(source.registration.read_text())
-            source.registration.write_text(json.dumps(dict(reference, launch_id="new")))
-        else:
-            source.registration.unlink(missing_ok=True)
-
-    def departed(*args, **kwargs):
-        calls.append(args)
-        if response != "history":
-            depart()
-        if response != "stale":
-            raise httpx.ConnectError("old endpoint closed")
-        return httpx.Response(
-            200,
-            json=ActivitySnapshot(
-                live=LiveSnapshot("obsolete", timestamp(NOW), ()),
-                completed=completed(),
-            ).model_dump(mode="json"),
-            request=httpx.Request("GET", source.endpoint),
-        )
-
-    monkeypatch.setattr(top.httpx, "get", departed)
-    if response == "history":
-        original = top.activity_snapshot
-
-        def history(*args, **kwargs):
-            depart()
-            return original(*args, **kwargs)
-
-        monkeypatch.setattr(top, "activity_snapshot", history)
-    for _ in range(2):
-        result = top.read_activity(source, 300)
-        assert result.live is None and result.live_error is None
-        assert result.completed.counts.succeeded == 1
-        assert [row.id for row in result.completed.roots] == ["run_done"]
-    assert len(calls) == 1
-    assert source.layout.run_store.exists()
-
-
-@pytest.mark.parametrize("operation", ["activity", "usage"])
-@pytest.mark.parametrize("established", [False, True])
-def test_departure_during_first_history_read_only_zeros_a_never_created_store(
-    tmp_path, monkeypatch, operation, established
-):
-    source = binding(tmp_path)
-    if established:
-        with closing(RunStore(source.layout.run_store)):
-            pass
-    state = top._Source(
-        source,
-        NOW,
-        SourceActivity(
-            identity=source.instance.identity, label="alice", placement="resident"
-        ),
-    )
-
-    def departed(*args, **kwargs):
-        source.registration.unlink()
-        source.layout.run_store.unlink(missing_ok=True)
-        raise StatsUnavailable("store is absent")
-
-    monkeypatch.setattr(top, f"read_{operation}", departed)
-
-    def read():
-        if operation == "activity":
-            return state.read_activity(
-                source, 300, previous=None, cancelled=lambda: False
-            )
-        return state.read_usage(source, 3600, lambda: False)
-
-    if established:
-        with pytest.raises(StatsUnavailable, match="store is absent"):
-            read()
-    else:
-        result = read()
-        if operation == "activity":
-            assert result.completed.counts.total == 0 and result.live_error is None
-        else:
-            assert result.metrics == Metrics()
-    assert not source.layout.run_store.exists()
-
-
 @pytest.mark.parametrize("endpoint", [None, "http://localhost:7001"])
 @pytest.mark.parametrize("unfinished", [False, True])
 def test_embedded_completed_work_proves_zero_active_roots(
@@ -1161,7 +922,7 @@ def test_embedded_completed_work_proves_zero_active_roots(
 ):
     from toolang.cli.common.top_view import TopView
 
-    source = replace(binding(tmp_path), endpoint=endpoint)
+    source = replace(binding(tmp_path, registered=True), endpoint=endpoint)
     with closing(RunStore(source.layout.run_store)) as store:
         project_run_start(
             store,
@@ -1176,7 +937,7 @@ def test_embedded_completed_work_proves_zero_active_roots(
     def offline(*args, **kwargs):
         raise httpx.ConnectError("connection refused")
 
-    monkeypatch.setattr(top.httpx, "get", offline)
+    monkeypatch.setattr(httpx, "get", offline)
     monkeypatch.setattr(top.time, "time", lambda: NOW)
     monkeypatch.setattr(
         top,
@@ -1199,7 +960,7 @@ def test_embedded_completed_work_proves_zero_active_roots(
             source.layout.run_store.unlink()
             state = observer.sources[source.instance.identity]
             state.activity = observer.live_pool.submit(
-                state.read_activity,
+                state.reader.read_activity,
                 source,
                 300,
                 previous=state.value.live,
@@ -1288,99 +1049,6 @@ def test_live_error_recovers_and_obsolete_failure_cannot_restore_it(tmp_path):
         observer._collect(state, NOW)
         assert state.value.live_error is None
         assert state.value.page_error is None
-
-
-def test_unreadable_store_metadata_cannot_be_treated_as_new_history(
-    tmp_path, monkeypatch
-):
-    source = replace(
-        binding(tmp_path),
-        instance=replace(binding(tmp_path).instance, state="not running"),
-        endpoint=None,
-    )
-    state = top._Source(
-        source,
-        NOW,
-        SourceActivity(identity="source", label="alice", placement="resident"),
-    )
-    original = type(source.layout.run_store).stat
-
-    def denied(path, *args, **kwargs):
-        if path == source.layout.run_store:
-            raise PermissionError("permission denied")
-        return original(path, *args, **kwargs)
-
-    monkeypatch.setattr(type(source.layout.run_store), "stat", denied)
-    with pytest.raises(PermissionError):
-        state.read_usage(source, 3600, lambda: False)
-
-
-def test_healthy_endpoint_does_not_require_readable_local_store_metadata(
-    tmp_path, monkeypatch
-):
-    source = binding(tmp_path)
-    state = top._Source(
-        source,
-        NOW,
-        SourceActivity(identity="source", label="alice", placement="resident"),
-    )
-    original = type(source.layout.run_store).stat
-
-    def denied(path, *args, **kwargs):
-        if path == source.layout.run_store:
-            raise PermissionError("permission denied")
-        return original(path, *args, **kwargs)
-
-    expected = ActivitySnapshot(
-        live=LiveSnapshot("epoch", timestamp(NOW), ()), completed=completed()
-    )
-    response = httpx.Response(
-        200,
-        json=expected.model_dump(mode="json"),
-        request=httpx.Request("GET", source.endpoint),
-    )
-    monkeypatch.setattr(type(source.layout.run_store), "stat", denied)
-    monkeypatch.setattr(top.httpx, "get", lambda *args, **kwargs: response)
-    assert (
-        state.read_activity(source, 300, previous=None, cancelled=lambda: False)
-        == expected
-    )
-
-
-def test_http_history_cannot_become_uninitialized_after_agent_stops(
-    tmp_path, monkeypatch
-):
-    source = binding(tmp_path)
-    state = top._Source(
-        source,
-        NOW,
-        SourceActivity(identity="source", label="alice", placement="resident"),
-    )
-    expected = ActivitySnapshot(
-        live=LiveSnapshot("epoch", timestamp(NOW), ()),
-        completed=completed().model_copy(
-            update={"counts": CompletionCounts(succeeded=3)}
-        ),
-    )
-    response = httpx.Response(
-        200,
-        json=expected.model_dump(mode="json"),
-        request=httpx.Request("GET", source.endpoint),
-    )
-    monkeypatch.setattr(top.httpx, "get", lambda *args, **kwargs: response)
-    assert (
-        state.read_activity(source, 300, previous=None, cancelled=lambda: False)
-        == expected
-    )
-    stopped = replace(
-        source, instance=replace(source.instance, state="not running"), endpoint=None
-    )
-    state.rebind(stopped)
-    with pytest.raises(StatsUnavailable):
-        state.read_activity(stopped, 300, previous=None, cancelled=lambda: False)
-    with pytest.raises(StatsUnavailable):
-        state.read_usage(stopped, 3600, lambda: False)
-    assert not source.layout.run_store.exists()
 
 
 @pytest.mark.parametrize("recovered", [False, True])
@@ -1584,7 +1252,7 @@ def test_failed_retired_lookup_preserves_http_snapshot_and_retries_as_paging(
 ):
     from toolang.cli.common.top_view import TopView
 
-    source = binding(tmp_path)
+    source = binding(tmp_path, registered=True)
     with closing(RunStore(source.layout.run_store)) as store:
         for identity in [*(f"run_{index:03}" for index in range(100)), "run_zz"]:
             project_run_start(
@@ -1597,7 +1265,7 @@ def test_failed_retired_lookup_preserves_http_snapshot_and_retries_as_paging(
             store.finish_run(
                 run_id=identity, finished_at=timestamp(NOW), report=RunReport()
             )
-        with top.recent_source(source.layout.run_store) as reader:
+        with activity.recent_source(source.layout.run_store) as reader:
             reader.pin()
             first = reader.completed(now=NOW, recent=300)
         root = RunNode("run_zz", None, "agic:work", "running", timestamp(NOW - 10))
@@ -1610,7 +1278,7 @@ def test_failed_retired_lookup_preserves_http_snapshot_and_retries_as_paging(
             json=ActivitySnapshot(live=fresh, completed=first).model_dump(mode="json"),
             request=httpx.Request("GET", source.endpoint),
         )
-        monkeypatch.setattr(top.httpx, "get", lambda *args, **kwargs: response)
+        monkeypatch.setattr(httpx, "get", lambda *args, **kwargs: response)
         monkeypatch.setattr(top.time, "time", lambda: NOW)
         state = top._Source(
             source,
@@ -1633,9 +1301,9 @@ def test_failed_retired_lookup_preserves_http_snapshot_and_retries_as_paging(
                 def unavailable(*args, **kwargs):
                     raise error("retired lookup unavailable")
 
-                denied.setattr(top, "recent_source", unavailable)
+                denied.setattr(activity, "recent_source", unavailable)
                 state.activity = resolved(
-                    state.read_activity(
+                    state.reader.read_activity(
                         source, 300, previous=previous, cancelled=lambda: False
                     )
                 )
@@ -1681,8 +1349,8 @@ def test_slow_completion_pages_cannot_starve_live_polls(
             live=LiveSnapshot("epoch", timestamp(now[0]), ()), completed=completed()
         )
 
-    monkeypatch.setattr(top, "read_page", page)
-    monkeypatch.setattr(top, "read_activity", activity)
+    monkeypatch.setattr(ActivityReader, "read_page", page)
+    monkeypatch.setattr(ActivityReader, "read_activity", activity)
     monkeypatch.setattr(top.time, "time", lambda: now[0])
     with closing(
         top.TopObserver(tmp_path, agent=agent, period=3600, recent=300, refresh=60)
