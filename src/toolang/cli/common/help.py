@@ -16,6 +16,7 @@ from typer._click.exceptions import ClickException, UsageError
 from typer.core import TyperArgument, TyperCommand, TyperGroup
 
 from toolang.common.typer.ui import HelpFormatter, argument_usage
+from .agent_argument import agent_parameter, install_agent_parameter
 from .help_sections import write_field_sections
 
 
@@ -25,6 +26,28 @@ def parameter_usage(param: Parameter, ctx: Context) -> list[str]:
     if not pieces or not isinstance(param, TyperArgument):
         return pieces
     return [argument_usage(param)]
+
+
+def _usage_path(ctx: Context) -> Text:
+    """Insert recommended prefix operands at their owning command level."""
+    contexts = []
+    current: Context | None = ctx
+    while current is not None:
+        contexts.append(current)
+        current = current.parent
+    path = Text()
+    for current in reversed(contexts):
+        agent = agent_parameter(current.command)
+        if path:
+            path.append(" ")
+        if agent is not None and agent.contract.recommended == "before":
+            path.append("<AGENT> " if agent.required else "[AGENT] ", style="cli.usage")
+        path.append(current.info_name or "", style="cli.command.name")
+        if current is not ctx:
+            for param in current.command.get_params(current):
+                for piece in parameter_usage(param, current):
+                    path.append(f" {piece}", style="cli.usage")
+    return path
 
 
 class HelpContext(Context):
@@ -71,15 +94,11 @@ class CliCommand(TyperCommand):
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        from .agent_argument import install_agent_parameter
-
         install_agent_parameter(self)
 
     def format_usage(self, ctx: Context, formatter: NativeHelpFormatter) -> None:
-        from .agent_argument import usage_path
-
         write_usage(
-            formatter, usage_path(ctx), " ".join(self.collect_usage_pieces(ctx))
+            formatter, _usage_path(ctx), " ".join(self.collect_usage_pieces(ctx))
         )
 
     def write_help_sections(self, ctx: Context, formatter: HelpFormatter) -> None:
@@ -114,15 +133,11 @@ class CliGroup(TyperGroup):
             ),
             **kwargs,
         )
-        from .agent_argument import install_agent_parameter
-
         install_agent_parameter(self)
 
     def format_usage(self, ctx: Context, formatter: NativeHelpFormatter) -> None:
-        from .agent_argument import usage_path
-
         write_usage(
-            formatter, usage_path(ctx), " ".join(self.collect_usage_pieces(ctx))
+            formatter, _usage_path(ctx), " ".join(self.collect_usage_pieces(ctx))
         )
 
     def resolve_command(

@@ -164,6 +164,24 @@ def test_thread_option_registration_keeps_chat_runtime_imports_lazy() -> None:
     assert result.returncode == 0, result.stderr
 
 
+@pytest.mark.parametrize("arguments", [[], ["--help"], ["run"], ["run", "--help"]])
+def test_static_help_keeps_script_runtime_imports_lazy(arguments) -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys; from toolang.cli.toolang.main import main; "
+            f"assert main({arguments!r}) == 0; "
+            "assert 'toolang.cli.toolang.commands.script' not in sys.modules; "
+            "assert 'toolang.cli.common.agent_server' not in sys.modules",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+
+
 @pytest.mark.parametrize(
     "arguments",
     (

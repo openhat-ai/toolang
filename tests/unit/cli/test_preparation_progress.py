@@ -12,6 +12,7 @@ from toolang.up import source as agent_sources
 
 from toolang.common.layout import AgentLayout
 from toolang.state.prepare import prepare_agent_state
+from tests.support.cli import invoke_script
 
 
 _REF = "github://example/caps/prompts/review.md@main"
@@ -171,7 +172,6 @@ def test_local_script_completes_preparation_before_setup_and_execution(
     from io import StringIO
 
     from tests.support.execution_harness import ExecutionHarness
-    from toolang.cli.toolang.commands import script
     from toolang.execution.executor import RunExecutor
     from toolang.setup import SetupWatcher
 
@@ -217,7 +217,7 @@ def test_local_script_completes_preparation_before_setup_and_execution(
     monkeypatch.setattr(RunExecutor, "start", start)
     try:
         args = [str(source), "flow:run", *(["--quiet"] if quiet else []), "--", "done"]
-        assert script.dispatch([], args, prog_name="too", stdin=StringIO()) == (
+        assert invoke_script(args, prog_name="too", stdin=StringIO()) == (
             1 if setup_fails else 0
         )
         assert bool(observed) == (not setup_fails)

@@ -126,6 +126,20 @@ class _ScriptEntryCommand(CliCommand):
         )
 
 
+def script_entry(
+    file: Annotated[str, typer.Argument(metavar="FILE", help="Path to a .too file")],
+    runnable: Annotated[
+        str | None,
+        typer.Argument(metavar="RUNNABLE", help="Runnable name", show_default=False),
+    ] = None,
+    arguments: Annotated[
+        list[str] | None,
+        typer.Argument(metavar="ARGUMENTS", help="Runnable arguments"),
+    ] = None,
+) -> None:
+    """Describe static entry help; the command resolves FILE before invocation."""
+
+
 class _StartCommand(OptionalValueCommand, CliCommand):
     optional_values = {"dev": OptionalValue(bare_value=".")}
 
@@ -595,7 +609,7 @@ _registered_command(
 )
 _registered_command(
     "run",
-    "toolang.cli.toolang.commands.script:run_script",
+    "toolang.cli.toolang.main:script_entry",
     help="Execute a .too file",
     cls=_ScriptEntryCommand,
     context_settings={"allow_interspersed_args": False},

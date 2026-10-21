@@ -102,7 +102,7 @@ def script_context(
     if not remaining:
         raise UsageError("Missing argument 'FILE'.", parent)
     label, *tail = remaining
-    command = inherit_ui(source_command(label), parent)
+    command = inherit_ui(_source_command(label), parent)
     assert isinstance(command, TyperGroup)
     shown = label if parent.meta.get(_IMPLICIT_ENTRY) else f"{info_name} {label}"
     if not tail and _entry_command_name(command) is None:
@@ -110,7 +110,7 @@ def script_context(
     return command.make_context(shown, tail, parent=parent, **extra)
 
 
-def source_command(label: str, *, stdin: TextIO | None = None) -> TyperGroup:
+def _source_command(label: str) -> TyperGroup:
     """Read one selected script, without preparing state or reading input."""
     if ":" in label.split("/", 1)[0]:
         raise UsageError(f"URLs are not supported: {label}")
@@ -126,7 +126,7 @@ def source_command(label: str, *, stdin: TextIO | None = None) -> TyperGroup:
     except (OSError, RuntimeError, UnicodeError, ValueError, ToolangError) as exc:
         raise ClickException(str(exc)) from exc
     return _program_command(
-        program, source_path=source, source_label=label, stdin=stdin or sys.stdin
+        program, source_path=source, source_label=label, stdin=sys.stdin
     )
 
 
@@ -263,6 +263,16 @@ class _RunnableCommand(OptionalValueCommand, CliCommand):
             ctx.exit(2)
 
 
+def _runnable_short_help(runnable: Runnable | None, name: str, identity: str) -> str:
+    """Share descriptions between the file listing and the selected command."""
+    if runnable is None:
+        return f"Runnable {name}"
+    doc = (runnable.doc or "").strip()
+    if runnable.name is None:
+        return f"{identity} {doc}".rstrip()
+    return doc or f"{runnable.kind.capitalize()} {name}"
+
+
 class _RunnableStub(LazyCommand):
     """File help needs declaration metadata, not a runnable's full signature."""
 
@@ -270,13 +280,7 @@ class _RunnableStub(LazyCommand):
         self, name: str, runnable: Runnable, *, identity: str, **kwargs: Any
     ) -> None:
         self._flow = runnable if isinstance(runnable, FlowDecl) else None
-        kind = runnable.kind
-        doc = (runnable.doc or "").strip()
-        short_help = (
-            f"{identity} {doc}".rstrip()
-            if runnable.name is None
-            else doc or f"{kind.capitalize()} {name}"
-        )
+        short_help = _runnable_short_help(runnable, name, identity)
         super().__init__(name, help=short_help, short_help=short_help, **kwargs)
 
 
@@ -367,75 +371,6 @@ def _flow_outline(flow: FlowDecl) -> Text:
         outline.append("No statements.")
     outline.rstrip()
     return outline
-
-
-def run_script(
-    ctx: typer.Context,
-    file: Annotated[str, typer.Argument(metavar="FILE", help="Path to a .too file")],
-    runnable: Annotated[
-        str | None,
-        typer.Argument(metavar="RUNNABLE", help="Runnable name", show_default=False),
-    ] = None,
-    arguments: Annotated[
-        list[str] | None,
-        typer.Argument(metavar="ARGUMENTS", help="Runnable arguments"),
-    ] = None,
-) -> None:
-    """Forward the file and its untouched argument tail to Script dispatch."""
-
-    root = ctx.find_root()
-    if root.get_parameter_source("toolang_root") == ParameterSource.COMMANDLINE:
-        raise UsageError("Script invocation does not support global --root / -r", ctx)
-    source = Path(file).expanduser()
-    if "://" in file:
-        raise UsageError(f"URLs are not supported: {file}", ctx)
-    if source.is_dir():
-        raise UsageError(f"expected a file, got a directory: {file}", ctx)
-    if source.suffix != ".too":
-        raise UsageError(f"expected a .too file: {file}", ctx)
-    # File dispatch chooses main or shows help when the file has no main entry.
-    if ctx.get_parameter_source("runnable") == ParameterSource.DEFAULT:
-        runnable = None
-    tail = ([runnable] if runnable is not None else []) + (arguments or [])
-    raise typer.Exit(dispatch([], [file, *tail], prog_name=ctx.command_path))
-
-
-def dispatch(
-    global_args: list[str],
-    argv: list[str],
-    *,
-    prog_name: str,
-    stdin: TextIO | None = None,
-) -> int:
-    """Dispatch one path-based runnable invocation."""
-
-    if global_args:
-        echo_error(f"{prog_name} <path>.too does not support global CLI options")
-        return 1
-    if not argv:
-        echo_error("missing script path")
-        return 1
-    source_path = _source_path(argv[0])
-    if source_path is None:
-        echo_error(f"script not found: {argv[0]}")
-        return 1
-    try:
-        command = source_command(argv[0], stdin=stdin)
-        result = command.main(
-            args=argv[1:]
-            or ([] if _entry_command_name(command) is not None else ["--help"]),
-            prog_name=f"{prog_name} {argv[0]}",
-            standalone_mode=False,
-        )
-        return int(result) if isinstance(result, int) else 0
-    except typer.Exit as exc:
-        return exc.exit_code
-    except ClickException as exc:
-        echo_error(exc)
-        return exc.exit_code
-    except (OSError, UnicodeError, ValueError, ToolangError) as exc:
-        _error(str(exc))
-        return 1
 
 
 def _program_command(
@@ -580,17 +515,15 @@ def _runnable_command(
     kind = runnable.kind if runnable is not None else "runnable"
     doc = (runnable.doc or "").strip() if runnable is not None else ""
     label = f"{kind} {name}"
-    short_help = doc or f"{kind.capitalize()} {name}"
     if runnable is not None and runnable.name is None:
         label = display_runnable_ref(f"{kind}:{identity}", surface="help")
-        short_help = f"{identity} {doc}".rstrip()
     command = get_command_from_info(
         CommandInfo(
             name=name,
             cls=_RunnableCommand,
             callback=callback,
             help=f"Run {label} - {doc}" if doc else f"Run {label}",
-            short_help=short_help,
+            short_help=_runnable_short_help(runnable, name, identity),
         ),
         pretty_exceptions_short=True,
         rich_markup_mode="rich",
@@ -1466,16 +1399,6 @@ def _emit_result(
         _error(str(exc))
         return 1
     return 0
-
-
-def _source_path(token: str) -> Path | None:
-    if not token:
-        return None
-    try:
-        source = Path(token).expanduser().resolve()
-    except OSError:
-        return None
-    return source if source.is_file() and source.suffix == ".too" else None
 
 
 def _error(message: str) -> None:

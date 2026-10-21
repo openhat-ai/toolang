@@ -210,7 +210,8 @@ and interruption codes, including failures from either script entry form.
 Root help/completion uses registry names without loading every command or
 placement-filtering unknown signatures. Selected-command help and AGENT
 completion read its parameter contract; completing agent names may enumerate
-residents.
+residents. Static `run` help is declared at the entry point and does not load the
+script runtime.
 
 ## Command capabilities
 

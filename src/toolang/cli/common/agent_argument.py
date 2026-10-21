@@ -8,7 +8,6 @@ from pathlib import Path
 from typing import Any, cast
 
 import typer
-from rich.text import Text
 from typer._click import Command, Context, Parameter
 from typer._click.core import ParameterSource
 from typer._click.shell_completion import CompletionItem
@@ -220,27 +219,3 @@ def agent_parameter(command: Command) -> AgentParameter | None:
 
 def bind_prefix(ctx: Context, command: Command, raw: str) -> None:
     ctx.meta[_PREFIX] = command, raw
-
-
-def usage_path(ctx: Context) -> Text:
-    """Insert recommended prefix operands at their owning command level."""
-    from .help import parameter_usage
-
-    contexts = []
-    current: Context | None = ctx
-    while current is not None:
-        contexts.append(current)
-        current = current.parent
-    path = Text()
-    for current in reversed(contexts):
-        agent = agent_parameter(current.command)
-        if path:
-            path.append(" ")
-        if agent is not None and agent.contract.recommended == "before":
-            path.append("<AGENT> " if agent.required else "[AGENT] ", style="cli.usage")
-        path.append(current.info_name or "", style="cli.command.name")
-        if current is not ctx:
-            for param in current.command.get_params(current):
-                for piece in parameter_usage(param, current):
-                    path.append(f" {piece}", style="cli.usage")
-    return path

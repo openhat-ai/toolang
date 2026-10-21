@@ -34,6 +34,7 @@ from toolang.lang.input import CallInput
 from toolang.lang.ast import FlowDecl, Program, RunStmt, Span
 from toolang.up.types import AgentServerRef
 from tests.support.execution_harness import ExecutionHarness
+from tests.support.cli import invoke_script
 
 
 _SOURCE = """
@@ -62,8 +63,7 @@ def test_script_binds_options_arguments_and_primary_input(
 
     monkeypatch.setattr(script, "_run", fake_run)
 
-    result = script.dispatch(
-        [],
+    result = invoke_script(
         [
             str(source),
             "demo",
@@ -170,8 +170,7 @@ def test_script_inherits_common_options_and_applies_child_overrides(
         else []
     )
     assert (
-        script.dispatch(
-            [],
+        invoke_script(
             [
                 str(source),
                 "--model",
@@ -223,8 +222,7 @@ def test_script_root_option_values_do_not_start_input(
         script, "_run", lambda _path, **kwargs: captured.update(kwargs) or 0
     )
     assert (
-        script.dispatch(
-            [],
+        invoke_script(
             [str(source), "-o", value, "demo", "count=2", "hello"],
             prog_name="too",
             stdin=_UnreadableStdin(),
@@ -248,8 +246,7 @@ def test_script_reads_primary_input_from_stdin(
 
     monkeypatch.setattr(script, "_run", fake_run)
 
-    result = script.dispatch(
-        [],
+    result = invoke_script(
         [str(source), "demo", "count=2"],
         prog_name="toolang",
         stdin=StringIO("from stdin"),
@@ -283,8 +280,7 @@ agic alternate(_: Part[]):
 
     monkeypatch.setattr(script, "_run", fake_run)
 
-    result = script.dispatch(
-        [],
+    result = invoke_script(
         [str(source), "demo"],
         prog_name="toolang",
         stdin=StringIO("/agic:alternate\n\nfrom stdin"),
@@ -313,8 +309,7 @@ def test_script_supports_explicit_stdin_marker(
 
     monkeypatch.setattr(script, "_run", fake_run)
 
-    result = script.dispatch(
-        [],
+    result = invoke_script(
         [str(source), "demo", "count=2", "-"],
         prog_name="toolang",
         stdin=StringIO("from stdin"),
@@ -346,8 +341,7 @@ def test_script_rejects_fenced_marker_before_reading_or_running(
         "_run",
         lambda *_args, **_kwargs: pytest.fail("invalid input must not run"),
     )
-    result = script.dispatch(
-        [],
+    result = invoke_script(
         [str(source), "demo", "---", *suffix],
         prog_name="too",
         stdin=_UnreadableStdin(stdin),
@@ -372,8 +366,7 @@ def test_script_preserves_explicit_empty_stream_input(
     monkeypatch.setattr(
         script, "_run", lambda _source_path, **kwargs: captured.update(kwargs) or 0
     )
-    result = script.dispatch(
-        [],
+    result = invoke_script(
         [str(source), "demo", "count=2", "-"],
         prog_name="toolang",
         stdin=StringIO(),
@@ -392,8 +385,7 @@ def test_script_rejects_empty_line_input(
 ) -> None:
     source = _write_source(tmp_path)
 
-    result = script.dispatch(
-        [],
+    result = invoke_script(
         [str(source), "demo", "count=2", *(["--"] if explicit else []), value],
         prog_name="toolang",
         stdin=_UnreadableStdin(),
@@ -414,8 +406,7 @@ def test_script_accepts_line_input_with_or_without_separator(
     monkeypatch.setattr(
         script, "_run", lambda _source_path, **kwargs: captured.update(kwargs) or 0
     )
-    result = script.dispatch(
-        [],
+    result = invoke_script(
         [
             str(source),
             "demo",
@@ -456,8 +447,7 @@ agic demo(_: Part[], count?: Number):
 
     monkeypatch.setattr(script, "_run", fake_run)
 
-    result = script.dispatch(
-        [],
+    result = invoke_script(
         [str(source), "demo", "--", "count=2"],
         prog_name="toolang",
         stdin=StringIO(),
@@ -486,8 +476,7 @@ def test_script_includes_an_image(
     monkeypatch.setattr(script, "_run", fake_run)
     monkeypatch.chdir(tmp_path)
 
-    result = script.dispatch(
-        [],
+    result = invoke_script(
         [str(source), "demo", "count=2", "--", "@sample.png"],
         prog_name="toolang",
         stdin=StringIO(),
@@ -511,8 +500,7 @@ def test_script_shows_runnable_help_for_a_missing_required_parameter(
         lambda *_args, **_kwargs: pytest.fail("an incomplete call must not run"),
     )
 
-    result = script.dispatch(
-        [],
+    result = invoke_script(
         [str(source), "demo", "--", "hello"],
         prog_name="toolang",
         stdin=StringIO(),
@@ -550,8 +538,7 @@ agic demo(_: Part[]):
         lambda *_args, **_kwargs: pytest.fail("an incomplete call must not run"),
     )
 
-    result = script.dispatch(
-        [],
+    result = invoke_script(
         [str(source), "demo"],
         prog_name="toolang",
         stdin=StringIO(),
@@ -615,8 +602,7 @@ def test_script_uses_typer_help_and_authored_docs(
     source = _write_source(tmp_path)
     monkeypatch.chdir(tmp_path)
 
-    result = script.dispatch(
-        [],
+    result = invoke_script(
         [source.name, "demo", "--help"],
         prog_name="toolang",
         stdin=StringIO(),
@@ -626,7 +612,7 @@ def test_script_uses_typer_help_and_authored_docs(
     normalized = " ".join(stdout.split())
 
     assert result == 0
-    assert "Usage: toolang demo.too demo [OPTIONS] [ARGUMENTS]" in normalized
+    assert "Usage: toolang run demo.too demo [OPTIONS] [ARGUMENTS]" in normalized
     assert "Run the documented demo." in stdout
     assert "Arguments" in stdout
     assert "count=<COUNT>" in stdout
@@ -702,8 +688,7 @@ def test_script_help_after_common_options_never_reads_or_runs(
         script, "_run", lambda *_args, **_kwargs: pytest.fail("help must not run")
     )
     assert (
-        script.dispatch(
-            [],
+        invoke_script(
             [
                 str(source),
                 "--model",
@@ -727,8 +712,8 @@ def test_script_without_public_runnables_still_shows_common_options(
 ) -> None:
     source = _write_source(tmp_path, "# No authored runnables.\n")
     assert (
-        script.dispatch(
-            [], [str(source), "--help"], prog_name="too", stdin=_UnreadableStdin()
+        invoke_script(
+            [str(source), "--help"], prog_name="too", stdin=_UnreadableStdin()
         )
         == 0
     )
@@ -765,8 +750,7 @@ def test_script_runnable_description_uses_docs_or_kind(
         script, "_run", lambda *_args, **_kwargs: pytest.fail("help must not run")
     )
     assert (
-        script.dispatch(
-            [],
+        invoke_script(
             [source.name, "demo", "--help"],
             prog_name="too",
             stdin=_UnreadableStdin(),
@@ -849,8 +833,7 @@ def test_script_help_groups_signature_categories(
     monkeypatch.setattr(
         script, "_run", lambda *_args, **_kwargs: pytest.fail("help must not run")
     )
-    result = script.dispatch(
-        [],
+    result = invoke_script(
         [source.name, "demo", "--help"],
         prog_name=prog_name,
         stdin=_UnreadableStdin(),
@@ -861,7 +844,7 @@ def test_script_help_groups_signature_categories(
     usage = "Usage: " + " ".join(
         output.split("Usage:", 1)[1].split("\n\n", 1)[0].split()
     )
-    expected = f"Usage: {prog_name} demo.too demo [OPTIONS]"
+    expected = f"Usage: {prog_name} run demo.too demo [OPTIONS]"
     if arguments or input_type:
         expected += " [ARGUMENTS]"
     assert usage == expected
@@ -907,9 +890,7 @@ def test_unnamed_script_signature_help_uses_compact_entry_label(
         script, "_run", lambda *_args, **_kwargs: pytest.fail("help must not run")
     )
     arguments = ["_", "--help"] if explicit_help else []
-    result = script.dispatch(
-        [], [source.name, *arguments], prog_name="too", stdin=StringIO()
-    )
+    result = invoke_script([source.name, *arguments], prog_name="too", stdin=StringIO())
     output = strip_ansi(capsys.readouterr().out)
 
     assert result == (0 if explicit_help else 2)
@@ -917,7 +898,7 @@ def test_unnamed_script_signature_help_uses_compact_entry_label(
     assert description in output
     assert f"{kind}:_" not in output
     assert f"Run {kind} _" not in output
-    assert "Usage: too demo.too _ [OPTIONS] [ARGUMENTS]" in output
+    assert "Usage: too run demo.too _ [OPTIONS] [ARGUMENTS]" in output
     assert "topic=<TOPIC>" in output
     assert "Primary input (Text)" in output
 
@@ -947,9 +928,7 @@ def test_script_without_input_runs_with_satisfied_arguments(
         script, "_run", lambda _source_path, **kwargs: captured.update(kwargs) or 0
     )
     assert (
-        script.dispatch(
-            [], [str(source), "demo", *tokens], prog_name="too", stdin=StringIO()
-        )
+        invoke_script([str(source), "demo", *tokens], prog_name="too", stdin=StringIO())
         == 0
     )
     assert captured["input"] == CallInput()
@@ -980,8 +959,7 @@ def test_script_options_can_follow_assignments_before_input(
         script, "_run", lambda _source_path, **kwargs: captured.update(kwargs) or 0
     )
     assert (
-        script.dispatch(
-            [],
+        invoke_script(
             [str(source), "demo", *header, "text", "--model", "literal"],
             prog_name="too",
             stdin=_UnreadableStdin(),
@@ -1007,8 +985,7 @@ def test_script_line_input_preserves_includes_and_quoted_newlines(
         script, "_run", lambda _source_path, **kwargs: captured.update(kwargs) or 0
     )
     assert (
-        script.dispatch(
-            [],
+        invoke_script(
             [
                 str(source),
                 "demo",
@@ -1054,8 +1031,7 @@ def test_script_markers_and_assignments_can_be_literal_data(
         script, "_run", lambda _source_path, **kwargs: captured.update(kwargs) or 0
     )
     assert (
-        script.dispatch(
-            [],
+        invoke_script(
             [str(source), "demo", *tokens],
             prog_name="too",
             stdin=_UnreadableStdin(),
@@ -1079,8 +1055,7 @@ def test_script_stream_input_keeps_fence_lines_until_eof(
     )
     body = "before\n---\nafter\n"
     assert (
-        script.dispatch(
-            [],
+        invoke_script(
             [str(source), "demo", "count=2", *tokens],
             prog_name="too",
             stdin=StringIO(body),
@@ -1117,8 +1092,7 @@ def test_script_invalid_headers_fail_before_reading_or_running(
         lambda *_args, **_kwargs: pytest.fail("invalid input must not run"),
     )
     assert (
-        script.dispatch(
-            [],
+        invoke_script(
             [str(source), "demo", *tokens],
             prog_name="too",
             stdin=_UnreadableStdin(),
@@ -1143,8 +1117,7 @@ def test_script_omitted_terminal_input_shows_help_without_reading(
         lambda *_args, **_kwargs: pytest.fail("missing input must not run"),
     )
     assert (
-        script.dispatch(
-            [],
+        invoke_script(
             [str(source), "demo", "count=2"],
             prog_name="too",
             stdin=stdin,
@@ -1192,8 +1165,7 @@ agic search:
             lambda *_args, **_kwargs: pytest.fail("explicit help must not read input"),
         )
 
-    result = script.dispatch(
-        [],
+    result = invoke_script(
         [str(source), "research", *(["--help"] if explicit_help else [])],
         prog_name="too",
         stdin=StringIO(),
@@ -1230,8 +1202,8 @@ agic search:
 def test_script_help_describes_unbounded_repeat(tmp_path: Path, capsys) -> None:
     source = _write_source(tmp_path, "flow main():\n  repeat:\n    let value = Body.\n")
     assert (
-        script.dispatch(
-            [], [str(source), "main", "--help"], prog_name="too", stdin=StringIO()
+        invoke_script(
+            [str(source), "main", "--help"], prog_name="too", stdin=StringIO()
         )
         == 0
     )
@@ -1266,8 +1238,8 @@ agic review:
     monkeypatch.setenv("COLUMNS", "160")
 
     assert (
-        script.dispatch(
-            [], [str(source), "pipeline", "--help"], prog_name="too", stdin=StringIO()
+        invoke_script(
+            [str(source), "pipeline", "--help"], prog_name="too", stdin=StringIO()
         )
         == 0
     )
@@ -1309,8 +1281,8 @@ agic score_{"x" * 100} -> Number:
     )
 
     assert (
-        script.dispatch(
-            [], [str(source), "pipeline", "--help"], prog_name="too", stdin=StringIO()
+        invoke_script(
+            [str(source), "pipeline", "--help"], prog_name="too", stdin=StringIO()
         )
         == 0
     )
@@ -1385,8 +1357,7 @@ def test_script_flow_invocation_does_not_print_the_help_outline(
     monkeypatch.setattr(script, "_run", fake_run)
 
     assert (
-        script.dispatch(
-            [],
+        invoke_script(
             [str(source), "work", "--", "question"],
             prog_name="too",
             stdin=StringIO(),
@@ -1444,8 +1415,7 @@ flow pipeline:
         script, "_run", lambda *_args, **_kwargs: pytest.fail("help must not run")
     )
 
-    result = script.dispatch(
-        [],
+    result = invoke_script(
         [source.name, "--help"],
         prog_name=prog_name,
         stdin=_UnreadableStdin(),
@@ -1454,7 +1424,7 @@ flow pipeline:
     stdout = strip_ansi(output.out)
 
     assert result == 0
-    assert f"Usage: {prog_name} {filename} [OPTIONS] [RUNNABLE]" in stdout
+    assert f"Usage: {prog_name} run {filename} [OPTIONS] [RUNNABLE]" in stdout
     assert "[NAME=VALUE...]" not in stdout
     assert f"Execute a runnable from {filename}" in stdout
     assert "Omit RUNNABLE" not in stdout
@@ -1501,7 +1471,7 @@ def test_script_help_orders_entry_then_agics_and_flows(
         "agic alpha_agic():\n  Hello.\n",
     )
     monkeypatch.setenv("COLUMNS", "100")
-    assert script.dispatch([], [str(source), "--help"], prog_name="too") == 0
+    assert invoke_script([str(source), "--help"], prog_name="too") == 0
     panel = _help_panel(strip_ansi(capsys.readouterr().out), "Runnables")
     labels = [
         *([f"{entry_kind}:"] if entry_kind else []),
@@ -1535,8 +1505,8 @@ def test_script_long_runnable_names_keep_descriptions_visible(
     monkeypatch.setenv("COLUMNS", str(width))
 
     assert (
-        script.dispatch(
-            [], [source.name, "--help"], prog_name="too", stdin=_UnreadableStdin()
+        invoke_script(
+            [source.name, "--help"], prog_name="too", stdin=_UnreadableStdin()
         )
         == 0
     )
@@ -1556,8 +1526,7 @@ def test_script_formats_an_unknown_runnable_with_a_help_hint(
     source = _write_source(tmp_path)
     monkeypatch.chdir(tmp_path)
 
-    result = script.dispatch(
-        [],
+    result = invoke_script(
         [source.name, "missing"],
         prog_name="toolang",
         stdin=StringIO(),
@@ -1569,7 +1538,7 @@ def test_script_formats_an_unknown_runnable_with_a_help_hint(
     assert result == 2
     assert lines[0].startswith("Error: No such command")
     assert lines[1] == ""
-    assert lines[2] == f"Try 'toolang {source.name} --help' for help."
+    assert lines[2] == f"Try 'toolang run {source.name} --help' for help."
     assert "Usage:" not in stderr
     assert "╭" not in stderr
     assert lines[-1].strip()
@@ -1613,8 +1582,7 @@ def test_script_accepts_explicit_runnable_queries(
         ),
     )
 
-    result = script.dispatch(
-        [],
+    result = invoke_script(
         [str(source), *root_options, query, "count=2", "--", "hello"],
         prog_name="toolang",
         stdin=StringIO(),
@@ -1634,8 +1602,7 @@ def test_script_rejects_an_explicit_runnable_kind_mismatch(
 ) -> None:
     source = _write_source(tmp_path)
 
-    result = script.dispatch(
-        [],
+    result = invoke_script(
         [str(source), *root_options, "flow:demo", "count=2", "hello"],
         prog_name="toolang",
         stdin=StringIO(),
@@ -1657,8 +1624,7 @@ def test_script_accepts_sandbox_option_at_the_runnable_level(
         lambda _source, **kwargs: captured.update(kwargs) or 0,
     )
 
-    result = script.dispatch(
-        [],
+    result = invoke_script(
         [str(source), "demo", "count=2", "--sandbox=host", "--", "hello"],
         prog_name="toolang",
         stdin=StringIO(),
@@ -1968,8 +1934,7 @@ def test_script_rejects_removed_verbose_option(
 ) -> None:
     source = _write_source(tmp_path)
 
-    result = script.dispatch(
-        [],
+    result = invoke_script(
         [str(source), "demo", "count=2", option, "hello"],
         prog_name="toolang",
         stdin=StringIO(),
@@ -1986,8 +1951,7 @@ def test_script_rejects_removed_default_option(
 ) -> None:
     source = _write_source(tmp_path)
 
-    result = script.dispatch(
-        [],
+    result = invoke_script(
         [
             str(source),
             "demo",
