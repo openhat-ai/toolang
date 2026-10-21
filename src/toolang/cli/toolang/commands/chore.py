@@ -14,7 +14,7 @@ from toolang.cli.common.editor import edit_markdown
 from toolang.cli.common.context import context_layout, require_prefix_agent, user_call
 from toolang.cli.common.client import runtime_post
 from toolang.cli.common.execution import open_execution
-from toolang.cli.common.output import echo_table
+from toolang.cli.common.output import echo_table, format_local_timestamp
 from toolang.cli.common.parameters import TextType
 from toolang.cli.common.routing import PrefixAgentChoreGroup, RequiredPrefixAgentCommand
 from toolang.catalog.chore_authoring import (
@@ -77,16 +77,18 @@ def list_chores(ctx: typer.Context) -> None:
                 item.title,
                 (item.runtime.status or "-") if item.runtime.synced else "unsynced",
                 item.runtime.last_run.status if item.runtime.last_run else "-",
-                min(
-                    (
-                        value
-                        for value in (
-                            item.runtime.pending_at,
-                            item.runtime.next_scheduled_at,
-                        )
-                        if value
+                format_local_timestamp(
+                    min(
+                        (
+                            value
+                            for value in (
+                                item.runtime.pending_at,
+                                item.runtime.next_scheduled_at,
+                            )
+                            if value
+                        ),
+                        default=None,
                     ),
-                    default="-",
                 ),
                 item.schedule or "once",
                 item.source_error

@@ -74,7 +74,7 @@ from toolang.execution.types import (
 )
 
 from ...common.execution import open_execution
-from ...common.output import echo_table
+from ...common.output import echo_table, format_local_timestamp
 
 _SubjectKind = Literal[
     "agent",
@@ -1042,7 +1042,7 @@ def _render_collection(
                 control.id,
                 control.kind,
                 _display_status(control.status),
-                control.created_at,
+                format_local_timestamp(control.created_at),
             )
             for control in controls
         ]
@@ -1057,7 +1057,7 @@ def _render_collection(
                 _truncate(item.title, width=48),
                 str(item.run_count),
                 item.status,
-                item.updated_at,
+                format_local_timestamp(item.updated_at),
             )
             for item in items
         ]
@@ -1074,7 +1074,7 @@ def _render_collection(
                     _runnable_activity(item.runnable, item.runnable_kind),
                     _display_status(item.record.status),
                     str(item.step_count),
-                    item.record.created_at,
+                    format_local_timestamp(item.record.created_at),
                 )
                 for item in items
             ]
@@ -1097,7 +1097,7 @@ def _render_collection(
                     _display_status(item.record.status),
                     str(item.step_count),
                     str(item.record.parent) if item.record.parent is not None else "-",
-                    item.record.created_at,
+                    format_local_timestamp(item.record.created_at),
                 )
                 for item in items
             ]
@@ -1121,7 +1121,7 @@ def _render_collection(
                 str(item.step_count),
                 str(item.record.thread),
                 str(item.record.parent) if item.record.parent is not None else "-",
-                item.record.created_at,
+                format_local_timestamp(item.record.created_at),
             )
             for item in items
         ]
@@ -1153,7 +1153,7 @@ def _render_collection(
                     ),
                     str(item.child_run_count),
                     str(item.child_step_count),
-                    item.record.started_at,
+                    format_local_timestamp(item.record.started_at),
                     _step_occurrence_label(
                         item.record,
                         fallback=item.child_occurrence_totals,
@@ -1183,7 +1183,7 @@ def _render_collection(
                 str(item.child_run_count),
                 str(item.child_step_count),
                 str(item.record.parent) if item.record.parent is not None else "-",
-                item.record.started_at,
+                format_local_timestamp(item.record.started_at),
                 _step_occurrence_label(
                     item.record,
                     fallback=item.child_occurrence_totals,

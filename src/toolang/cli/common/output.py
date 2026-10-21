@@ -237,6 +237,15 @@ def parse_utc_timestamp(value: str) -> datetime | None:
     return parsed.astimezone(UTC)
 
 
+def format_local_timestamp(value: str | None) -> str:
+    """Render a durable timestamp in the CLI process's local timezone."""
+
+    if not value:
+        return "-"
+    parsed = parse_utc_timestamp(value)
+    return parsed.astimezone().isoformat() if parsed is not None else value
+
+
 def runtime_value(value: object) -> str:
     if not isinstance(value, str) or not value.strip():
         return "-"

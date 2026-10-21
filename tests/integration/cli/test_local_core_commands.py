@@ -686,7 +686,18 @@ def test_chore_list_does_not_resolve_runnables_or_prepare_state(
     assert not layout.run_store.exists()
 
 
-def test_chore_list_shows_scheduler_and_latest_run_state(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "schedule,manual,expected_time",
+    [
+        ("FREQ=HOURLY", False, "2026-10-21T15:46:28+08:00"),
+        (None, False, "2026-10-21T14:46:28+08:00"),
+        ("FREQ=HOURLY", True, "2026-10-21T14:46:28+08:00"),
+    ],
+)
+def test_chore_list_shows_scheduler_and_latest_run_state(
+    tmp_path: Path, set_local_timezone, schedule, manual, expected_time
+) -> None:
+    set_local_timezone("Asia/Shanghai")
     root = tmp_path / "toolang"
     _create_agent(root)
     layout = AgentLayout.resident(root, "alice")
@@ -696,10 +707,10 @@ def test_chore_list_shows_scheduler_and_latest_run_state(tmp_path: Path) -> None
         agent_name=layout.name,
     ).create(
         ChoreFile.parse(
-            """---
+            f"""---
 id: maintain
 title: Maintain knowledge
-schedule: FREQ=HOURLY
+{f"schedule: {schedule}" if schedule else ""}
 ---
 Maintain the knowledge base.
 """,
@@ -709,7 +720,14 @@ Maintain the knowledge base.
     (job,) = load_chores(layout)
     jobs = ChoreStore(layout.chore_store)
     try:
-        jobs.reconcile(chores=(job,), now=datetime.now(timezone.utc))
+        (record,) = jobs.reconcile(
+            chores=(job,), now=datetime(2026, 10, 21, 6, 46, 28, tzinfo=timezone.utc)
+        )
+        if manual:
+            record = jobs.request_manual_chore(
+                chore_id=job.id,
+                now=datetime(2026, 10, 21, 6, 46, 28, tzinfo=timezone.utc),
+            )
     finally:
         jobs.close()
     runs = RunStore(layout.run_store)
@@ -740,6 +758,11 @@ Maintain the knowledge base.
     assert "pending" in result.stdout
     assert "failed" in result.stdout
     assert "model credits exhausted" in result.stdout
+    assert expected_time in result.stdout
+    assert "2026-10-21T06:46:28+00:00" not in result.stdout
+    assert "2026-10-21T07:46:28+00:00" not in result.stdout
+    with closing(ChoreStore(layout.chore_store, read_only=True)) as jobs:
+        assert jobs.get(chore_id=job.id) == record
 
 
 def test_inspect_emits_exact_step_record_json(tmp_path: Path) -> None:
@@ -907,7 +930,10 @@ def test_inspect_emits_exact_step_record_json(tmp_path: Path) -> None:
     assert "• prepared" not in response.stdout
 
 
-def test_inspect_lists_root_and_related_record_subjects(tmp_path: Path) -> None:
+def test_inspect_lists_root_and_related_record_subjects(
+    tmp_path: Path, set_local_timezone
+) -> None:
+    set_local_timezone("Asia/Shanghai")
     root = tmp_path / "toolang"
     _create_agent(root)
     store = RunStore(AgentLayout.resident(root, "alice").run_store)
@@ -1024,6 +1050,7 @@ def test_inspect_lists_root_and_related_record_subjects(tmp_path: Path) -> None:
         " ".join(line.split()) for line in strip_ansi(human_threads.stdout).splitlines()
     ]
     assert "THREAD TITLE RUNS STATUS UPDATED" in human_thread_lines
+    assert "2025-12-31T08:00:00+08:00" in human_threads.stdout
     assert runs.exit_code == 0, runs.stderr
     assert [item["id"] for item in json.loads(runs.stdout)] == [
         "run_subject_other",
@@ -1050,9 +1077,9 @@ def test_inspect_lists_root_and_related_record_subjects(tmp_path: Path) -> None:
         line for line in human_run_lines if line.startswith("run_subject_child ")
     )
     assert "agic:test succeeded 3 chat_subject -" in first_run_line
-    assert first_run_line.split()[-1] == "2026-01-01T00:00:00Z"
+    assert first_run_line.split()[-1] == "2026-01-01T08:00:00+08:00"
     assert "agic:test succeeded 0 chat_subject run_subject_first.2" in child_run_line
-    assert child_run_line.split()[-1] == "2026-01-01T12:00:00Z"
+    assert child_run_line.split()[-1] == "2026-01-01T20:00:00+08:00"
     assert human_scoped_runs.exit_code == 0, human_scoped_runs.stderr
     human_scoped_lines = [
         " ".join(line.split())
@@ -1063,7 +1090,7 @@ def test_inspect_lists_root_and_related_record_subjects(tmp_path: Path) -> None:
         line for line in human_scoped_lines if line.startswith("run_subject_first ")
     )
     assert "agic:test succeeded 3 -" in scoped_first_line
-    assert scoped_first_line.split()[-1] == "2026-01-01T00:00:00Z"
+    assert scoped_first_line.split()[-1] == "2026-01-01T08:00:00+08:00"
     assert steps.exit_code == 0, steps.stderr
     step_documents = json.loads(steps.stdout)
     assert [item["id"] for item in step_documents] == [
@@ -1095,6 +1122,8 @@ def test_inspect_lists_root_and_related_record_subjects(tmp_path: Path) -> None:
         line for line in human_step_lines if line.startswith("run_subject_first.2 ")
     )
     assert "✔ [value] let _ 1 1" in outer_line
+    assert "2026-01-01T08:00:02+08:00" in outer_line
+    assert json.loads(runs.stdout)[-1]["created_at"] == "2026-01-01T00:00:00Z"
     assert (
         human.stdout.index("run_subject_first.2")
         < human.stdout.index("run_subject_first.2.10")
@@ -1102,7 +1131,10 @@ def test_inspect_lists_root_and_related_record_subjects(tmp_path: Path) -> None:
     )
 
 
-def test_inspect_lists_mixed_control_subjects(tmp_path: Path) -> None:
+def test_inspect_lists_mixed_control_subjects(
+    tmp_path: Path, set_local_timezone
+) -> None:
+    set_local_timezone("Asia/Shanghai")
     root = tmp_path / "toolang"
     _create_agent(root)
     store = RunStore(AgentLayout.resident(root, "alice").run_store)
@@ -1153,6 +1185,8 @@ def test_inspect_lists_mixed_control_subjects(tmp_path: Path) -> None:
     ]
     assert "CONTROL KIND STATUS CREATED" in human_lines
     assert all(pointer in human.stdout for pointer in pointers)
+    assert "2026-01-01T10:00:00+08:00" in human.stdout
+    assert documents[0]["created_at"] == "2026-01-01T02:00:00Z"
     assert rejected.exit_code == 2
     assert "controls does not accept a child subject" in rejected.stderr
 
