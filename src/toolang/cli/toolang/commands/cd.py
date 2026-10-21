@@ -11,6 +11,7 @@ import typer
 from typer._click.exceptions import ClickException
 
 from ...common.context import context_agent, context_layout, context_root
+from ...common.output import shorten_home_path
 
 
 def should_prepare_target(arguments: list[str]) -> bool:
@@ -25,15 +26,22 @@ def should_prepare_target(arguments: list[str]) -> bool:
     return True
 
 
-def home(ctx: typer.Context) -> None:
+def cd(ctx: typer.Context) -> None:
     """Run the configured interactive shell from the selected directory."""
 
     agent = context_agent(ctx)
-    directory = context_layout(ctx).home if agent else context_root(ctx)
+    layout = context_layout(ctx) if agent else None
+    directory = layout.home if layout else context_root(ctx)
     _require_interactive_terminal(sys.stdin, sys.stdout)
     executable = os.environ.get("SHELL", "/bin/sh")
-    destination = "agent home" if agent else "Toolang root"
-    typer.echo(f"Entered {destination}. Type exit to return.")
+    destination = f"{layout.name}'s home" if layout else "the Toolang root"
+    try:
+        display_path = shorten_home_path(directory)
+    except (OSError, RuntimeError):
+        # A display label must not prevent the shell from opening.
+        display_path = str(directory.absolute())
+    typer.echo(f"Opening a shell in {destination}: {display_path}")
+    typer.echo("Type exit to return.")
     try:
         result = subprocess.run([executable, "-i"], cwd=directory, check=False)
     except OSError as exc:
@@ -48,4 +56,4 @@ def home(ctx: typer.Context) -> None:
 
 def _require_interactive_terminal(input_stream: TextIO, output_stream: TextIO) -> None:
     if not input_stream.isatty() or not output_stream.isatty():
-        raise ClickException("home requires an interactive terminal")
+        raise ClickException("cd requires an interactive terminal")

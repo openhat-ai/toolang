@@ -342,6 +342,16 @@ def test_chore_and_hub_help_lists_supported_commands(group, commands, tmp_path, 
     )
 
 
+@pytest.mark.parametrize("arguments", [["--help"], ["agent:sample", "--help"]])
+def test_cd_summary_omits_root_fallback(arguments, tmp_path, capsys):
+    assert too_main(["--root", str(tmp_path), *arguments]) == 0
+    output = strip_ansi(capsys.readouterr().out)
+    rows = [" ".join(line.split()) for line in output.splitlines()]
+
+    assert "cd Enter an agent home" in rows
+    assert "if no agent is specified" not in output
+
+
 def test_declared_help_omits_final_period():
     pending = [(typer.main.get_command(app), None)]
     while pending:

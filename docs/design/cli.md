@@ -19,6 +19,7 @@ formatting conventions. Command help describes their options and output modes.
 | `too serve TARGET`, `too TARGET serve` | Foreground server; target can be resident, visiting, or local `.too` |
 | `too start TARGET`, `too stop TARGET` | Background lifecycle for resident/visiting targets; either target order |
 | `too TARGET info` | Agent information; command-first form is also accepted |
+| `too cd`, `too TARGET cd` | Interactive shell in the Toolang root or selected agent home; `exit` returns to the calling shell |
 | `too TARGET chat`, `too TARGET chore list`, `too TARGET inspect runs` | Targeted work, authoring, and history |
 | `too run FILE [RUNNABLE]`, `too FILE [RUNNABLE]` | Local script execution |
 | `too init DIR` | Create executable `aid.too` and comment-only `toolang.toml` without overwriting |
