@@ -50,10 +50,23 @@ def usage(period=3600):
 
 
 def binding(tmp_path):
+    registration = tmp_path / ".runtime" / "instances" / "alice.json"
+    registration.parent.mkdir(parents=True, exist_ok=True)
+    registration.write_text(
+        json.dumps(
+            {
+                "version": 3,
+                "status": str(AgentLayout.resident(tmp_path, "alice").runtime_status),
+                "launch_id": "fixture",
+            }
+        )
+    )
     return RuntimeSource(
         RuntimeInstance("alice", "resident", None, "source", "running", ()),
         AgentLayout.resident(tmp_path, "alice"),
         "http://localhost:7001",
+        registration,
+        "fixture",
     )
 
 
@@ -125,8 +138,10 @@ def test_departure_stops_endpoint_polling_and_rejects_inflight_live(
         assert calls == [None]
 
 
-def test_rediscovery_refreshes_binding_without_accepting_a_predeparture_live_result(
+@pytest.mark.parametrize("departed", [False, True])
+def test_rediscovery_rejects_live_results_from_earlier_bindings(
     tmp_path,
+    departed,
 ):
     source = binding(tmp_path)
     with closing(
@@ -142,10 +157,13 @@ def test_rediscovery_refreshes_binding_without_accepting_a_predeparture_live_res
         inflight = Future()
         inflight.set_running_or_notify_cancel()
         state.activity, state.activity_recent = inflight, 300
-        observer.discovery_job = resolved(
-            RuntimeInventory(RuntimeInstanceSnapshot(()), ())
-        )
-        observer._inventory(NOW + 1)
+        if departed:
+            observer.discovery_job = resolved(
+                RuntimeInventory(RuntimeInstanceSnapshot(()), ())
+            )
+            observer._inventory(NOW + 1)
+        else:
+            inventory = replace(inventory, sources=(replace(source, launch_id="new"),))
         observer.discovery_job = resolved(inventory)
         observer._inventory(NOW + 2)
         assert observer.sources == {source.instance.identity: state}
@@ -1033,6 +1051,107 @@ def test_published_endpoint_failure_is_distinct_from_an_embedded_runtime(
     monkeypatch.setattr(top.httpx, "get", lambda *args, **kwargs: response)
     result = top.read_activity(source, 300)
     assert result.live is not None and result.live_error is None
+
+
+@pytest.mark.parametrize("replacement", [False, True])
+@pytest.mark.parametrize("response", ["disconnected", "stale", "history"])
+def test_departure_during_live_read_keeps_history_without_reporting_a_live_failure(
+    tmp_path, monkeypatch, replacement, response
+):
+    source = binding(tmp_path)
+    with closing(RunStore(source.layout.run_store)) as store:
+        project_run_start(
+            store,
+            run_id="run_done",
+            thread_id="chat_top",
+            input=Message.user("fixture"),
+            started_at=timestamp(NOW - 10),
+        )
+        store.finish_run(run_id="run_done", finished_at=timestamp(NOW - 1))
+    monkeypatch.setattr(top.time, "time", lambda: NOW)
+    calls = []
+
+    def depart():
+        if replacement:
+            reference = json.loads(source.registration.read_text())
+            source.registration.write_text(json.dumps(dict(reference, launch_id="new")))
+        else:
+            source.registration.unlink(missing_ok=True)
+
+    def departed(*args, **kwargs):
+        calls.append(args)
+        if response != "history":
+            depart()
+        if response != "stale":
+            raise httpx.ConnectError("old endpoint closed")
+        return httpx.Response(
+            200,
+            json=ActivitySnapshot(
+                live=LiveSnapshot("obsolete", timestamp(NOW), ()),
+                completed=completed(),
+            ).model_dump(mode="json"),
+            request=httpx.Request("GET", source.endpoint),
+        )
+
+    monkeypatch.setattr(top.httpx, "get", departed)
+    if response == "history":
+        original = top.activity_snapshot
+
+        def history(*args, **kwargs):
+            depart()
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(top, "activity_snapshot", history)
+    for _ in range(2):
+        result = top.read_activity(source, 300)
+        assert result.live is None and result.live_error is None
+        assert result.completed.counts.succeeded == 1
+        assert [row.id for row in result.completed.roots] == ["run_done"]
+    assert len(calls) == 1
+    assert source.layout.run_store.exists()
+
+
+@pytest.mark.parametrize("operation", ["activity", "usage"])
+@pytest.mark.parametrize("established", [False, True])
+def test_departure_during_first_history_read_only_zeros_a_never_created_store(
+    tmp_path, monkeypatch, operation, established
+):
+    source = binding(tmp_path)
+    if established:
+        with closing(RunStore(source.layout.run_store)):
+            pass
+    state = top._Source(
+        source,
+        NOW,
+        SourceActivity(
+            identity=source.instance.identity, label="alice", placement="resident"
+        ),
+    )
+
+    def departed(*args, **kwargs):
+        source.registration.unlink()
+        source.layout.run_store.unlink(missing_ok=True)
+        raise StatsUnavailable("store is absent")
+
+    monkeypatch.setattr(top, f"read_{operation}", departed)
+
+    def read():
+        if operation == "activity":
+            return state.read_activity(
+                source, 300, previous=None, cancelled=lambda: False
+            )
+        return state.read_usage(source, 3600, lambda: False)
+
+    if established:
+        with pytest.raises(StatsUnavailable, match="store is absent"):
+            read()
+    else:
+        result = read()
+        if operation == "activity":
+            assert result.completed.counts.total == 0 and result.live_error is None
+        else:
+            assert result.metrics == Metrics()
+    assert not source.layout.run_store.exists()
 
 
 @pytest.mark.parametrize("endpoint", [None, "http://localhost:7001"])

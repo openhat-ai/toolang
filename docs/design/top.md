@@ -21,6 +21,12 @@ no pending or running physical roots proves zero active roots. Unfinished roots
 of any age keep live coverage unknown; failed endpoints and unreadable stores
 also remain unknown.
 Instance departure or shutdown never implies a Run's terminal status.
+Discovery and live reads verify the registration's launch ID before publishing
+results. Removal or replacement during a read discards the old observation,
+including its failures, without an error notice. A still-registered instance
+with unreadable or missing state remains unavailable. A departed instance whose
+history store was never created contributes zero; losing an established store
+remains an error.
 
 ```sh
 too top

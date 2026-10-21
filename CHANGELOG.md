@@ -134,6 +134,11 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   anonymous entry runnables, and new Run captions show the accepted runnable
   name.
 
+- Top and Hub no longer warn about availability when an instance unregisters
+  mid-discovery, keeping durable usage and flagging only current
+  registrations' failures.
+  ([#894](https://github.com/openhat-ai/toolang/pull/894))
+
 ### Security
 
 - The locked certifi trust store advances to 2026.10.19, resolving trust-store

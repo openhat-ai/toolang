@@ -14,6 +14,7 @@ from toolang.up.observation import (
     RuntimeRegistration,
     instance_filename,
     running_instances,
+    runtime_inventory,
     runtime_snapshot,
 )
 
@@ -565,6 +566,95 @@ def test_unregistered_residents_do_not_enter_inventory(tmp_path):
     malformed.runtime_status.write_text("not json")
     snapshot = runtime_snapshot(tmp_path)
     assert snapshot.instances == () and not snapshot.partial
+
+
+def test_registration_can_disappear_between_listing_and_reading(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    layout = AgentLayout.resident(tmp_path, "alice")
+    with ForegroundWorkload(
+        layout, toolang_root=tmp_path, drivers=frozenset()
+    ) as registration:
+        original = Path.read_text
+        departed = False
+
+        def read(path, *args, **kwargs):
+            nonlocal departed
+            if path == registration.path and not departed:
+                departed = True
+                registration.close()
+            return original(path, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "read_text", read)
+        inventory = runtime_inventory(tmp_path)
+        assert departed
+        assert not inventory.snapshot.instances and not inventory.snapshot.partial
+        assert not inventory.sources
+
+
+@pytest.mark.parametrize("outcome", ["missing", "error", "stale"])
+def test_departure_during_status_read_is_not_an_observation_failure(
+    tmp_path, monkeypatch, outcome
+):
+    from toolang.up import observation
+
+    layout = AgentLayout.resident(tmp_path, "alice")
+    with ForegroundWorkload(
+        layout, toolang_root=tmp_path, drivers=frozenset()
+    ) as registration:
+        original = observation.read_document
+
+        def read(path):
+            snapshot = original(path)
+            registration.close()
+            if outcome == "error":
+                raise PermissionError("obsolete status read")
+            return snapshot if outcome == "stale" else None
+
+        monkeypatch.setattr(observation, "read_document", read)
+        inventory = runtime_inventory(tmp_path)
+        assert not inventory.snapshot.instances and not inventory.snapshot.partial
+        assert not inventory.sources
+
+
+@pytest.mark.parametrize("outcome", ["missing", "error", "stale"])
+@pytest.mark.parametrize("restart", [False, True])
+def test_departed_probe_cannot_publish_failure_or_a_replacement_generation(
+    tmp_path, monkeypatch, outcome, restart
+):
+    from toolang.up.process import AgentProcess
+
+    layout = AgentLayout.resident(tmp_path, "alice")
+    with (
+        ForegroundWorkload(layout, toolang_root=tmp_path, drivers=frozenset()) as old,
+    ):
+        current = ForegroundWorkload(
+            layout, toolang_root=tmp_path, drivers=frozenset({"chat"})
+        )
+        original = AgentProcess.status
+
+        def inspect(self, **kwargs):
+            status = original(self, **kwargs)
+            old.close()
+            if restart:
+                current.__enter__()
+            if outcome == "error":
+                raise OSError("obsolete probe failed")
+            return status if outcome == "stale" else None
+
+        monkeypatch.setattr(AgentProcess, "status", inspect)
+        try:
+            inventory = runtime_inventory(tmp_path)
+            assert not inventory.snapshot.instances and not inventory.snapshot.partial
+            assert not inventory.sources
+            monkeypatch.setattr(AgentProcess, "status", original)
+            following = runtime_inventory(tmp_path)
+            assert len(following.sources) == int(restart)
+            if restart:
+                assert following.snapshot.instances[0].drivers == ("chat",)
+                assert current.path.exists()
+        finally:
+            current.close()
 
 
 def test_runtime_snapshot_caps_independent_liveness_probes_at_eight(

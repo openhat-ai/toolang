@@ -36,10 +36,11 @@ def read_activity(
     cancelled: Callable[[], bool] | None = None,
 ) -> ActivitySnapshot:
     live_error = None
-    if source.endpoint:
+    endpoint = source.endpoint if source.is_current() else None
+    if endpoint:
         try:
             response = httpx.get(
-                source.endpoint.rstrip("/") + f"/api/v{AGENT_API_VERSION}/top/snapshot",
+                endpoint.rstrip("/") + f"/api/v{AGENT_API_VERSION}/top/snapshot",
                 params={"recent": recent},
                 timeout=3,
                 trust_env=False,
@@ -76,7 +77,8 @@ def read_activity(
                     except (StatsUnavailable, OSError, ValueError, RuntimeError) as exc:
                         # Supplemental history must not invalidate a healthy sample.
                         result.page_error = str(exc)
-            return result
+            if source.is_current():
+                return result
         except (httpx.HTTPError, ValueError) as exc:
             # Preserve durable completions when the control plane disconnects.
             live_error = str(exc)
@@ -86,10 +88,10 @@ def read_activity(
         known_roots=tuple(tree.root_run_id for tree in previous.trees)
         if previous
         else (),
-        check_idle=not source.endpoint and source.instance.needs_live_observation,
+        check_idle=live_error is None and source.instance.needs_live_observation,
         cancelled=cancelled,
     )
-    result.live_error = live_error
+    result.live_error = live_error if source.is_current() else None
     return result
 
 
@@ -147,9 +149,9 @@ class _Source:
             try:
                 binding.layout.run_store.stat()
             except FileNotFoundError:
-                return (
-                    not self.history_seen
-                    and not binding.instance.needs_live_observation
+                return not self.history_seen and (
+                    not binding.instance.needs_live_observation
+                    or not binding.is_current()
                 )
             self.history_seen = True
             return False
@@ -169,35 +171,46 @@ class _Source:
             if not binding.endpoint:
                 raise
             empty = False
-        if empty:
-            now = int(time.time())
-            return ActivitySnapshot(
-                live=None,
-                completed=CompletedRoots(
-                    observed_at=timestamp(now),
-                    start=timestamp(now - recent),
-                    end=timestamp(now),
-                    counts=CompletionCounts(),
-                    roots=(),
-                ),
-            )
-        result = read_activity(binding, recent, previous=previous, cancelled=cancelled)
-        with self.history_lock:
-            self.history_seen = True
-        return result
+        if not empty:
+            try:
+                result = read_activity(
+                    binding, recent, previous=previous, cancelled=cancelled
+                )
+            except StatsUnavailable:
+                if not self.empty_history(binding):
+                    raise
+            else:
+                with self.history_lock:
+                    self.history_seen = True
+                return result
+        now = int(time.time())
+        return ActivitySnapshot(
+            live=None,
+            completed=CompletedRoots(
+                observed_at=timestamp(now),
+                start=timestamp(now - recent),
+                end=timestamp(now),
+                counts=CompletionCounts(),
+                roots=(),
+            ),
+        )
 
     def read_usage(
         self, binding: RuntimeSource, period: int, cancelled: Callable[[], bool]
     ) -> RecentUsage:
-        if self.empty_history(binding):
-            now = int(time.time())
-            return RecentUsage(
-                observed_at=timestamp(now),
-                start=timestamp(now - period),
-                end=timestamp(now),
-                metrics=Metrics(),
-            )
-        return read_usage(binding, period, cancelled)
+        if not self.empty_history(binding):
+            try:
+                return read_usage(binding, period, cancelled)
+            except StatsUnavailable:
+                if not self.empty_history(binding):
+                    raise
+        now = int(time.time())
+        return RecentUsage(
+            observed_at=timestamp(now),
+            start=timestamp(now - period),
+            end=timestamp(now),
+            metrics=Metrics(),
+        )
 
     def rebind(self, binding: RuntimeSource) -> None:
         self.binding = binding
