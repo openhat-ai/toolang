@@ -63,7 +63,8 @@ def resolve_command(
         from .commands.script import implicit_entry
 
         implicit_entry(ctx)
-        return "run", group.commands["run"], args
+        # The root has recognized FILE; preserve it as a literal in run's header.
+        return "run", group.commands["run"], ["--", *args]
     if _agent_candidate(ctx, first):
         if args[1:] in (["--help"], ["-h"]):
             show_help(ctx)

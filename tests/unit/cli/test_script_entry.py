@@ -642,3 +642,23 @@ def test_script_help_allows_unnamed_entry_with_explicit_main(
     output = capsys.readouterr().out
     assert f"{kind}: <entry:1>" in " ".join(output.split())
     assert f"main {kind}" in " ".join(output.split())
+
+
+@pytest.mark.parametrize("explicit_run", [False, True])
+def test_escaped_script_filename_stays_literal_across_entry_forms(
+    explicit_run, monkeypatch, capsys
+):
+    source = Path("-demo.too")
+    source.write_text("flow research():\n  pass\n")
+    calls = []
+    monkeypatch.setattr(
+        script,
+        "_run",
+        lambda path, **kwargs: calls.append((path, kwargs["runnable"])) or 0,
+    )
+    header = ["run", "--", str(source)] if explicit_run else ["--", str(source)]
+    assert cli.main([*header, "research", "--help"]) == 0
+    assert calls == []
+    assert "research" in capsys.readouterr().out
+    assert cli.main([*header, "research"]) == 0
+    assert calls == [(source.resolve(), "research")]

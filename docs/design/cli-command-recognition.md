@@ -201,8 +201,8 @@ command-specific no-arguments behavior.
 
 Presence/position routing errors happen after command selection and before its
 argument parsing. On an allowed form, native eager help precedes AGENT syntax
-and placement validation. Unknown commands never trigger selector conversion;
-source errors never receive command typo suggestions. Lookup, form, and native
+and placement validation. Unknown root commands never trigger selector
+conversion; source errors never receive command typo suggestions. Lookup, form, and native
 parameter failures exit 2; explicit help exits 0. Preserve operational failure
 and interruption codes, including failures from either script entry form.
 
