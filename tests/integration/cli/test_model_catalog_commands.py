@@ -27,10 +27,84 @@ from toolang.plugin.catalogs.ollama import OllamaModelCatalog
 runner = CliRunner()
 
 
-def _capture_catalog_tables(monkeypatch, capture):
-    monkeypatch.setenv("COLUMNS", "120")
+def _capture_catalog_tables(monkeypatch, capture, *, width=120):
+    monkeypatch.setenv("COLUMNS", str(width))
     monkeypatch.setattr(record_output, "echo_table", capture)
     monkeypatch.setattr(model_catalog_commands, "echo_table", capture)
+
+
+@pytest.mark.parametrize("width", [40, 80, 120, 240])
+@pytest.mark.parametrize("human", [False, True])
+def test_model_columns_follow_priority_without_changing_json_or_selection(
+    tmp_path, monkeypatch, width, human
+):
+    from wcwidth import wcswidth
+
+    _disable_local_discovery(monkeypatch)
+    monkeypatch.setenv("TEST_API_KEY", "synthetic-secret")
+    monkeypatch.setenv("COLUMNS", str(width))
+    _write_catalog(tmp_path / "catalog.json", _catalog_data())
+    args = ["--root", str(tmp_path), "models", "--query", "test/*"]
+    before = runner.invoke(cli.app, [*args, "--json"])
+
+    result = runner.invoke(cli.app, [*args, *(["--human"] if human else [])])
+
+    assert before.exit_code == result.exit_code == 0, result.exception
+    lines = strip_ansi(result.stdout).splitlines()
+    optional = ["INPUT", "FEATURES", "MAX_OUTPUT", "OUTPUT"]
+    expected = (
+        optional[:1] if width <= 80 else optional[:3] if width == 120 else optional
+    )
+    assert lines[0].split() == [
+        "MODEL",
+        "CONTEXT",
+        "PRICE",
+        "($/1M)",
+        "STATUS",
+        *expected,
+    ]
+    assert len(lines) == 6 and lines[-2:] == ["", "2 models, 1 provider"]
+    assert all(wcswidth(line) <= max(width, 80) for line in lines)
+    assert all(
+        line.startswith(ref) for line, ref in zip(lines[2:4], ("test/one", "test/two"))
+    )
+    assert "synthetic-secret" not in result.stdout
+    if width < 80:
+        monkeypatch.setenv("COLUMNS", "80")
+        minimum = runner.invoke(cli.app, args)
+        assert minimum.exit_code == 0 and minimum.stdout == result.stdout
+    monkeypatch.setenv("COLUMNS", "240")
+    after = runner.invoke(cli.app, [*args, "--json"])
+    assert after.exit_code == 0 and after.stdout == before.stdout
+    assert {record["ref"] for record in json.loads(after.stdout)} == {
+        "test/one",
+        "test/two",
+    }
+
+
+def test_models_read_width_on_each_call_and_fall_back_to_120(tmp_path, monkeypatch):
+    import os
+
+    _disable_local_discovery(monkeypatch)
+    monkeypatch.setenv("TEST_API_KEY", "synthetic-secret")
+    _write_catalog(tmp_path / "catalog.json", _catalog_data())
+
+    def no_terminal(*args):
+        raise OSError("No terminal")
+
+    monkeypatch.setattr(os, "get_terminal_size", no_terminal)
+    headers = []
+    for width in ("80", "240", "invalid", "0", None):
+        if width is None:
+            monkeypatch.delenv("COLUMNS", raising=False)
+        else:
+            monkeypatch.setenv("COLUMNS", width)
+        result = runner.invoke(cli.app, ["--root", str(tmp_path), "models"])
+        assert result.exit_code == 0, result.exception
+        headers.append(result.stdout.splitlines()[0].split())
+    assert headers[0][-1] == "INPUT"
+    assert headers[1][-1] == "OUTPUT"
+    assert all(header[-1] == "MAX_OUTPUT" for header in headers[2:])
 
 
 @pytest.mark.parametrize("width", [40, 80, 120, 240])
@@ -144,8 +218,8 @@ def test_empty_model_allow_keeps_complete_diagnostic_view(
     if not all_:
         assert result.out.strip() == f"0 {command}"
     elif command == "models":
-        assert "TAGS" in result.out
-        assert "not_allowed" in result.out
+        assert "STATUS" in result.out
+        assert "not allowed" in result.out
     else:
         assert "MODELS" in result.out
         assert "0/2" in result.out
@@ -432,6 +506,7 @@ def test_models_accepts_month_precision_catalog_dates(
 
 
 def test_models_table_splits_profile_fields(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("COLUMNS", "240")
     data = _catalog_data()
     catalog = tmp_path / "catalog.json"
     _write_catalog(catalog, data)
@@ -457,7 +532,8 @@ def test_models_table_splits_profile_fields(tmp_path: Path, monkeypatch) -> None
     for field in model_catalog_commands.MODEL_COLUMNS:
         assert field.upper() in stdout
     assert "text,image" in stdout
-    assert "no_env,remote" in stdout
+    assert "no env" in stdout
+    assert "remote" not in stdout
     assert "1 model" in stdout
 
 
@@ -484,9 +560,9 @@ def test_models_render_aligned_prices_and_group_summary(
     assert "0.43" in lines[0] and "0.87" in lines[0]
     assert "1.25" in lines[1] and "10" in lines[1]
     assert "PRICE" in result.stdout
-    assert "  0.43 /  0.87" in lines[0]
-    assert "  1.25 / 10.00" in lines[1]
-    assert "TAGS" in result.stdout
+    assert "0.43/ 0.87" in lines[0]
+    assert "1.25/10.00" in lines[1]
+    assert "STATUS" in result.stdout
     assert result.stdout.strip().endswith("2 models, 1 provider")
 
 
@@ -803,7 +879,7 @@ def test_catalog_reasons_only_appear_inside_model_status(
 
     assert result.exit_code == 0, result.stderr
     if command == "models":
-        assert all(row[-1] == "no_env,no_adapter,remote" for row in rows)
+        assert all(row[3] == "no env,no adapter" for row in rows)
     else:
         assert rows == [("test", "0/2", "-", "TEST_API_KEY")]
 
@@ -926,7 +1002,7 @@ def test_models_uses_isolated_resident_catalogs(
                 assert actual == ((model,) if model in expected else ())
             elif model in expected:
                 assert f"test/{model}" in output.out
-                assert "TAGS" in output.out
+                assert "STATUS" in output.out
             else:
                 assert output.out.strip() == "0 models"
 
@@ -1302,7 +1378,7 @@ def test_catalog_cli_uses_published_environment_for_route_failures(
     assert result.exit_code == 0, result.exception
     assert rows
     if command == "models":
-        assert all(row[-1] == "no_env,remote" for row in rows)
+        assert all(row[3] == "no env" for row in rows)
     else:
         assert rows[0][1] == "0/2" and rows[0][-1] == "TEST_API_KEY"
     assert all("added-after-publication" not in str(row) for row in rows)
@@ -1391,28 +1467,28 @@ def test_model_status_columns_separate_readiness_and_allow(
 
     def capture(headers, values, **kwargs):
         rows.extend(
-            dict(zip((key.lower() for key in headers), row, strict=True))
+            dict(zip((key.split()[0].lower() for key in headers), row, strict=True))
             for row in values
         )
 
-    _capture_catalog_tables(monkeypatch, capture)
+    _capture_catalog_tables(monkeypatch, capture, width=240)
     result = runner.invoke(
         cli.app, ["--root", str(tmp_path), command, *(("--all",) if all_ else ())]
     )
 
     assert result.exit_code == 0, result.stderr
     if command == "models":
-        by_id = {str(row["ref"]): row for row in rows}
+        by_id = {str(row["model"]): row for row in rows}
         assert set(by_id) == (
             {"test/one", "test/two", "offline/one", "offline/two"}
             if all_
             else {"test/one"}
         )
-        assert by_id["test/one"]["tags"] == "ready,remote"
+        assert by_id["test/one"]["status"] == "ready"
         if all_:
-            assert by_id["test/two"]["tags"] == "not_allowed,remote"
-            assert by_id["offline/one"]["tags"] == "no_env,remote"
-            assert by_id["offline/two"]["tags"] == "not_allowed,no_env,remote"
+            assert by_id["test/two"]["status"] == "not allowed"
+            assert by_id["offline/one"]["status"] == "no env"
+            assert by_id["offline/two"]["status"] == "not allowed,no env"
         assert all(tuple(row) == model_catalog_commands.MODEL_COLUMNS for row in rows)
     else:
         by_id = {str(row["provider"]): row for row in rows}

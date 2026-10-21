@@ -141,10 +141,23 @@ def echo_table(
     *,
     justify: Sequence[TableJustify | None] | None = None,
     max_widths: Sequence[int | None] | None = None,
+    width: int | None = None,
 ) -> None:
-    _TABLE_CONSOLE.print(
-        _make_table(headers, rows, justify=justify, max_widths=max_widths)
-    )
+    console = _TABLE_CONSOLE
+    if width is not None:
+        console = Console(
+            file=console.file,
+            width=width,
+            height=console.height,
+            color_system=cast(
+                Literal["standard", "256", "truecolor", "windows"] | None,
+                console.color_system,
+            ),
+            force_terminal=console.is_terminal,
+            no_color=console.no_color,
+            highlight=False,
+        )
+    console.print(_make_table(headers, rows, justify=justify, max_widths=max_widths))
 
 
 def echo_collection_summary(
