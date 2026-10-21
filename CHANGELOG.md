@@ -125,6 +125,11 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   ownership failures from the builtin Talk handler, while a user
   `runnables/compact.too` still runs as `compact::compact`.
 
+- Retained `runnables::<module>` route restrictions keep authorizing run and
+  handoff targets, and targets named `ALL` or `NONE` are no longer mistaken for
+  protocol sentinels.
+  ([#895](https://github.com/openhat-ai/toolang/pull/895))
+
 ### Security
 
 - The locked certifi trust store advances to 2026.10.19, resolving trust-store
