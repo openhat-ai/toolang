@@ -42,7 +42,10 @@ def answer():
     return ModelCallResult(message=Message.assistant("done"))
 
 
-@pytest.mark.parametrize("name", [None, "target", "target", "agent::target", "chat"])
+@pytest.mark.parametrize(
+    "name",
+    [None, "target", "agic:target", "agent::target", "agent::agic:target", "chat"],
+)
 def test_named_and_all_discovery_return_full_docs_even_with_no_routes(tmp_path, name):
     doc = 'A long description & "literal" text. ' * 30
     source = f"""
@@ -94,6 +97,14 @@ agic chat() -> Text:
                 if name is None
                 else ["chat" if name == "chat" else "target"]
             )
+            identities = {
+                "chat": ("chat", "agic", "agent::chat"),
+                "empty": ("empty", "flow", "agent::empty"),
+                "target": ("target", "agic", "agent::target"),
+            }
+            assert [(e["name"], e["kind"], e["full_name"]) for e in entries] == [
+                identities[e["ref"]] for e in entries
+            ]
             assert {e["revision"] for e in entries} == {harness.state.revision}
             if name != "chat":
                 entry = next(e for e in entries if e["ref"] == "target")
@@ -459,6 +470,12 @@ def test_private_module_discovery_retains_aliases_and_hides_other_private_docs(
             assert [e["ref"] for e in values[0]["runnables"]] == [
                 "research",
                 "research::worker",
+            ]
+            assert [
+                (e["name"], e["kind"], e["full_name"]) for e in values[0]["runnables"]
+            ] == [
+                ("research", "flow", "research::research"),
+                ("worker", "agic", "research::worker"),
             ]
             assert "Private secret description." not in str(values)
             assert values[1]["runnables"] == [values[0]["runnables"][1]]
