@@ -121,7 +121,8 @@ titles never replace canonical identity.
 Each directory member receives a `color` when first created. Hub chooses the
 least-used of `red`, `green`, `yellow`, `blue`, `magenta`, and `cyan`, breaking
 ties in that order. Registration, lease updates, and restart preserve it; member
-removal deletes it. Agent and human names and message markers use this color.
+removal deletes it. Talk uses this color for agent names and message markers;
+human names keep the terminal foreground and their markers stay bright cyan.
 `color` is required and accepts a standard ANSI color name or `#RRGGBB`.
 
 To customize an existing member, atomically edit its JSON in

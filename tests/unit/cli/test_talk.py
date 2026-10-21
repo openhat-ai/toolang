@@ -671,7 +671,7 @@ def test_left_message_marker_has_aligned_header_and_wrapped_body(identity):
     lines = output.getvalue().splitlines()
     assert lines[0].rstrip() == "• alice"
     assert lines[1].startswith("  word")
-    assert lines[-2] == "  " + "┄" * 38
+    assert lines[-2] == "  " + "┈" * 38
     assert all(line.startswith("  ") for line in lines[1:] if line.strip())
     assert output.getvalue().count("•") == 1
     assert output.getvalue().split().count("word") == 20
@@ -774,11 +774,11 @@ print(json.dumps(colors))
     assert len(set(results[0].values())) > 1
 
 
-@pytest.mark.parametrize("sender", ["agent:alice", "human:bryan"])
 @pytest.mark.parametrize("own_message", [False, True])
 @pytest.mark.parametrize("color", ["green", "bright_magenta", "#7aa2f7"])
-def test_member_color_applies_only_to_name_and_marker(sender, own_message, color):
+def test_agent_member_color_applies_only_to_name_and_marker(own_message, color):
     console = Console(width=60)
+    sender = "agent:alice"
     message = Message.create(sender, "body text")
     block = message_block(
         message,
@@ -800,6 +800,35 @@ def test_member_color_applies_only_to_name_and_marker(sender, own_message, color
     assert header.style.dim is marker.style.dim is False
     assert bool(header.style.bold) == sender.startswith("agent:")
     assert body.style is None or body.style.color is None
+    output = StringIO()
+    Console(file=output, width=60, color_system=None).print(block)
+    assert "\x1b" not in output.getvalue()
+
+
+@pytest.mark.parametrize("own_message", [False, True])
+@pytest.mark.parametrize("color", [None, "green", "bright_magenta", "#7aa2f7"])
+@pytest.mark.parametrize("surfaces", [DARK_TERMINAL_SURFACES, LIGHT_TERMINAL_SURFACES])
+def test_human_name_and_marker_keep_original_colors(own_message, color, surfaces):
+    console = Console(width=60)
+    block = message_block(
+        Message.create("human:bryan", "body text"),
+        "human:bryan" if own_message else "human:reader",
+        60,
+        surfaces,
+        color=color,
+    )
+    segments = list(console.render(block))
+    header = next(segment for segment in segments if "bryan" in segment.text)
+    marker = next(segment for segment in segments if "▮" in segment.text)
+    body = next(segment for segment in segments if "body text" in segment.text)
+    assert header.style is not None and marker.style is not None
+    assert header.style.color is None
+    assert not header.style.bold
+    assert marker.style.color == Color.parse("bright_cyan")
+    assert header.style.dim is marker.style.dim is False
+    assert body.style is not None
+    assert body.style.color is None
+    assert body.style.bgcolor == Color.parse(surfaces.input_background)
     output = StringIO()
     Console(file=output, width=60, color_system=None).print(block)
     assert "\x1b" not in output.getvalue()

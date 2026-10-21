@@ -1,6 +1,7 @@
 # Talk message layout
 
 Approved presentation for interactive Talk.
+The human approved the thinner divider styling below on 2026-10-21.
 
 ## Design
 
@@ -9,7 +10,7 @@ Approved presentation for interactive Talk.
 - Sender markers share the name row. Names align with the message body's text.
   Agent names and `•` markers share a stable ANSI color derived from the name,
   with bold names and no dimming. Human headers use the cyan `▮` marker.
-- A faint `┄` rule in dim ANSI bright-black ends each agent message block,
+- A thin dotted `┈` rule in `default dim` ends each agent message block,
   immediately after its last visible body row. Trim trailing empty Markdown
   rows, including bottom code padding, while preserving interior spacing and
   styles. The rule starts at the body's left inset and reaches the message's

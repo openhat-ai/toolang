@@ -78,8 +78,6 @@ def message_block(
     header_style = "not dim"
     if agent:
         header_style = f"{color or _agent_color(sender.name)} bold not dim"
-    elif color:
-        header_style = f"{color} not dim"
     name = Text(
         display_text(sender.name),
         style=header_style,
@@ -105,7 +103,7 @@ def message_block(
     if padding:
         marker = Text(
             "•" if agent else CONTROL_BAR_MARK,
-            style=header_style if agent or color else f"{RUN_CONTROL_ACCENT} not dim",
+            style=header_style if agent else f"{RUN_CONTROL_ACCENT} not dim",
             justify="right" if right else "left",
         )
         columns = Table.grid(padding=0, expand=True)
@@ -125,7 +123,7 @@ def message_block(
         Group(
             header,
             content,
-            Padding(Rule(characters="┄", style="bright_black dim"), (0, 0, 0, padding)),
+            Padding(Rule(characters="┈", style="default dim"), (0, 0, 0, padding)),
         )
         if agent
         else Group(header, content)
