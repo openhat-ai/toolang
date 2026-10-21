@@ -92,10 +92,6 @@ confirmed running instances within it, though neither appears in the agents
 line. Summary placement counts, source results and table projection use the same
 scoped roster. Incomplete coverage remains nullable with diagnostics.
 
-The separately approved [compact instance IDs](https://github.com/openhat-ai/toolang/blob/codex/compact-instance-ids/docs/plans/compact-instance-ids.md)
-definition covers generation, all CLI displays and selection. It replaces the
-earlier Top-only label proposal and is implemented in a separate PR.
-
 ## Implementation boundaries
 
 Review of [PR #893](https://github.com/openhat-ai/toolang/pull/893) and
