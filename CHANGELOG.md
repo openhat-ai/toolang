@@ -131,6 +131,11 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   `unset` to clear a model preference.
   ([#907](https://github.com/openhat-ai/toolang/pull/907))
 
+- `too providers` fits terminal width with an 80-column minimum, omits adapter
+  details, prioritizes ENV over API, and shows required credential names even
+  when unset.
+  ([#912](https://github.com/openhat-ai/toolang/pull/912))
+
 ### Fixed
 
 - Failed preparation no longer leaves active registrations; runtime references
