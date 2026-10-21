@@ -113,6 +113,11 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   divider in default dim.
   ([#889](https://github.com/openhat-ai/toolang/pull/889))
 
+- Top and Hub no longer warn about availability when an instance unregisters
+  mid-discovery, keeping durable usage and flagging only current
+  registrations' failures.
+  ([#894](https://github.com/openhat-ai/toolang/pull/894))
+
 - Help describes `top` as "Monitor agent runs", and the Work commands panel
   lists `chore` immediately above `talk`.
   ([#891](https://github.com/openhat-ai/toolang/pull/891))
@@ -133,11 +138,6 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 - Earlier Run and exec labels follow the current naming rules, including
   anonymous entry runnables, and new Run captions show the accepted runnable
   name.
-
-- Top and Hub no longer warn about availability when an instance unregisters
-  mid-discovery, keeping durable usage and flagging only current
-  registrations' failures.
-  ([#894](https://github.com/openhat-ai/toolang/pull/894))
 
 ### Security
 

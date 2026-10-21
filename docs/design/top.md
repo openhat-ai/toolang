@@ -85,6 +85,8 @@ Top reads persisted facts through `toolang.stats.recent` and current paths throu
 LiveTree. `up.observation` owns registration identity and generation checks;
 `up.activity.ActivityReader` owns endpoint, history and paging reads, sharing
 established-history state across a source's workers and rebindings.
+A successful database or endpoint read establishes history even if the initial
+metadata check found no store.
 `up.top.TopObserver` owns polling, retention, obsolete results and snapshot
 projection. The recent reader opens only `runs.db`, read-only, without historical
 receipts, `stats.db` or an archival worker. For UTC second T, usage uses `[T-W,T)`

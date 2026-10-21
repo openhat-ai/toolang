@@ -53,6 +53,31 @@ def test_corrupt_history_never_becomes_zero_or_gets_repaired(tmp_path):
     assert not source.layout.stats_store.exists()
 
 
+@pytest.mark.parametrize("following_read", ["activity", "usage"])
+def test_usage_remembers_history_created_after_the_initial_existence_check(
+    tmp_path, monkeypatch, following_read
+):
+    source = replace(binding(tmp_path, registered=True), endpoint=None)
+    reader = ActivityReader()
+    original = activity.recent_usage
+
+    def appeared(*args, **kwargs):
+        with closing(RunStore(source.layout.run_store)):
+            pass
+        return original(*args, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(activity, "recent_usage", appeared)
+        assert reader.read_usage(source, 3600).metrics == Metrics()
+    source.layout.run_store.unlink()
+    source.registration.unlink()
+    read = reader.read_activity if following_read == "activity" else reader.read_usage
+    with pytest.raises(StatsUnavailable):
+        read(source, 300)
+    assert not source.layout.run_store.exists()
+    assert not source.layout.stats_store.exists()
+
+
 def test_activity_and_usage_workers_share_established_history(tmp_path, monkeypatch):
     source = binding(tmp_path, registered=True)
     with closing(RunStore(source.layout.run_store)):

@@ -140,6 +140,10 @@ class ActivityReader:
         self._history_seen = False
         self._history_lock = Lock()
 
+    def _remember_history(self) -> None:
+        with self._history_lock:
+            self._history_seen = True
+
     def _empty_history(self, binding: RuntimeSource) -> bool:
         # Workers share this fact so a lost established store never becomes zero.
         with self._history_lock:
@@ -177,8 +181,7 @@ class ActivityReader:
                 if not self._empty_history(binding):
                     raise
             else:
-                with self._history_lock:
-                    self._history_seen = True
+                self._remember_history()
                 return result
         now = int(time.time())
         return ActivitySnapshot(
@@ -200,7 +203,7 @@ class ActivityReader:
     ) -> RecentUsage:
         if not self._empty_history(binding):
             try:
-                return recent_usage(
+                result = recent_usage(
                     binding.layout.run_store,
                     now=int(time.time()),
                     period=period,
@@ -209,6 +212,9 @@ class ActivityReader:
             except StatsUnavailable:
                 if not self._empty_history(binding):
                     raise
+            else:
+                self._remember_history()
+                return result
         now = int(time.time())
         return RecentUsage(
             observed_at=timestamp(now),
@@ -226,7 +232,6 @@ class ActivityReader:
         cancelled: Callable[[], bool] | None = None,
     ) -> CompletedRoots:
         with recent_source(source.layout.run_store, cancelled=cancelled) as reader:
-            with self._history_lock:
-                self._history_seen = True
+            self._remember_history()
             reader.pin()
             return reader.completed(now=completed_at, recent=recent, before=before)
