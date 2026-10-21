@@ -25,7 +25,7 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 - Structured `[model]`, `[talk.model]`, `[talk.limit]`, and `[compact.model]`
   tables configure model ref, effort, and output limits, and model strings
-  accept `ref=`, while legacy strings warn.
+  accept `ref=`.
   ([#907](https://github.com/openhat-ai/toolang/pull/907))
 
 ### Changed
@@ -120,6 +120,15 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 - **Breaking:** Independent flows and `runtime__spawn` use captured `[model]`
   and `[limit]` defaults instead of caller Talk, Chat, or Chore overrides;
   set worker defaults there.
+  ([#907](https://github.com/openhat-ai/toolang/pull/907))
+
+- **Breaking:** Legacy `[default].model` strings and scalar `compact.model`
+  settings are ignored; move them to `[model]` ref, effort, and max_output
+  fields and `[compact.model]` with the same fields.
+  ([#907](https://github.com/openhat-ai/toolang/pull/907))
+
+- **Breaking:** Model strings no longer normalize `none` to unset, so write
+  `unset` to clear a model preference.
   ([#907](https://github.com/openhat-ai/toolang/pull/907))
 
 ### Fixed
