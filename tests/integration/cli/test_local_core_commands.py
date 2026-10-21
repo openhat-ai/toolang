@@ -856,6 +856,105 @@ def test_chore_list_does_not_resolve_runnables_or_prepare_state(
 
 
 @pytest.mark.parametrize(
+    "columns,expected_headers,expected_width",
+    [
+        ("40", "CHORE STATUS NEXT RUN SCHEDULE ERROR LOCATION", 105),
+        ("80", "CHORE STATUS NEXT RUN SCHEDULE ERROR LOCATION", 105),
+        ("120", "CHORE STATUS LAST RUN NEXT RUN SCHEDULE ERROR LOCATION", 120),
+        ("240", "CHORE TITLE STATUS LAST RUN NEXT RUN SCHEDULE ERROR LOCATION", 240),
+        (None, "CHORE STATUS LAST RUN NEXT RUN SCHEDULE ERROR LOCATION", 120),
+        ("invalid", "CHORE STATUS LAST RUN NEXT RUN SCHEDULE ERROR LOCATION", 120),
+        ("0", "CHORE STATUS LAST RUN NEXT RUN SCHEDULE ERROR LOCATION", 120),
+    ],
+)
+def test_chore_list_fits_terminal_and_omits_columns_in_priority_order(
+    tmp_path, monkeypatch, set_local_timezone, columns, expected_headers, expected_width
+):
+    def no_terminal(*args):
+        raise OSError("No terminal")
+
+    monkeypatch.setattr("os.get_terminal_size", no_terminal)
+    monkeypatch.delenv("COLUMNS", raising=False)
+    if columns is not None:
+        monkeypatch.setenv("COLUMNS", columns)
+    set_local_timezone("Asia/Shanghai")
+    root = tmp_path / "toolang"
+    _create_agent(root)
+    layout = AgentLayout.resident(root, "alice")
+    layout.program.write_text("")
+    catalog = AuthoredChores(
+        layout.home, lock_path=layout.home_edit_lock, agent_name=layout.name
+    )
+    schedule = "FREQ=DAILY;BYHOUR=9;BYMINUTE=30;BYSECOND=0"
+    for name, title, rule in (
+        ("cleanup", "Clean temporary files", ""),
+        (
+            "report",
+            "Review repository changes and prepare the daily maintenance report",
+            f"schedule: {schedule}\n",
+        ),
+    ):
+        catalog.create(
+            ChoreFile.parse(
+                f"---\ntitle: {title}\n{rule}---\nPerform maintenance.\n", name=name
+            )
+        )
+    definitions = load_chores(layout)
+    now = datetime(2026, 10, 21, 16, 30, tzinfo=timezone.utc)
+    with (
+        closing(ChoreStore(layout.chore_store)) as jobs,
+        closing(RunStore(layout.run_store)) as runs,
+    ):
+        jobs.reconcile(chores=definitions, now=now)
+        for chore in definitions:
+            run_id = f"run_{chore.name}"
+            project_run_start(
+                runs,
+                run_id=run_id,
+                thread_id=chore.thread_id,
+                input=Message.user("Work."),
+            )
+            project_run_end(
+                runs,
+                run_id=run_id,
+                status="failed" if chore.name == "report" else "succeeded",
+                error=(
+                    "Provider request failed: model credits exhausted; "
+                    "replenish the configured account before retrying."
+                    if chore.name == "report"
+                    else None
+                ),
+            )
+            if chore.name == "cleanup":
+                jobs.claim(chore=chore, trigger="source", run_id=run_id, now=now)
+                jobs.finish_run(
+                    chores={chore.id: chore},
+                    run_id=run_id,
+                    run_status="succeeded",
+                    now=now,
+                )
+        checkpoints = jobs.list()
+    layout.program.write_text("chore review:\n  Review recent changes.\n")
+
+    result = _invoke(root, "alice", "chore", "list")
+
+    assert result.exit_code == 0, result.stderr
+    lines = strip_ansi(result.stdout).splitlines()
+    assert " ".join(lines[0].split()) == expected_headers
+    assert len(lines) == 7
+    assert wcswidth(lines[1]) == expected_width
+    assert max(map(wcswidth, lines)) == expected_width
+    assert all(not line.startswith(" ") for line in lines if line)
+    assert schedule in lines[3] and "2026-10-22T17:30:00+08:00" in lines[3]
+    assert "done" in lines[2] and "pending" in lines[3] and "unsynced" in lines[4]
+    assert "once" in lines[2] and lines[4].rstrip().endswith(":1")
+    assert lines[-2:] == ["", "3 chores"]
+    with closing(ChoreStore(layout.chore_store, read_only=True)) as jobs:
+        assert jobs.list() == checkpoints
+    assert not layout.agent_state.exists()
+
+
+@pytest.mark.parametrize(
     "schedule,manual,expected_time",
     [
         ("FREQ=HOURLY", False, "2026-10-21T15:46:28+08:00"),
@@ -864,8 +963,9 @@ def test_chore_list_does_not_resolve_runnables_or_prepare_state(
     ],
 )
 def test_chore_list_shows_scheduler_and_latest_run_state(
-    tmp_path: Path, set_local_timezone, schedule, manual, expected_time
+    tmp_path: Path, monkeypatch, set_local_timezone, schedule, manual, expected_time
 ) -> None:
+    monkeypatch.setenv("COLUMNS", "400")
     set_local_timezone("Asia/Shanghai")
     root = tmp_path / "toolang"
     _create_agent(root)
