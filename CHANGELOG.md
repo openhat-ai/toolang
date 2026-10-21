@@ -219,6 +219,15 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   reject with restart guidance.
   ([#901](https://github.com/openhat-ai/toolang/pull/901))
 
+- Replayed Flow spawns keep captured Json, struct, and Parts inputs and
+  recorded handle identities, so later worker status changes no longer
+  invalidate an accepted spawn.
+  ([#907](https://github.com/openhat-ai/toolang/pull/907))
+
+- Spawn replays that conflict with a recorded source-output handle or lack
+  their target thread are rejected instead of accepted.
+  ([#907](https://github.com/openhat-ai/toolang/pull/907))
+
 ### Security
 
 - The locked certifi trust store advances to 2026.10.19, resolving trust-store

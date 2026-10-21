@@ -1456,3 +1456,80 @@ def test_spawn_replay_keeps_store_receipt_integrity_checks(
             )
 
     asyncio.run(scenario())
+
+
+def test_tool_spawn_replay_uses_shared_admission_and_keeps_recorded_reply(
+    tmp_path, monkeypatch
+):
+    from dataclasses import replace
+    from toolang.common.errors import ToolangError
+    from toolang.execution.executor.tool_runtime import _ToolRuntime
+
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="agic parent():\n  Start child.\nflow child(_: Text):\n  pass\n",
+        responses=[
+            ModelCallResult(
+                tool_calls=(
+                    ToolCall(
+                        "spawn",
+                        "spawn",
+                        "runtime__spawn",
+                        {"runnable": "child", "input": {"_": "task"}},
+                    ),
+                )
+            ),
+            ModelCallResult(message=Message.assistant("done")),
+        ],
+    )
+    spawn = _ToolRuntime.spawn
+    seen = []
+
+    async def replay(runtime, runnable, input, *, thread=None):
+        result = await spawn(runtime, runnable, input, thread=thread)
+        assert result.error is None
+        execution = runtime.state.execution
+        assert execution is not None
+        worker = str(result.output["id"])
+        await execution.executor._root_runs[worker].task
+        # Reconstruct the adapter after worker completion; replay still returns
+        # the original pending snapshot without discovering a new target.
+        replayed = replace(runtime)
+        with monkeypatch.context() as context:
+
+            def reject(*args, **kwargs):
+                raise AssertionError("replay discovered a new target")
+
+            context.setattr(execution, "resolve_invocation", reject)
+            repeated = await spawn(replayed, runnable, input, thread=thread)
+            assert repeated.output == result.output and repeated.error is None
+            assert repeated.output["status"] == "pending"
+            original_thread = execution.store.get_thread
+            context.setattr(
+                execution.store,
+                "get_thread",
+                lambda *, thread_id: (
+                    None
+                    if thread_id == result.output["thread"]
+                    else original_thread(thread_id=thread_id)
+                ),
+            )
+            with pytest.raises(ToolangError, match="conflicting spawn thread"):
+                await spawn(replayed, runnable, input, thread=thread)
+        seen.append(worker)
+        return result
+
+    monkeypatch.setattr(_ToolRuntime, "spawn", replay)
+
+    async def scenario():
+        async with harness:
+            parent = await harness.executor.run(
+                harness.run_spec(
+                    thread=harness.threads.create(kind=ThreadKind.TALK),
+                    runnable="parent",
+                )
+            )
+            assert parent.status == "succeeded", parent.error
+            assert len(seen) == 1 and len(harness.store.list_runs()) == 2
+
+    asyncio.run(scenario())
