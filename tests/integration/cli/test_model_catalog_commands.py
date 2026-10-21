@@ -27,6 +27,87 @@ from toolang.plugin.catalogs.ollama import OllamaModelCatalog
 runner = CliRunner()
 
 
+def _capture_catalog_tables(monkeypatch, capture):
+    monkeypatch.setenv("COLUMNS", "120")
+    monkeypatch.setattr(record_output, "echo_table", capture)
+    monkeypatch.setattr(model_catalog_commands, "echo_table", capture)
+
+
+@pytest.mark.parametrize("width", [40, 80, 120, 240])
+@pytest.mark.parametrize("human", [False, True])
+def test_provider_table_fits_terminal_width_and_keeps_connection_columns(
+    tmp_path, monkeypatch, width, human
+):
+    from rich.cells import cell_len
+
+    _disable_local_discovery(monkeypatch)
+    monkeypatch.setenv("COLUMNS", str(width))
+    monkeypatch.setenv("TERM", "xterm-256color")
+    monkeypatch.delenv("TEST_API_KEY", raising=False)
+    data = _catalog_data()
+    provider = cast(dict[str, object], data["test"])
+    provider["api"] = "https://api.example.test/" + "long-path/" * 20
+    _write_catalog(tmp_path / "catalog.json", data)
+
+    result = runner.invoke(
+        cli.app,
+        [
+            "--root",
+            str(tmp_path),
+            "providers",
+            "--all",
+            *(["--human"] if human else []),
+        ],
+    )
+
+    assert result.exit_code == 0, result.exception
+    lines = strip_ansi(result.stdout).splitlines()
+    assert lines[0].split() == ["PROVIDER", "MODELS", "API", "ENV"]
+    assert lines[0].startswith("PROVIDER") and lines[2].startswith("test")
+    assert set(lines[1]) == {"─"}
+    assert len(lines) == 5 and lines[-2:] == ["", "1 provider"]
+    assert all(cell_len(line) <= max(80, width) for line in lines)
+    assert "TEST_API_KEY" in lines[2] and "0/2" in lines[2]
+    assert "…" in lines[2]
+    assert lines[0].index("MODELS") + len("MODELS") == lines[2].index("0/2") + 3
+    if width < 80:
+        monkeypatch.setenv("COLUMNS", "80")
+        minimum = runner.invoke(
+            cli.app, ["--root", str(tmp_path), "providers", "--all"]
+        )
+        assert minimum.exit_code == 0 and minimum.stdout == result.stdout
+
+
+def test_provider_human_environment_shows_unsatisfied_requirements_without_changing_json(
+    tmp_path, monkeypatch
+):
+    _disable_local_discovery(monkeypatch)
+    monkeypatch.setenv("COLUMNS", "240")
+    for name in ("TEST_REGION", "TEST_API_KEY", "TEST_ALT_API_KEY"):
+        monkeypatch.delenv(name, raising=False)
+    data = _catalog_data()
+    cast(dict[str, object], data["test"])["env"] = [
+        "TEST_REGION",
+        "TEST_API_KEY",
+        "TEST_ALT_API_KEY",
+    ]
+    _write_catalog(tmp_path / "catalog.json", data)
+    args = ["--root", str(tmp_path), "providers", "--all"]
+
+    exported = runner.invoke(cli.app, [*args, "--json"])
+    human = runner.invoke(cli.app, args)
+    exported_again = runner.invoke(cli.app, [*args, "--json"])
+
+    assert exported.exit_code == human.exit_code == exported_again.exit_code == 0
+    assert exported.stdout == exported_again.stdout
+    record = json.loads(exported.stdout)[0]
+    assert record["env"] == [] and record["adapter"] == "chat_completions"
+    assert (
+        "(TEST_REGION + TEST_API_KEY) OR (TEST_REGION + TEST_ALT_API_KEY)"
+        in human.stdout
+    )
+
+
 @pytest.mark.parametrize("agent", [False, True])
 @pytest.mark.parametrize("command", ["models", "providers"])
 @pytest.mark.parametrize("all_", [False, True])
@@ -553,7 +634,7 @@ def test_models_summary_counts_local_catalogs_and_providers_show_availability(
         captured_headers = tuple(headers)
         captured_rows = [tuple(row) for row in rows]
 
-    monkeypatch.setattr(record_output, "echo_table", capture_table)
+    _capture_catalog_tables(monkeypatch, capture_table)
     providers_result = runner.invoke(
         cli.app,
         [
@@ -576,14 +657,13 @@ def test_models_summary_counts_local_catalogs_and_providers_show_availability(
     assert by_provider["llama_cpp"] == (
         "llama_cpp",
         "1/1",
-        "chat_completions",
         "http://llama.test/v1",
         "-",
     )
 
 
 @pytest.mark.parametrize("configured", [False, True])
-def test_providers_lists_resolved_api_and_model_adapters(
+def test_providers_lists_connection_requirements_and_preserves_adapter_json(
     tmp_path: Path,
     monkeypatch,
     configured: bool,
@@ -621,7 +701,7 @@ def test_providers_lists_resolved_api_and_model_adapters(
     for field in model_catalog_commands.PROVIDER_COLUMNS:
         assert field.upper() in stdout
     assert "https://api.test/v1" in stdout
-    assert ("TEST_API_KEY" in stdout) is configured
+    assert "TEST_API_KEY" in stdout
     assert "1 provider" in stdout
 
     filtered = runner.invoke(
@@ -655,7 +735,7 @@ def test_providers_lists_resolved_api_and_model_adapters(
         del headers, justify
         captured_rows.extend(tuple(row) for row in rows)
 
-    monkeypatch.setattr(record_output, "echo_table", capture_table)
+    _capture_catalog_tables(monkeypatch, capture_table)
     styled_result = runner.invoke(
         cli.app,
         [
@@ -674,9 +754,8 @@ def test_providers_lists_resolved_api_and_model_adapters(
     assert styled_row == (
         "test",
         "2/2" if configured else "0/2",
-        "messages",
         "https://api.test/v1",
-        "TEST_API_KEY,TEST_ALT_API_KEY" if configured else "-",
+        "TEST_API_KEY OR TEST_ALT_API_KEY",
     )
 
     json_result = runner.invoke(
@@ -697,6 +776,7 @@ def test_providers_lists_resolved_api_and_model_adapters(
     provider = json.loads(json_result.stdout)[0]
     assert provider["api"] == "https://api.test/v1"
     assert provider["npm"] == "@ai-sdk/anthropic"
+    assert provider["adapter"] == "messages"
     assert "resolved" not in provider
 
 
@@ -715,10 +795,8 @@ def test_catalog_reasons_only_appear_inside_model_status(
     _write_catalog(tmp_path / "catalog.json", data)
     _disable_local_discovery(monkeypatch)
     rows: list[Sequence[str | Text]] = []
-    monkeypatch.setattr(
-        record_output,
-        "echo_table",
-        lambda headers, values, **kwargs: rows.extend(values),
+    _capture_catalog_tables(
+        monkeypatch, lambda headers, values, **kwargs: rows.extend(values)
     )
 
     result = runner.invoke(cli.app, ["--root", str(tmp_path), command, "-a"])
@@ -727,7 +805,7 @@ def test_catalog_reasons_only_appear_inside_model_status(
     if command == "models":
         assert all(row[-1] == "no_env,no_adapter,remote" for row in rows)
     else:
-        assert rows == [("test", "0/2", "-", "-", "-")]
+        assert rows == [("test", "0/2", "-", "TEST_API_KEY")]
 
 
 @pytest.mark.parametrize("available_models", [0, 1])
@@ -746,10 +824,8 @@ def test_provider_api_and_counts_use_independent_availability(
     _write_catalog(catalog, data)
     _disable_local_discovery(monkeypatch)
     rows: list[Sequence[str | Text]] = []
-    monkeypatch.setattr(
-        record_output,
-        "echo_table",
-        lambda headers, values, **kwargs: rows.extend(values),
+    _capture_catalog_tables(
+        monkeypatch, lambda headers, values, **kwargs: rows.extend(values)
     )
 
     result = runner.invoke(
@@ -768,7 +844,6 @@ def test_provider_api_and_counts_use_independent_availability(
     assert rows[0] == (
         "test",
         f"{available_models}/2",
-        "chat_completions",
         "-",
         "TEST_API_KEY",
     )
@@ -1220,10 +1295,8 @@ def test_catalog_cli_uses_published_environment_for_route_failures(
     source.unlink()
 
     rows = []
-    monkeypatch.setattr(
-        record_output,
-        "echo_table",
-        lambda headers, values, **kwargs: rows.extend(values),
+    _capture_catalog_tables(
+        monkeypatch, lambda headers, values, **kwargs: rows.extend(values)
     )
     result = runner.invoke(cli.app, ["--root", str(tmp_path), command, "--all"])
     assert result.exit_code == 0, result.exception
@@ -1231,7 +1304,7 @@ def test_catalog_cli_uses_published_environment_for_route_failures(
     if command == "models":
         assert all(row[-1] == "no_env,remote" for row in rows)
     else:
-        assert rows[0][1] == "0/2" and rows[0][-1] == "-"
+        assert rows[0][1] == "0/2" and rows[0][-1] == "TEST_API_KEY"
     assert all("added-after-publication" not in str(row) for row in rows)
 
 
@@ -1322,7 +1395,7 @@ def test_model_status_columns_separate_readiness_and_allow(
             for row in values
         )
 
-    monkeypatch.setattr(record_output, "echo_table", capture)
+    _capture_catalog_tables(monkeypatch, capture)
     result = runner.invoke(
         cli.app, ["--root", str(tmp_path), command, *(("--all",) if all_ else ())]
     )
@@ -1342,7 +1415,7 @@ def test_model_status_columns_separate_readiness_and_allow(
             assert by_id["offline/two"]["tags"] == "not_allowed,no_env,remote"
         assert all(tuple(row) == model_catalog_commands.MODEL_COLUMNS for row in rows)
     else:
-        by_id = {str(row["id"]): row for row in rows}
+        by_id = {str(row["provider"]): row for row in rows}
         assert set(by_id) == ({"test", "offline"} if all_ else {"test"})
         assert by_id["test"]["models"] == "1/2"
         if all_:

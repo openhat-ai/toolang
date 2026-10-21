@@ -121,6 +121,14 @@ column `CONVO`, and right-align `JOINED`.
 Agent ports and inspection run, step, and child counts are right-aligned; text
 fields retain their existing alignment.
 
+`too providers` uses single rows with `PROVIDER`, right-aligned `MODELS`, `API`,
+and `ENV`. API addresses shorten first; the API column is omitted when fewer
+than 24 cells remain for an address, unless the complete address is shorter.
+ENV requirements shorten only after API is omitted. Provider identities and
+model counts remain complete. ENV displays required variable names even when
+unset, joining required names with `+` and alternatives with `OR`; no values
+are displayed. JSON retains its complete records, including adapter metadata.
+
 ## Historical inspection
 
 `too TARGET inspect SUBJECT... [PROJECTOR] [--human | --json]` reads durable

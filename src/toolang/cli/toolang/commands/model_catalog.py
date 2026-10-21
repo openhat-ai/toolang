@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 import asyncio
+from collections.abc import Sequence
 from pathlib import Path
+from shutil import get_terminal_size
 from typing import Annotated
 import typer
+from wcwidth import wcswidth
+from toolang.base.types.model import Provider
 from toolang.cli.common.context import (
     context_layout,
     context_agent,
@@ -13,14 +17,20 @@ from toolang.cli.common.context import (
     resolve_model_catalog_option,
     user_call,
 )
-from toolang.cli.common.output import echo_collection_summary
+from toolang.cli.common.output import (
+    MIN_TABLE_WIDTH,
+    echo_collection_summary,
+    echo_table,
+)
 from toolang.cli.common.records import check_output_options, echo_records
 from toolang.cli.common.progress import make_cli_progress
+from toolang.cli.common.terminal_title import clip_title, label_text
 from toolang.common.progress import ProgressSink
 from toolang.common.layout import AgentLayout
 from toolang.plugin.models.query import filter_models
 from toolang.plugin.models.records import model_record, provider_record
 from toolang.setup import AgentSetup
+from toolang.setup.routes import provider_environment
 from toolang.setup.watcher import load_setup
 
 
@@ -34,7 +44,7 @@ MODEL_COLUMNS = (
     "features",
     "tags",
 )
-PROVIDER_COLUMNS = ("id", "models", "adapter", "api", "env")
+PROVIDER_COLUMNS = ("provider", "models", "api", "env")
 
 
 def models_command(
@@ -109,9 +119,63 @@ def providers_command(
             else setup.providers_effective(progress=progress.sink)
         )
     records = [provider_record(provider) for provider in providers]
-    echo_records(records, PROVIDER_COLUMNS, json_=json_)
-    if not json_:
-        echo_collection_summary(len(records), "provider")
+    if json_:
+        echo_records(records, PROVIDER_COLUMNS, json_=True)
+        return
+    _echo_providers(
+        providers,
+        width=max(MIN_TABLE_WIDTH, get_terminal_size(fallback=(120, 24)).columns),
+    )
+    echo_collection_summary(len(records), "provider")
+
+
+def _echo_providers(providers: Sequence[Provider], *, width: int) -> None:
+    """Keep identities and counts intact, shrinking API before environment rules."""
+
+    if not providers:
+        return
+    rows: list[tuple[str, ...]] = []
+    for provider in providers:
+        env = provider_environment(provider)
+        requirements = " OR ".join(
+            alternative
+            if isinstance(alternative, str)
+            else "(" + " + ".join(alternative) + ")"
+            for alternative in env
+        )
+        rows.append(
+            (
+                label_text(provider.id),
+                f"{provider._toolang.ready_count}/{provider._toolang.model_count}",
+                label_text(provider._toolang.route.api or "-"),
+                label_text(requirements) or "-",
+            )
+        )
+    columns = list(PROVIDER_COLUMNS)
+    widths = [
+        max(len(column), *(wcswidth(row[index]) for row in rows))
+        for index, column in enumerate(columns)
+    ]
+    api_space = width - widths[0] - widths[1] - widths[3] - 6
+    # Below a recognizable address, the whole API column yields to ENV.
+    if api_space < min(widths[2], 24):
+        columns.pop(2)
+        widths.pop(2)
+        rows = [(*row[:2], row[3]) for row in rows]
+    else:
+        widths[2] = min(widths[2], api_space)
+    widths[-1] = max(
+        len("ENV"),
+        min(widths[-1], width - sum(widths[:-1]) - 2 * (len(columns) - 1)),
+    )
+    echo_table(
+        tuple(column.upper() for column in columns),
+        [
+            tuple(clip_title(value, width=size) for value, size in zip(row, widths))
+            for row in rows
+        ],
+        justify=tuple("right" if column == "models" else "left" for column in columns),
+    )
 
 
 def _layout(ctx: typer.Context) -> tuple[AgentLayout, bool]:
