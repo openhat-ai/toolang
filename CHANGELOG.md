@@ -258,8 +258,12 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   locations shrink, with JSON unchanged.
   ([#910](https://github.com/openhat-ai/toolang/pull/910))
 
-- Help and native CLI parameter errors no longer prepare agent sources or
-  allocate instances.
+- Help and native CLI parameter errors, including a repeated Chat
+  `--workdir/-d`, no longer prepare agent sources or allocate instances.
+  ([#916](https://github.com/openhat-ai/toolang/pull/916))
+
+- A visiting `--instance` ID on a local `.too` agent target now reports a
+  parameter mismatch and exits 2, instead of invalid ID syntax and exit 1.
   ([#916](https://github.com/openhat-ai/toolang/pull/916))
 
 - Shell completion ignores invalid agent command forms, missing or invalid
