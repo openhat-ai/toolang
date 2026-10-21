@@ -45,9 +45,15 @@ agent home. Remote content follows the same cache and refresh behavior as agent
 State preparation.
 
 `--all` includes resources excluded by allow in the same scope. Both views
-show `CAP`, `DESCRIPTION`, `LOCATION`, and `TAGS`; availability is `ready` or
-`not_allowed`, alongside origin, scope, and form tags. The full view does not restore
-shadowed definitions or grant runtime access. This applies to aggregate and
+show `CAP`, `DESCRIPTION`, `LOCATION`, and `STATUS` in one row per cap, following
+the [CLI table width policy](cli.md) with 120 cells when geometry is unavailable.
+Only descriptions and locations shrink; identities and statuses remain complete.
+Long cells use `…`, with locations retaining their beginning and end. Local
+locations are relative to the selected agent root; URLs and canonical source refs
+retain their existing form. `STATUS` is `ready` or `not_allowed`. Complete
+locations and origin, scope, and form tags remain available in JSON and queries;
+there is no `--long`. The full view does not restore shadowed definitions or
+grant runtime access. This applies to aggregate and
 kind-specific lists through `too`, for example `too alice caps --all`,
 `too alice skill list --all`, and `too psyche list --all`. Queries filter the
 chosen default/full view. Caps have no separate readiness protocol; an invalid

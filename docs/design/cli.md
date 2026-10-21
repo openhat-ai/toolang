@@ -129,6 +129,15 @@ model counts remain complete. ENV displays required variable names even when
 unset, joining required names with `+` and alternatives with `OR`; no values
 are displayed. JSON retains its complete records, including adapter metadata.
 
+Cap and tool lists keep each resource on one line and follow this width policy,
+with a 120-cell fallback when geometry is unavailable. Only descriptions
+and locations shrink; identities and statuses remain complete. Long cells use `…`; source
+locations preserve their beginning and end. Local cap locations are relative to
+the selected agent root; URLs and canonical refs keep their existing form.
+`STATUS` shows only `ready` or `not_allowed`; all tags remain in JSON and queries. The tool identity heading is `TOOL`,
+while JSON and query records retain `ref`. These lists have no `--long`; complete
+field values remain available through `--json`.
+
 ## Historical inspection
 
 `too TARGET inspect SUBJECT... [PROJECTOR] [--human | --json]` reads durable

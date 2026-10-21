@@ -27,7 +27,7 @@ from toolang.state.prepare import (
 )
 from ..common.context import context_agent, context_layout, context_root, user_call
 from ..common.output import echo_collection_summary
-from ..common.records import check_output_options, echo_records
+from ..common.records import check_output_options, echo_compact_records
 from ..common.routing import (
     OptionalPrefixAgentCommand,
     OptionalPrefixAgentListCommand,
@@ -210,10 +210,12 @@ def list_caps(
         queries=query,
         allowed=_allowed_cap_keys(allowed),
     )
-    echo_records(
+    echo_compact_records(
         [view.data for view in selected],
         ("cap", "description", "location", "tags"),
+        heading="CAP",
         json_=json_,
+        root=layout.root,
     )
     if not json_:
         echo_collection_summary(
@@ -267,10 +269,12 @@ def _make_cap_list_command(kind: CapKind, title: str) -> Callable[..., None]:
             allowed=_allowed_cap_keys(allowed),
         )
         selected = user_call(dataset.query, query)
-        echo_records(
+        echo_compact_records(
             [view.data for view in selected],
             ("cap", "description", "location", "tags"),
+            heading="CAP",
             json_=json_,
+            root=layout.root,
         )
         if not json_:
             echo_collection_summary(len(selected), kind)
