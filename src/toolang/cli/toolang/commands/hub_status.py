@@ -254,7 +254,9 @@ def render_hub_snapshot(snapshot: HubSnapshot, console: Console | None = None) -
             ):
                 console.print(line)
     else:
-        console.print(Text("no agents", no_wrap=True))
+        branch = "\\--" if ascii_tree else "└──"
+        style = "" if console.no_color else "default dim"
+        console.print(Text(f"{branch} no agents", style=style, no_wrap=True))
 
     if instances:
         console.print()

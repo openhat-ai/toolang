@@ -79,6 +79,7 @@ def test_hub_status_missing_metadata_keeps_readiness(
 ):
     import toolang.up.hub as module
 
+    monkeypatch.setenv("TERM", "xterm-256color")
     saved = HubDiscovery(
         pid=os.getpid(),
         created=psutil.Process().create_time(),
@@ -104,7 +105,7 @@ def test_hub_status_missing_metadata_keeps_readiness(
     assert output.splitlines()[0].split() == (
         ["hub", "running", "unknown"] if healthy else ["hub", "not", "running"]
     )
-    assert "no agents" in output
+    assert output.splitlines()[1:] == ["└── no agents"]
     assert "0 agents, 0 running, 0 talk enabled" not in output
 
 
@@ -114,6 +115,7 @@ def test_hub_status_without_ready_process_skips_http(
 ):
     import toolang.up.hub as module
 
+    monkeypatch.setenv("TERM", "xterm-256color")
     if state != "stopped":
         saved = HubDiscovery(
             pid=os.getpid(),
@@ -132,7 +134,7 @@ def test_hub_status_without_ready_process_skips_http(
     assert cli.main(["--root", str(tmp_path), "hub"]) == 0
     output = capsys.readouterr().out
     assert output.splitlines()[0].split() == ["hub", "not", "running"]
-    assert "no agents" in output
+    assert output.splitlines()[1:] == ["└── no agents"]
     assert "0 agents, 0 running, 0 talk enabled" not in output
     assert "http://127.0.0.1:7123" not in output
 

@@ -179,6 +179,10 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   and completed tree text aligns under its column title.
   ([#897](https://github.com/openhat-ai/toolang/pull/897))
 
+- An empty Hub roster renders as a dim `└── no agents` tree leaf beneath the
+  Hub row, and as `\-- no agents` in ASCII output.
+  ([#905](https://github.com/openhat-ai/toolang/pull/905))
+
 ### Security
 
 - The locked certifi trust store advances to 2026.10.19, resolving trust-store

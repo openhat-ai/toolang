@@ -90,6 +90,7 @@ def test_snapshot_shows_hub_then_three_agent_columns_and_bottom_summary():
     assert lines[6] == ""
     assert lines[7] == "5 agents, 2 running, 1 talk enabled"
     assert "STATUS" not in output and "TALK" not in output
+    assert "no agents" not in output
 
 
 @pytest.mark.parametrize("width", [80, 120, 160])
@@ -240,11 +241,7 @@ def test_long_hub_versions_wrap_without_losing_values_or_column_alignment(
     roster = RuntimeInstanceSnapshot((instance("gus"),) if has_agents else ())
     output = render(HubSnapshot("running", version, roster), width=width)
     lines = output.splitlines()
-    hub_end = next(
-        i
-        for i, line in enumerate(lines)
-        if line.startswith("└──") or line == "no agents"
-    )
+    hub_end = next(i for i, line in enumerate(lines) if line.startswith("└──"))
     hub_rows = lines[:hub_end]
     status_start = hub_rows[0].index("r")
     version_start = hub_rows[0].index("v")
@@ -256,6 +253,8 @@ def test_long_hub_versions_wrap_without_losing_values_or_column_alignment(
     assert all(cell_len(row) <= width for row in hub_rows)
     if has_agents:
         assert lines[hub_end].index("r") == status_start
+    else:
+        assert lines[hub_end:] == ["└── no agents"]
 
 
 @pytest.mark.parametrize("mode", ["pipe", "no_color", "dumb"])
@@ -282,6 +281,51 @@ def test_plain_output_keeps_values_without_ansi_controls(monkeypatch, mode):
     assert "not running" in output and "disabled" in output
 
 
+@pytest.mark.parametrize("state", ["running", "not running"])
+def test_empty_roster_is_one_dim_default_foreground_tree_leaf(state):
+    snapshot = HubSnapshot(state, "v0.4.0a11", RuntimeInstanceSnapshot(()))
+    output = render(snapshot, terminal=True)
+    rows = [Text.from_ansi(line) for line in output.splitlines()]
+
+    assert len(rows) == 2
+    assert rows[1].plain == "└── no agents"
+    console = Console()
+    for offset in range(len(rows[1].plain)):
+        style = rows[1].get_style_at_offset(console, offset)
+        assert style.dim and not style.bold
+        assert style.color is not None and style.color.is_default
+
+
+@pytest.mark.parametrize("mode", ["pipe", "no_color", "dumb", "ascii"])
+def test_empty_roster_preserves_plain_output_and_tree_fallback(monkeypatch, mode):
+    class ASCIIStream(io.StringIO):
+        @property
+        def encoding(self):
+            return "ascii"
+
+    if mode == "no_color":
+        monkeypatch.setenv("NO_COLOR", "1")
+    elif mode == "dumb":
+        monkeypatch.setenv("TERM", "dumb")
+    stream = ASCIIStream() if mode == "ascii" else io.StringIO()
+    console = Console(
+        file=stream,
+        width=120,
+        force_terminal=mode == "no_color",
+        color_system="standard" if mode == "no_color" else None,
+    )
+    render_hub_snapshot(
+        HubSnapshot("running", "v0.4.0a11", RuntimeInstanceSnapshot(())), console
+    )
+    output = stream.getvalue()
+
+    assert "\x1b" not in output
+    branch = r"\--" if mode in {"dumb", "ascii"} else "└──"
+    assert output.splitlines()[1:] == [f"{branch} no agents"]
+    if mode == "ascii":
+        output.encode("ascii")
+
+
 def test_empty_roster_omits_summary_and_keeps_partial_diagnostics():
     snapshot = HubSnapshot(
         "not running",
@@ -293,11 +337,12 @@ def test_empty_roster_omits_summary_and_keeps_partial_diagnostics():
     lines = output.splitlines()
 
     assert lines[0].split() == ["hub", "not", "running"]
-    assert lines[1] == "no agents"
+    assert lines[1] == "└── no agents"
     assert "0 agents, 0 running, 0 talk enabled" not in output
-    assert lines[2] == "partial: agent discovery failed"
-    assert "partial: agent discovery failed" in output
-    assert "partial: Hub: record inspection failed" in output
+    assert lines[2:] == [
+        "partial: agent discovery failed",
+        "partial: Hub: record inspection failed",
+    ]
 
 
 def test_width_is_content_sized_and_narrow_terminals_wrap_all_three_fields():
