@@ -33,11 +33,12 @@ An offline Hub row contains `hub` in column one, `not running` in column two,
 and an empty third column. Empty rosters still use the shared Hub layout and
 retain the existing `no agents` line without a count summary.
 
-- Render `hub` and the agent-name portion in Rich `cyan`, without bold or dim.
-  Render the complete `@r…` suffix in `yellow` and the complete `@v…` suffix in
-  `magenta`, including any existing `#…` discriminator. Derive styled segments
-  from the existing name and label; do not shorten, reformat, or reclassify IDs.
-  Tree branches retain their normal style.
+- Render `hub` and nonresident agent-name portions in Rich `cyan`; resident
+  agent names use `bright_cyan`. Render the complete `@r…` suffix in
+  `bright_magenta` and the complete `@v…` suffix in `bright_yellow`, including
+  any existing `#…` discriminator. Use no bold or dim on names or suffixes.
+  Derive styled segments from the existing name and label; do not shorten,
+  reformat, or reclassify IDs. Tree branches retain their normal style.
 - Column one has a minimum width of 32 terminal cells, including the four-cell
   agent tree prefix, instead of the current 24. Grow it for complete labels
   when space permits. Keep the Hub name at the root indentation. This moves
@@ -77,7 +78,7 @@ retain the existing `no agents` line without a count summary.
 | Scenario | Pass condition |
 | --- | --- |
 | Online and offline Hub | Hub status starts at the same cell as agent status; known version shares the Talk column's right edge. Offline Hub has an empty third field. Empty rosters retain the same layout rules. |
-| Colors and intensity | Resident names and `hub` are cyan; same-name `@r…` and `@v…` instances have yellow and magenta suffixes. Positive fields are normal; negative and unknown fields are dim without affecting names. |
+| Colors and intensity | Resident names are bright cyan; `hub` and nonresident names are cyan. Same-name `@r…` and `@v…` instances have bright magenta and bright yellow suffixes. Positive fields are normal; negative and unknown fields are dim without affecting names. |
 | Wide layout | At 80, 120, and 160 cells, short-name status starts at cell offset 34; long names/versions expand their columns when they fit, and rows remain sized to content. |
 | Narrow layout and encoding | At 20, 32, and 40 cells, long versions, IDs, wide Unicode names, and ASCII-escaped names retain all text and field styles within the existing effective minimum width of 20. |
 | Plain terminals | Pipes, `NO_COLOR`, and `TERM=dumb` preserve readable values and alignment without ANSI controls; existing tree fallback remains intact. |
@@ -89,7 +90,7 @@ and the repository's default verification before implementation commits.
 ## Risks and open questions
 
 Long versions can force wrapping sooner because the Hub now participates in
-column sizing. Terminal palettes determine the exact cyan/yellow/magenta shades;
+column sizing. Terminal palettes determine the exact shades of named ANSI colors;
 instance markers remain readable without color. Human-readable spacing and Hub
 wording change, so consumers parsing the old output need to adjust.
 
