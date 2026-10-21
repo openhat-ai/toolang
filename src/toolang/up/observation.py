@@ -711,14 +711,12 @@ def runtime_inventory(
             observed = str(workload_state or reported_state)
             detail = status.message or f"observed {observed}"
             diagnostic = f"{detail[:180]}"
-        if normalized_state == "not running":
+        if normalized_state == "not running" and not read_only:
             if entry["control"].get("ref") is None:
-                if not read_only:
-                    remove_registration(layout, entry["launch_id"])
-                    continue
-            else:
-                normalized_state = "unknown"
-                diagnostic = "runtime resources have not been released"
+                remove_registration(layout, entry["launch_id"])
+                continue
+            normalized_state = "unknown"
+            diagnostic = "runtime resources have not been released"
         if diagnostic is not None:
             observed_state = str(workload_state or reported_state)
         else:

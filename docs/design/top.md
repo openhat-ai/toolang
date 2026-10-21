@@ -19,7 +19,7 @@ remains diagnostic. Queued jobs for removed sources are canceled; running jobs
 receive cancellation and cannot restore removed results.
 
 Instances confirmed `not running` contribute zero active roots without live
-warnings. Embedded instances without an endpoint can prove idle from a pinned
+warnings, including while runtime management retains resource cleanup references. Embedded instances without an endpoint can prove idle from a pinned
 source with no unfinished physical roots. Otherwise live coverage stays unknown;
 shutdown never implies a Run's terminal status. Genuine failures of a current
 endpoint or history store remain visible.

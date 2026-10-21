@@ -197,3 +197,45 @@ def test_scope_probes_dead_process_without_repairing_runtime_state(
         assert result.sources[0].instance.state == "not running"
         assert layout.runtime_status.read_bytes() == before
         assert workload.path.read_bytes() == reference
+
+
+def test_readonly_inventory_keeps_stopped_fact_while_resources_await_cleanup(
+    tmp_path, monkeypatch
+):
+    from toolang.base.types.sandbox import SandboxRef
+    from toolang.up.instance import SandboxState
+    from toolang.up.observation import runtime_inventory
+    from toolang.up.process import AgentProcess, AgentStatus
+    from toolang.up.workload import ForegroundWorkload
+    from toolang.up.activity import ActivityReader
+    from toolang.stats.types import Metrics
+
+    layout = AgentLayout.resident(tmp_path, "alice")
+    with ForegroundWorkload(
+        layout, toolang_root=tmp_path, drivers=frozenset()
+    ) as workload:
+        SandboxState(
+            "docker:image",
+            SandboxRef(
+                "fixture-container", "http://localhost:7001", runtime_kind="container"
+            ),
+            workload.token,
+        ).save(layout.runtime_status)
+        monkeypatch.setattr(
+            AgentProcess, "cache_docker_states", classmethod(lambda cls, owners: None)
+        )
+        monkeypatch.setattr(
+            AgentProcess,
+            "status",
+            lambda self, **kwargs: AgentStatus(
+                self.layout.name, "stopped", None, None, None, "docker:image"
+            ),
+        )
+        before = layout.runtime_status.read_bytes()
+        # Runtime management keeps its resource-cleanup diagnostic.
+        assert runtime_inventory(tmp_path).snapshot.instances[0].state == "unknown"
+        result = ScopeReader(tmp_path, agent=None).read()
+        assert result.sources[0].instance.state == "not running"
+        assert ActivityReader().read_usage(result.sources[0], 3600).metrics == Metrics()
+        assert layout.runtime_status.read_bytes() == before
+        assert workload.path.exists() and not layout.run_store.exists()
