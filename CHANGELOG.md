@@ -151,6 +151,10 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   sandbox resource awaits cleanup, so zero active roots stay provable.
   ([#897](https://github.com/openhat-ai/toolang/pull/897))
 
+- The Top `STATUS` heading reserves the two-cell root-marker gutter, so active
+  and completed tree text aligns under its column title.
+  ([#897](https://github.com/openhat-ai/toolang/pull/897))
+
 ### Security
 
 - The locked certifi trust store advances to 2026.10.19, resolving trust-store
