@@ -30,6 +30,11 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Changed
 
+- `too AGENT chore list` fits terminal width by shortening text and omitting
+  TITLE then LAST RUN, while retaining scheduling, status, errors, and source
+  locations.
+  ([#915](https://github.com/openhat-ai/toolang/pull/915))
+
 - `too models` keeps complete identities, context, price, and status in single
   rows, dropping optional columns by priority to fit terminal width while
   preserving JSON records.

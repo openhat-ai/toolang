@@ -149,6 +149,18 @@ the selected agent root; URLs and canonical refs keep their existing form.
 while JSON and query records retain `ref`. These lists have no `--long`; complete
 field values remain available through `--json`.
 
+`too TARGET chore list` keeps its column order: `CHORE`, `TITLE`, `STATUS`,
+`LAST RUN`, `NEXT RUN`, `SCHEDULE`, `ERROR`, `LOCATION`. It shrinks title, error,
+and location text in that order, then omits `TITLE` followed by `LAST RUN` when
+needed, refitting remaining fields after each omission. Every chore occupies one
+logical row. Before omitting columns, title, error, and location retain up to
+12, 16, and 12 cells as readable minima. Once both optional columns are omitted,
+error and location may shrink further to fit. Identity, status, next-run
+timestamp, and schedule remain complete;
+fixed fields may exceed the width budget. Locations retain both ends and any
+complete inline line-number suffix. `LAST RUN` is the latest execution status;
+`NEXT RUN` is the earlier of pending and scheduled work in local ISO time.
+
 ## Historical inspection
 
 `too TARGET inspect SUBJECT... [PROJECTOR] [--human | --json]` reads durable

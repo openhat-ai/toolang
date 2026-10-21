@@ -1,11 +1,13 @@
 """Author and inspect the current chore definitions"""
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from pathlib import Path
+from shutil import get_terminal_size
 from typing import Annotated, cast
 from urllib.parse import quote
 
 import typer
+from wcwidth import wcswidth
 
 from toolang.api.version import AGENT_API_VERSION
 from toolang.catalog.chore import AuthoredChores, ChoreFile
@@ -15,10 +17,13 @@ from toolang.cli.common.context import context_layout, require_prefix_agent, use
 from toolang.cli.common.client import runtime_post
 from toolang.cli.common.execution import open_execution
 from toolang.cli.common.output import (
+    MIN_TABLE_WIDTH,
     echo_collection_summary,
     echo_table,
     format_local_timestamp,
 )
+from toolang.cli.common.records import _clip_location
+from toolang.cli.common.terminal_title import clip_title, label_text, safe_text
 from toolang.cli.common.parameters import TextType
 from toolang.cli.common.routing import PrefixAgentChoreGroup, RequiredPrefixAgentCommand
 from toolang.catalog.chore_authoring import (
@@ -27,6 +32,7 @@ from toolang.catalog.chore_authoring import (
     editable_chore_path,
 )
 from toolang.driver.chore.inspection import ChoreInspection, ChoreRun
+from toolang.driver.chore.schemas import ChoreInfo
 
 ChoreRef = Annotated[
     str,
@@ -64,47 +70,132 @@ def list_chores(ctx: typer.Context) -> None:
     if not entries:
         echo_collection_summary(0, "chore")
         return
-    echo_table(
-        (
-            "CHORE",
-            "TITLE",
-            "STATUS",
-            "LAST RUN",
-            "NEXT RUN",
-            "SCHEDULE",
-            "ERROR",
-            "LOCATION",
-        ),
-        [
-            (
-                item.name,
-                item.title,
-                (item.runtime.status or "-") if item.runtime.synced else "unsynced",
-                item.runtime.last_run.status if item.runtime.last_run else "-",
-                format_local_timestamp(
-                    min(
-                        (
-                            value
-                            for value in (
-                                item.runtime.pending_at,
-                                item.runtime.next_scheduled_at,
-                            )
-                            if value
-                        ),
-                        default=None,
-                    ),
-                ),
-                item.schedule or "once",
-                item.source_error
-                or item.runtime.scheduler_error
-                or (item.runtime.last_run.error if item.runtime.last_run else None)
-                or "-",
-                f"{item.path}:{item.line}" if item.line is not None else item.path,
-            )
-            for item in entries
-        ],
+    _echo_chores(
+        entries,
+        width=max(MIN_TABLE_WIDTH, get_terminal_size(fallback=(120, 24)).columns),
     )
     echo_collection_summary(len(entries), "chore")
+
+
+def _echo_chores(entries: Sequence[ChoreInfo], *, width: int) -> None:
+    """Shrink prose before omitting title and last-run status in that order."""
+    if not entries:
+        return
+    headers = (
+        "CHORE",
+        "TITLE",
+        "STATUS",
+        "LAST RUN",
+        "NEXT RUN",
+        "SCHEDULE",
+        "ERROR",
+        "LOCATION",
+    )
+    rows = [
+        (
+            item.name,
+            item.title,
+            (item.runtime.status or "-") if item.runtime.synced else "unsynced",
+            item.runtime.last_run.status if item.runtime.last_run else "-",
+            format_local_timestamp(
+                min(
+                    (
+                        value
+                        for value in (
+                            item.runtime.pending_at,
+                            item.runtime.next_scheduled_at,
+                        )
+                        if value
+                    ),
+                    default=None,
+                ),
+            ),
+            item.schedule or "once",
+            item.source_error
+            or item.runtime.scheduler_error
+            or (item.runtime.last_run.error if item.runtime.last_run else None)
+            or "-",
+            f"{item.path}:{item.line}" if item.line is not None else item.path,
+        )
+        for item in entries
+    ]
+    rows = [
+        tuple(
+            (
+                label_text(value)
+                if headers[index] in {"TITLE", "ERROR"}
+                else safe_text(
+                    value.replace("\r", " ").replace("\n", " ").replace("\t", " ")
+                )
+            )
+            or "-"
+            for index, value in enumerate(row)
+        )
+        for row in rows
+    ]
+    natural_widths = [
+        max(len(header), *(wcswidth(row[index]) for row in rows))
+        for index, header in enumerate(headers)
+    ]
+    minimums = [len(header) for header in headers]
+    minimums[-1] = max(
+        (
+            minimums[-1],
+            *(len(f":{entry.line}") + 1 for entry in entries if entry.line is not None),
+        )
+    )
+    readable_minimums = [
+        min(
+            natural_widths[index],
+            max(
+                minimums[index],
+                {"TITLE": 12, "ERROR": 16, "LOCATION": 12}.get(header, 0),
+            ),
+        )
+        for index, header in enumerate(headers)
+    ]
+    indices = list(range(len(headers)))
+    for omitted in (None, "TITLE", "LAST RUN"):
+        if omitted is not None:
+            indices.remove(headers.index(omitted))
+        widths = natural_widths.copy()
+        table_width = sum(widths[index] for index in indices) + 2 * (len(indices) - 1)
+        for column in ("TITLE", "ERROR", "LOCATION"):
+            index = headers.index(column)
+            if index not in indices:
+                continue
+            reduction = min(
+                max(0, table_width - width), widths[index] - readable_minimums[index]
+            )
+            widths[index] -= reduction
+            table_width -= reduction
+        if table_width <= width:
+            break
+
+    # Only squeeze diagnostics below readable widths after optional columns yield.
+    for column in ("ERROR", "LOCATION"):
+        index = headers.index(column)
+        reduction = min(max(0, table_width - width), widths[index] - minimums[index])
+        widths[index] -= reduction
+        table_width -= reduction
+
+    def clip(value: str, index: int, entry: ChoreInfo) -> str:
+        if headers[index] != "LOCATION":
+            return clip_title(value, width=widths[index])
+        suffix = f":{entry.line}" if entry.line is not None else ""
+        return (
+            _clip_location(value.removesuffix(suffix), widths[index] - len(suffix))
+            + suffix
+        )
+
+    echo_table(
+        [headers[index] for index in indices],
+        [
+            tuple(clip(row[index], index, entry) for index in indices)
+            for entry, row in zip(entries, rows)
+        ],
+        width=max(width, table_width),
+    )
 
 
 def new_chore(ctx: typer.Context, name: ChoreName = None) -> None:
