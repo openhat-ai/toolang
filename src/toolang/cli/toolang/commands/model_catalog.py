@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 import asyncio
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from shutil import get_terminal_size
 from typing import Annotated
@@ -24,7 +24,7 @@ from toolang.cli.common.output import (
 )
 from toolang.cli.common.records import check_output_options, echo_records
 from toolang.cli.common.progress import make_cli_progress
-from toolang.cli.common.terminal_title import clip_title, label_text
+from toolang.cli.common.terminal_title import clip_title, label_text, safe_text
 from toolang.common.progress import ProgressSink
 from toolang.common.layout import AgentLayout
 from toolang.plugin.models.query import filter_models
@@ -35,15 +35,16 @@ from toolang.setup.watcher import load_setup
 
 
 MODEL_COLUMNS = (
-    "ref",
+    "model",
     "context",
     "max_output",
     "price",
     "input",
     "output",
     "features",
-    "tags",
+    "status",
 )
+MODEL_DROP_ORDER = ("output", "max_output", "features", "input")
 PROVIDER_COLUMNS = ("provider", "models", "api", "env")
 
 
@@ -79,19 +80,93 @@ def models_command(
             else setup.models_effective(progress=progress.sink)
         )
     selected = user_call(filter_models, models, query)
-    echo_records(
-        [model_record(model) for model in selected],
-        MODEL_COLUMNS,
-        json_=json_,
-        align_ref_continuations=True,
-        right_align=("max_output", "price", "output"),
+    records = [model_record(model) for model in selected]
+    if json_:
+        echo_records(records, MODEL_COLUMNS, json_=True)
+        return
+    _echo_models(
+        records,
+        width=max(MIN_TABLE_WIDTH, get_terminal_size(fallback=(120, 24)).columns),
     )
-    if not json_:
-        echo_collection_summary(
-            len(selected),
-            "model",
-            group=(len({model.provider for model in selected}), "provider"),
+    echo_collection_summary(
+        len(selected),
+        "model",
+        group=(len({model.provider for model in selected}), "provider"),
+    )
+
+
+def _echo_models(records: Sequence[Mapping[str, object]], *, width: int) -> None:
+    """Omit optional columns in order while preserving complete required values."""
+
+    if not records:
+        return
+    prices = [str(record.get("price") or "-").partition("/") for record in records]
+    price_widths = [
+        max((len(parts[index].strip()) for parts in prices if parts[1]), default=1)
+        for index in (0, 2)
+    ]
+    formatted_prices = [
+        f"{parts[0].strip():>{price_widths[0]}}/{parts[2].strip():>{price_widths[1]}}"
+        if parts[1]
+        else "-"
+        for parts in prices
+    ]
+
+    def cell(record: Mapping[str, object], column: str, price: str) -> str:
+        value = record.get({"model": "ref", "status": "tags"}.get(column, column))
+        if column == "price":
+            value = price
+        elif column == "status":
+            value = ",".join(
+                tag.replace("_", " ")
+                for tag in (value if isinstance(value, (list, tuple)) else ())
+                if isinstance(tag, str)
+                and tag in {"ready", "not_allowed", "no_env", "no_api", "no_adapter"}
+            )
+        elif column in {"context", "max_output"} and isinstance(value, int):
+            value = f"{value:,}"
+        elif isinstance(value, (list, tuple)):
+            value = ",".join(str(item) for item in value)
+        if value is None:
+            return "-"
+        return (
+            safe_text(
+                str(value).replace("\r", " ").replace("\n", " ").replace("\t", " ")
+            )
+            or "-"
         )
+
+    rows = [
+        tuple(cell(record, column, price) for column in MODEL_COLUMNS)
+        for record, price in zip(records, formatted_prices)
+    ]
+    headers = [
+        "PRICE ($/1M)" if column == "price" else column.upper()
+        for column in MODEL_COLUMNS
+    ]
+    widths = [
+        max(wcswidth(header), *(wcswidth(row[index]) for row in rows))
+        for index, header in enumerate(headers)
+    ]
+    indices = list(range(len(MODEL_COLUMNS)))
+    table_width = sum(widths) + 2 * (len(indices) - 1)
+    for column in MODEL_DROP_ORDER:
+        if table_width <= width:
+            break
+        index = MODEL_COLUMNS.index(column)
+        indices.remove(index)
+        table_width -= widths[index] + 2
+    echo_table(
+        [headers[index] for index in indices],
+        [tuple(row[index] for index in indices) for row in rows],
+        justify=tuple(
+            "right"
+            if MODEL_COLUMNS[index] in {"context", "price", "max_output"}
+            else "left"
+            for index in indices
+        ),
+        width=max(width, table_width),
+    )
 
 
 def providers_command(

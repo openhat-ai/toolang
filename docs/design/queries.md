@@ -15,7 +15,7 @@ effective resources. Visible columns retain this order in both views.
 
 | Collection | Identity | Human columns, in order |
 | --- | --- | --- |
-| Models | `ref`: `provider/id` | `REF`, `CONTEXT`, `MAX_OUTPUT`, `PRICE`, `INPUT`, `OUTPUT`, `FEATURES`, `TAGS` |
+| Models | `ref`: `provider/id` | `MODEL`, `CONTEXT`, `MAX_OUTPUT`, `PRICE ($/1M)`, `INPUT`, `OUTPUT`, `FEATURES`, `STATUS` |
 | Providers | `id` (external TQ only) | `PROVIDER`, `MODELS`, `API` (when space permits), `ENV` |
 | Tools | `ref`: `toolset/name` | `TOOL`, `DESCRIPTION`, `STATUS` |
 | Caps | `cap`: `kind/name` | `CAP`, `DESCRIPTION`, `LOCATION`, `STATUS` |
@@ -30,13 +30,19 @@ tag (`ready` or `not_allowed`), while JSON and queries retain complete locations
 and all `tags`, including origin, scope, and form.
 These lists do not offer `--long`; use `--json` for complete field values.
 
-Model `REF` columns are at most 40 display cells wide; longer refs wrap,
-preferably after `/`, without losing characters. Except for provider ENV rules,
-arrays display comma-separated values; missing values and empty arrays display `-`.
-Model REF continuation lines are right-aligned; other fields start on the second
-line when the ref wraps. Model `CONTEXT` and `MAX_OUTPUT` display comma thousands
-separators, while JSON and query values remain integers.
-Model `MAX_OUTPUT`, `PRICE`, and `OUTPUT` columns are right-aligned.
+Except for provider ENV rules, arrays display comma-separated values; missing
+values and empty arrays display `-`.
+
+`MODEL`, `CONTEXT`, `PRICE`, and `STATUS` are mandatory for models. Optional
+columns are omitted in order `OUTPUT`, `MAX_OUTPUT`, `FEATURES`, `INPUT` until
+the selected rows fit the terminal budget, with an 80-cell minimum and 120-cell
+fallback. Remaining columns retain their display order; all rows use the same
+columns. Mandatory columns and model identities remain complete on
+single logical rows, even when this requires a wider table. Model `CONTEXT` and
+`MAX_OUTPUT` display comma thousands separators; these and `PRICE` are
+right-aligned. JSON and query values remain unchanged. Human `STATUS` includes
+only availability tags, replacing underscores with spaces; JSON `tags` retains
+its existing names and provenance tags.
 
 ### Canonical and inspection records
 
@@ -69,7 +75,9 @@ Inspection records retain canonical fields and add these shortcuts:
 Price uses `f"{input_price:6.2f} /{output_price:6.2f}"` in per-million-token units:
 `"  1.00 /  2.00"`. Each side is space-padded to a minimum width of six;
 an unknown side uses `-` at that width. If both sides are unknown, `price` is a
-single `"-"`. JSON and human output retain the same string and padding.
+single `"-"`. JSON retains this string and padding. Human output aligns the
+trimmed input and output components across the selected rows, with `/` between
+them and `$/1M` units in the header.
 Original numeric cost/limit fields remain queryable without display rounding.
 Missing scalar shortcuts are null; missing lists are empty arrays. `price` and
 `models` always remain formatted strings.

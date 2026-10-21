@@ -121,6 +121,17 @@ column `CONVO`, and right-align `JOINED`.
 Agent ports and inspection run, step, and child counts are right-aligned; text
 fields retain their existing alignment.
 
+`too models` displays `MODEL`, `CONTEXT`, `MAX_OUTPUT`, `PRICE ($/1M)`, `INPUT`,
+`OUTPUT`, `FEATURES`, and `STATUS`, in that order. `MODEL`, `CONTEXT`, `PRICE`,
+and `STATUS` are mandatory. When the selected rows do not fit, whole optional
+columns are omitted in order: `OUTPUT`, `MAX_OUTPUT`, `FEATURES`, `INPUT`,
+preserving the display order of the remaining columns. Every displayed value
+stays complete on one logical row; if mandatory columns exceed the width budget,
+the table may exceed the terminal width. `STATUS` contains availability
+tags with spaces instead of underscores, omitting provenance tags. Context,
+maximum output, and prices are right-aligned; input/output price components align
+across rows. JSON and queries retain their existing fields and values.
+
 `too providers` uses single rows with `PROVIDER`, right-aligned `MODELS`, `API`,
 and `ENV`. API addresses shorten first; the API column is omitted when fewer
 than 24 cells remain for an address, unless the complete address is shorter.
