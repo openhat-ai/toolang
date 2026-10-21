@@ -103,6 +103,18 @@ def apply_model_override(
     return replace(model, reasoning=reasoning, max_output=max_output)
 
 
+def apply_model_overrides(
+    baseline: ModelRequest | None,
+    overrides: Sequence[ModelOverride],
+) -> ModelRequest | None:
+    """Apply ordered operations while keeping one fixed default selection."""
+
+    request = baseline
+    for override in overrides:
+        request = apply_model_override(request, baseline, override)
+    return request
+
+
 def compose_model_overrides(
     overrides: Sequence[ModelOverride],
 ) -> ModelOverride | None:
@@ -170,6 +182,7 @@ def _effort_value(raw: str) -> ModelEffort:
 
 __all__ = [
     "apply_model_override",
+    "apply_model_overrides",
     "compose_model_overrides",
     "format_model_body",
     "parse_model_body",

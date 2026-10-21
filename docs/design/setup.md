@@ -34,9 +34,12 @@ environment. Each generation keeps its own copied environment map.
 
 Policy resolves field by field from built-in defaults through root/home or
 project configuration, process-derived overrides, and explicit CLI overrides.
-Request/session policy applies when preparing a Run. Model/tool allow policy
-belongs to Setup; cap allow policy belongs to State. External resource ceilings
-can only narrow the published bases. An empty allow set denies that resource;
+`setup.config` parses source tables; `setup.models` validates configured model
+choices when the lazy catalog loads. The watcher coordinates publication;
+execution supplies handler/thread baselines and applies the shared typed model
+operations. Request/session policy applies when preparing a Run. Model/tool
+allow policy belongs to Setup; cap allow policy belongs to State. External
+resource ceilings can only narrow the published bases. An empty allow set denies that resource;
 a zero limit is active, while `none` disables a limit.
 
 The configuration groups are `allow`, `model`, `limit`, `talk`, and `compact`.

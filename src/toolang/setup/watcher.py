@@ -11,7 +11,6 @@ import logging
 from pathlib import Path
 
 from toolang.base.protocols.model import ModelAdapter, ModelCatalog
-from toolang.base.model_settings import apply_model_override, compose_model_overrides
 from toolang.base.types.model import ModelCatalogSnapshot, ModelOverride
 from toolang.base.types.policy import AgentCeiling, RunDefaults, RunLimits
 from toolang.common.layout import AgentLayout
@@ -31,7 +30,6 @@ from toolang.plugin.catalogs.models_dev.catalog import (
 )
 from toolang.plugin.catalogs.models_dev.path import resolve_model_catalog_path
 from toolang.plugin.models.config import validate_models_config
-from toolang.plugin.models.resolution import resolve_model_reasoning
 from .tools import capture_toolset_loader, materialize_tools
 from toolang.setup.routes import RouteAdapter, resolve_catalog_providers
 
@@ -53,8 +51,7 @@ from .config import (
     resolve_setup_allow,
 )
 from .errors import SetupDiagnostic
-from .models import order_models, select_compact_model
-from toolang.plugin.models.query import resolve_model
+from .models import order_models, validate_model_defaults
 from .types import AgentEnvironment, AgentSetup, CompactConfig, TalkConfig, _ModelData
 
 DEFAULT_INTERVAL_MS = 5_000.0
@@ -512,25 +509,13 @@ def _build_setup(
         providers_effective = [
             provider for provider in providers if provider._toolang.ready_count > 0
         ]
-        if validate_defaults and compact.model:
-            selected = compose_model_overrides(compact.model)
-            if selected is not None and selected.identity not in (None, "default"):
-                select_compact_model(models_effective, (selected,))
-        if validate_defaults and talk.model:
-            selected = compose_model_overrides(talk.model)
-            request = (
-                apply_model_override(defaults.model, defaults.model, selected)
-                if defaults.model is not None
-                or selected is not None
-                and selected.identity not in (None, "default")
-                else None
+        if validate_defaults:
+            validate_model_defaults(
+                models_effective,
+                default=defaults.model,
+                compact=compact.model,
+                talk=talk.model,
             )
-            if request is not None:
-                model = resolve_model(models_effective, request.ref)
-                resolve_model_reasoning(model, request.reasoning)
-        if validate_defaults and defaults.model is not None:
-            model = resolve_model(models_effective, defaults.model.ref)
-            resolve_model_reasoning(model, defaults.model.reasoning)
         data = _ModelData(
             models=tuple(models),
             providers=tuple(providers),

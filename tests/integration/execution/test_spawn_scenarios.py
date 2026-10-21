@@ -1385,3 +1385,74 @@ flow child(_: Text):
                     assert entry.payload.limits == source_limits
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("conflict", ["handle", "thread"])
+def test_spawn_replay_keeps_store_receipt_integrity_checks(
+    tmp_path, monkeypatch, conflict
+):
+    from dataclasses import replace
+    from toolang.common.errors import ToolangError
+    from toolang.execution.executor import spawn
+
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="flow parent(_: Text):\n  spawn child\nflow child(_: Text):\n  pass\n",
+        responses=[],
+    )
+    accept = spawn.accept
+    seen = []
+
+    async def replay(execution, parent, locals, step, name, **kwargs):
+        handle = await accept(execution, parent, locals, step, name, **kwargs)
+        with monkeypatch.context() as context:
+            if conflict == "handle":
+                original = execution.store.get_step
+
+                def changed_handle(*, ref):
+                    record = original(ref=ref)
+                    if ref == step:
+                        assert record is not None
+                        return replace(
+                            record,
+                            output=Output(
+                                AwaitableHandle(handle.id, handle.thread, "Number")
+                            ),
+                        )
+                    return record
+
+                context.setattr(execution.store, "get_step", changed_handle)
+            else:
+                original_thread = execution.store.get_thread
+                context.setattr(
+                    execution.store,
+                    "get_thread",
+                    lambda *, thread_id: (
+                        None
+                        if thread_id == handle.thread
+                        else original_thread(thread_id=thread_id)
+                    ),
+                )
+            with pytest.raises(ToolangError, match=f"conflicting spawn {conflict}"):
+                await accept(execution, parent, locals, step, name, **kwargs)
+        seen.append(handle)
+        return handle
+
+    monkeypatch.setattr("toolang.execution.executor.stmts.spawn.accept", replay)
+
+    async def scenario():
+        async with harness:
+            parent = await harness.executor.run(
+                harness.run_spec(
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
+                    runnable="parent",
+                    primary=(TextPart("input"),),
+                )
+            )
+            assert parent.status == "succeeded", parent.error
+            assert len(seen) == 1
+            await asyncio.gather(
+                *(root.task for root in tuple(harness.executor._root_runs.values()))
+            )
+
+    asyncio.run(scenario())

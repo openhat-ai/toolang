@@ -791,14 +791,55 @@ class RunStore:
             raise RuntimeError(f"run acceptance failed: {run_id}")
         return _run_from_row(run_row), _control_from_row(control_row)
 
-    def get_spawn_control(self, source: StepRef) -> ControlRecord | None:
-        """Read a spawn receipt before preparing any new execution policy."""
+    def get_spawn_receipt(
+        self, source: StepRef
+    ) -> tuple[RunControlPayload, AwaitableHandle] | None:
+        """Read and validate a recorded admission without preparing new policy."""
+
         with self.read_transaction():
             row = self._conn.execute(
                 "SELECT * FROM controls WHERE kind = 'run' AND triggered_by = ?",
                 (str(source),),
             ).fetchone()
-        return _control_from_row(row) if row is not None else None
+            if row is None:
+                return None
+            control = _control_from_row(row)
+            payload = control.payload
+            run = self.get_run(run_id=str(control.target))
+            step = self.get_step(ref=source)
+            if (
+                not isinstance(payload, RunControlPayload)
+                or payload.launch_context is None
+                or run is None
+                or run.parent is not None
+                or step is None
+            ):
+                raise ValueError(f"invalid spawn admission: {source}")
+            thread = self.get_thread(thread_id=str(run.thread))
+            creation = self.get_thread_control(thread_id=str(run.thread), index=0)
+            if (
+                thread is None
+                or (
+                    payload.spawn_thread is None
+                    and (creation is None or creation.triggered_by != source)
+                )
+                or (
+                    payload.spawn_thread is not None
+                    and str(run.thread) != payload.spawn_thread
+                )
+            ):
+                raise ValueError(f"conflicting spawn thread: {source}")
+            result = payload.launch_context.result
+            handle = AwaitableHandle(
+                run.id, str(run.thread), result.type_name if result else None
+            )
+            if (
+                step.output is not None
+                and isinstance(step.output.value, AwaitableHandle)
+                and step.output.value != handle
+            ):
+                raise ValueError(f"conflicting spawn handle: {source}")
+            return payload, handle
 
     def accept_spawn(
         self,
@@ -837,16 +878,11 @@ class RunStore:
                 )
             ):
                 raise ValueError("spawn requires a flow spawn or model Tool Step")
-            previous = self._conn.execute(
-                "SELECT * FROM controls WHERE kind = 'run' AND triggered_by = ?",
-                (str(source),),
-            ).fetchone()
+            previous = self.get_spawn_receipt(source)
             if previous is not None:
-                control = _control_from_row(previous)
-                payload = control.payload
+                payload, original = previous
                 if (
-                    not isinstance(payload, RunControlPayload)
-                    or payload.runnable != runnable
+                    payload.runnable != runnable
                     or payload.input != input
                     or payload.launch_context != context
                     or payload.resources != resources
@@ -859,30 +895,6 @@ class RunStore:
                     or payload.horizon != horizon
                 ):
                     raise ValueError(f"conflicting spawn admission: {source}")
-                run = self.get_run(run_id=str(control.target))
-                if run is None or run.parent is not None:
-                    raise ValueError(f"invalid spawn admission: {source}")
-                thread = self.get_thread(thread_id=str(run.thread))
-                creation = self.get_thread_control(thread_id=str(run.thread), index=0)
-                if (
-                    thread is None
-                    or (
-                        requested_thread is None
-                        and (creation is None or creation.triggered_by != source)
-                    )
-                    or (
-                        requested_thread is not None
-                        and str(run.thread) != requested_thread
-                    )
-                ):
-                    raise ValueError(f"conflicting spawn thread: {source}")
-                original = AwaitableHandle(run.id, str(run.thread), handle.result_type)
-                if (
-                    step.output is not None
-                    and isinstance(step.output.value, AwaitableHandle)
-                    and step.output.value != original
-                ):
-                    raise ValueError(f"conflicting spawn handle: {source}")
                 return original, False
             if step.status != "running" or step.output is not None:
                 raise ValueError("spawn requires an unacknowledged running Step")

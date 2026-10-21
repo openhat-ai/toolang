@@ -55,7 +55,6 @@ async def accept(
     thread: str | None = None,
 ) -> AwaitableHandle:
     from .executor import (
-        _bind_child_input,
         _bound_runnable,
         _child_binding,
         _setup_sandbox,
@@ -64,75 +63,24 @@ async def accept(
     def admit() -> AwaitableHandle:
         executor = execution.executor
         executor._require_available()
-        previous = execution.store.get_spawn_control(step)
+        try:
+            previous = execution.store.get_spawn_receipt(step)
+        except ValueError as exc:
+            raise ToolangError(str(exc)) from exc
         if previous is not None:
-            payload = previous.payload
-            recorded = execution.store.get_step(ref=step)
-            if not isinstance(payload, RunControlPayload) or recorded is None:
-                raise ToolangError(f"invalid spawn admission: {step}")
-            if payload.spawn_thread != thread:
-                raise ToolangError(f"conflicting spawn admission: {step}")
-            if resolution == "state":
-                if (
-                    not isinstance(recorded.spec, ToolStepSpec)
-                    or recorded.spec.call.name != "runtime__spawn"
-                    or recorded.spec.trigger != "model"
-                    or recorded.spec.call.input.get("runnable") != name
-                    or recorded.spec.call.input.get("input", {}) != (raw_input or {})
-                    or recorded.spec.call.input.get("thread") != thread
-                ):
-                    raise ToolangError(f"conflicting spawn admission: {step}")
-            else:
-                if (
-                    not isinstance(recorded.spec, SpawnStmt)
-                    or recorded.spec.runnable != name
-                ):
-                    raise ToolangError(f"conflicting spawn admission: {step}")
-                try:
-                    # The accepted caller pins the original input contract; do
-                    # not infer it from converted values or discover new code.
-                    target = resolve_call_target(parent.state, parent.module, name)
-                    replay_locals = dict(locals)
-                    # Handle metadata keeps the admission's captured status.
-                    for key, value in payload.input.items():
-                        local = locals.get(key)
-                        if (
-                            local is None
-                            or not isinstance(local.value, AwaitableHandle)
-                            or not isinstance(value, Mapping)
-                        ):
-                            continue
-                        snapshot = cast(Mapping[str, object], value)
-                        if (
-                            snapshot.get("id") == local.value.id
-                            and snapshot.get("thread") == local.value.thread
-                        ):
-                            replay_locals[key] = Local(value=value, type_name="Json")
-                    replay_locals = execution.project_call_locals(
-                        replay_locals, target.executable, name, step=step
-                    )
-                    _, replay_input = _bind_child_input(
-                        target.executable,
-                        replay_locals,
-                        reference=name,
-                        structs={
-                            item.name: item
-                            for item in state_program(
-                                parent.state, target.module
-                            ).structs
-                        },
-                    )
-                except (ToolangError, TypeError, ValueError) as exc:
-                    raise ToolangError(f"conflicting spawn input: {step}") from exc
-                if replay_input != payload.input:
-                    raise ToolangError(f"conflicting spawn input: {step}")
-            run = execution.store.get_run(run_id=str(previous.target))
-            if run is None or run.parent is not None or payload.launch_context is None:
-                raise ToolangError(f"invalid spawn admission: {step}")
-            contract = payload.launch_context.result
-            return AwaitableHandle(
-                run.id, str(run.thread), contract.type_name if contract else None
+            payload, handle = previous
+            _validate_replay(
+                execution,
+                parent,
+                locals,
+                step,
+                name,
+                payload=payload,
+                resolution=resolution,
+                raw_input=raw_input,
+                thread=thread,
             )
+            return handle
         state, state_ref = state_snapshot or (parent.state, parent.state_ref)
         try:
             state, target = execution.resolve_invocation(
@@ -306,6 +254,68 @@ async def accept(
         async with execution._root_run.boundary_lock:
             handle = admit()
     return handle
+
+
+def _validate_replay(
+    execution: _Execution,
+    parent: BoundRun,
+    locals: Mapping[str, Local],
+    step: StepRef,
+    name: str,
+    *,
+    payload: RunControlPayload,
+    resolution: Literal["module", "state"],
+    raw_input: Mapping[str, object] | None,
+    thread: str | None,
+) -> None:
+    """Verify the source binding without discovering code or selecting policy."""
+
+    recorded = execution.store.get_step(ref=step)
+    if recorded is None or payload.spawn_thread != thread:
+        raise ToolangError(f"conflicting spawn admission: {step}")
+    if resolution == "state":
+        if (
+            not isinstance(recorded.spec, ToolStepSpec)
+            or recorded.spec.call.name != "runtime__spawn"
+            or recorded.spec.trigger != "model"
+            or recorded.spec.call.input.get("runnable") != name
+            or recorded.spec.call.input.get("input", {}) != (raw_input or {})
+            or recorded.spec.call.input.get("thread") != thread
+        ):
+            raise ToolangError(f"conflicting spawn admission: {step}")
+        return
+    if not isinstance(recorded.spec, SpawnStmt) or recorded.spec.runnable != name:
+        raise ToolangError(f"conflicting spawn admission: {step}")
+    try:
+        # The accepted caller pins the original contract and handle status.
+        target = resolve_call_target(parent.state, parent.module, name)
+        replay_locals = dict(locals)
+        for key, value in payload.input.items():
+            local = locals.get(key)
+            if (
+                local is None
+                or not isinstance(local.value, AwaitableHandle)
+                or not isinstance(value, Mapping)
+            ):
+                continue
+            snapshot = cast(Mapping[str, object], value)
+            if (
+                snapshot.get("id") == local.value.id
+                and snapshot.get("thread") == local.value.thread
+            ):
+                replay_locals[key] = Local(value=value, type_name="Json")
+        _, replay_input = execution.bind_call_input(
+            replay_locals,
+            target.executable,
+            name,
+            state=parent.state,
+            module=target.module,
+            step=step,
+        )
+    except (ToolangError, TypeError, ValueError) as exc:
+        raise ToolangError(f"conflicting spawn input: {step}") from exc
+    if replay_input != payload.input:
+        raise ToolangError(f"conflicting spawn input: {step}")
 
 
 def _outer_templates(
