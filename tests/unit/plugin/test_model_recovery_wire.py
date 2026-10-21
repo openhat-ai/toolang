@@ -5,7 +5,7 @@ import json
 from collections.abc import Callable
 
 import httpx
-from openai import AsyncOpenAI
+from openai import APIStatusError, AsyncOpenAI
 from openai.lib.streaming.responses import AsyncResponseStream
 import pytest
 
@@ -670,3 +670,20 @@ def test_broken_json_event_is_an_incomplete_response(wire_call, protocol):
     with pytest.raises(ModelResponseError) as caught:
         wire_call(protocol, [], truncated=True)
     assert caught.value.kind == "incomplete_stream"
+
+
+@pytest.mark.parametrize("protocol", list(MODULES))
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("status", [401, 403, 422])
+def test_http_rejection_preserves_failure_without_inventing_usage(
+    wire_call, protocol, stream, status
+):
+    with pytest.raises((httpx.HTTPStatusError, APIStatusError)) as caught:
+        wire_call(
+            protocol,
+            {"error": {"message": "rejected", "type": "invalid_request_error"}},
+            status=status,
+            stream=stream,
+        )
+    assert caught.value.response.status_code == status
+    assert getattr(caught.value, "usage", None) is None

@@ -18,7 +18,7 @@ def agent_layouts(root: Path, *, agent: str | None = None) -> tuple[AgentLayout,
         return tuple(
             AgentLayout.resident(root, home.name)
             for home in sorted(directory.iterdir())
-            if is_agent_name(home.name) and home.is_dir()
+            if is_agent_name(home.name) and _is_directory(home)
         )
     except FileNotFoundError:
         return ()
@@ -28,3 +28,10 @@ def agent_roster(root: Path) -> set[str]:
     if not root.is_dir():
         raise FileNotFoundError(root)
     return {f"agent:{layout.name}" for layout in agent_layouts(root)}
+
+
+def _is_directory(path: Path) -> bool:
+    try:
+        return S_ISDIR(path.stat().st_mode)
+    except FileNotFoundError:
+        return False

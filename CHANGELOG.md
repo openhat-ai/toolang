@@ -76,6 +76,10 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   separate `runnable_kind` field carries its kind, so API and event consumers
   read `runnable_kind` instead of parsing the kind from `runnable`.
 
+- `too top` and `too AGENT top` show `agents:`, `usage:`, and `runs:` with
+  separate dim time ranges, omitting the running, total, and completed counts.
+  ([#897](https://github.com/openhat-ai/toolang/pull/897))
+
 ### Fixed
 
 - Failed preparation no longer leaves active registrations; runtime references
@@ -133,6 +137,23 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 - Earlier Run and exec labels follow the current naming rules, including
   anonymous entry runnables, and new Run captions show the accepted runnable
   name.
+
+- Top retains resident agents without running instances and drops departing
+  visiting or roaming agents with their rows, usage, and errors, keeping one
+  roster across summaries and tables.
+  ([#897](https://github.com/openhat-ai/toolang/pull/897))
+
+- Stats and Top time-window reads stay indexed on SQLite 3.45 because writable
+  execution stores now replace the legacy call-start index.
+  ([#897](https://github.com/openhat-ai/toolang/pull/897))
+
+- Top keeps a stopped agent's confirmed liveness and readable history while a
+  sandbox resource awaits cleanup, so zero active roots stay provable.
+  ([#897](https://github.com/openhat-ai/toolang/pull/897))
+
+- The Top `STATUS` heading reserves the two-cell root-marker gutter, so active
+  and completed tree text aligns under its column title.
+  ([#897](https://github.com/openhat-ai/toolang/pull/897))
 
 ### Security
 

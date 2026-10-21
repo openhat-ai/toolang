@@ -355,3 +355,49 @@ def test_legacy_json_blocks_writing_without_import_or_deletion(
         readonly = RunStore(path, read_only=True)
         readonly.close()
         assert path.read_bytes() == before
+
+
+def test_start_time_index_upgrade_preserves_readonly_schema_and_records(tmp_path):
+    path = tmp_path / "runs.db"
+    store = RunStore(path)
+    ref = store.put_content(b"retained across index upgrade")
+    store.close()
+    with sqlite3.connect(path) as connection:
+        connection.execute("DROP INDEX idx_steps_call_started")
+        connection.execute(
+            "CREATE INDEX idx_steps_call_started ON steps(started_at,run) "
+            "WHERE kind IN ('model','tool') AND started_at IS NOT NULL"
+        )
+
+    def index_state():
+        with sqlite3.connect(path) as connection:
+            return (
+                connection.execute("PRAGMA schema_version").fetchone()[0],
+                connection.execute(
+                    "SELECT sql FROM sqlite_master WHERE name='idx_steps_call_started'"
+                ).fetchone()[0],
+                connection.execute("PRAGMA user_version").fetchone()[0],
+            )
+
+    legacy = index_state()
+    readonly = RunStore(path, read_only=True)
+    try:
+        assert readonly.get_content(ref) == b"retained across index upgrade"
+    finally:
+        readonly.close()
+    assert index_state() == legacy
+
+    def reopen():
+        reopened = RunStore(path)
+        try:
+            assert reopened.get_content(ref) == b"retained across index upgrade"
+        finally:
+            reopened.close()
+        return index_state()
+
+    upgraded = reopen()
+    assert upgraded[2] == RUN_STORE_SCHEMA
+    # SQLite 3.45 removes this tautology from queries before matching partial
+    # indexes, so retaining it in the index defeats bounded start-time reads.
+    assert "started_at IS NOT NULL" not in upgraded[1]
+    assert reopen() == upgraded

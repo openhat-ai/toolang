@@ -164,7 +164,7 @@ class _CdCommand(OptionalPrefixAgentCommand):
 
 
 class _TopCommand(OptionalPrefixAgentCommand):
-    argument_help = "Resident agent name; omit to observe all local instances"
+    argument_help = "Resident agent name; omit for resident homes and registered visiting/roaming instances"
 
 
 class _ThreadRunCommand(OptionalValueCommand, _TargetAgentCommand):

@@ -198,12 +198,14 @@ class AgentProcess:
         check_health: bool = False,
         cache: bool = False,
         snapshot: dict | None = None,
+        read_only: bool = False,
     ) -> AgentStatus | None:
-        """Inspect the workload, optionally requiring HTTP readiness for running."""
+        """Inspect liveness; read-only probes skip lock recovery and state repair."""
 
         if not self.layout.home.is_dir():
             return None
-        recover_control_write_lock(self.layout.runtime_status)
+        if not read_only:
+            recover_control_write_lock(self.layout.runtime_status)
         from toolang.up.sandbox import load_state_sandbox, _health_ready
 
         endpoint = None
@@ -248,7 +250,7 @@ class AgentProcess:
                         is not False
                     ):
                         status = "preparing"
-                    else:
+                    elif not read_only:
                         self.reconcile(observed)
                     if status != "preparing" and report.get("status") == "failed":
                         status = "failed"
@@ -281,7 +283,8 @@ class AgentProcess:
                     status = "unknown"
                 else:
                     if alive is False:
-                        self.reconcile(entry)
+                        if not read_only:
+                            self.reconcile(entry)
                     elif alive is True:
                         status = str(report.get("status"))
                         live_endpoint = report.get("endpoint")
