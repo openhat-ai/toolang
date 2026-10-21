@@ -33,7 +33,7 @@ from toolang.execution.types import (
 )
 
 from .facts import elapsed_fact
-from .formatting import one_line, output_parts, split_hanging_prefix
+from .formatting import one_line, output_parts, runnable_label, split_hanging_prefix
 from .operations import normalize_operation, committed_exec_target
 from .headers import statement_header, until_header
 from .state import (
@@ -1296,8 +1296,11 @@ class ProgressProjector:
             ProgressRow(""),
         )
 
-    @staticmethod
-    def _dynamic_runnable_label(state: StepState) -> str:
+    def _dynamic_runnable_label(self, state: StepState) -> str:
+        if state.dynamic_child_run_id is not None:
+            child = self._runs[state.dynamic_child_run_id].begin
+            if child.runnable:
+                return runnable_label(child.runnable, kind=child.runnable_kind)
         return state.operation.runnable or "request"
 
     def _claim_boundaries(

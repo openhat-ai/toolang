@@ -437,6 +437,12 @@ def test_repeated_handoffs_have_run_aligned_boundaries_and_reset_display_numbers
 ):
     from toolang.cli.common.execution_progress import ProgressProjector
     from toolang.execution.inspection.trees import build_execution_tree, tree_to_data
+    from toolang.cli.toolang.commands.inspect import (
+        _InspectSubject,
+        _render_execution_tree,
+    )
+    from io import StringIO
+    from rich.console import Console
 
     harness = ExecutionHarness.create(
         tmp_path,
@@ -489,6 +495,12 @@ flow final():
                 "agent::second",
                 "agent::final",
             ]
+            output = StringIO()
+            _render_execution_tree(
+                Console(file=output, width=120), _InspectSubject(kind="run"), tree
+            )
+            assert "exec → flow:second" in output.getvalue()
+            assert "exec → flow:final" in output.getvalue()
             steps = harness.store.list_steps(run_id=root.id)
             assert tree.step_ordinal(steps[2]) == 0
             if not empty:

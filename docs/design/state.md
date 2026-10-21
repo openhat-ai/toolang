@@ -205,7 +205,10 @@ rebuilt from authored inputs; historical data is not migrated or converted.
 
 The main module `agent` comes from `agent.too`. Each direct
 `runnables/<name>.too` contributes an independent runnable module named `<name>`.
-The builtin module is `_`. [Runnable names](program.md#runnable-names) defines
+The builtin module is `_`; its packaged Talk source is captured when bound by
+the runtime, rather than added to every prepared home. This captured source
+does not create a State layer or change its revision. Native compaction needs
+no parsed Program. [Runnable names](program.md#runnable-names) defines
 FQNs, kinds, lookup, and interface labels. Prepared Program roles remain `agent`
 and `runnable`; the exported declaration determines execution kind.
 

@@ -226,8 +226,7 @@ def bound_runnable(state: AgentState, module: str, reference: str) -> ResolvedRu
     """Resolve a captured binding without adopting a newer declaration."""
 
     parsed = parse_runnable_ref_parts(reference)
-    if parsed.module is not None:
-        parsed = replace(parsed, module=normalize_module_name(parsed.module))
+    module = normalize_module_name(parsed.module or module)
     executable = resolve_bound_runnable(state, module, reference)
     return ResolvedRunnable(parsed.name, module, executable)
 

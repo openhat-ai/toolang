@@ -617,7 +617,7 @@ def test_inspect_thread_and_run_collections_read_local_history(tmp_path: Path) -
     assert "RUNNABLE" in runs.stdout
     assert "PARENT STEP" in runs.stdout
     assert "OCCUR" not in runs.stdout
-    assert "<agic>  test" in runs.stdout
+    assert "agic:test" in runs.stdout
     assert "succeeded" in runs.stdout
 
 
@@ -1049,9 +1049,9 @@ def test_inspect_lists_root_and_related_record_subjects(tmp_path: Path) -> None:
     child_run_line = next(
         line for line in human_run_lines if line.startswith("run_subject_child ")
     )
-    assert "<agic> test succeeded 3 chat_subject -" in first_run_line
+    assert "agic:test succeeded 3 chat_subject -" in first_run_line
     assert first_run_line.split()[-1] == "2026-01-01T00:00:00Z"
-    assert "<agic> test succeeded 0 chat_subject run_subject_first.2" in child_run_line
+    assert "agic:test succeeded 0 chat_subject run_subject_first.2" in child_run_line
     assert child_run_line.split()[-1] == "2026-01-01T12:00:00Z"
     assert human_scoped_runs.exit_code == 0, human_scoped_runs.stderr
     human_scoped_lines = [
@@ -1062,7 +1062,7 @@ def test_inspect_lists_root_and_related_record_subjects(tmp_path: Path) -> None:
     scoped_first_line = next(
         line for line in human_scoped_lines if line.startswith("run_subject_first ")
     )
-    assert "<agic> test succeeded 3 -" in scoped_first_line
+    assert "agic:test succeeded 3 -" in scoped_first_line
     assert scoped_first_line.split()[-1] == "2026-01-01T00:00:00Z"
     assert steps.exit_code == 0, steps.stderr
     step_documents = json.loads(steps.stdout)
@@ -1652,9 +1652,9 @@ def test_inspect_projects_run_tree_and_container_step_call(tmp_path: Path) -> No
     assert not any("STATUS" in line for line in human_lines)
     assert not any("DURATION" in line for line in human_lines)
     assert not any("METRICS" in line for line in human_lines)
-    assert "<flow>  parent" in human.stdout
-    assert "[run]   <agic>  test" in human.stdout
-    assert "<agic>  child" in human.stdout
+    assert "flow:parent" in human.stdout
+    assert "[run]   agic:test" in human.stdout
+    assert "agic:child" in human.stdout
     assert "[model] openai/gpt-5" in human.stdout
     parent_step_line = next(line for line in human_lines if str(run_step.ref) in line)
     child_line = next(line for line in human_lines if child.id in line)

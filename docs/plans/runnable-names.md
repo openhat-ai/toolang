@@ -22,14 +22,17 @@ and of user-authored runnables named `compact`.
 - A valid State already guarantees unique effective public names. Execute by
   name within the existing visibility rules; preserve State acceptance,
   shadowing, resource ownership, and driver selection behavior. Layout-level
-  declarations can coexist even when one is excluded from effective State.
+  declarations such as `agent::talk` and `talk::talk` can coexist even when one
+  is excluded from effective State. An FQN does not bypass visibility or
+  acceptance.
 - Display `kind:name`, including `agic:` or `flow:` for an unnamed entry, using
   the Run's bound State. This string is a label, not another identity concept.
   Preserve existing source-generated entry/adhoc locators for durable binding.
 - Keep public commands and flags. Existing typed input spellings may be decoded
   at input boundaries; execution resolves their name and checks any explicit
   kind separately. New accepted records and model discovery use names/FQNs.
-- Read retained legacy records and State snapshots without rewriting them.
+- Read retained legacy records and State snapshots with compatible source layouts
+  without rewriting them. Reserved module filenames require renaming at source.
   Normalize legacy module names and recover legacy kind at decoding boundaries;
   emit the new representation for newly accepted work. No history reset,
   database migration, or source-directory rename is required.
@@ -60,11 +63,14 @@ models, compaction policy, and unrelated runtime behavior.
 
 1. Root, file-export, private helper, builtin Talk, and anonymous runs retain
    their selected declaration and kind; newly accepted identities use FQNs.
-2. Preparing/reloading State yields `agent`, file stems, and `_`; reserved
-   filename collisions are rejected and existing visibility remains enforced.
+2. Preparing/reloading State uses `agent` and file stems; a bound builtin handler
+   captures `_` without changing State revision. Reserved filename collisions
+   are rejected and existing visibility remains enforced.
 3. API and model discovery accept effective names and expose kinds separately;
-   UI output still shows `agic:name`, `flow:name`, and empty-name labels.
-4. Legacy captured State and run records remain inspectable and rerunnable.
+   UI output uses `agic:name`, `flow:name`, and empty-name labels from accepted
+   bindings in live progress and historical inspection.
+4. Legacy captured State and run records with compatible source layouts remain
+   inspectable and rerunnable.
 5. The builtin Talk compaction regression fails with the reported ownership
    error before the fix, then succeeds with `_::compact`; persisted checkpoints,
    replay, recovery, accounting, and internal progress suppression remain valid.

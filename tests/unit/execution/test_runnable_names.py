@@ -9,11 +9,34 @@ from toolang.execution.records import (
     control_payload_from_data,
     control_payload_to_data,
 )
-from toolang.execution.runnables import resolve_runnable_reference
+from toolang.execution.runnables import bound_runnable, resolve_runnable_reference
+from toolang.common.layout import AgentLayout
 from toolang.execution.types import AgentResources, PromptSetting, RunnableSettings
 from toolang.lang import Program
 from toolang.lang.input import CallInput
 from toolang.lang.types import display_runnable_ref
+from toolang.state.prepare import prepare_agent_state
+
+
+@pytest.mark.parametrize("context", ["agent", "research"])
+@pytest.mark.parametrize("prefix", ["research::", "runnables::research::flow:"])
+@pytest.mark.parametrize("name", ["research", "helper"])
+def test_captured_fqn_preserves_its_module_and_declaration(
+    tmp_path, context, prefix, name
+):
+    layout = AgentLayout.resident(tmp_path, "alice")
+    (layout.home / "runnables").mkdir(parents=True)
+    layout.program.write_text("flow helper:\n  pass\n")
+    (layout.home / "runnables/research.too").write_text(
+        "flow research:\n  pass\nflow helper:\n  pass\n"
+    )
+    state = prepare_agent_state(layout)
+
+    resolved = bound_runnable(state, context, prefix + name)
+
+    assert resolved.module == "research"
+    assert resolved.qualified == f"research::{name}"
+    assert resolved.executable is state.module_runnables[f"research::{name}"]
 
 
 @pytest.mark.parametrize(

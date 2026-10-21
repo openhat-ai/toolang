@@ -30,7 +30,7 @@ from toolang.cli.common.execution_progress.facts import (
 )
 from toolang.cli.common.execution_progress.formatting import one_line as _one_line
 from toolang.base.types.message import Part, TextPart, message_text
-from toolang.lang.types import Array
+from toolang.lang.types import Array, display_runnable_ref, runnable_kind
 from toolang.execution.inspection.history import RunHistory
 from toolang.execution.inspection import (
     ChildOccurrenceTotals,
@@ -460,10 +460,12 @@ def _render_execution_tree(
                 )
             )
         for boundary in value.handoffs_after(node.pointer):
+            kind = getattr(entries.get(boundary.control), "runnable_kind", "")
+            label = _runnable_activity(boundary.runnable, kind)
             rows.append(
                 (
                     "   " * boundary.depth + str(boundary.control),
-                    Text(f"── exec → {boundary.runnable} ──", style="dim"),
+                    Text(f"── exec → {label} ──", style="dim"),
                     "",
                 )
             )
@@ -566,16 +568,9 @@ def _replace_runnable_tokens(operation: str) -> str:
 
 
 def _runnable_activity(runnable: str, kind: str = "") -> str:
-    from toolang.lang.types import parse_runnable_ref_parts
-
-    try:
-        parsed = parse_runnable_ref_parts(runnable)
-    except ValueError:
-        return "<?>".ljust(7) + f" {runnable}"
-    kind = kind or parsed.kind or ""
-    separator, name = ":" if kind else "", parsed.name
-    if separator and kind in {"flow", "agic"} and name:
-        return f"<{kind}>".ljust(7) + f" {name}"
+    kind = runnable_kind(runnable, kind)
+    if kind:
+        return display_runnable_ref(runnable, kind=kind, surface="inspect")
     return "<?>".ljust(7) + f" {runnable}"
 
 
