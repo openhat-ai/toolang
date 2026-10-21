@@ -262,3 +262,109 @@ def test_old_nested_run_limits_are_not_interpreted() -> None:
     limits = resolve_run_limits(({"run": {"limits": {"tokens": 1000}}},))
 
     assert limits == RunLimits()
+
+
+def test_structured_model_layers_reset_identity_and_inherit_parameters():
+    root = {"model": {"ref": "test/base", "effort": "high", "max_output": 4096}}
+    assert resolve_run_defaults(
+        (root, {"model": {"effort": "auto"}})
+    ).model == ModelRequest("test/base", max_output=4096)
+    assert resolve_run_defaults(
+        (root, {"model": {"ref": "test/base"}})
+    ).model == ModelRequest("test/base")
+    assert (
+        resolve_run_defaults((root, {"model": {}})).model
+        == resolve_run_defaults((root,)).model
+    )
+    assert resolve_run_defaults((root, {"model": {"ref": "unset"}})).model is None
+    with pytest.raises(ValueError, match="effective model"):
+        resolve_run_defaults(({"model": {"effort": "high"}},))
+
+
+@pytest.mark.parametrize("scope", ["model", "talk.model", "compact.model"])
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("effort", True),
+        ("effort", 0.2),
+        ("effort", -1),
+        ("effort", ""),
+        ("ref", 42),
+        ("ref", "test/a effort=low"),
+        ("max_output", 0),
+        ("max_output", False),
+        ("max_output", "8192"),
+        ("temperature", 0.2),
+    ],
+)
+def test_structured_model_validation_has_source_and_field(
+    tmp_path, scope, field, value
+):
+    from toolang.setup.config import resolve_compact_config, resolve_talk_config
+    from toolang.base.types.policy import RunLimits
+
+    config = (
+        {scope: {field: value}}
+        if "." not in scope
+        else {scope.split(".")[0]: {"model": {field: value}}}
+    )
+    path = tmp_path / "config.toml"
+    with pytest.raises((TypeError, ValueError), match=str(path)) as exc:
+        if scope == "model":
+            resolve_run_defaults((config,), origins=(path,))
+        elif scope == "talk.model":
+            resolve_talk_config((config,), limits=RunLimits(), origins=(path,))
+        else:
+            resolve_compact_config((config,), origins=(path,))
+    assert "model" in str(exc.value)
+
+
+def test_legacy_model_warnings_are_per_source_and_conflicts_fail(tmp_path, caplog):
+    caplog.set_level("WARNING", logger="toolang.setup.config")
+    root, agent = tmp_path / "root.toml", tmp_path / "agent.toml"
+    config = {"default": {"model": "test/base effort=high"}}
+    for _ in range(2):
+        assert resolve_run_defaults((config,), origins=(root,)).model == ModelRequest(
+            "test/base", reasoning=Reasoning(effort="high")
+        )
+    resolve_run_defaults((config,), origins=(agent,))
+    warnings = [
+        record.message for record in caplog.records if "is deprecated" in record.message
+    ]
+    assert len(warnings) == 2 and str(root) in warnings[0] and str(agent) in warnings[1]
+    with pytest.raises(ValueError, match="same source"):
+        resolve_run_defaults(({**config, "model": {}},))
+    assert resolve_run_defaults(
+        (config, {"model": {"effort": "auto"}})
+    ).model == ModelRequest("test/base")
+
+
+def test_talk_policy_is_sparse_and_above_resolved_general_limits():
+    from toolang.setup.config import resolve_talk_config
+    from toolang.base.types.policy import RunLimits
+
+    config = resolve_talk_config(
+        (
+            {
+                "talk": {
+                    "model": {"ref": "test/router", "effort": "low"},
+                    "limit": {"time": 20, "cost": "0.20"},
+                }
+            },
+            {
+                "talk": {
+                    "model": {"effort": "auto"},
+                    "limit": {"tokens": 0, "cost": "none"},
+                }
+            },
+        ),
+        limits=RunLimits(agic_model_calls=50, time=500, tokens=9000),
+    )
+    assert config.model == (
+        parse_model_body("test/router effort=low"),
+        parse_model_body("effort=auto"),
+    )
+    assert config.limits == RunLimits(agic_model_calls=50, time=20, tokens=0)
+    for field in ("allow", "unknown"):
+        with pytest.raises(ValueError, match="talk field"):
+            resolve_talk_config(({"talk": {field: {}}},), limits=RunLimits())

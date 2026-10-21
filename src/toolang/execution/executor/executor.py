@@ -2563,6 +2563,7 @@ class _Execution:
         state: AgentState,
         state_ref: ControlRef,
         validate_input: bool = True,
+        ordinary_defaults: bool = False,
     ) -> BoundRun:
         if validate_input:
             _validate_inputs(
@@ -2597,7 +2598,9 @@ class _Execution:
             call="run",
             parent=parent_step,
         )
-        return self.prepare_resources(binding, runnable)
+        return self.prepare_resources(
+            binding, runnable, ordinary_defaults=ordinary_defaults
+        )
 
     def prepare_resources(
         self,
@@ -2605,6 +2608,7 @@ class _Execution:
         runnable: AgicDecl | FlowDecl,
         *,
         state: AgentState | None = None,
+        ordinary_defaults: bool = False,
     ) -> BoundRun:
         """Select fresh resources without changing any accepted code binding."""
         path = self.active_path(binding)
@@ -2632,7 +2636,21 @@ class _Execution:
                 tools=tuple(t for t in resources.tools if t in ceiling.tools),
                 caps=tuple(c for c in resources.caps if c in ceiling.caps),
             )
-        if isinstance(runnable, AgicDecl):
+        if ordinary_defaults:
+            request = binding.setup.defaults.model
+            if request is None and resources.models:
+                request = ModelRequest(resources.models[0])
+            if request is not None:
+                request = materialize_model_request(request, setup=binding.setup)
+            binding = replace(
+                binding,
+                bindings=replace(
+                    binding.bindings, model=request.ref if request is not None else None
+                ),
+                model_request=request,
+                limits=binding.setup.limits,
+            )
+        if ordinary_defaults or isinstance(runnable, AgicDecl):
             validate_model_binding(
                 self.models,
                 runnable=runnable,
@@ -3702,6 +3720,9 @@ def _resolve_driver_spec(spec: RunSpec) -> RunSpec:
                 module=target.module,
             )
             model = ModelRequest(resources.models[0]) if resources.models else None
+        baseline = model
+        for operation in spec.setup.talk.model:
+            model = apply_model_override(model, baseline, operation)
     return replace(
         spec,
         state=state,

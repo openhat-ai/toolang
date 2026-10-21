@@ -637,3 +637,47 @@ def test_interrupted_completion_observer_keeps_published_setup_resources(
         setup.models(progress=progress)
     assert setup.models()
     assert counts["adapters"] == 1
+
+
+def test_structured_talk_refresh_changes_generation_without_eager_model_loading(
+    tmp_path, monkeypatch
+):
+    config = tmp_path / "config.toml"
+    config.write_text(
+        '[model]\nref="test/one"\n[limit]\ntime=500\n[talk.model]\nref="test/two"\nmax_output=40\n[talk.limit]\ntime=60\n[compact.model]\nmax_output=20\n'
+    )
+    watcher, counts = _watcher(monkeypatch, tmp_path, validate_defaults=True)
+    first = asyncio.run(watcher.refresh())
+    assert counts["adapters"] == 0
+    assert first.defaults.model is not None
+    assert first.defaults.model.ref == "test/one"
+    assert first.talk.model[0].identity == "test/two"
+    assert first.talk.limits is not None
+    assert first.talk.limits.time == 60 and first.limits.time == 500
+    first.models_effective()
+    config.write_text(config.read_text().replace("max_output=40", "max_output=30"))
+    second = asyncio.run(watcher.refresh())
+    assert second is not first and second.revision != first.revision
+    assert (
+        second.talk.model[0].max_output == 30 and first.talk.model[0].max_output == 40
+    )
+    config.write_text(config.read_text() + '\n[talk.allow]\nmodels=["test/*"]\n')
+    assert asyncio.run(watcher.refresh()) is second
+    assert str(config) in str(watcher.diagnostics())
+    assert "talk" in str(watcher.diagnostics())
+
+
+def test_parameter_only_talk_waits_for_handler_model_and_invalid_refs_fail_lazily(
+    tmp_path, monkeypatch
+):
+    config = tmp_path / "config.toml"
+    config.write_text("[talk.model]\nmax_output=30\n[compact.model]\nmax_output=20\n")
+    watcher, counts = _watcher(monkeypatch, tmp_path, validate_defaults=True)
+    setup = asyncio.run(watcher.refresh())
+    assert setup.defaults.model is None and counts["adapters"] == 0
+    assert setup.models_effective()
+    config.write_text('[talk.model]\nref="test/missing"\n')
+    invalid = asyncio.run(watcher.refresh())
+    assert invalid is not setup
+    with pytest.raises(ToolangError, match="unavailable"):
+        invalid.models_effective()

@@ -25,26 +25,30 @@ def order_models(
 
 def select_compact_model(
     models: Sequence[Model],
-    override: ModelOverride | None,
+    override: ModelOverride | Sequence[ModelOverride] | None,
     *,
     default: str | None = None,
 ) -> ModelRequest:
     """Select one allowed, ready tool-call model without building a collection."""
 
-    if override is not None and override.identity in (None, "default", "unset"):
-        raise ToolangError("compact.model requires an exact model")
+    operations = (
+        (override,) if isinstance(override, ModelOverride) else tuple(override or ())
+    )
     eligible = tuple(
         model
         for model in filter_models(models, ("*[tool_call]",))
         if model._toolang.effective_ready
     )
-    if override is None:
-        if default is None:
-            raise ToolangError("compaction requires a thread model or compact.model")
-        request = ModelRequest(default)
-    else:
-        request = apply_model_override(None, None, override)
-        assert request is not None
+    baseline = ModelRequest(default) if default is not None else None
+    request = baseline
+    for operation in operations:
+        if operation.identity == "unset":
+            raise ToolangError(
+                "compact.model requires an exact model or an inherited model"
+            )
+        request = apply_model_override(request, baseline, operation)
+    if request is None:
+        raise ToolangError("compaction requires a thread model or compact.model")
     if not any(model.ref == request.ref for model in eligible):
         raise ToolangError(
             f"compact model {request.ref!r} must be available, allowed, and support "

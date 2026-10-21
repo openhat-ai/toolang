@@ -268,7 +268,9 @@ class MessagingLoop:
                 ),
                 bindings=RunBindings(),
                 driver="talk",
-                limits=setup.limits,
+                limits=setup.talk.limits
+                if setup.talk.limits is not None
+                else setup.limits,
                 conversation=scope,
                 talk_batch=admitted,
                 input=CallInput({"_": (TextPart(admitted.payload),)}),

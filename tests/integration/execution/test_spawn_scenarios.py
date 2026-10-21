@@ -936,3 +936,237 @@ flow child(_: Text) -> Text:
             assert set(captured["job"]) == {"id", "thread", "status"}
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    "caller,reuse", [("flow", False), ("agic", False), ("agic", True)]
+)
+@pytest.mark.parametrize("prefix", list(ThreadKind))
+def test_spawn_resets_model_and_budget_while_nested_calls_inherit(
+    tmp_path, caller, reuse, prefix
+):
+    from dataclasses import replace
+    from toolang.base.types.policy import RunDefaults, RunLimits
+    from toolang.base.types.model import ModelRequest
+    from tests.support.setup import replace_materialized_setup
+
+    source = """
+flow parent(_: Text) -> Text:
+  run nested
+  let job = spawn child
+  await job
+agic tool_parent(_: Text):
+  {{_}}
+flow nested(_: Text) -> Text:
+  let note = nested
+flow child(_: Text) -> Text:
+  let note = child
+"""
+    responses = (
+        []
+        if caller == "flow"
+        else [
+            ModelCallResult(
+                tool_calls=(
+                    ToolCall(
+                        "nested",
+                        "nested",
+                        "runtime__run",
+                        {"runnable": "nested", "input": {"_": "input"}},
+                    ),
+                    ToolCall(
+                        "spawn",
+                        "spawn",
+                        "runtime__spawn",
+                        {
+                            "runnable": "child",
+                            "input": {"_": "input"},
+                            **({"thread": "talk_deadbeef"} if reuse else {}),
+                        },
+                    ),
+                ),
+            ),
+            ModelCallResult(message=Message.assistant("complete")),
+        ]
+    )
+    harness = ExecutionHarness.create(tmp_path, source=source, responses=responses)
+    if reuse:
+        harness.store.create_thread(thread_id="talk_deadbeef")
+    ordinary = harness.setup.models_effective()[0]
+    router = replace(ordinary, id="router")
+    normal_request = ModelRequest(ordinary.ref, max_output=512)
+    harness.setup = replace_materialized_setup(
+        harness.setup,
+        models=(ordinary, router),
+        defaults=RunDefaults(model=normal_request),
+    )
+    normal_limits = RunLimits(agic_model_calls=20, time=600)
+    harness.setup = replace(harness.setup, limits=normal_limits)
+    source_request = ModelRequest(router.ref, max_output=128)
+    source_limits = RunLimits(agic_model_calls=7, time=120)
+
+    async def scenario():
+        async with harness:
+            spec = harness.run_spec(
+                thread=harness.threads.create(kind=prefix),
+                runnable="parent" if caller == "flow" else "tool_parent",
+                primary=(TextPart("input"),),
+                limits=source_limits,
+            )
+            spec = replace(
+                spec,
+                bindings=replace(spec.bindings, model=router.ref),
+                model_request=source_request,
+            )
+            parent = await harness.executor.run(spec)
+            assert parent.status == "succeeded", parent.error
+            await asyncio.gather(
+                *(root.task for root in tuple(harness.executor._root_runs.values()))
+            )
+            for run in harness.store.list_runs():
+                assert run.status == "succeeded", run.error
+                entry = harness.store.get_run_control(run_id=run.id, index=0)
+                assert entry is not None and isinstance(
+                    entry.payload, RunControlPayload
+                )
+                control = entry.payload
+                if run.id != parent.id and run.parent is None:
+                    assert (
+                        control.model_request == normal_request
+                        and control.limits == normal_limits
+                    )
+                else:
+                    assert (
+                        control.model_request == source_request
+                        and control.limits == source_limits
+                    )
+
+    asyncio.run(scenario())
+
+
+def test_flow_spawn_replay_uses_receipt_before_changed_defaults_or_source(
+    tmp_path, monkeypatch
+):
+    from dataclasses import replace
+    from toolang.base.types.model import ModelRequest
+    from toolang.base.types.policy import RunDefaults
+    from toolang.execution.executor import spawn
+    from toolang.execution.executor.common import Local
+    from toolang.common.errors import ToolangError
+
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="flow parent(_: Text):\n  spawn child\nflow child(_: Text):\n  let note = child\n",
+        responses=[],
+    )
+    original = spawn.accept
+    seen = []
+
+    async def replay(execution, parent, locals, step, name, **kwargs):
+        handle = await original(execution, parent, locals, step, name, **kwargs)
+        changed = replace(
+            parent,
+            setup=replace(
+                parent.setup, defaults=RunDefaults(model=ModelRequest("missing/model"))
+            ),
+        )
+
+        # Receipt lookup must precede target discovery, including signature changes.
+        def reject(*args, **kw):
+            raise AssertionError("replay resolved a new target")
+
+        with monkeypatch.context() as context:
+            context.setattr(execution, "resolve_invocation", reject)
+            assert (
+                await original(execution, changed, locals, step, name, **kwargs)
+                == handle
+            )
+            with pytest.raises(ToolangError, match="conflicting spawn"):
+                await original(execution, changed, locals, step, "other", **kwargs)
+            with pytest.raises(ToolangError, match="conflicting spawn"):
+                await original(
+                    execution,
+                    changed,
+                    {**locals, "_": Local(value="changed", type_name="Text")},
+                    step,
+                    name,
+                    **kwargs,
+                )
+        seen.append(handle)
+        return handle
+
+    monkeypatch.setattr(spawn, "accept", replay)
+    monkeypatch.setattr("toolang.execution.executor.stmts.spawn.accept", replay)
+
+    async def scenario():
+        async with harness:
+            parent = await harness.executor.run(
+                harness.run_spec(
+                    thread=harness.threads.create(kind=ThreadKind.CHORE),
+                    runnable="parent",
+                    primary=(TextPart("input"),),
+                )
+            )
+            assert parent.status == "succeeded", parent.error
+            assert len(seen) == 1 and len(harness.store.list_threads()) == 2
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("preference", ["ordinary", "fallback", "excluded"])
+def test_spawn_selects_ordinary_model_before_validating_target_resources(
+    tmp_path, preference
+):
+    from dataclasses import replace
+    from toolang.base.types.model import ModelRequest
+    from toolang.base.types.policy import RunDefaults
+    from tests.support.setup import replace_materialized_setup
+
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="""
+flow parent(_: Text):
+  let job = spawn worker
+  await job
+agic worker(_: Text):
+  models = test/scripted
+  {{_}}
+""",
+        responses=[ModelCallResult(message=Message.assistant("done"))],
+    )
+    ordinary = harness.setup.models_effective()[0]
+    router = replace(ordinary, id="router")
+    preferred = (
+        None
+        if preference == "fallback"
+        else ModelRequest(
+            router.ref if preference == "excluded" else ordinary.ref, max_output=128
+        )
+    )
+    harness.setup = replace_materialized_setup(
+        harness.setup, models=(router, ordinary), defaults=RunDefaults(model=preferred)
+    )
+
+    async def scenario():
+        async with harness:
+            parent = await harness.executor.run(
+                harness.run_spec(
+                    thread=harness.threads.create(kind=ThreadKind.TALK),
+                    runnable="parent",
+                    primary=(TextPart("input"),),
+                    model=router.ref,
+                )
+            )
+            if preference == "excluded":
+                assert parent.status == "failed" and len(harness.store.list_runs()) == 1
+                assert not harness.adapter.invocations
+                assert parent.error is not None
+                assert "outside run resources" in harness.store.resolve_error(
+                    parent.error
+                )
+            else:
+                assert parent.status == "succeeded", parent.error
+                assert len(harness.adapter.invocations) == 1
+                assert harness.adapter.invocations[0].model.ref == ordinary.ref
+
+    asyncio.run(scenario())

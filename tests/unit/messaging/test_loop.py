@@ -864,3 +864,128 @@ def test_membership_loss_during_poll_does_not_block_other_conversations(
             assert leaving not in loop.gaps
 
     asyncio.run(scenario())
+
+
+def test_talk_scoped_model_limits_and_refresh_are_captured_per_batch(tmp_path):
+    from toolang.base.model_settings import parse_model_body
+    from toolang.base.types.policy import RunLimits
+    from toolang.setup.config import resolve_talk_config
+
+    server = FakeServer(server_type="valkey")
+    harness = harness_with_msg(
+        tmp_path,
+        server,
+        [
+            ModelCallResult(message=ModelMessage.assistant("Handled.")),
+            ModelCallResult(message=ModelMessage.assistant("Handled again.")),
+        ],
+    )
+    ordinary = harness.setup.models_effective()[0]
+    router = replace(ordinary, id="router")
+    harness.setup = replace_materialized_setup(
+        harness.setup,
+        models=(ordinary, router),
+        defaults=RunDefaults(model=ModelRequest(ordinary.ref, max_output=512)),
+    )
+    policy = resolve_talk_config(
+        (
+            {
+                "talk": {
+                    "model": {"ref": router.ref, "max_output": 128},
+                    "limit": {"time": 120, "agic_model_calls": 7},
+                }
+            },
+        ),
+        limits=RunLimits(),
+    )
+    harness.setup = replace(harness.setup, talk=policy)
+
+    async def scenario():
+        async with (
+            harness,
+            make_client(server) as client,
+            make_client(server, "human:owner") as human,
+        ):
+            await prepare(client, human)
+            loop = make_loop(tmp_path, client, harness)
+            await human.send("gc_00000001", body="first")
+            await loop.poll()
+            harness.setup = replace(
+                harness.setup,
+                talk=replace(
+                    policy, model=(*policy.model, parse_model_body("max_output=64"))
+                ),
+            )
+            await human.send("gc_00000001", body="second")
+            await loop.poll()
+            controls = [
+                harness.store.get_run_control(run_id=run.id, index=0).payload
+                for run in harness.store.list_runs()
+                if run.parent is None
+            ]
+            assert sorted(control.model_request.max_output for control in controls) == [
+                64,
+                128,
+            ]
+            assert all(
+                control.model_request.ref == router.ref
+                and control.limits == policy.limits
+                for control in controls
+            )
+            assert [
+                call.call.max_output_tokens for call in harness.adapter.invocations
+            ] == [128, 64]
+            assert harness.setup.defaults.model.ref == ordinary.ref
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    "source,body,success",
+    [
+        (
+            "flow talk(_: Json):\n  models -= *\n  let note = handled\n",
+            {"ref": "unset"},
+            True,
+        ),
+        ("agic talk(_: Json):\n  {{_}}\n", {"ref": "unset"}, False),
+        ("agic talk(_: Json):\n  {{_}}\n", {"max_output": 64}, True),
+        ("agic talk(_: Json):\n  models -= *\n  {{_}}\n", {"max_output": 64}, False),
+    ],
+)
+def test_talk_scoped_unset_and_parameter_only_respect_handler_admission(
+    tmp_path, source, body, success
+):
+    from toolang.setup.config import resolve_talk_config
+
+    server = FakeServer(server_type="valkey")
+    harness = harness_with_msg(
+        tmp_path,
+        server,
+        [ModelCallResult(message=ModelMessage.assistant("Handled."))],
+        source=source,
+    )
+    harness.setup = replace_materialized_setup(harness.setup, defaults=RunDefaults())
+    harness.setup = replace(
+        harness.setup,
+        talk=resolve_talk_config(
+            ({"talk": {"model": body}},), limits=harness.setup.limits
+        ),
+    )
+
+    async def scenario():
+        async with (
+            harness,
+            make_client(server) as client,
+            make_client(server, "human:owner") as human,
+        ):
+            await prepare(client, human)
+            await human.send("gc_00000001", body="please handle")
+            loop = make_loop(tmp_path, client, harness)
+            await loop.poll()
+            assert bool(harness.store.list_runs()) is success
+            if not success:
+                assert await client.talk_cursor("gc_00000001") == "0-0"
+                assert not harness.adapter.invocations
+
+    asyncio.run(scenario())

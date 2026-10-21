@@ -151,8 +151,13 @@ stop waiting without canceling accepted execution. Controls are durable requests
 Callers resolve the captured `AgentSetup` defaults and any session or run
 policy into `RunSpec.limits` before `run()`. Per-agic model and tool call
 limits reset on each agic invocation, while token, cost, and time limits are
-shared by all recursive runs. Effective limits are stored on the root run
-control.
+shared by all recursive runs, including automatic compact runs. Effective
+limits are stored on the root run control. Independent spawns start a fresh
+budget with ordinary Setup limits and model defaults; source Chat/Talk/Chore
+model and limit overrides stay with their root and nested calls. Spawn admission
+applies the ordinary model before target resource validation. Matching receipts
+return the original worker and policy before preparing a new target/default;
+changed source runnable/input/thread bindings remain conflicts.
 
 A configured zero limit is active; `None` disables it. Call limits are checked
 before invocation, while token and cost limits account for completed calls and

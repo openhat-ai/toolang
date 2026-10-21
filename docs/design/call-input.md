@@ -208,8 +208,10 @@ Authored Agic and prompt bodies are [Content](content.md), not caller envelopes.
 Leading `/model`, `/allow`, `/limit`, and `/workdir` lines affect one submission.
 They do not update Chat defaults. Overrides occupy complete leading lines and
 use POSIX quoting without shell expansion. Model and workdir may each occur
-once; allow queries can accumulate; duplicate limit fields fail. A root runnable
-call ends prefix parsing and following lines become primary input:
+once; allow queries can accumulate; duplicate limit fields fail. Model identity
+may use `ref=provider/model` or a bare first token; typed parameter assignments
+may be used without an identity. A root runnable call ends prefix parsing and
+following lines become primary input:
 
 ```text
 /model effort=high

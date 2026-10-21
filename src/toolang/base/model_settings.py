@@ -48,7 +48,12 @@ def parse_model_body(body: str) -> ModelOverride:
                 ModelRequest(identity)
             continue
         field, raw = _assignment(token)
-        if field == "effort":
+        if field == "ref":
+            if identity is not None:
+                raise ValueError("duplicate model identity: ref")
+            identity = raw.lower() if raw.lower() in {"default", "unset"} else raw
+            ModelOverride(identity=identity)
+        elif field == "effort":
             if effort is not None:
                 raise ValueError("duplicate model parameter: effort")
             effort = _effort_value(raw)
@@ -127,7 +132,7 @@ def format_model_body(override: ModelOverride) -> str:
 
     tokens: list[str] = []
     if override.identity is not None:
-        tokens.append(override.identity)
+        tokens.append(f"ref={override.identity}")
     if override.effort is not None:
         tokens.append(f"effort={override.effort}")
     if override.max_output is not None:

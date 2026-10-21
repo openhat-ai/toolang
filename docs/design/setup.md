@@ -39,9 +39,11 @@ belongs to Setup; cap allow policy belongs to State. External resource ceilings
 can only narrow the published bases. An empty allow set denies that resource;
 a zero limit is active, while `none` disables a limit.
 
-The policy layers are `allow`, `default`, `limit`, and `compact`. Allow queries
-select resources, defaults supply a model request, and limits apply at the
-scopes defined by [Execution](execution.md#run-execution). There is no runtime
+The configuration groups are `allow`, `model`, `limit`, `talk`, and `compact`.
+Allow queries select common resources; model and limit settings supply ordinary
+root defaults. Talk overlays model/limit settings for automatic message handling,
+and compact settings apply to all thread kinds. Limits use the scopes defined by
+[Execution](execution.md#run-execution). There is no runtime
 default-runnable setting; [Drivers](drivers.md) resolve their handlers. Chat's
 runnable default is session state.
 

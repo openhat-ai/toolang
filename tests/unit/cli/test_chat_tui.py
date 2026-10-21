@@ -3154,7 +3154,7 @@ def test_chat_command_block_renders_command_usage_as_table_rows() -> None:
 
 def test_chat_command_summary_uses_two_space_indent_without_marker() -> None:
     block = blocks.CommandBlock(
-        ":model openai/gpt-5 effort=high",
+        ":model ref=openai/gpt-5 effort=high",
         ("Model set to openai/gpt-5 · high",),
         "success",
     )

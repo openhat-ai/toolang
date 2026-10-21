@@ -265,8 +265,7 @@ def test_three_project_layers_preserve_field_specific_merges(tmp_path):
     assert defaults.model.reasoning is not None
     assert defaults.model.reasoning.effort == "high"
     compact = resolve_compact_config(configs)
-    assert compact.model is not None
-    assert compact.model.identity == "test/new" and compact.model.effort is None
+    assert compact.model[-1].identity == "test/new" and compact.model[-1].effort is None
     assert resolve_setup_allow(configs).tools == ("shell/*",)
     assert resolve_selection(layout) == "host"
     assert merge_plugin_configs(configs, family="toolset")["fs"] == {

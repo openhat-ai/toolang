@@ -106,6 +106,21 @@ presence, outbound tools, and observation available. Flow `spawn` creates a new
 `work_` thread; [`runtime.spawn`](tools.md#spawn-independent-work) may instead
 reuse an inspected idle local thread. Both record ancestry and an independent
 root; ordinary nested calls remain in their thread.
+
+New automatic Talk batches apply `[talk.model]` and `[talk.limit]` above resolved
+ordinary defaults. Root Talk fields override agent general fields and general
+startup overrides; agent Talk fields override root Talk fields. Model tables use
+[shared model fields](models.md#runtime-configuration), and limit fields inherit
+individually. Sending a message with `too talk` does not configure its recipient.
+New batches in existing conversation threads use the latest Setup; accepted
+batches keep their recorded policy.
+
+Every independent spawn selects ordinary model/limit defaults from its captured
+Setup, including work dispatched by Talk or Chore and work reusing an existing
+thread. Thread prefixes never select policy. Resource ceilings still apply;
+nested calls and same-Run transfers keep the source model and budget. Chore
+bodies can use `/model`, `/limit`, and `/allow` for occurrence-specific policy.
+
 Noninteractive CLI and HTTP API calls create `exec_` invocation contexts with
 derived kind `exec`. Every run has a `run_` ID.
 

@@ -142,3 +142,27 @@ def test_default_model_body_composes_environment_and_startup_parameters() -> Non
         {"TOOLANG_DEFAULT_MODEL": "none"},
         ("model=default effort=high",),
     ) == {"model": ModelOverride(identity="default", effort="high")}
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "ref=test/worker effort=high max_output=512",
+        "test/worker effort=high max_output=512",
+        "max_output=512 effort=high ref=test/worker",
+    ],
+)
+def test_named_and_bare_model_refs_match_across_string_boundaries(body):
+    from toolang.execution.input import parse_call
+    from toolang.base.model_settings import parse_model_body, format_model_body
+
+    expected = ModelOverride(identity="test/worker", effort="high", max_output=512)
+    assert resolve_default_overrides({"TOOLANG_DEFAULT_MODEL": body}) == {
+        "model": expected
+    }
+    assert resolve_default_overrides({}, (f"model={body}",)) == {"model": expected}
+    assert resolve_compact_override({"TOOLANG_COMPACT_MODEL": body}) == expected
+    assert resolve_compact_override({}, body) == expected
+    assert parse_call(f"/model {body}\n\nrequest")[0].model == expected
+    assert parse_model_body(body) == expected
+    assert format_model_body(expected).startswith("ref=test/worker")

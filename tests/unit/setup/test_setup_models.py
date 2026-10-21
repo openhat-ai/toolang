@@ -140,10 +140,17 @@ def test_compact_config_layers_are_independent_complete_model_requests():
     }
     agent = {"compact": {"model": "other/b"}}
     assert resolve_compact_config(({},)) == CompactConfig()
-    assert resolve_compact_config((root, agent)).model == parse_model_body("other/b")
+    assert resolve_compact_config((root, agent)).model == (
+        parse_model_body("other/a effort=low"),
+        parse_model_body("other/b"),
+    )
     assert resolve_compact_config(
         (root, agent), override=parse_model_body("other/c")
-    ).model == parse_model_body("other/c")
+    ).model == (
+        parse_model_body("other/a effort=low"),
+        parse_model_body("other/b"),
+        parse_model_body("other/c"),
+    )
 
 
 @pytest.mark.parametrize("value", ["default", "effort=low", "unset"])
@@ -340,7 +347,10 @@ def test_compact_fields_layer_independently():
         (root, agent), override=parse_model_body("test/two")
     )
     assert result == CompactConfig(
-        model=parse_model_body("test/two"), summary=0.025, recent=6000, trigger=0.75
+        model=(parse_model_body("test/one effort=low"), parse_model_body("test/two")),
+        summary=0.025,
+        recent=6000,
+        trigger=0.75,
     )
 
 
@@ -363,3 +373,25 @@ def test_compact_rejects_unknown_fields(field):
 def test_compact_recent_must_be_below_trigger(recent, trigger):
     with pytest.raises(ValueError, match="recent must be less"):
         resolve_compact_config(({"compact": {"recent": recent, "trigger": trigger}},))
+
+
+def test_compact_structured_operations_follow_calling_identity_without_parameters():
+    models = (model("test/one"), model("test/two"))
+    config = resolve_compact_config(
+        (
+            {"compact": {"model": {"ref": "test/two", "max_output": 4096}}},
+            {"compact": {"model": {"ref": "default", "max_output": 512}}},
+        )
+    )
+    request = select_compact_model(models, config.model, default="test/one")
+    assert (
+        request.ref == "test/one"
+        and request.max_output == 512
+        and request.reasoning is None
+    )
+    param = resolve_compact_config(({"compact": {"model": {"max_output": 1024}}},))
+    assert (
+        select_compact_model(models, param.model, default="test/two").max_output == 1024
+    )
+    with pytest.raises(ValueError, match="unset"):
+        resolve_compact_config(({"compact": {"model": {"ref": "unset"}}},))

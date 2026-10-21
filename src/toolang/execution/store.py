@@ -791,6 +791,15 @@ class RunStore:
             raise RuntimeError(f"run acceptance failed: {run_id}")
         return _run_from_row(run_row), _control_from_row(control_row)
 
+    def get_spawn_control(self, source: StepRef) -> ControlRecord | None:
+        """Read a spawn receipt before preparing any new execution policy."""
+        with self.read_transaction():
+            row = self._conn.execute(
+                "SELECT * FROM controls WHERE kind = 'run' AND triggered_by = ?",
+                (str(source),),
+            ).fetchone()
+        return _control_from_row(row) if row is not None else None
+
     def accept_spawn(
         self,
         *,
