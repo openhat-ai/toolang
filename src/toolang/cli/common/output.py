@@ -279,6 +279,7 @@ def _make_table(
 ) -> Table:
     table = Table(
         box=box.HORIZONTALS,
+        show_edge=False,
         header_style="",
         show_lines=False,
         pad_edge=False,

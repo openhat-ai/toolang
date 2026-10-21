@@ -14,7 +14,11 @@ from toolang.cli.common.editor import edit_markdown
 from toolang.cli.common.context import context_layout, require_prefix_agent, user_call
 from toolang.cli.common.client import runtime_post
 from toolang.cli.common.execution import open_execution
-from toolang.cli.common.output import echo_table, format_local_timestamp
+from toolang.cli.common.output import (
+    echo_collection_summary,
+    echo_table,
+    format_local_timestamp,
+)
 from toolang.cli.common.parameters import TextType
 from toolang.cli.common.routing import PrefixAgentChoreGroup, RequiredPrefixAgentCommand
 from toolang.catalog.chore_authoring import (
@@ -58,7 +62,7 @@ def list_chores(ctx: typer.Context) -> None:
         error_messages=errors,
     ).list()
     if not entries:
-        typer.echo("No chores found.")
+        echo_collection_summary(0, "chore")
         return
     echo_table(
         (
@@ -100,6 +104,7 @@ def list_chores(ctx: typer.Context) -> None:
             for item in entries
         ],
     )
+    echo_collection_summary(len(entries), "chore")
 
 
 def new_chore(ctx: typer.Context, name: ChoreName = None) -> None:

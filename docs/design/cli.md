@@ -104,11 +104,21 @@ and distribution packages. They do not invoke factories or load agent settings.
 `toolsets --all` reveals internal entries. These are plugin inventory, distinct
 from the configured resources exposed by `tools` and `models`.
 
+Shared list and inspection tables start at terminal column zero, with one header
+separator and no outer border rules. Nonempty lists end with one blank line
+followed by an unindented count of the displayed records; resource lists retain
+their group counts. Empty lists print only `0 <items>`, such as `0 agents` or
+`0 workspaces`.
+Inspection record, value, and tree tables use the same border style; collection
+counts apply only to the thread, run, step, and control lists.
+
 ## Historical inspection
 
 `too TARGET inspect SUBJECT... [PROJECTOR] [--human | --json]` reads durable
 history without starting a server or fetching a visiting source. Collections
-are unbounded; absent storage is an error and an empty existing collection is `[]`.
+are unbounded; absent storage is an error. Empty existing collections print
+`0 threads`, `0 runs`, `0 steps`, or `0 controls` in human output, and `[]` with
+`--json`.
 
 | Subject | Selects |
 | --- | --- |

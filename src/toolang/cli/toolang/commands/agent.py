@@ -41,6 +41,7 @@ from ...common.context import (
 )
 from ...common.output import (
     agent_avatar,
+    echo_collection_summary,
     echo_pairs_table,
     echo_table,
     parse_utc_timestamp,
@@ -154,7 +155,7 @@ def list_agents(ctx: typer.Context) -> None:
         ui_base_url=ui_base_url(),
     )
     if not items:
-        typer.echo("No agents found.")
+        echo_collection_summary(0, "agent")
         return
     rows = [
         (
@@ -167,6 +168,7 @@ def list_agents(ctx: typer.Context) -> None:
         for item in items
     ]
     echo_table(("AGENT", "STATUS", "SANDBOX", "PORT", "WEBUI"), rows)
+    echo_collection_summary(len(items), "agent")
 
 
 def info_agent(

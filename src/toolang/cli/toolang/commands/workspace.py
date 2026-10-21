@@ -18,7 +18,7 @@ from ...common.context import (
     require_prefix_agent,
     user_call,
 )
-from ...common.output import echo_table
+from ...common.output import echo_collection_summary, echo_table
 from ...common.routing import RequiredPrefixAgentCommand, RequiredPrefixAgentGroup
 
 
@@ -96,13 +96,15 @@ def list_workspaces(ctx: typer.Context) -> None:
     workspaces = user_call(
         ConfiguredWorkspaces(config_path, lock_path=_workspace_edit_lock(layout)).list
     )
-    echo_table(
-        ("NAME", "PATH", "AVAILABLE"),
-        tuple(
-            (name, path, "yes" if Path(path).is_dir() else "no")
-            for name, path in workspaces.items()
-        ),
-    )
+    if workspaces:
+        echo_table(
+            ("NAME", "PATH", "AVAILABLE"),
+            tuple(
+                (name, path, "yes" if Path(path).is_dir() else "no")
+                for name, path in workspaces.items()
+            ),
+        )
+    echo_collection_summary(len(workspaces), "workspace")
 
 
 def _authored_config(layout: AgentLayout) -> Path:
