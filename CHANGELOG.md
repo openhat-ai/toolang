@@ -30,6 +30,11 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Changed
 
+- `too models` keeps complete identities, context, price, and status in single
+  rows, dropping optional columns by priority to fit terminal width while
+  preserving JSON records.
+  ([#913](https://github.com/openhat-ai/toolang/pull/913))
+
 - **Breaking:** Stop every running agent with `too AGENT stop` or Ctrl+C before
   upgrading or rolling back, because instance layouts and RunStore schema 63
   are incompatible with older releases.
