@@ -25,7 +25,7 @@ from toolang.teaming.discovery import HubDiscovery
     ],
 )
 @pytest.mark.parametrize("healthy", [True, False])
-def test_hub_status_shows_server_version_inline(
+def test_hub_status_shows_server_version_in_shared_columns(
     tmp_path, monkeypatch, capsys, version, label, healthy
 ):
     import toolang.up.hub as module
@@ -60,7 +60,13 @@ def test_hub_status_shows_server_version_inline(
     ):
         assert cli.main(["--root", str(tmp_path), "hub"]) == 0
         output = capsys.readouterr().out
-        assert output.startswith(f"hub {label}\n" if healthy else "hub not running\n")
+        rows = output.splitlines()
+        assert rows[0].split() == (
+            ["hub", "running", label] if healthy else ["hub", "not", "running"]
+        )
+        assert rows[0].index("running" if healthy else "not") == rows[1].index(
+            "running"
+        )
         assert "1 agents, 1 running, 1 talk enabled" in output
         assert "alice" in output
         assert "http://127.0.0.1:7123" not in output
@@ -95,7 +101,9 @@ def test_hub_status_missing_metadata_keeps_readiness(
     )
     assert cli.main(["--root", str(tmp_path), "hub"]) == 0
     output = capsys.readouterr().out
-    assert output.startswith("hub unknown\n" if healthy else "hub not running\n")
+    assert output.splitlines()[0].split() == (
+        ["hub", "running", "unknown"] if healthy else ["hub", "not", "running"]
+    )
     assert "no agents" in output
     assert "0 agents, 0 running, 0 talk enabled" not in output
 
@@ -123,7 +131,7 @@ def test_hub_status_without_ready_process_skips_http(
     monkeypatch.setattr(module.httpx, "Client", fail)
     assert cli.main(["--root", str(tmp_path), "hub"]) == 0
     output = capsys.readouterr().out
-    assert output.startswith("hub not running\n")
+    assert output.splitlines()[0].split() == ["hub", "not", "running"]
     assert "no agents" in output
     assert "0 agents, 0 running, 0 talk enabled" not in output
     assert "http://127.0.0.1:7123" not in output
@@ -137,7 +145,7 @@ def test_hub_inspection_failure_keeps_local_agents_visible(tmp_path, capsys):
 
     assert cli.main(["--root", str(tmp_path), "hub"]) == 0
     output = capsys.readouterr().out
-    assert "hub not running" in output
+    assert output.splitlines()[0].split() == ["hub", "not", "running"]
     assert "no agents" in output
     assert "Hub" in output and "alice" not in output
     assert "partial: Hub: record inspection failed" in output
@@ -229,6 +237,6 @@ def test_root_api_settings_rejected_and_talk_requires_running_hub(tmp_path, caps
     assert "too hub start" in capsys.readouterr().err
     assert cli.main(["--root", str(tmp_path), "hub"]) == 0
     output = capsys.readouterr().out
-    assert output.startswith("hub not running\n")
+    assert output.splitlines()[0].split() == ["hub", "not", "running"]
     assert "no agents" in output
     assert "0 agents, 0 running, 0 talk enabled" not in output
