@@ -183,6 +183,11 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   Hub row, and as `\-- no agents` in ASCII output.
   ([#905](https://github.com/openhat-ai/toolang/pull/905))
 
+- Attaching to a running Chat or `start` server no longer compares caller
+  environment or inferred defaults, while explicit startup differences still
+  reject with restart guidance.
+  ([#901](https://github.com/openhat-ai/toolang/pull/901))
+
 ### Security
 
 - The locked certifi trust store advances to 2026.10.19, resolving trust-store

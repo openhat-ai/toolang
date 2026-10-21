@@ -31,12 +31,15 @@ def _wait(predicate, timeout=40):
 
 
 @contextmanager
-def _visiting_chat(tmp_path: Path):
+def _visiting_chat(tmp_path: Path, *, source_available: threading.Event | None = None):
     requests = []
 
     class Source(BaseHTTPRequestHandler):
         def do_GET(self):
             requests.append(self.path)
+            if source_available is not None and not source_available.is_set():
+                self.send_error(503)
+                return
             self.send_response(200)
             self.end_headers()
             self.wfile.write(b"flow:\n  pass\n")
@@ -206,6 +209,45 @@ def test_chat_reuses_default_hosted_drivers_without_relaunch(tmp_path):
         assert current["launch_id"] == original["launch_id"]
         assert current["drivers"] == original["drivers"]
         assert len(requests) == fetched
+
+
+def test_visiting_reuse_ignores_caller_startup_defaults_and_unavailable_source(
+    tmp_path, monkeypatch
+):
+    available = threading.Event()
+    available.set()
+    with _visiting_chat(tmp_path, source_available=available) as (
+        layout,
+        url,
+        chat,
+        command,
+        requests,
+    ):
+        first = chat()
+        original = AgentProcess(layout).state()
+        assert original is not None
+        fetched = len(requests)
+        available.clear()
+        monkeypatch.setenv("PWD", "/another/directory")
+        monkeypatch.setenv("TERM", "another-terminal")
+        monkeypatch.setenv("TOOLANG_LIMIT_TOKENS", "invalid-startup-value")
+        assert layout.toolang_root is not None
+        (layout.toolang_root / "config.toml").write_text(
+            '[teaming]\nenabled = false\n[sandbox]\ndriver = "docker"\n'
+        )
+        assert command(url, "start").stdout.strip() == (
+            f"Agent {layout.name} running: {original['endpoint']}"
+        )
+        second = chat()
+        current = AgentProcess(layout).state()
+        assert current is not None
+        assert current["launch_id"] == original["launch_id"]
+        assert current["drivers"] == original["drivers"]
+        assert current["lifetime"] == "persistent"
+        assert len(requests) == fetched
+        for client in (first, second):
+            client.stdin.close()
+            assert client.wait(timeout=10) == 0
 
 
 def test_lease_loss_ends_an_idle_client_without_relaunch(tmp_path):

@@ -145,7 +145,7 @@ async def resolve_launch(
         explicit=sandbox,
         remembered=_remembered_sandbox(layout),
     )
-    artifact = _resolve_dev_artifact(dev, sandbox=selected)
+    artifact = resolve_dev_artifact(dev, sandbox=selected)
     serve = resolve_serve(
         layout=layout,
         toolang_root=toolang_root,
@@ -877,7 +877,7 @@ def _split_sandbox(selector: str) -> tuple[str, str | None]:
     return name, spec if separator else None
 
 
-def _resolve_dev_artifact(raw: Path | None, *, sandbox: str) -> Path | None:
+def resolve_dev_artifact(raw: Path | None, *, sandbox: str) -> Path | None:
     if raw is None:
         return None
     sandbox_name, _ = _split_sandbox(sandbox)

@@ -22,6 +22,7 @@ from toolang.cli.common.terminal_session import prepare_terminal
 from toolang.cli.common.terminal_title import agent_label
 
 import typer
+from typer._click.core import ParameterSource
 from typer._click.exceptions import ClickException
 
 from toolang.cli.common.parameters import InstanceOption
@@ -55,7 +56,7 @@ from toolang.cli.common.policy import (
 )
 from toolang.up import source as agent_sources
 from toolang.up import process as agents
-from ...common.startup import resolve_runtime_launch
+from ...common.startup import resolve_attachment_requirements, resolve_runtime_launch
 from ...common.context import (
     ModelCatalogOption,
     cli_context,
@@ -324,7 +325,11 @@ def start(
                 limits=limits,
                 port=port,
                 endpoint_host=endpoint_host,
-                host=host,
+                host=(
+                    host
+                    if ctx.get_parameter_source("host") == ParameterSource.COMMANDLINE
+                    else None
+                ),
             ):
                 return
             target = agent_sources.prepare_visiting_layout(
@@ -398,7 +403,7 @@ def _retain_started(
     limits: list[str] | None,
     port: int | None,
     endpoint_host: str | None,
-    host: str = "127.0.0.1",
+    host: str | None = None,
 ) -> bool:
     from toolang.up import sandbox as sandbox_runtime
 
@@ -409,26 +414,15 @@ def _retain_started(
             status = process.wait_ready(status, ui_base_url=ui_base_url(), timeout=30)
         if status is None or status.status != "running":
             return False
-        from toolang.up.contract import require_compatible
-
-        requested = resolve_startup(
-            layout,
-            toolang_root=context_root(ctx),
-            model_catalog=model_catalog,
-            sandbox=sandbox,
+        requested = resolve_attachment_requirements(
+            sandbox=status.sandbox or "host",
             allows=allows,
             defaults=defaults,
             limits=limits,
             port=port,
             host=host,
             endpoint_host=endpoint_host,
-            dev=dev,
-            background=True,
-            compact_model=compact_model,
-            driver=driver,
-            allow_live=True,
         )
-        require_compatible(layout, requested)
         try:
             with acquire_agent_server(
                 layout,
@@ -438,6 +432,7 @@ def _retain_started(
                 model_catalog=model_catalog,
                 compact_override=resolve_compact_override({}, compact_model),
                 attach_only=True,
+                attachment_requirements=requested,
             ) as server:
                 if server is None:
                     raise RuntimeError("agent acquisition requires a server")
@@ -663,15 +658,11 @@ def resolve_startup(
     driver: str | None = None,
     workspace_options: list[str] | None = None,
     workdir: str | None = None,
-    allow_live: bool = False,
 ) -> LaunchSpec:
     from toolang.up.config import default_drivers, parse_drivers
-    from toolang.up.contract import bound_drivers
 
     if driver is not None:
         drivers = user_call(parse_drivers, driver)
-    elif allow_live:
-        drivers = user_call(bound_drivers, target)
     else:
         drivers = default_drivers(target.placement)
     root, agent = target.root, target.name
@@ -681,11 +672,7 @@ def resolve_startup(
     if target.placement == "resident" and not target.home.is_dir():
         raise ClickException(f"Agent {agent} not found")
     existing = agents.AgentProcess(target).status(ui_base_url=ui_base_url())
-    if (
-        not allow_live
-        and existing is not None
-        and existing.status in {"running", "preparing", "starting"}
-    ):
+    if existing is not None and existing.status in {"running", "preparing", "starting"}:
         raise ClickException(active_agent_error(existing))
     environ = load_runtime_environ(target, base_environ=os.environ)
     toolang_root = (
@@ -707,7 +694,6 @@ def resolve_startup(
         host=host,
         endpoint_host=endpoint_host,
         port=port,
-        active_port=existing.port if allow_live and existing is not None else None,
         allows=allows,
         defaults=defaults,
         limits=limits,

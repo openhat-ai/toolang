@@ -8,10 +8,12 @@ from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
+import httpx
 from typer._click.utils import strip_ansi
 from typer.testing import CliRunner
 
 from toolang.base.errors import ToolangError
+from toolang.api.version import AGENT_API_VERSION
 from toolang.base.types.model import ModelOverride
 from toolang.base.types.progress import ProgressEvent, ProgressStage, ProgressStatus
 from toolang.base.types.sandbox import SandboxOutput, SandboxRef
@@ -621,6 +623,110 @@ def test_start_launches_in_background_and_reports_endpoint(
     assert resolved["dev"] == dev
     assert resolved["log_path"] == root / "agents" / "alice" / ".runtime" / "agent.log"
     assert resolved["output"] == "file"
+
+
+@pytest.mark.parametrize(
+    "options,conflict",
+    [
+        ([], None),
+        (["--host", "0.0.0.0"], None),
+        (["--host", "127.0.0.1"], "host"),
+        (["--port", "8123"], None),
+        (["--port", "8124"], "port"),
+        (["--default", "model=test/model"], None),
+        (["--default", "model=test/other"], "run defaults"),
+        (["--limit", "tokens=1000"], None),
+        (["--limit", "tokens=2000"], "run limits"),
+        (["--enable", "chat"], None),
+        (["--enable", "chat,talk"], "drivers"),
+    ],
+)
+def test_repeated_start_preserves_omitted_settings_and_checks_explicit_options(
+    tmp_path, monkeypatch, options, conflict
+):
+    from toolang.cli.common.startup import resolve_runtime_launch
+    from toolang.up.contract import startup_contract
+    from toolang.up.identity import identity_bindings
+    from toolang.up.instance import read_instance, update_instance
+    from toolang.up.process import AgentStatus
+
+    layout = _create_agent(tmp_path)
+    spec = resolve_runtime_launch(
+        layout,
+        toolang_root=tmp_path,
+        environ={},
+        sandbox="host",
+        dev=None,
+        host="0.0.0.0",
+        port=8123,
+        lifetime="persistent",
+        background=True,
+        drivers=frozenset({"chat"}),
+        defaults=["model=test/model"],
+        limits=["tokens=1000", "time=60"],
+    )
+
+    def record(entry):
+        entry["control"].update(
+            **identity_bindings(layout),
+            startup_contract=startup_contract(spec),
+            drivers=["chat"],
+        )
+        entry["workload"].update(api_version=AGENT_API_VERSION, lifetime="persistent")
+
+    update_instance(layout.runtime_status, record)
+    original = read_instance(layout.runtime_status)
+    assert original is not None
+    status = AgentStatus(
+        name="alice",
+        status="running",
+        endpoint=spec.serve.endpoint,
+        sandbox="host",
+        api_url=None,
+        webui_url=None,
+    )
+    monkeypatch.setattr(
+        runtime_commands.agents,
+        "AgentProcess",
+        lambda *_a: SimpleNamespace(status=lambda **_k: status),
+    )
+    monkeypatch.setattr(
+        runtime_commands,
+        "resolve_startup",
+        lambda *_a, **_k: pytest.fail("running start must not resolve startup"),
+    )
+    monkeypatch.setattr(
+        agent_server_acquisition, "_retain_server", lambda server: (server, None)
+    )
+    promotions = []
+
+    def promote(request):
+        assert request.method == "POST"
+        assert request.url.path == f"/api/v{AGENT_API_VERSION}/runtime/promote"
+        promotions.append(request.content)
+        return httpx.Response(200, json={})
+
+    client = httpx.Client
+    monkeypatch.setattr(
+        runtime_commands.httpx,
+        "Client",
+        lambda **kwargs: client(transport=httpx.MockTransport(promote), **kwargs),
+    )
+    monkeypatch.setenv("TOOLANG_LIMIT_TOKENS", "invalid-startup-value")
+    result = runner.invoke(
+        cli.app, ["--root", str(tmp_path), "start", "alice", *options]
+    )
+    if conflict is None:
+        assert result.exit_code == 0, result.stderr
+        assert result.stdout.strip() == f"Agent alice running: {spec.serve.endpoint}"
+        assert len(promotions) == 1
+        assert original["launch_id"].encode() in promotions[0]
+    else:
+        assert result.exit_code == 1, result.stderr
+        assert conflict in result.stderr
+        assert "restart" in result.stderr
+        assert not promotions
+    assert read_instance(layout.runtime_status) == original
 
 
 def test_start_reports_guest_failure_stage_reason_hint_and_log(

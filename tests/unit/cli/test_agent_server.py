@@ -100,11 +100,16 @@ def _set_status(
     if status is not None and status.status == "running":
         from toolang.up.instance import update_instance
         from toolang.up.contract import startup_contract
+        from toolang.up.identity import identity_bindings
 
         update_instance(
             layout.runtime_status,
             lambda entry: entry["control"].update(
-                last_successful={"sandbox": status.sandbox, "endpoint": status.endpoint}
+                **identity_bindings(layout),
+                last_successful={
+                    "sandbox": status.sandbox,
+                    "endpoint": status.endpoint,
+                },
             ),
         )
         startup = agent_server._resolve_launch(
@@ -136,9 +141,7 @@ def _set_status(
     monkeypatch.setattr(agent_server.agents, "AgentProcess", Process)
 
 
-def test_visiting_reuse_validates_effective_parameters_before_fetch(
-    tmp_path, monkeypatch
-):
+def test_visiting_reuse_checks_explicit_settings_without_fetch(tmp_path, monkeypatch):
     layout = AgentLayout.visiting(
         "https://example.test/strict.too", "strict", toolang_root=tmp_path
     )
@@ -168,7 +171,86 @@ def test_visiting_reuse_validates_effective_parameters_before_fetch(
         layout, sandbox=None, ui_base_url="https://ui.test", show_progress=False
     ) as ref:
         assert ref is not None
-    assert prepared == [layout]
+    assert prepared == []
+
+
+@pytest.mark.parametrize("placement", ["resident", "visiting"])
+def test_running_server_reuses_bound_settings_without_resolving_startup(
+    tmp_path, monkeypatch, placement
+):
+    from toolang.up.instance import read_instance
+
+    layout = (
+        AgentLayout.resident(tmp_path, "alice")
+        if placement == "resident"
+        else AgentLayout.visiting(
+            "https://example.test/alice.too", "alice", toolang_root=tmp_path
+        )
+    )
+    _set_status(
+        monkeypatch,
+        layout,
+        _status(value="running", endpoint="http://localhost:8123", sandbox="host"),
+    )
+    original = read_instance(layout.runtime_status)
+    monkeypatch.setenv("PWD", "/different/directory")
+    monkeypatch.setenv("TERM", "different-terminal")
+    monkeypatch.setenv("TOOLANG_LIMIT_TOKENS", "invalid-startup-value")
+    layout.root_config.write_text('[sandbox]\ndriver = "docker"\n')
+    monkeypatch.setattr(
+        agent_server,
+        "_resolve_launch",
+        lambda *_a, **_k: pytest.fail("attachment must not resolve a new launch"),
+    )
+    monkeypatch.setattr(
+        agent_server,
+        "_prepare_source",
+        lambda *_a, **_k: pytest.fail("attachment must not prepare source"),
+    )
+
+    with agent_server.acquire_agent_server(
+        layout, sandbox=None, ui_base_url="https://ui.test", required_driver="chat"
+    ) as server:
+        assert server is not None and server.endpoint == "http://localhost:8123"
+
+    assert read_instance(layout.runtime_status) == original
+
+
+@pytest.mark.parametrize("attach_only", [False, True])
+def test_copied_runtime_status_cannot_attach_to_another_root(
+    tmp_path, monkeypatch, attach_only
+):
+    from toolang.up.identity import identity_bindings
+    from toolang.up.instance import read_instance, update_instance
+
+    original = AgentLayout.resident(tmp_path / "original", "alice")
+    status = _status(value="running", endpoint="http://localhost:8123", sandbox="host")
+    _set_status(monkeypatch, original, status)
+    update_instance(
+        original.runtime_status,
+        lambda entry: entry["control"].update(identity_bindings(original)),
+    )
+    copied = AgentLayout.resident(tmp_path / "copied", "alice")
+    copied.runtime_status.parent.mkdir(parents=True)
+    copied.runtime_status.write_bytes(original.runtime_status.read_bytes())
+    saved = read_instance(original.runtime_status)
+    monkeypatch.setattr(
+        agent_server.agents,
+        "AgentProcess",
+        lambda *_a: SimpleNamespace(status=lambda **_k: status),
+    )
+
+    with pytest.raises(
+        agent_server.AgentServerAcquisitionError, match="identity|ownership"
+    ):
+        with agent_server.acquire_agent_server(
+            copied, sandbox=None, attach_only=attach_only
+        ):
+            pytest.fail(
+                "copied status must not redirect execution to the original root"
+            )
+    assert read_instance(original.runtime_status) == saved
+    assert read_instance(copied.runtime_status) == saved
 
 
 @pytest.mark.parametrize("placement", ["resident", "visiting", "roaming"])
@@ -280,9 +362,73 @@ def test_startup_override_cannot_be_silently_ignored_by_an_existing_runtime(
             pytest.fail("existing runtime must not ignore startup overrides")
 
 
+@pytest.mark.parametrize("selection", ["omitted", "same", "changed"])
+def test_running_server_retains_or_verifies_explicit_startup_settings(
+    tmp_path, monkeypatch, selection
+):
+    from toolang.up.contract import startup_contract
+    from toolang.up.instance import update_instance
+
+    layout = AgentLayout.resident(tmp_path, "alice")
+    _set_status(
+        monkeypatch,
+        layout,
+        _status(
+            value="running",
+            endpoint="http://localhost:8123",
+            sandbox="docker:python:3.13-slim",
+        ),
+    )
+    wheel = tmp_path / "toolang-0.0.0-py3-none-any.whl"
+    wheel.write_bytes(b"original wheel")
+    catalog = tmp_path / "models.json"
+    compact = ModelOverride(identity="test/compact")
+    spec = agent_server._resolve_launch(
+        layout,
+        sandbox="docker:python:3.13-slim",
+        dev=wheel,
+        model_catalog=catalog,
+        base_environ={},
+        compact_override=compact,
+        drivers=frozenset({"chat"}),
+        active_port=8123,
+    )
+    update_instance(
+        layout.runtime_status,
+        lambda entry: entry["control"].update(startup_contract=startup_contract(spec)),
+    )
+    monkeypatch.setattr(
+        agent_server,
+        "_resolve_launch",
+        lambda *_a, **_k: pytest.fail("attachment must not resolve a launch"),
+    )
+    options: dict[str, Any] = (
+        {}
+        if selection == "omitted"
+        else {"dev": wheel, "model_catalog": catalog, "compact_override": compact}
+    )
+    if selection == "changed":
+        wheel.write_bytes(b"changed wheel")
+        with pytest.raises(
+            agent_server.AgentServerAcquisitionError,
+            match="development wheel contents.*restart",
+        ):
+            with agent_server.acquire_agent_server(
+                layout, sandbox="docker", ui_base_url="https://ui.test", **options
+            ):
+                pytest.fail("changed explicit wheel must not be ignored")
+    else:
+        with agent_server.acquire_agent_server(
+            layout, sandbox="docker", ui_base_url="https://ui.test", **options
+        ) as server:
+            assert server is not None
+
+
+@pytest.mark.parametrize("requested", [None, "docker", "docker:python:3.13-slim"])
 def test_agent_server_attaches_to_a_compatible_running_agent(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    requested: str | None,
 ) -> None:
     layout = AgentLayout.resident(tmp_path, "alice")
     _set_status(
@@ -297,7 +443,7 @@ def test_agent_server_attaches_to_a_compatible_running_agent(
 
     with agent_server.acquire_agent_server(
         layout,
-        sandbox="docker:python:3.13-slim",
+        sandbox=requested,
         ui_base_url="https://ui.test",
     ) as selected:
         assert selected == AgentServerRef(
@@ -439,6 +585,8 @@ def test_acquisition_does_not_replace_an_automatic_server_that_is_still_alive(
 def test_managed_attachment_checks_its_profile_instead_of_waiting_for_health(
     tmp_path, monkeypatch
 ):
+    from toolang.up.identity import identity_bindings
+
     layout = AgentLayout.resident(tmp_path, "alice")
 
     class Process:
@@ -455,6 +603,7 @@ def test_managed_attachment_checks_its_profile_instead_of_waiting_for_health(
         "read_instance",
         lambda *_args: {
             "launch_id": "launch",
+            "control": identity_bindings(layout),
             "workload": {"lifetime": "automatic", "api_version": 0},
         },
     )
@@ -1132,7 +1281,13 @@ def test_sandbox_match_accepts_driver_or_exact_spec() -> None:
 
 @pytest.mark.parametrize(
     "requested,compatible",
-    [(None, False), ({}, False), ({"repo": "/one"}, True), ({"repo": "/two"}, False)],
+    [
+        (None, True),
+        ({}, True),
+        ({"repo": "/one"}, True),
+        ({"repo": "/two"}, False),
+        ({"new": "/three"}, False),
+    ],
 )
 def test_running_server_cannot_rebind_workspace_names(
     tmp_path, monkeypatch, requested, compatible
@@ -1140,6 +1295,7 @@ def test_running_server_cannot_rebind_workspace_names(
     layout = AgentLayout.resident(tmp_path, "alice")
 
     from toolang.up.contract import startup_contract
+    from toolang.up.identity import identity_bindings
     from toolang.up.instance import update_instance
 
     spec = agent_server._resolve_launch(
@@ -1148,14 +1304,16 @@ def test_running_server_cannot_rebind_workspace_names(
         dev=None,
         model_catalog=None,
         base_environ=None,
-        workspace_additions={"repo": "/one"},
+        workspace_additions={"repo": "/one", "other": "/three"},
         active_port=7001,
         drivers=frozenset({"chat"}),
     )
     update_instance(
         layout.runtime_status,
         lambda entry: entry["control"].update(
-            startup_contract=startup_contract(spec), drivers=["chat"]
+            **identity_bindings(layout),
+            startup_contract=startup_contract(spec),
+            drivers=["chat"],
         ),
     )
 
@@ -1180,7 +1338,7 @@ def test_running_server_cannot_rebind_workspace_names(
     else:
         with pytest.raises(
             agent_server.AgentServerAcquisitionError,
-            match="startup parameters differ: workspace_additions",
+            match="startup parameters differ: workspace bindings",
         ):
             with agent_server.acquire_agent_server(
                 layout, sandbox=None, workspace_additions=requested
@@ -1192,7 +1350,14 @@ def test_running_server_cannot_rebind_workspace_names(
 def test_persistent_acquisition_waits_for_an_existing_startup(
     tmp_path, monkeypatch, capsys, outcome
 ):
+    from toolang.up.identity import identity_bindings
+    from toolang.up.instance import update_instance
+
     layout = AgentLayout.resident(tmp_path, "alice")
+    update_instance(
+        layout.runtime_status,
+        lambda entry: entry["control"].update(identity_bindings(layout)),
+    )
     statuses = iter(("starting", outcome))
     observed_wait = []
 
@@ -1290,11 +1455,17 @@ def test_persistent_acquisition_waits_for_http_after_running_report(
     import os
 
     from toolang.plugin.sandboxes.host import process_ref
+    from toolang.up.identity import identity_bindings
+    from toolang.up.instance import update_instance
 
     layout = AgentLayout.resident(tmp_path, "alice")
     layout.home.mkdir(parents=True)
     ref = process_ref(os.getpid(), "http://localhost:8123")
     SandboxState("host", ref, launch_id="fixture").save(layout.runtime_status)
+    update_instance(
+        layout.runtime_status,
+        lambda entry: entry["control"].update(identity_bindings(layout)),
+    )
     agent_server.agents.write_runtime_state(
         layout,
         endpoint=ref.endpoint,

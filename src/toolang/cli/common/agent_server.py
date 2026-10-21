@@ -35,7 +35,7 @@ from toolang.up.config import placement_policy
 from .context import load_runtime_environ, resolve_root
 from .server_lease import ServerLease
 from .parameters import DEVELOPMENT_WHEEL_HELP as DEVELOPMENT_WHEEL_HELP
-from .startup import resolve_runtime_launch
+from .startup import resolve_attachment_requirements, resolve_runtime_launch
 from .progress import (
     CliProgress,
     make_cli_progress,
@@ -71,6 +71,7 @@ def acquire_agent_server(
     required_driver: DriverName | None = None,
     attach_only: bool = False,
     expected_launch_id: str | None = None,
+    attachment_requirements: Mapping[str, object] | None = None,
 ) -> Iterator[AgentServerRef | None]:
     """Acquire an executor using the placement's reuse and ownership policy."""
 
@@ -103,6 +104,7 @@ def acquire_agent_server(
                     drivers=drivers,
                     required_driver=required_driver,
                     attach_only=attach_only,
+                    attachment_requirements=attachment_requirements,
                 )
                 try:
                     selected_server = (
@@ -302,6 +304,7 @@ def _prepare_agent_server(
     drivers: ExecutionDrivers | None = None,
     required_driver: DriverName | None = None,
     attach_only: bool = False,
+    attachment_requirements: Mapping[str, object] | None = None,
 ) -> AgentServerRef | sandbox_runtime.SandboxHandle | None:
     policy = placement_policy(layout.placement)
     entry = read_instance(layout.runtime_status, layout.instance) or {}
@@ -331,39 +334,34 @@ def _prepare_agent_server(
             progress=progress.sink,
         )
     if status is not None and status.status == "running":
-        attached = _attached_server(layout, status, requested=sandbox)
-        if not attach_only and not isinstance(
-            entry.get("control", {}).get("startup_contract"), dict
-        ):
-            raise AgentServerAcquisitionError(
-                "running startup parameters are unverifiable; stop and restart the agent"
-            )
-        raw = entry.get("control", {}).get("drivers", [])
-        if drivers is not None and isinstance(raw, list) and set(raw) != set(drivers):
-            raise AgentServerAcquisitionError("--enable differs from the running agent")
-        if required_driver is not None and (
-            not isinstance(raw, (list, tuple)) or required_driver not in raw
-        ):
-            raise AgentServerAcquisitionError(f"{required_driver} driver is disabled")
-        if not attach_only:
-            from toolang.up.contract import bound_drivers, require_compatible
+        from toolang.up.identity import verify_identity
 
-            requested = _resolve_launch(
-                layout,
-                sandbox=sandbox,
+        entry = read_instance(layout.runtime_status, layout.instance) or {}
+        verify_identity(layout, entry.get("control", {}))
+        attached = _attached_server(layout, status, requested=sandbox)
+        from toolang.up.contract import bound_drivers, require_compatible
+
+        if drivers is not None or required_driver is not None:
+            running_drivers = bound_drivers(layout)
+            if drivers is not None and drivers != running_drivers:
+                raise AgentServerAcquisitionError(
+                    "--enable differs from the running agent's drivers; stop and restart the agent"
+                )
+            if required_driver is not None and required_driver not in running_drivers:
+                raise AgentServerAcquisitionError(
+                    f"{required_driver} driver is disabled"
+                )
+        require_compatible(
+            layout,
+            resolve_attachment_requirements(
+                sandbox=attached.sandbox,
                 dev=dev,
                 model_catalog=model_catalog,
-                base_environ=base_environ,
                 compact_override=compact_override,
                 workspace_additions=workspace_additions,
-                drivers=drivers if drivers is not None else bound_drivers(layout),
-                active_port=status.port,
-            )
-            try:
-                require_compatible(layout, requested)
-            except ValueError as exc:
-                raise AgentServerAcquisitionError(str(exc)) from exc
-            _prepare_source(layout, progress)
+            ),
+            attachment_requirements or {},
+        )
         return attached
 
     if attach_only:
