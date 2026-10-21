@@ -90,6 +90,10 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   preparation.
   ([#884](https://github.com/openhat-ai/toolang/pull/884))
 
+- The Hub label in `too hub` now uses bright cyan to match resident agent
+  names.
+  ([#888](https://github.com/openhat-ai/toolang/pull/888))
+
 ### Security
 
 - The locked certifi trust store advances to 2026.10.19, resolving trust-store
