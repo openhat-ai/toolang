@@ -26,6 +26,30 @@ EXPECTED_INFO_AVATAR = """\
 
 
 @pytest.mark.parametrize(
+    "zone,value,expected",
+    [
+        ("Asia/Shanghai", "2026-10-21T07:46:28+00:00", "2026-10-21T15:46:28+08:00"),
+        ("Asia/Shanghai", "2026-10-21T07:46:28Z", "2026-10-21T15:46:28+08:00"),
+        ("Asia/Shanghai", "2026-10-21T07:46:28", "2026-10-21T15:46:28+08:00"),
+        ("Asia/Shanghai", "2026-10-21T07:46:28-04:00", "2026-10-21T19:46:28+08:00"),
+        ("UTC", "2026-10-21T07:46:28Z", "2026-10-21T07:46:28+00:00"),
+        ("America/New_York", "2026-01-01T00:00:00Z", "2025-12-31T19:00:00-05:00"),
+        ("America/New_York", "2026-07-01T00:00:00Z", "2026-06-30T20:00:00-04:00"),
+        ("Asia/Shanghai", None, "-"),
+        ("Asia/Shanghai", "", "-"),
+        ("Asia/Shanghai", "-", "-"),
+        ("Asia/Shanghai", "invalid", "invalid"),
+    ],
+)
+def test_timestamp_display_uses_local_timezone(
+    set_local_timezone, zone, value, expected
+):
+    set_local_timezone(zone)
+
+    assert output.format_local_timestamp(value) == expected
+
+
+@pytest.mark.parametrize(
     "count,noun,group,expected",
     [
         (0, "tool", (0, "toolset"), "0 tools\n"),

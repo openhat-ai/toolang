@@ -3,8 +3,25 @@
 from __future__ import annotations
 
 import os
+import time
 
 import pytest
+
+
+@pytest.fixture
+def set_local_timezone():
+    """Select a process-local timezone and restore it after the test."""
+
+    try:
+        with pytest.MonkeyPatch.context() as patch:
+
+            def select(name: str) -> None:
+                patch.setenv("TZ", name)
+                time.tzset()
+
+            yield select
+    finally:
+        time.tzset()
 
 
 def pytest_configure(config: pytest.Config) -> None:
