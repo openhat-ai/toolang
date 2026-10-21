@@ -44,9 +44,9 @@ def _wrap(console: Console, value: str, width: int) -> list[str]:
     return [line.plain for line in Text(value).wrap(console, width, overflow="fold")]
 
 
-def _pad(line: Text, value: str, width: int, *, style: str | None = None) -> None:
-    line.append(value, style=style)
-    padding = width - cell_len(value)
+def _pad(line: Text, value: Text, width: int) -> None:
+    line.append(value)
+    padding = width - value.cell_len
     if padding > 0:
         line.append(" " * padding)
 
@@ -56,6 +56,19 @@ def _pad_right(line: Text, value: str, width: int, *, style: str | None = None) 
     if padding > 0:
         line.append(" " * padding)
     line.append(value, style=style)
+
+
+def _agent_label(console: Console, instance: RuntimeInstance) -> Text:
+    style = {
+        "resident": "bright_cyan",
+        "roaming": "bright_magenta",
+        "visiting": "bright_yellow",
+    }[instance.placement]
+    label = Text(_safe_text(console, instance.name), style=style)
+    suffix = instance.label[len(instance.name) :]
+    if suffix:
+        label.append(_safe_text(console, suffix), style="default dim")
+    return label
 
 
 def _ascii_tree(console: Console) -> bool:
@@ -81,32 +94,39 @@ def _status_label(instance: RuntimeInstance) -> str:
     return "-" if instance.state == "unknown" else instance.state
 
 
+def _hub_fields(snapshot: HubSnapshot) -> tuple[str, str]:
+    if snapshot.state == "running":
+        return "running", snapshot.version or "unknown"
+    return "not running", ""
+
+
 def _column_widths(
     console: Console,
-    instances: tuple[RuntimeInstance, ...],
+    snapshot: HubSnapshot,
     *,
     width: int,
 ) -> tuple[int, int, int]:
+    instances = snapshot.instances.instances
+    hub_status, hub_version = _hub_fields(snapshot)
     tree_width = 4
     name_width = max(
-        24,
+        32,
         max(
-            (
-                tree_width + cell_len(_safe_text(console, item.label))
-                for item in instances
-            ),
+            (tree_width + _agent_label(console, item).cell_len for item in instances),
             default=tree_width,
         ),
     )
     status_width = max(
-        10,
+        11,
+        cell_len(hub_status),
         max(
             (cell_len(_safe_text(console, _status_label(item))) for item in instances),
-            default=10,
+            default=11,
         ),
     )
     talk_width = max(
         8,
+        cell_len(_safe_text(console, hub_version)),
         max(
             (cell_len(_safe_text(console, _talk_label(item))) for item in instances),
             default=8,
@@ -122,6 +142,50 @@ def _column_widths(
     return name_width, status_width, talk_width
 
 
+def _row_lines(
+    console: Console,
+    name: Text,
+    status: str,
+    detail: str,
+    *,
+    name_width: int,
+    status_width: int,
+    talk_width: int,
+    prefix: str = "",
+    continuation: str = "",
+) -> list[Text]:
+    label_width = max(1, name_width - cell_len(prefix))
+    name_chunks = name.wrap(console, label_width, overflow="fold")
+    status = _safe_text(console, status)
+    detail = _safe_text(console, detail)
+    status_chunks = _wrap(console, status, status_width)
+    talk_chunks = _wrap(console, detail, talk_width)
+    row_count = max(len(name_chunks), len(status_chunks), len(talk_chunks))
+    status_style = "dim" if status in {"not running", "-"} else ""
+    talk_style = "dim" if detail in {"disabled", "-", "unknown"} else None
+    lines: list[Text] = []
+
+    for row_index in range(row_count):
+        line = Text(no_wrap=True)
+        line.append(prefix if row_index == 0 else continuation)
+
+        name_chunk = name_chunks[row_index] if row_index < len(name_chunks) else Text()
+        _pad(line, name_chunk, label_width)
+        line.append("  ")
+
+        status_chunk = (
+            status_chunks[row_index] if row_index < len(status_chunks) else ""
+        )
+        _pad(line, Text(status_chunk, style=status_style), status_width)
+        line.append("  ")
+
+        talk_chunk = talk_chunks[row_index] if row_index < len(talk_chunks) else ""
+        _pad_right(line, talk_chunk, talk_width, style=talk_style)
+        lines.append(Text(line.plain, no_wrap=True) if console.no_color else line)
+
+    return lines
+
+
 def _agent_lines(
     console: Console,
     instance: RuntimeInstance,
@@ -133,54 +197,22 @@ def _agent_lines(
     talk_width: int,
     ascii_tree: bool,
 ) -> list[Text]:
-    tree_width = 4
     is_last = index == count - 1
     branch = (
         ("\\--" if is_last else "+--") if ascii_tree else ("└──" if is_last else "├──")
     )
     spine = "|   " if ascii_tree else "│   "
-    name_chunks = _wrap(console, instance.label, max(1, name_width - tree_width))
-    status = _safe_text(console, _status_label(instance))
-    talk = _safe_text(console, _talk_label(instance))
-    status_chunks = _wrap(console, status, status_width)
-    talk_chunks = _wrap(console, talk, talk_width)
-    row_count = max(len(name_chunks), len(status_chunks), len(talk_chunks))
-    status_style = "dim" if status in {"not running", "-"} else None
-    talk_style = "dim" if talk in {"disabled", "-"} else None
-    lines: list[Text] = []
-
-    for row_index in range(row_count):
-        line = Text(no_wrap=True)
-        if row_index == 0:
-            line.append(f"{branch} ")
-        else:
-            line.append("    " if is_last else spine)
-
-        name = name_chunks[row_index] if row_index < len(name_chunks) else ""
-        _pad(line, name, max(1, name_width - tree_width))
-        line.append("  ")
-
-        status_chunk = (
-            status_chunks[row_index] if row_index < len(status_chunks) else ""
-        )
-        _pad(line, status_chunk, status_width, style=status_style)
-        line.append("  ")
-
-        talk_chunk = talk_chunks[row_index] if row_index < len(talk_chunks) else ""
-        _pad_right(line, talk_chunk, talk_width, style=talk_style)
-        lines.append(line)
-
-    return lines
-
-
-def _hub_line(snapshot: HubSnapshot, console: Console) -> Text:
-    line = Text(no_wrap=True)
-    line.append("hub ")
-    if snapshot.state == "running":
-        line.append(_safe_text(console, snapshot.version or "running"))
-    else:
-        line.append("not running")
-    return line
+    return _row_lines(
+        console,
+        _agent_label(console, instance),
+        _status_label(instance),
+        _talk_label(instance),
+        name_width=name_width,
+        status_width=status_width,
+        talk_width=talk_width,
+        prefix=f"{branch} ",
+        continuation="    " if is_last else spine,
+    )
 
 
 def render_hub_snapshot(snapshot: HubSnapshot, console: Console | None = None) -> None:
@@ -193,13 +225,22 @@ def render_hub_snapshot(snapshot: HubSnapshot, console: Console | None = None) -
         for item in instances
     )
     ascii_tree = _ascii_tree(console)
-    console.print(_hub_line(snapshot, console))
+    name_width, status_width, talk_width = _column_widths(
+        console, snapshot, width=max(20, console.width)
+    )
+    hub_status, hub_version = _hub_fields(snapshot)
+    for line in _row_lines(
+        console,
+        Text("hub", style="cyan"),
+        hub_status,
+        hub_version,
+        name_width=name_width,
+        status_width=status_width,
+        talk_width=talk_width,
+    ):
+        console.print(line)
 
     if instances:
-        width = max(20, console.width)
-        name_width, status_width, talk_width = _column_widths(
-            console, instances, width=width
-        )
         for index, instance in enumerate(instances):
             for line in _agent_lines(
                 console,

@@ -305,7 +305,7 @@ module.serve(root, TeamingRootConfig("human:owner", BackendConfig("redis://local
                 hub.connection()
             assert cli.main(["--root", str(tmp_path), "hub"]) == 0
             output = capsys.readouterr().out
-            assert output.startswith("hub not running\n")
+            assert output.splitlines()[0].split() == ["hub", "not", "running"]
             assert "no agents" in output
             assert "0 agents, 0 running, 0 talk enabled" not in output
             assert cli.main(["--root", str(tmp_path), "hub", "stop", "--force"]) == 0
