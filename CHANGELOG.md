@@ -23,6 +23,11 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   usage, or replayed events.
   ([#884](https://github.com/openhat-ai/toolang/pull/884))
 
+- Structured `[model]`, `[talk.model]`, `[talk.limit]`, and `[compact.model]`
+  tables configure model ref, effort, and output limits, and model strings
+  accept `ref=`, while legacy strings warn.
+  ([#907](https://github.com/openhat-ai/toolang/pull/907))
+
 ### Changed
 
 - **Breaking:** Stop every running agent with `too AGENT stop` or Ctrl+C before
@@ -112,6 +117,11 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   other labels unchanged.
   ([#911](https://github.com/openhat-ai/toolang/pull/911))
 
+- **Breaking:** Independent flows and `runtime__spawn` use captured `[model]`
+  and `[limit]` defaults instead of caller Talk, Chat, or Chore overrides;
+  set worker defaults there.
+  ([#907](https://github.com/openhat-ai/toolang/pull/907))
+
 ### Fixed
 
 - Failed preparation no longer leaves active registrations; runtime references
@@ -186,6 +196,10 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 - The Top `STATUS` heading reserves the two-cell root-marker gutter, so active
   and completed tree text aligns under its column title.
   ([#897](https://github.com/openhat-ai/toolang/pull/897))
+
+- CLI tables show chore next-run and inspect control, thread, run, and step
+  timestamps in the local timezone, while stored records and JSON keep UTC.
+  ([#898](https://github.com/openhat-ai/toolang/pull/898))
 
 - An empty Hub roster renders as a dim `└── no agents` tree leaf beneath the
   Hub row, and as `\-- no agents` in ASCII output.
