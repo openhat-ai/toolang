@@ -23,7 +23,7 @@ def test_policy_options_overlay_environment_by_field() -> None:
         "models": ("local/*", "test/*"),
         "tools": (),
     }
-    assert resolve_default_overrides(environ, ("model=none",)) == {
+    assert resolve_default_overrides(environ, ("model=unset",)) == {
         "model": ModelOverride(identity="unset")
     }
     assert resolve_limit_overrides(
@@ -40,7 +40,7 @@ def test_policy_overrides_preserve_absent_empty_and_unrestricted() -> None:
     assert resolve_ceiling_overrides({}, ()) == {}
     assert resolve_ceiling_overrides({}, ("tools=none",)) == {"tools": ()}
     assert resolve_ceiling_overrides({}, ("tools=all",)) == {"tools": None}
-    assert resolve_default_overrides({}, ("model=none",)) == {
+    assert resolve_default_overrides({}, ("model=unset",)) == {
         "model": ModelOverride(identity="unset")
     }
     assert resolve_limit_overrides({}, ("time=none",)) == {"time": None}
@@ -139,7 +139,7 @@ def test_default_model_body_composes_environment_and_startup_parameters() -> Non
         ("model=effort=high",),
     ) == {"model": ModelOverride(identity="gateway/chat", effort="high")}
     assert resolve_default_overrides(
-        {"TOOLANG_DEFAULT_MODEL": "none"},
+        {"TOOLANG_DEFAULT_MODEL": "unset"},
         ("model=default effort=high",),
     ) == {"model": ModelOverride(identity="default", effort="high")}
 
@@ -166,3 +166,11 @@ def test_named_and_bare_model_refs_match_across_string_boundaries(body):
     assert parse_call(f"/model {body}\n\nrequest")[0].model == expected
     assert parse_model_body(body) == expected
     assert format_model_body(expected).startswith("ref=test/worker")
+
+
+@pytest.mark.parametrize("source", ["environment", "startup"])
+def test_default_model_none_is_rejected(source):
+    environ = {"TOOLANG_DEFAULT_MODEL": "none"} if source == "environment" else {}
+    options = ("model=none",) if source == "startup" else ()
+    with pytest.raises(ValueError, match="model identity 'none' was removed"):
+        resolve_default_overrides(environ, options)

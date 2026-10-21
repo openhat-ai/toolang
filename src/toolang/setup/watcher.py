@@ -515,7 +515,7 @@ def _build_setup(
         if validate_defaults and compact.model:
             selected = compose_model_overrides(compact.model)
             if selected is not None and selected.identity not in (None, "default"):
-                select_compact_model(models_effective, selected)
+                select_compact_model(models_effective, (selected,))
         if validate_defaults and talk.model:
             selected = compose_model_overrides(talk.model)
             request = (

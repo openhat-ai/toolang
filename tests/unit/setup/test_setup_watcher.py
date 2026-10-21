@@ -434,7 +434,7 @@ def test_model_defaults_are_validated_when_models_are_first_loaded(
     _write_catalog(path, ("one",))
     watcher, _counts = _watcher(monkeypatch, tmp_path, validate_defaults=True)
     watcher.layout.root_config.write_text(
-        '[default]\nmodel = "test/missing"\n', encoding="utf-8"
+        '[model]\nref = "test/missing"\n', encoding="utf-8"
     )
     setup = asyncio.run(watcher.refresh())
     with pytest.raises(ToolangError, match="model ref is unavailable: test/missing"):
@@ -517,7 +517,7 @@ def test_compact_changes_publish_new_setup_and_preserve_captured_values(
     assert second.revision != first.revision
     assert getattr(second.compact, field) == expected
     assert first.compact == captured
-    watcher.layout.root_config.write_text('[compact]\nmodel = "unset"\n')
+    watcher.layout.root_config.write_text('[compact.model]\nref = "unset"\n')
     assert asyncio.run(watcher.refresh()) is second
     assert watcher.diagnostics
 
@@ -681,3 +681,31 @@ def test_parameter_only_talk_waits_for_handler_model_and_invalid_refs_fail_lazil
     assert invalid is not setup
     with pytest.raises(ToolangError, match="unavailable"):
         invalid.models_effective()
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        '[default]\nmodel="test/missing effort=high"\n',
+        '[compact]\nmodel="test/missing effort=high"\n',
+    ],
+)
+def test_unowned_model_configuration_does_not_change_setup(
+    tmp_path, monkeypatch, content
+):
+    config = tmp_path / "config.toml"
+    config.write_text(content)
+    watcher, counts = _watcher(monkeypatch, tmp_path, validate_defaults=True)
+    first = asyncio.run(watcher.refresh())
+    assert first.defaults.model is None and first.compact.model == ()
+    assert first.models_effective()
+    config.write_text(content.replace("missing effort=high", "other effort=low"))
+    assert asyncio.run(watcher.refresh()) is first
+    assert not watcher.diagnostics()
+    assert counts["adapters"] == 1
+    config.write_text('[model]\nref="test/one"\n[compact.model]\nref="test/two"\n')
+    second = asyncio.run(watcher.refresh())
+    assert second is not first and second.defaults.model is not None
+    assert second.defaults.model.ref == "test/one"
+    assert second.compact.model[0].identity == "test/two"
+    assert second.models_effective()

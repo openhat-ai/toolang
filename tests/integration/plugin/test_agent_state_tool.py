@@ -114,7 +114,7 @@ def test_six_closed_me_schemas():
 @pytest.mark.parametrize(
     ("key", "content"),
     [
-        ("config.toml", '# Keep comments\r\n[default]\r\nmodel = "test/model"\r\n'),
+        ("config.toml", '# Keep comments\r\n[model]\r\nref = "test/model"\r\n'),
         ("runnables/research.too", "flow:\n  pass\n"),
         ("runnables/talk.too", "agic(_: Json):\n  {{_}}\n"),
         ("psyches/careful.md", "Think carefully.\n"),
@@ -714,7 +714,7 @@ def test_flow_deletion_is_saved_and_composition_errors_belong_to_watcher(context
     [
         "[broken",
         "[allow]\ntools = 1",
-        "[default]\nunexpected = true",
+        "[model]\nunexpected = true",
         "[workspaces]\na = 42",
     ],
 )

@@ -469,12 +469,12 @@ The same grammar is accepted by `TOOLANG_DEFAULT_MODEL`, `TOOLANG_COMPACT_MODEL`
 `:model BODY`, retaining each surface's existing restrictions and lifetime.
 Quote multi-token shell values, for example `--model 'ref=gateway/chat effort=high'`.
 
-Legacy `[default].model` and `[compact].model` strings remain supported with one
-migration warning per source/field per process. Use the corresponding model
-tables instead. A source cannot contain both `[default].model` and `[model]`;
-legacy and structured values can occur in different layers. Legacy `none`
-normalization is retained only for existing general-default sources. There is
-no `[default.model]` table or arbitrary provider-parameter map.
+Only structured model tables are read from configuration files. Migrate
+`[default].model` to `[model]` with `ref`, `effort`, and `max_output` fields,
+and compact model strings to `[compact.model]`. The old `[default]` namespace
+and scalar compact model settings have no effect. Model string inputs use
+`unset` to clear a preference; `none` is not a model selection sentinel.
+There is no arbitrary provider-parameter map.
 
 `[models.providers.*]`, `[models].default`, and `[models.aliases.*]` are rejected.
 Custom model identities and aliases will be supplied by a future custom catalog rather than

@@ -11,8 +11,8 @@ from toolang.common.layout import home_edit_lock_path
 def test_state_config_projection_excludes_setup_fields_and_is_canonical() -> None:
     first = canonical_state_config(
         b"""
-[default]
-model = "openai/one"
+[model]
+ref = "openai/one"
 
 [allow]
 models = ["openai/*"]
@@ -40,7 +40,7 @@ tools = ["shell/*"]
 
     assert first == reordered
     text = first.decode()
-    assert "default" not in text
+    assert "model" not in text
     assert "models" not in text
     assert "tools" not in text
     assert text.index("alpha") < text.index("zeta")
@@ -68,7 +68,7 @@ def test_configured_workspaces_preserve_unrelated_toml_and_workspace_data(
     tmp_path: Path,
 ) -> None:
     config = tmp_path / "config.toml"
-    original = '# Keep this comment\n[default]\nmodel = "openai/gpt-5"\n'
+    original = '# Keep this comment\n[model]\nref = "openai/gpt-5"\n'
     config.write_text(original, encoding="utf-8")
     workspace = tmp_path / "toolang"
     workspace.mkdir()

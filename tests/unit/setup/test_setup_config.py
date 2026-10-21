@@ -121,7 +121,7 @@ def test_setup_policy_overlays_root_agent_and_frozen_overrides() -> None:
             "models": ["gateway/*"],
             "skills": ["reviewer"],
         },
-        "default": {"model": "gateway/chat"},
+        "model": {"ref": "gateway/chat"},
         "limit": {
             "agic_model_calls": 50,
             "tokens": 1000,
@@ -130,7 +130,7 @@ def test_setup_policy_overlays_root_agent_and_frozen_overrides() -> None:
     }
     agent = {
         "allow": {"models": [], "skills": ["editor"]},
-        "default": {"model": "none"},
+        "model": {"ref": "unset"},
         "limit": {"tokens": 2000, "cost": "none", "time": 60},
     }
 
@@ -179,16 +179,16 @@ def test_run_limits_use_limit_table() -> None:
 def test_default_model_body_layers_identity_and_typed_parameters() -> None:
     assert resolve_run_defaults(
         (
-            {"default": {"model": "openai/gpt-5 effort=low"}},
-            {"default": {"model": "effort=high"}},
+            {"model": {"ref": "openai/gpt-5", "effort": "low"}},
+            {"model": {"effort": "high"}},
         ),
         overrides={"model": parse_model_body("effort=auto")},
     ) == RunDefaults(model=ModelRequest("openai/gpt-5"))
 
     assert resolve_run_defaults(
         (
-            {"default": {"model": "openai/gpt-5 effort=low"}},
-            {"default": {"model": "effort=4096"}},
+            {"model": {"ref": "openai/gpt-5", "effort": "low"}},
+            {"model": {"effort": 4096}},
         )
     ) == RunDefaults(
         model=ModelRequest(
@@ -198,26 +198,17 @@ def test_default_model_body_layers_identity_and_typed_parameters() -> None:
     )
 
 
-@pytest.mark.parametrize("scope", ["root", "agent"])
-def test_runnable_configuration_is_rejected_at_both_scopes(scope):
-    root = {"default": {"runnable": "agic:work"}} if scope == "root" else {}
-    agent = {"default": {"runnable": "agic:work"}} if scope == "agent" else {}
-    with pytest.raises(ValueError, match=r"\[default\].runnable.*no longer supported"):
-        resolve_run_defaults((root, agent))
-    assert not hasattr(RunDefaults(), "runnable")
-
-
 def test_setup_policy_rejects_unknown_and_invalid_fields() -> None:
     with pytest.raises(ValueError, match="unknown allow field: channels"):
         resolve_setup_allow(({"allow": {"channels": ["web"]}},))
     with pytest.raises(TypeError, match="allow models must be an array"):
         resolve_setup_allow(({"allow": {"models": 42}},))
-    with pytest.raises(ValueError, match="unknown default field: tool"):
-        resolve_run_defaults(({"default": {"tool": "shell"}},))
+    with pytest.raises(ValueError, match="unknown model field: tool"):
+        resolve_run_defaults(({"model": {"tool": "shell"}},))
     with pytest.raises(ValueError, match="model request ref must be exact"):
-        resolve_run_defaults(({"default": {"model": "openai/*"}},))
-    with pytest.raises(TypeError, match="default model must be a string"):
-        resolve_run_defaults(({"default": {"model": {"ref": "openai/gpt-5"}}},))
+        resolve_run_defaults(({"model": {"ref": "openai/*"}},))
+    with pytest.raises(TypeError, match="model.ref must be a string"):
+        resolve_run_defaults(({"model": {"ref": {"ref": "openai/gpt-5"}}},))
     with pytest.raises(ValueError, match="unknown run limit: turns"):
         resolve_run_limits(({"limit": {"turns": 1}},))
     with pytest.raises(ValueError, match="cost must be non-negative"):
@@ -234,8 +225,6 @@ def test_setup_policy_validates_owned_collection_queries() -> None:
     assert resolve_setup_allow(
         ({"allow": {"models": ["*[missing=value]"]}},)
     ).models == ("*[missing=value]",)
-    with pytest.raises(ValueError, match="no longer supported"):
-        resolve_run_defaults(({"default": {"runnable": "*[missing=value]"}},))
 
 
 def test_setup_policy_ignores_state_owned_allow_value_syntax() -> None:
@@ -319,24 +308,22 @@ def test_structured_model_validation_has_source_and_field(
     assert "model" in str(exc.value)
 
 
-def test_legacy_model_warnings_are_per_source_and_conflicts_fail(tmp_path, caplog):
-    caplog.set_level("WARNING", logger="toolang.setup.config")
-    root, agent = tmp_path / "root.toml", tmp_path / "agent.toml"
-    config = {"default": {"model": "test/base effort=high"}}
-    for _ in range(2):
-        assert resolve_run_defaults((config,), origins=(root,)).model == ModelRequest(
-            "test/base", reasoning=Reasoning(effort="high")
-        )
-    resolve_run_defaults((config,), origins=(agent,))
-    warnings = [
-        record.message for record in caplog.records if "is deprecated" in record.message
+@pytest.mark.parametrize("scope", ["root", "agent"])
+@pytest.mark.parametrize(
+    "value",
+    [{}, {"model": "test/old effort=high"}, {"model": "none"}, {"runnable": "work"}],
+)
+def test_unowned_default_configuration_is_ignored(scope, value):
+    configs = [
+        {"model": {"ref": "test/base"}},
+        {"model": {"max_output": 128}},
     ]
-    assert len(warnings) == 2 and str(root) in warnings[0] and str(agent) in warnings[1]
-    with pytest.raises(ValueError, match="same source"):
-        resolve_run_defaults(({**config, "model": {}},))
-    assert resolve_run_defaults(
-        (config, {"model": {"effort": "auto"}})
-    ).model == ModelRequest("test/base")
+    configs[0 if scope == "root" else 1]["default"] = value
+    assert resolve_run_defaults(configs) == RunDefaults(
+        model=ModelRequest("test/base", max_output=128)
+    )
+    assert resolve_run_defaults(({"default": value},)) == RunDefaults()
+    assert not hasattr(RunDefaults(), "runnable")
 
 
 def test_talk_policy_is_sparse_and_above_resolved_general_limits():
@@ -368,3 +355,81 @@ def test_talk_policy_is_sparse_and_above_resolved_general_limits():
     for field in ("allow", "unknown"):
         with pytest.raises(ValueError, match="talk field"):
             resolve_talk_config(({"talk": {field: {}}},), limits=RunLimits())
+
+
+@pytest.mark.parametrize(
+    "root_talk,agent_talk,expected",
+    [
+        (
+            {},
+            {},
+            RunLimits(
+                agic_model_calls=11, agic_tool_calls=12, tokens=13, cost=14, time=15
+            ),
+        ),
+        (
+            {"agic_model_calls": 0, "cost": "0.25"},
+            {"agic_tool_calls": "none", "tokens": 0, "time": "none"},
+            RunLimits(agic_model_calls=0, tokens=0, cost=0.25),
+        ),
+        (
+            dict.fromkeys(
+                ("agic_model_calls", "agic_tool_calls", "tokens", "cost", "time"), 0
+            ),
+            {},
+            RunLimits(agic_model_calls=0, agic_tool_calls=0, tokens=0, cost=0, time=0),
+        ),
+        (
+            {
+                "agic_model_calls": 1,
+                "agic_tool_calls": 2,
+                "tokens": 3,
+                "cost": "4.25",
+                "time": 5,
+            },
+            dict.fromkeys(
+                ("agic_model_calls", "agic_tool_calls", "tokens", "cost", "time"),
+                "none",
+            ),
+            RunLimits(agic_model_calls=None),
+        ),
+    ],
+)
+def test_talk_limits_overlay_every_resolved_ordinary_field(
+    root_talk, agent_talk, expected
+):
+    from toolang.setup.config import resolve_talk_config
+
+    configs = (
+        {
+            "limit": {
+                "agic_model_calls": 1,
+                "agic_tool_calls": 2,
+                "tokens": 3,
+                "cost": "4",
+                "time": 5,
+            },
+            "talk": {"limit": root_talk},
+        },
+        {
+            "limit": {
+                "agic_model_calls": 6,
+                "agic_tool_calls": 7,
+                "tokens": 8,
+                "cost": "9",
+                "time": 10,
+            },
+            "talk": {"limit": agent_talk},
+        },
+    )
+    ordinary = resolve_run_limits(
+        configs,
+        overrides={
+            "agic_model_calls": 11,
+            "agic_tool_calls": 12,
+            "tokens": 13,
+            "cost": 14,
+            "time": 15,
+        },
+    )
+    assert resolve_talk_config(configs, limits=ordinary).limits == expected

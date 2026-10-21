@@ -69,9 +69,9 @@ def test_bounded_layers_keep_path_origins_and_local_permissions(tmp_path, monkey
     source = source_dir / "file.too"
     source.write_text("flow run():\n  pass\n")
     (tmp_path / "toolang.toml").write_text(
-        '[default]\nmodel = "openai/gpt-4o"\n[workspaces]\nouter = "/"\n'
+        '[model]\nref = "openai/gpt-4o"\n[workspaces]\nouter = "/"\n'
     )
-    (project / "toolang.toml").write_text('[default]\nmodel = "effort=high"\n')
+    (project / "toolang.toml").write_text('[model]\neffort = "high"\n')
     (source_dir / "toolang.toml").write_text('[workspaces]\nrepo = ".."\n')
     monkeypatch.setenv("GIT_WORK_TREE", "/wrong")
     layout = materialize_roaming_program(source)
@@ -240,20 +240,20 @@ def test_three_project_layers_preserve_field_specific_merges(tmp_path):
     source = inner / "aid.too"
     source.write_text("flow run():\n  pass\n")
     (tmp_path / "toolang.toml").write_text(
-        '[default]\nmodel = "test/base"\n'
-        '[compact]\nmodel = "test/old effort=high"\n'
+        '[model]\nref = "test/base"\n'
+        '[compact.model]\nref = "test/old"\neffort = "high"\n'
         '[allow]\ntools = ["fs/*"]\n'
         '[sandbox]\ndriver = "docker"\ntarget = "old-image"\n'
         "[plugin.toolset.fs]\nvalues = [1, 2]\n"
         "[plugin.toolset.fs.options]\nouter = true\n"
     )
     (middle / "toolang.toml").write_text(
-        '[default]\nmodel = "effort=high"\n'
+        '[model]\neffort = "high"\n'
         '[sandbox]\ndriver = "host"\n'
         "[plugin.toolset.fs.options]\ninner = true\n"
     )
     (inner / "toolang.toml").write_text(
-        '[compact]\nmodel = "test/new"\n'
+        '[compact.model]\nref = "test/new"\n'
         '[allow]\ntools = ["shell/*"]\n'
         "[plugin.toolset.fs]\nvalues = [3]\n"
     )

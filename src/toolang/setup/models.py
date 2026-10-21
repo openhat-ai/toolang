@@ -25,15 +25,12 @@ def order_models(
 
 def select_compact_model(
     models: Sequence[Model],
-    override: ModelOverride | Sequence[ModelOverride] | None,
+    operations: Sequence[ModelOverride],
     *,
     default: str | None = None,
 ) -> ModelRequest:
     """Select one allowed, ready tool-call model without building a collection."""
 
-    operations = (
-        (override,) if isinstance(override, ModelOverride) else tuple(override or ())
-    )
     eligible = tuple(
         model
         for model in filter_models(models, ("*[tool_call]",))

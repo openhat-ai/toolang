@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 import math
 import os
 import re
@@ -11,7 +10,6 @@ from contextlib import contextmanager
 from dataclasses import replace
 from decimal import Decimal
 from pathlib import Path
-from threading import Lock
 from typing import Iterator, cast
 
 from dotenv import dotenv_values
@@ -31,11 +29,6 @@ from toolang.common.config_sources import read_config
 from toolang.common.policy import resolve_query_sentinels
 
 from .types import CompactConfig, TalkConfig
-
-logger = logging.getLogger(__name__)
-_LEGACY_WARNINGS: set[tuple[Path | None, str]] = set()
-_WARNING_LOCK = Lock()
-
 
 _CAP_KIND_BY_FIELD = {
     "psyches": "psyche",
@@ -105,7 +98,7 @@ def project_setup_config(config: Mapping[str, object]) -> dict[str, object]:
 
     projected = {
         name: _mutable_value(config[name])
-        for name in ("models", "model", "default", "compact", "talk", "limit")
+        for name in ("models", "model", "compact", "talk", "limit")
         if name in config
     }
     raw_allow = config.get("allow")
@@ -201,17 +194,6 @@ def _origin(origins: Sequence[Path], index: int) -> Iterator[None]:
         raise
 
 
-def _warn_legacy(origin: Path | None, field: str, replacement: str) -> None:
-    key = origin, field
-    with _WARNING_LOCK:
-        if key in _LEGACY_WARNINGS:
-            return
-        _LEGACY_WARNINGS.add(key)
-    logger.warning(
-        "%s: %s is deprecated; use [%s]", origin or "configuration", field, replacement
-    )
-
-
 def _model_table(value: object, label: str) -> ModelOverride | None:
     if not isinstance(value, Mapping):
         raise TypeError(f"{label} must be a table")
@@ -254,18 +236,8 @@ def resolve_compact_config(
                 frozenset({"model", "summary", "recent", "trigger"}),
                 "compact field",
             )
-            if "model" in table:
-                raw = table["model"]
-                if isinstance(raw, str):
-                    selected = parse_model_body(_default_text("model", raw))
-                    _validate_compact_override(selected)
-                    _warn_legacy(
-                        origins[index] if index < len(origins) else None,
-                        "compact.model string",
-                        "compact.model",
-                    )
-                else:
-                    selected = _model_table(raw, "compact.model")
+            if isinstance(table.get("model"), Mapping):
+                selected = _model_table(table["model"], "compact.model")
                 if selected is not None:
                     if selected.identity == "unset":
                         raise ValueError(
@@ -361,33 +333,12 @@ def resolve_run_defaults(
     overrides: Mapping[str, ModelOverride | str | None] | None = None,
     origins: Sequence[Path] = (),
 ) -> RunDefaults:
-    """Resolve layered ``[default]`` configuration and frozen overrides."""
+    """Resolve layered ``[model]`` configuration and frozen overrides."""
 
     model: ModelRequest | None = None
     for index, config in enumerate(configs):
         with _origin(origins, index):
-            raw_default = _table(config, "default")
-            if raw_default is not None:
-                if "runnable" in raw_default:
-                    raise ValueError(
-                        "[default].runnable is no longer supported; declare a named chat, talk, or chore handler, or select a Chat session runnable"
-                    )
-                _reject_unknown(raw_default, _DEFAULT_FIELDS, "default field")
-            if raw_default is not None and "model" in raw_default:
-                if "model" in config:
-                    raise ValueError(
-                        "[default].model and [model] cannot occur in the same source"
-                    )
-                body = _default_text("model", raw_default["model"])
-                if body.lower() == "none":
-                    body = "unset"
-                selected = parse_model_body(body)
-                _warn_legacy(
-                    origins[index] if index < len(origins) else None,
-                    "default.model",
-                    "model",
-                )
-            elif "model" in config:
+            if "model" in config:
                 selected = _model_table(config["model"], "model")
             else:
                 selected = None
@@ -467,15 +418,6 @@ def _query_values(name: str, value: object) -> tuple[str, ...] | None:
         )
     except ToolangError as error:
         raise ValueError(str(error)) from error
-
-
-def _default_text(name: str, value: object) -> str:
-    if not isinstance(value, str):
-        raise TypeError(f"default {name} must be a string")
-    normalized = value.strip()
-    if not normalized:
-        raise ValueError(f"default {name} must not be empty")
-    return normalized
 
 
 def _load_dotenv(path: Path) -> dict[str, str]:

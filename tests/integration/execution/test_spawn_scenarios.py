@@ -939,11 +939,12 @@ flow child(_: Text) -> Text:
 
 
 @pytest.mark.parametrize(
-    "caller,reuse", [("flow", False), ("agic", False), ("agic", True)]
+    "caller,target_kind",
+    [("flow", None), ("agic", None), *(("agic", kind) for kind in ThreadKind)],
 )
 @pytest.mark.parametrize("prefix", list(ThreadKind))
 def test_spawn_resets_model_and_budget_while_nested_calls_inherit(
-    tmp_path, caller, reuse, prefix
+    tmp_path, caller, target_kind, prefix
 ):
     from dataclasses import replace
     from toolang.base.types.policy import RunDefaults, RunLimits
@@ -962,6 +963,7 @@ flow nested(_: Text) -> Text:
 flow child(_: Text) -> Text:
   let note = child
 """
+    target_thread = f"{target_kind.value}_deadbeef" if target_kind else None
     responses = (
         []
         if caller == "flow"
@@ -981,7 +983,7 @@ flow child(_: Text) -> Text:
                         {
                             "runnable": "child",
                             "input": {"_": "input"},
-                            **({"thread": "talk_deadbeef"} if reuse else {}),
+                            **({"thread": target_thread} if target_thread else {}),
                         },
                     ),
                 ),
@@ -990,8 +992,8 @@ flow child(_: Text) -> Text:
         ]
     )
     harness = ExecutionHarness.create(tmp_path, source=source, responses=responses)
-    if reuse:
-        harness.store.create_thread(thread_id="talk_deadbeef")
+    if target_thread:
+        harness.store.create_thread(thread_id=target_thread)
     ordinary = harness.setup.models_effective()[0]
     router = replace(ordinary, id="router")
     normal_request = ModelRequest(ordinary.ref, max_output=512)
@@ -1023,6 +1025,14 @@ flow child(_: Text) -> Text:
             await asyncio.gather(
                 *(root.task for root in tuple(harness.executor._root_runs.values()))
             )
+            workers = [
+                run
+                for run in harness.store.list_runs()
+                if run.id != parent.id and run.parent is None
+            ]
+            assert len(workers) == 1
+            if target_thread:
+                assert workers[0].thread.id == target_thread
             for run in harness.store.list_runs():
                 assert run.status == "succeeded", run.error
                 entry = harness.store.get_run_control(run_id=run.id, index=0)
@@ -1267,5 +1277,111 @@ agic worker(_: Text):
                 assert parent.status == "succeeded", parent.error
                 assert len(harness.adapter.invocations) == 1
                 assert harness.adapter.invocations[0].model.ref == ordinary.ref
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("caller", ["flow", "agic"])
+def test_spawn_keeps_captured_ordinary_defaults_after_setup_refresh(
+    tmp_path, monkeypatch, caller
+):
+    from dataclasses import replace
+    from toolang.base.types.model import ModelRequest
+    from toolang.base.types.policy import RunDefaults, RunLimits
+    from tests.support.setup import replace_materialized_setup
+
+    gate = AsyncGate()
+    result = (
+        ModelCallResult(message=Message.assistant("continue"))
+        if caller == "flow"
+        else ModelCallResult(
+            tool_calls=(
+                ToolCall(
+                    "spawn",
+                    "spawn",
+                    "runtime__spawn",
+                    {"runnable": "child", "input": {"_": "input"}},
+                ),
+            )
+        )
+    )
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="""
+flow parent(_: Text):
+  run pause
+  let job = spawn child
+  await job
+agic pause(_: Text):
+  {{_}}
+agic tool_parent(_: Text):
+  {{_}}
+flow child(_: Text):
+  pass
+""",
+        responses=[
+            ScriptedModelTurn(result, gate=gate),
+            *(
+                [ModelCallResult(message=Message.assistant("done"))]
+                if caller == "agic"
+                else []
+            ),
+        ],
+    )
+    ordinary = harness.setup.models_effective()[0]
+    router = replace(ordinary, id="router")
+    captured_request = ModelRequest(ordinary.ref, max_output=512)
+    captured_limits = RunLimits(agic_model_calls=20, time=600)
+    harness.setup = replace_materialized_setup(
+        harness.setup,
+        models=(ordinary, router),
+        defaults=RunDefaults(model=captured_request),
+    )
+    harness.setup = replace(harness.setup, limits=captured_limits)
+    monkeypatch.setattr(harness.executor, "_setup", lambda: harness.setup)
+    source_request = ModelRequest(router.ref, max_output=128)
+    source_limits = RunLimits(agic_model_calls=7, time=120)
+
+    async def scenario():
+        async with harness:
+            spec = harness.run_spec(
+                thread=harness.threads.create(kind=ThreadKind.CHORE),
+                runnable="parent" if caller == "flow" else "tool_parent",
+                primary=(TextPart("input"),),
+                model=router.ref,
+                limits=source_limits,
+            )
+            handle = harness.executor.run(replace(spec, model_request=source_request))
+            await asyncio.wait_for(gate.wait_until_entered(), timeout=5)
+            harness.setup = replace(
+                harness.setup,
+                defaults=RunDefaults(model=ModelRequest(router.ref, max_output=256)),
+                limits=RunLimits(agic_model_calls=99, time=999),
+            )
+            assert harness.executor._current_setup() is harness.setup
+            assert harness.setup.defaults.model != captured_request
+            gate.release()
+            parent = await handle
+            assert parent.status == "succeeded", parent.error
+            await asyncio.gather(
+                *(root.task for root in tuple(harness.executor._root_runs.values()))
+            )
+            workers = [
+                run
+                for run in harness.store.list_runs()
+                if run.id != parent.id and run.parent is None
+            ]
+            assert len(workers) == 1 and workers[0].status == "succeeded"
+            for run in harness.store.list_runs():
+                entry = harness.store.get_run_control(run_id=run.id, index=0)
+                assert entry is not None and isinstance(
+                    entry.payload, RunControlPayload
+                )
+                if run.id == workers[0].id:
+                    assert entry.payload.model_request == captured_request
+                    assert entry.payload.limits == captured_limits
+                else:
+                    assert entry.payload.model_request == source_request
+                    assert entry.payload.limits == source_limits
 
     asyncio.run(scenario())

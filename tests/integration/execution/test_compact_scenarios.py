@@ -1038,7 +1038,7 @@ def test_compact_config_controls_summary_and_recent_whole_roots(
                     (
                         {
                             "compact": {
-                                "model": "test/reducer",
+                                "model": {"ref": "test/reducer"},
                                 "summary": summary,
                                 "recent": recent,
                                 "trigger": "90%",  # Keep headroom for runtime tool definitions.
@@ -1060,7 +1060,9 @@ def test_compact_config_controls_summary_and_recent_whole_roots(
             entry = control.payload
             assert entry.input["end"] == (roots[-2].id if keep_middle else latest)
             assert json.loads(str(entry.input["policy"]))["size"] == target
-            compact_call = harness.adapter.invocations[-2].call
+            compact_invocation = harness.adapter.invocations[-2]
+            assert compact_invocation.model.ref == "test/reducer"
+            compact_call = compact_invocation.call
             assert f"approximately {target} tokens" in compact_call.instructions
             assert compact_call.max_output_tokens == max(target * 2, target + 1024)
             final = str(harness.adapter.invocations[-1].call.messages)
@@ -1095,7 +1097,7 @@ def test_unknown_thread_context_never_substitutes_an_input_limit(
                     (
                         {
                             "compact": {
-                                "model": "test/reducer",
+                                "model": {"ref": "test/reducer"},
                                 "summary": 400,
                                 "recent": recent,
                                 "trigger": 8000,
@@ -1188,7 +1190,7 @@ def test_one_large_root_compacts_in_step_batches_and_keeps_latest_step(
                     (
                         {
                             "compact": {
-                                "model": "test/reducer",
+                                "model": {"ref": "test/reducer"},
                                 "summary": 128,
                                 "recent": 1,
                             }
