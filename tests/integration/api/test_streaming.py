@@ -683,7 +683,9 @@ def test_live_relay_accepts_thread_events_from_worker_threads(tmp_path) -> None:
     asyncio.run(scenario())
 
 
-def test_existing_run_stream_attaches_to_live_events(tmp_path: Path) -> None:
+def test_existing_run_stream_attaches_to_live_events(
+    tmp_path: Path, monkeypatch
+) -> None:
     harness = ExecutionHarness.create(
         tmp_path,
         source="agic answer:\n  hello\n",
@@ -703,18 +705,13 @@ def test_existing_run_stream_attaches_to_live_events(tmp_path: Path) -> None:
         ChoresManager(core.layout),
         cors_allowed_origins=(),
     )
-    errors: list[str] = []
+    original_subscribe = core.executor.stream.subscribe
 
-    def publish() -> None:
-        deadline = time.monotonic() + 2
-        while time.monotonic() < deadline:
-            with core.executor.stream._lock:
-                if core.executor.stream._readers:
-                    break
-            time.sleep(0.01)
-        else:
-            errors.append("run stream did not subscribe")
-            return
+    def subscribe(**kwargs):
+        reader = original_subscribe(**kwargs)
+        # Admission readers precede the Run's pinned snapshot and live reader.
+        if kwargs.get("root_run_id") != "run_live":
+            return reader
         with core.executor.stream.publication() as publication:
             publication.append(
                 run_begin(
@@ -734,16 +731,14 @@ def test_existing_run_stream_attaches_to_live_events(tmp_path: Path) -> None:
                 thread_id="exec_live",
                 root_run_id="run_live",
             )
+        return reader
 
-    worker = threading.Thread(target=publish)
-    worker.start()
+    monkeypatch.setattr(core.executor.stream, "subscribe", subscribe)
     try:
         with TestClient(app) as client:
             response = client.get("/api/v0/runs/run_live/stream")
-        worker.join(timeout=2)
         events = _sse_events(response.text)
 
-        assert errors == []
         assert response.status_code == 200
         assert events[0][0] == "stream_prefill"
         assert events[-1][0] == "run_end"
