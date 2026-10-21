@@ -58,6 +58,10 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   and contracts stay unchanged.
   ([#884](https://github.com/openhat-ai/toolang/pull/884))
 
+- Hub snapshots align status and version with agent fields, widen the name
+  column, color agent names by placement, and dim instance IDs.
+  ([#886](https://github.com/openhat-ai/toolang/pull/886))
+
 ### Fixed
 
 - Failed preparation no longer leaves active registrations; runtime references
