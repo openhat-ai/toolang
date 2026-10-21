@@ -414,27 +414,25 @@ def _retain_started(
             status = process.wait_ready(status, ui_base_url=ui_base_url(), timeout=30)
         if status is None or status.status != "running":
             return False
-        from toolang.up.contract import require_compatible
-
         requested = resolve_attachment_requirements(
             sandbox=status.sandbox or "host",
-            model_catalog=model_catalog,
             allows=allows,
             defaults=defaults,
             limits=limits,
             port=port,
             host=host,
             endpoint_host=endpoint_host,
-            dev=dev,
-            compact_override=resolve_compact_override({}, compact_model),
         )
-        require_compatible(layout, requested)
         try:
             with acquire_agent_server(
                 layout,
                 sandbox=sandbox,
                 drivers=parse_drivers(driver) if driver is not None else None,
+                dev=dev,
+                model_catalog=model_catalog,
+                compact_override=resolve_compact_override({}, compact_model),
                 attach_only=True,
+                attachment_requirements=requested,
             ) as server:
                 if server is None:
                     raise RuntimeError("agent acquisition requires a server")

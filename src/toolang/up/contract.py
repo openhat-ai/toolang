@@ -51,12 +51,8 @@ def startup_contract(spec: LaunchSpec) -> dict[str, str]:
     }
     bindings.update(
         model_catalog={**spec.dotenv_envs, **spec.environ}.get(MODEL_CATALOG_ENV),
-        development=str(spec.dev_artifact) if spec.dev_artifact else None,
     )
-    if spec.dev_artifact is not None:
-        bindings["development_digest"] = sha256(
-            spec.dev_artifact.read_bytes()
-        ).hexdigest()
+    bindings.update(development_bindings(spec.dev_artifact))
     saved = {key: _digest(value) for key, value in bindings.items()}
     for key, value in bindings.items():
         if isinstance(value, Mapping):
@@ -66,13 +62,28 @@ def startup_contract(spec: LaunchSpec) -> dict[str, str]:
     return saved
 
 
+def development_bindings(artifact: Path | None) -> dict[str, object]:
+    """Bind a resolved development wheel to its path and contents."""
+    bindings: dict[str, object] = {
+        "development": str(artifact) if artifact is not None else None
+    }
+    if artifact is not None:
+        bindings["development_digest"] = sha256(artifact.read_bytes()).hexdigest()
+    return bindings
+
+
 def _digest(value: object) -> str:
     return sha256(json.dumps(_value(value), sort_keys=True).encode()).hexdigest()
 
 
-def require_compatible(layout: AgentLayout, requested: Mapping[str, object]) -> None:
+def require_compatible(
+    layout: AgentLayout,
+    requested: Mapping[str, object],
+    *additional: Mapping[str, object],
+) -> None:
     """Compare only supplied requirements; omission retains the running binding."""
-    if not requested:
+    requirements = (requested, *additional)
+    if not any(requirements):
         return
     entry = read_instance(layout.runtime_status) or {}
     saved = entry.get("control", {}).get("startup_contract")
@@ -81,16 +92,19 @@ def require_compatible(layout: AgentLayout, requested: Mapping[str, object]) -> 
             "running startup parameters are unverifiable; stop and restart the agent"
         )
     different = sorted(
-        key
-        for key, value in requested.items()
-        if saved.get(key) != _digest(value)
-        and not (
-            isinstance(value, Mapping)
-            and all(
-                saved.get(f"{key}.{name}") == _digest(item)
-                for name, item in value.items()
+        {
+            key
+            for requirement in requirements
+            for key, value in requirement.items()
+            if saved.get(key) != _digest(value)
+            and not (
+                isinstance(value, Mapping)
+                and all(
+                    saved.get(f"{key}.{name}") == _digest(item)
+                    for name, item in value.items()
+                )
             )
-        )
+        }
     )
     if different:
         labels = {

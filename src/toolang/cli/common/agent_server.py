@@ -71,6 +71,7 @@ def acquire_agent_server(
     required_driver: DriverName | None = None,
     attach_only: bool = False,
     expected_launch_id: str | None = None,
+    attachment_requirements: Mapping[str, object] | None = None,
 ) -> Iterator[AgentServerRef | None]:
     """Acquire an executor using the placement's reuse and ownership policy."""
 
@@ -103,6 +104,7 @@ def acquire_agent_server(
                     drivers=drivers,
                     required_driver=required_driver,
                     attach_only=attach_only,
+                    attachment_requirements=attachment_requirements,
                 )
                 try:
                     selected_server = (
@@ -302,6 +304,7 @@ def _prepare_agent_server(
     drivers: ExecutionDrivers | None = None,
     required_driver: DriverName | None = None,
     attach_only: bool = False,
+    attachment_requirements: Mapping[str, object] | None = None,
 ) -> AgentServerRef | sandbox_runtime.SandboxHandle | None:
     policy = placement_policy(layout.placement)
     entry = read_instance(layout.runtime_status, layout.instance) or {}
@@ -357,6 +360,7 @@ def _prepare_agent_server(
                 compact_override=compact_override,
                 workspace_additions=workspace_additions,
             ),
+            attachment_requirements or {},
         )
         return attached
 

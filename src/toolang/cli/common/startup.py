@@ -2,13 +2,13 @@
 
 import asyncio
 from collections.abc import Mapping
-from hashlib import sha256
 from pathlib import Path
 
 from toolang.base.types.model import ModelOverride
 from toolang.common.layout import AgentLayout
 from toolang.plugin.catalogs.models_dev.path import MODEL_CATALOG_ENV
 from toolang.up import sandbox as sandbox_runtime
+from toolang.up.contract import development_bindings
 from toolang.up.logging import (
     configure_logging_plan,
     resolve_agent_logging,
@@ -61,8 +61,7 @@ def resolve_attachment_requirements(
     if dev is not None:
         artifact = sandbox_runtime.resolve_dev_artifact(dev, sandbox=sandbox)
         assert artifact is not None
-        requirements["development"] = str(artifact)
-        requirements["development_digest"] = sha256(artifact.read_bytes()).hexdigest()
+        requirements.update(development_bindings(artifact))
     return requirements
 
 

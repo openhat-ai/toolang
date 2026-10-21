@@ -35,8 +35,11 @@ def test_explicit_settings_match_without_repeating_unrelated_bindings(tmp_path):
     require_compatible(layout, {"port": 8123})
     require_compatible(layout, {"limit_overrides": {"tokens": 1000}})
     require_compatible(layout, {"workspace_additions": {"repo": "/one"}})
+    require_compatible(layout, {"port": 8123}, {"limit_overrides": {"tokens": 1000}})
     with pytest.raises(ValueError, match="startup parameters differ: port.*restart"):
         require_compatible(layout, {"port": 8124})
+    with pytest.raises(ValueError, match="startup parameters differ: port.*restart"):
+        require_compatible(layout, {"port": 8124}, {"port": 8123})
     with pytest.raises(ValueError, match="workspace bindings"):
         require_compatible(layout, {"workspace_additions": {"repo": "/elsewhere"}})
     with pytest.raises(ValueError, match="run limits"):
