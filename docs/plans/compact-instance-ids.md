@@ -6,7 +6,8 @@ ships no implementation. Existing formats and layouts are not supported.
 ## Goal and scope
 
 Use the actual instance ID consistently in CLI output, selectors, JSON, agent
-roots and discovery filenames. Keep visiting identities deterministic from
+roots and discovery filenames. Top displays `A@I`; `-i` / `--instance` takes
+only `I`, including its `v`/`r` marker. Keep visiting identities deterministic from
 their scope and URL, and roaming identities ordered by launch within a source.
 Resident names and private UUID launch-generation fences remain unchanged.
 Top's membership and window semantics from #897 do not change.
@@ -93,6 +94,9 @@ it changes discovery membership, not retained history.
 Derive every displayed instance label, root basename and discovery filename
 from the same canonical `instance_name`. Keep the agent name `A` as the inner
 home component; do not introduce display aliases or alternate ID spellings.
+For existing-instance commands, pass the complete `instance_id` as
+`-i I` / `--instance I`; reject `A@I` and bodies without the placement marker.
+The command's target already supplies the agent name or source.
 
 ## Collisions and security
 
@@ -111,13 +115,12 @@ consume new random path tags; their timestamp uniqueness is enforced by locks.
 For roots sharing the same URL, the suffix is identical and the complete
 visiting collision probability depends on the 32-bit root tag alone.
 
-- Visiting collisions cannot be resolved by randomizing or extending the ID:
-  that would break deterministic mapping. Verify the full canonical root and
-  URL; report conflicting ownership without adopting or modifying its files.
-- Check roaming candidate roots and current registry references under source
-  and registry publication guards. Advance the timestamp on a complete-ID
-  collision, up to 128 attempts. Never overwrite a retained root or another
-  status binding; exhaustion fails without publishing a provisional instance.
+- For both placements, a detected complete-ID ownership collision immediately
+  terminates the launch with an explicit error. Do not retry, increment the
+  timestamp, randomize, extend the ID or attempt any other recovery. Preserve
+  existing files and references; publish no provisional instance. Verify full
+  canonical root/URL bindings for visiting and check roaming candidate roots
+  and current references under source and registry publication guards.
 - Create an absent `/tmp/toolang` atomically as an effective-user-owned `0700`
   directory. Accept an existing private `0700` directory owned by that user,
   or an administrator-provisioned root-owned `01777` shared parent. Reject
@@ -156,8 +159,8 @@ override the required format version or full source/path bindings.
 - `up.identity`: source ownership, locked allocation and retained selection.
 - `up.instance` and `up.observation`: versioned status/reference parsing,
   publication and generation-safe cleanup.
-- CLI renderers/selectors: consume canonical names and IDs; no local shortening
-  or duplicate parsing rules.
+- CLI renderers/selectors: Top consumes canonical names; `-i` / `--instance`
+  consumes complete IDs. No local shortening or duplicate parsing rules.
 
 Likely changes also include source preparation, their direct unit tests,
 CLI boundary tests, [layout](../design/layout.md), [CLI](../design/cli.md),
@@ -173,15 +176,19 @@ CLI boundary tests, [layout](../design/layout.md), [CLI](../design/cli.md),
 3. Roaming path aliases agree; parallel launches, identical clocks and clock
    rollback produce distinct increasing IDs with matching persisted units;
    other paths and file mtime do not determine a source's lower bound.
-4. Forced tag/full-ID collisions, exhaustion and foreign `/tmp` paths preserve
-   all existing records and never mix source history. Direct filesystem tests
-   cover both accepted parent modes, wrong owners/modes and symlink races.
+4. Forced complete-ID ownership collisions immediately fail visiting/roaming
+   launches without retry or alternate allocation. Collisions, timestamp
+   overflow and foreign `/tmp` paths preserve all existing records and never
+   mix source history. Direct filesystem tests cover both accepted parent
+   modes, wrong owners/modes and symlink races.
 5. Direct lifecycle tests preserve UUID replacement fencing and reject invalid
    records without destructive cleanup. Observation creates no instances.
 6. Old formats/paths are neither adopted nor rewritten; unsupported records
    remain unchanged and produce explicit errors, including when their ID
    spelling also matches the new Base32 alphabet.
-7. Hub, Top, JSON and CLI selection expose identical IDs; #897 scope semantics
-   remain intact. Default static checks and the offline test suite pass.
+7. Hub, Top and JSON expose identical IDs. Top displays `A@I`; both `-i I` and
+   `--instance I` select that instance, including the `v`/`r` marker. Selectors
+   reject `A@I` and markerless bodies. #897 scope semantics remain intact.
+   Default static checks and the offline test suite pass.
 
 Open questions: none; the proposed definition awaits user approval.
