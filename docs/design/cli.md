@@ -130,9 +130,11 @@ unset, joining required names with `+` and alternatives with `OR`; no values
 are displayed. JSON retains its complete records, including adapter metadata.
 
 Cap and tool lists keep each resource on one line and follow this width policy,
-with a 120-cell fallback when geometry is unavailable. Descriptions
-and locations shrink before identities and tags. Long cells use `…`; source
-locations preserve their beginning and end. The tool identity heading is `TOOL`,
+with a 120-cell fallback when geometry is unavailable. Only descriptions
+and locations shrink; identities and statuses remain complete. Long cells use `…`; source
+locations preserve their beginning and end. Local cap locations are relative to
+the selected agent root; URLs and canonical refs keep their existing form.
+`STATUS` shows only `ready` or `not_allowed`; all tags remain in JSON and queries. The tool identity heading is `TOOL`,
 while JSON and query records retain `ref`. These lists have no `--long`; complete
 field values remain available through `--json`.
 

@@ -18,7 +18,7 @@ runner = CliRunner()
 
 
 @pytest.mark.parametrize("command", [("caps",), ("skill", "list")])
-@pytest.mark.parametrize("width", [80, 120, 240])
+@pytest.mark.parametrize("width", [40, 80, 120, 240])
 def test_cap_lists_keep_single_rows_and_complete_json(
     tmp_path, monkeypatch, command, width
 ):
@@ -44,10 +44,12 @@ def test_cap_lists_keep_single_rows_and_complete_json(
     assert record["location"].endswith("/skills/review/SKILL.md")
     lines = strip_ansi(human.stdout).splitlines()
     assert len(lines) == 5
-    assert max(map(wcswidth, lines)) == width
-    assert lines[0].split() == ["CAP", "DESCRIPTION", "LOCATION", "TAGS"]
+    assert max(map(wcswidth, lines)) == max(80, width)
+    assert lines[0].split() == ["CAP", "DESCRIPTION", "LOCATION", "STATUS"]
     assert lines[2].startswith("skill/review")
-    assert lines[2].endswith("ready,local,root,authored")
+    assert lines[2].endswith("ready")
+    assert str(root) not in lines[2]
+    assert "local,root,authored" not in human.stdout
     assert "…" in lines[2]
     assert lines[-2] == ""
     assert lines[-1] == "1 " + ("cap" if command == ("caps",) else "skill")

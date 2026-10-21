@@ -215,6 +215,7 @@ def list_caps(
         ("cap", "description", "location", "tags"),
         heading="CAP",
         json_=json_,
+        root=layout.root,
     )
     if not json_:
         echo_collection_summary(
@@ -273,6 +274,7 @@ def _make_cap_list_command(kind: CapKind, title: str) -> Callable[..., None]:
             ("cap", "description", "location", "tags"),
             heading="CAP",
             json_=json_,
+            root=layout.root,
         )
         if not json_:
             echo_collection_summary(len(selected), kind)

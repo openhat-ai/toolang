@@ -94,7 +94,10 @@ def _human_record_rows(output: str, columns: tuple[str, ...]) -> list[dict[str, 
     lines = strip_ansi(output).splitlines()
     if lines[0].startswith("0 "):
         return []
-    headings = ["TOOL" if column == "ref" else column.upper() for column in columns]
+    headings = [
+        "TOOL" if column == "ref" else "STATUS" if column == "tags" else column.upper()
+        for column in columns
+    ]
     starts = [lines[0].index(heading) for heading in headings]
     return [
         {
@@ -3215,7 +3218,7 @@ def test_tools_visibility_queries_and_counts(
         assert result.stdout.strip() == "0 tools"
         return
     header = next(line for line in result.stdout.splitlines() if "DESCRIPTION" in line)
-    assert header.split() == ["TOOL", "DESCRIPTION", "TAGS"]
+    assert header.split() == ["TOOL", "DESCRIPTION", "STATUS"]
     tool_count = len(visible) + int("shell" in visible)
     toolset_count = len(visible)
     tool_plural = "" if tool_count == 1 else "s"
@@ -3251,7 +3254,7 @@ def test_tools_use_terminal_width_without_wrapping_or_changing_json(
     lines = strip_ansi(human.stdout).splitlines()
     assert len(lines) == 5
     assert max(map(wcswidth, lines)) == width
-    assert lines[0].split() == ["TOOL", "DESCRIPTION", "TAGS"]
+    assert lines[0].split() == ["TOOL", "DESCRIPTION", "STATUS"]
     assert lines[2].startswith("shell/echo") and lines[2].endswith("ready")
     assert "…" in lines[2]
     assert lines[-2:] == ["", "1 tool"]
@@ -3494,8 +3497,9 @@ def test_cap_lists_apply_scope_allow_and_display_status(
         allowed = name == ("private_cap" if agent else "shared_cap")
         assert ("ready" in tags) is allowed
         assert ("not_allowed" in tags) is not allowed
-        assert "local" in tags
-        assert ("home" if name == "private_cap" else "root") in tags
+        assert "local" not in tags
+        assert "root" not in tags and "home" not in tags
+        assert not Path(row["location"]).is_absolute()
         assert tuple(row) == ("cap", "description", "location", "tags")
 
 
@@ -3536,12 +3540,13 @@ def test_root_cap_inspection_uses_resolved_metadata_and_shared_cache(
     assert exit_code == 0, stderr
     rewrite = next(line for line in stdout.splitlines() if "prompt/rewrite" in line)
     assert "Rewrite" in rewrite
-    assert "root" in rewrite
     if all_:
-        assert "ready,remote,root" in rewrite
+        assert rewrite.endswith("ready")
+        assert "remote,root" not in rewrite
         other = next(line for line in stdout.splitlines() if "prompt/other" in line)
         assert "Other" in other
-        assert "not_allowed,remote,root" in other
+        assert other.endswith("not_allowed")
+        assert "remote,root" not in other
     else:
         assert "prompt/other" not in stdout
     assert len(fetched) == 2
@@ -4188,11 +4193,21 @@ def test_too_caps_all_preserves_scope_and_query(tmp_path: Path, all_: bool) -> N
 
     assert result.exit_code == 0, result.stderr
     if all_:
-        assert "TAGS" in result.stdout
+        assert "STATUS" in result.stdout
         row = next(line for line in result.stdout.splitlines() if "shared_cap" in line)
-        assert "home" in row
+        assert "agents/alice/psyches/shared_cap.md" in row
         assert "not_allowed" in row
         assert result.stdout.count("psyche/shared_cap") == 1
+        data = _invoke(
+            tmp_path, "alice", "caps", "--all", "--query", "psyche/shared_cap", "--json"
+        )
+        assert data.exit_code == 0, data.stderr
+        assert json.loads(data.stdout)[0]["tags"] == [
+            "not_allowed",
+            "local",
+            "home",
+            "authored",
+        ]
     else:
         assert result.stdout.strip() == "0 caps"
 
@@ -4398,14 +4413,17 @@ def test_resource_json_human_and_external_tq_select_identical_records(
     assert [row[identity] for row in rows] == [record[identity] for record in records]
     assert all(tuple(row) == expected_columns for row in rows)
     for row, record in zip(rows, records, strict=True):
-        assert row["tags"] == ",".join(record["tags"])
+        assert row["tags"] == ",".join(
+            tag for tag in record["tags"] if tag in {"ready", "not_allowed"}
+        )
         if "location" in row:
+            expected_location = str(Path(record["location"]).relative_to(tmp_path))
             if "…" in row["location"]:
                 prefix, suffix = row["location"].split("…", 1)
-                assert record["location"].startswith(prefix)
-                assert record["location"].endswith(suffix)
+                assert expected_location.startswith(prefix)
+                assert expected_location.endswith(suffix)
             else:
-                assert row["location"] == record["location"]
+                assert row["location"] == expected_location
         assert "id" not in record
 
 

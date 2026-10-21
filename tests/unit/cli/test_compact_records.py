@@ -34,7 +34,7 @@ def test_resource_rows_stay_single_line_at_the_full_terminal_width(
     )
     records = [
         {
-            "cap": "skill/" + "开发e\u0301" * 24,
+            "cap": "skill/" + "开发e\u0301" * 4,
             "description": "(error) Review [bold]changes[/bold].\n" * 30,
             "location": "/project  folder/" + "nested/" * 30 + "SKILL.md",
             "tags": ["not_allowed", "local", "root", "authored"],
@@ -59,7 +59,9 @@ def test_resource_rows_stay_single_line_at_the_full_terminal_width(
     assert not lines[0].startswith(" ")
     assert not lines[2].startswith(" ")
     assert records == before
-    assert "not_allowed,local,root,authored" in lines[2]
+    assert "not_allowed" in lines[2]
+    assert "local,root,authored" not in rendered
+    assert lines[0].endswith("STATUS")
     if width >= 240:
         assert "SKILL.md" in lines[2]
 
@@ -82,7 +84,7 @@ def test_compact_rows_use_fresh_width_and_unavailable_terminal_fallback(
         )
         lines = capsys.readouterr().out.splitlines()
         assert len(lines) == 3
-        assert lines[0].split() == ["TOOL", "DESCRIPTION", "TAGS"]
+        assert lines[0].split() == ["TOOL", "DESCRIPTION", "STATUS"]
         assert lines[2].startswith("shell/run") and lines[2].endswith("ready")
         widths.append(wcswidth(lines[1]))
     assert widths == [120, 80, 80, 240, 120, 120]
@@ -121,5 +123,70 @@ def test_compact_json_retains_complete_unmodified_records(capsys):
     }
     echo_compact_records(
         [record], ("ref", "description", "tags"), heading="TOOL", json_=True
+    )
+    assert json.loads(capsys.readouterr().out) == [record]
+
+
+@pytest.mark.parametrize("width", [1, 40, 80, 120])
+def test_compact_records_never_shorten_identity_or_status(monkeypatch, capsys, width):
+    monkeypatch.setenv("COLUMNS", str(width))
+    identity = "shell/" + "very_long_identity_" * 12
+    echo_compact_records(
+        [
+            {
+                "ref": identity,
+                "description": "Description " * 50,
+                "tags": ["not_allowed", "local"],
+            }
+        ],
+        ("ref", "description", "tags"),
+        heading="TOOL",
+        json_=False,
+    )
+    lines = capsys.readouterr().out.splitlines()
+    assert len(lines) == 3
+    assert identity in lines[2] and lines[2].endswith("not_allowed")
+    assert "local" not in lines[2]
+
+
+@pytest.mark.parametrize(
+    "location,expected",
+    [
+        ("/agent-root/skills/review/SKILL.md", "skills/review/SKILL.md"),
+        ("/agent-root/agents/alice/agent.too:8", "agents/alice/agent.too:8"),
+        ("/shared/skills/review/SKILL.md", "../shared/skills/review/SKILL.md"),
+        ("https://example.test/skills/review", "https://example.test/skills/review"),
+        ("github://acme/caps/review@main", "github://acme/caps/review@main"),
+        ("inline://psyches/review", "inline://psyches/review"),
+    ],
+)
+def test_compact_locations_are_relative_or_keep_the_source_ref(
+    monkeypatch, capsys, location, expected
+):
+    from pathlib import Path
+
+    monkeypatch.setenv("COLUMNS", "240")
+    record = {
+        "cap": "skill/review",
+        "location": location,
+        "tags": ["ready", "local", "root", "authored"],
+    }
+    echo_compact_records(
+        [record],
+        ("cap", "location", "tags"),
+        heading="CAP",
+        json_=False,
+        root=Path("/agent-root"),
+    )
+    human = capsys.readouterr().out
+    assert expected in human
+    assert "local,root,authored" not in human
+    assert record["location"] == location
+    echo_compact_records(
+        [record],
+        ("cap", "location", "tags"),
+        heading="CAP",
+        json_=True,
+        root=Path("/agent-root"),
     )
     assert json.loads(capsys.readouterr().out) == [record]

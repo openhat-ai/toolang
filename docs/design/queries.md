@@ -17,14 +17,17 @@ effective resources. Visible columns retain this order in both views.
 | --- | --- | --- |
 | Models | `ref`: `provider/id` | `REF`, `CONTEXT`, `MAX_OUTPUT`, `PRICE`, `INPUT`, `OUTPUT`, `FEATURES`, `TAGS` |
 | Providers | `id` (external TQ only) | `PROVIDER`, `MODELS`, `API` (when space permits), `ENV` |
-| Tools | `ref`: `toolset/name` | `TOOL`, `DESCRIPTION`, `TAGS` |
-| Caps | `cap`: `kind/name` | `CAP`, `DESCRIPTION`, `LOCATION`, `TAGS` |
+| Tools | `ref`: `toolset/name` | `TOOL`, `DESCRIPTION`, `STATUS` |
+| Caps | `cap`: `kind/name` | `CAP`, `DESCRIPTION`, `LOCATION`, `STATUS` |
 
 Cap and tool lists follow the [CLI table width policy](cli.md), falling back to
 120 cells when terminal geometry is unavailable. Each resource occupies one row.
-Column sizing shrinks descriptions and locations first, preserving identities and tags when
-they fit. Cells that remain too long use `…`; locations retain their beginning
-and end. Longer identities or tag lists may also be shortened after these fields.
+Only descriptions and locations shrink; identities and statuses remain complete.
+Long elastic cells use `…`; locations retain their beginning and end. Local
+locations are relative to the selected agent root; URLs and canonical source
+refs retain their existing form. `STATUS` displays only the existing availability
+tag (`ready` or `not_allowed`), while JSON and queries retain complete locations
+and all `tags`, including origin, scope, and form.
 These lists do not offer `--long`; use `--json` for complete field values.
 
 Model `REF` columns are at most 40 display cells wide; longer refs wrap,

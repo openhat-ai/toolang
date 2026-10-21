@@ -1,6 +1,8 @@
 """JSON records and tables sharing the same public field paths."""
 
 import json
+from os.path import relpath
+from pathlib import Path
 from shutil import get_terminal_size
 from collections.abc import Mapping, Sequence
 from typing import cast
@@ -28,6 +30,7 @@ def echo_compact_records(
     *,
     heading: str,
     json_: bool,
+    root: Path | None = None,
 ) -> None:
     """Fit descriptive records into single rows using the current terminal width."""
     if json_:
@@ -37,10 +40,13 @@ def echo_compact_records(
         return
     width = max(MIN_TABLE_WIDTH, get_terminal_size(fallback=(120, 24)).columns)
     console = Console(width=width, highlight=False)
-    headers = [heading, *(column.upper() for column in columns[1:])]
+    headers = [
+        heading,
+        *("STATUS" if column == "tags" else column.upper() for column in columns[1:]),
+    ]
     rows = [
         tuple(
-            _compact_value(record.get(column), prose=column in {"description", "title"})
+            _compact_cell(record.get(column), column=column, root=root)
             for column in columns
         )
         for record in records
@@ -57,27 +63,19 @@ def echo_compact_records(
         for index, column in enumerate(columns)
         if column in {"description", "title", "location"}
     ]
-    for indices in (
-        flexible,
-        [0],
-        [index for index in range(1, len(columns)) if index not in flexible],
-    ):
-        capacity = sum(widths[index] - minimums[index] for index in indices)
-        reduction = min(excess, capacity)
-        remaining = reduction
-        for index in indices:
-            share = (
-                reduction * (widths[index] - minimums[index]) // capacity
-                if capacity
-                else 0
-            )
-            widths[index] -= share
-            remaining -= share
-        for index in indices:
-            if remaining and widths[index] > minimums[index]:
-                widths[index] -= 1
-                remaining -= 1
-        excess -= reduction
+    capacity = sum(widths[index] - minimums[index] for index in flexible)
+    reduction = min(excess, capacity)
+    remaining = reduction
+    for index in flexible:
+        share = (
+            reduction * (widths[index] - minimums[index]) // capacity if capacity else 0
+        )
+        widths[index] -= share
+        remaining -= share
+    for index in flexible:
+        if remaining and widths[index] > minimums[index]:
+            widths[index] -= 1
+            remaining -= 1
 
     def print_row(values: Sequence[str], *, header: bool = False) -> None:
         line = Text()
@@ -101,7 +99,20 @@ def echo_compact_records(
         print_row(row)
 
 
-def _compact_value(value: object, *, prose: bool = False) -> str:
+def _compact_cell(value: object, *, column: str, root: Path | None) -> str:
+    if column == "tags":
+        value = (
+            [tag for tag in value if tag in {"ready", "not_allowed"}]
+            if isinstance(value, (list, tuple))
+            else []
+        )
+    elif (
+        column == "location"
+        and root is not None
+        and isinstance(value, str)
+        and Path(value).is_absolute()
+    ):
+        value = relpath(value, root)
     if value is None:
         return "-"
     if isinstance(value, bool):
@@ -111,7 +122,9 @@ def _compact_value(value: object, *, prose: bool = False) -> str:
     text = safe_text(
         str(value).replace("\r", " ").replace("\n", " ").replace("\t", " ")
     )
-    return (" ".join(text.split()) if prose else text) or "-"
+    return (
+        " ".join(text.split()) if column in {"description", "title"} else text
+    ) or "-"
 
 
 def _clip_location(value: str, width: int) -> str:
