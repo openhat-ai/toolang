@@ -281,7 +281,8 @@ async def stream_chat_completion(
             )
     except (Exception, asyncio.CancelledError) as exc:
         if isinstance(exc, ModelResponseError):
-            exc.usage = final_usage
+            if final_usage is not None:
+                exc.usage = final_usage
             exc.partial_text = "".join(text_parts)
         await reasoning.finish(parts, complete=False)
         await parts.interrupt()

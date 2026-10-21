@@ -146,6 +146,28 @@ def test_transient_in_band_error_is_recoverable(wire_call, protocol, error):
     assert caught.value.kind == "transport_error"
 
 
+@pytest.mark.parametrize("protocol", list(MODULES))
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("status", [400, 401, 403, 422, 429])
+def test_http_request_rejection_retains_zero_consumption(
+    wire_call, protocol, stream, status
+):
+    with pytest.raises(ModelResponseError) as caught:
+        wire_call(
+            protocol,
+            {"error": {"code": "invalid_api_key"}},
+            status=status,
+            stream=stream,
+        )
+    error = caught.value
+    assert error.recoverable == (status == 429)
+    assert error.usage is not None
+    assert error.usage.input_tokens == error.usage.output_tokens == 0
+    assert error.usage.input_cache_read_tokens == 0
+    assert error.usage.reported_cost == 0
+    assert error.usage.reported_currency == "USD"
+
+
 @pytest.mark.parametrize("protocol", ["messages", "generate_content"])
 def test_native_early_eof_never_returns_success(wire_call, protocol):
     events = (
@@ -252,8 +274,11 @@ def test_native_failure_retains_all_received_text(wire_call, protocol, stream, k
 
 @pytest.mark.parametrize("protocol", ["messages", "generate_content"])
 def test_streaming_http_quota_exhaustion_stays_terminal(wire_call, protocol):
-    with pytest.raises(httpx.HTTPStatusError):
+    with pytest.raises(ModelResponseError) as caught:
         wire_call(protocol, {"error": {"code": "insufficient_quota"}}, status=429)
+    assert not caught.value.recoverable
+    assert caught.value.usage is not None
+    assert caught.value.usage.reported_cost == 0
 
 
 def test_messages_stream_uses_argument_deltas_instead_of_empty_start_input(wire_call):
@@ -655,14 +680,16 @@ def test_observer_failure_is_not_a_provider_retry(wire_call, protocol):
 
 @pytest.mark.parametrize("protocol", ["messages", "generate_content"])
 def test_known_http_rejection_wins_over_error_body_disconnect(wire_call, protocol):
-    with pytest.raises(httpx.HTTPStatusError) as caught:
+    with pytest.raises(ModelResponseError) as caught:
         wire_call(
             protocol,
             {"error": {"code": "invalid_api_key"}},
             status=401,
             disconnect=True,
         )
-    assert caught.value.response.status_code == 401
+    assert not caught.value.recoverable
+    assert caught.value.usage is not None
+    assert caught.value.usage.input_tokens == 0
 
 
 @pytest.mark.parametrize("protocol", list(MODULES))

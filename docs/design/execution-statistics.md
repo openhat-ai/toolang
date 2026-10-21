@@ -25,6 +25,12 @@ The seven quantities are `in`, `out`, `cached`, `spend`, `model_calls`,
 Spend sums recorded USD amounts; `spend_approximate` preserves the recorded cost
 classification. Unknown quantities stay null and known zero stays zero. Model
 rows have `root_runs=null`, since a root start has no model attribution.
+HTTP request rejections before generation (400, 401, 402, 403, 404, 405, 413,
+415, 422, and 429) retain the invocation count and record zero token usage and
+USD cost when no provider usage is available. Available usage takes precedence.
+Timeouts, conflicts, server errors, and interrupted generation without usage
+remain unknown. This normalization applies to new execution records; older
+records without usage retain their original unknown quantities.
 
 Root counts belong to root start, including still-running roots. Invocation counts
 belong to Step start and become queryable once a terminal Step records actual

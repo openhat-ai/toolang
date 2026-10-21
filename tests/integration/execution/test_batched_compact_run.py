@@ -2,10 +2,12 @@
 
 import asyncio
 import json
+import time
 from contextlib import closing
 from dataclasses import replace
 
 import pytest
+import httpx
 
 from tests.support.execution_assertions import assert_replayed
 from tests.support.execution_harness import (
@@ -46,9 +48,12 @@ from toolang.execution.types import (
     ThreadKind,
     ToolStepSpec,
     StepRef,
+    TokenUsage,
 )
 from toolang.lang.input import CallInput
 from toolang.state.types import RUNTIME_TALK_MODULE
+from toolang.plugin.adapters._errors import model_transport_errors
+from toolang.stats.recent import recent_usage
 
 SOURCE = """agic chat(_: Part[]) -> Text:
   context = none
@@ -569,6 +574,40 @@ def test_context_rejection_records_attempt_then_shrinks_only_whole_roots(
             assert steps[2].spec.call.input["roots"] == [str(roots[0])]
             assert steps[4].spec.call.input["roots"] == [str(r) for r in roots[1:-1]]
             assert steps[1].report.usage.input_tokens == 100
+
+    asyncio.run(scenario())
+
+
+def test_compact_http_rejection_records_zero_consumption(tmp_path, monkeypatch):
+    h = harness_at(tmp_path)
+    response = httpx.Response(
+        403, request=httpx.Request("POST", "https://example.invalid")
+    )
+    with pytest.raises(ModelResponseError) as caught:
+        with model_transport_errors():
+            response.raise_for_status()
+
+    async def scenario():
+        async with h:
+            thread, _ = await seed(h, monkeypatch)
+            h.adapter._responses.append(caught.value)
+            parent = await current(h, thread)
+            assert parent.status == "failed"
+            (child,) = producers(h, thread)
+            assert child.status == "failed"
+            assert child.report is not None
+            assert child.report.calls.model_calls == 1
+            assert child.report.usage == TokenUsage(0, 0, 0)
+            assert child.report.cost == 0
+            model = next(
+                s for s in h.store.list_steps(run_id=child.id) if s.kind == "model"
+            )
+            assert model.report.invoked and model.report.usage == child.report.usage
+            total = recent_usage(
+                h.store.db_path, now=int(time.time()) + 1, period=3600
+            ).metrics
+            assert total.model_calls == 5
+            assert (total.input_tokens, total.output_tokens) == (168, 20)
 
     asyncio.run(scenario())
 

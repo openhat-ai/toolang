@@ -9,6 +9,7 @@ from openai import APIConnectionError, APIStatusError
 import pytest
 
 from toolang.base.errors import ModelResponseError
+from toolang.base.types.run import ModelUsage
 from toolang.plugin.adapters._errors import model_transport_errors
 
 
@@ -30,7 +31,7 @@ def test_http_failure_classification(status: int, sdk: bool) -> None:
         )
     )
     recoverable = status in {408, 409, 429, 500, 502, 503, 504}
-    with pytest.raises(ModelResponseError if recoverable else type(error)) as caught:
+    with pytest.raises(ModelResponseError) as caught:
         with model_transport_errors():
             raise error
     if recoverable:
@@ -38,7 +39,13 @@ def test_http_failure_classification(status: int, sdk: bool) -> None:
         assert caught.value.kind == "transport_error"
         assert caught.value.retry_after == 4
     else:
-        assert caught.value is error
+        assert caught.value.kind == "provider_rejection"
+        assert str(caught.value) == str(error)
+    if status in {400, 401, 403, 404, 422, 429}:
+        assert caught.value.usage is not None
+        assert caught.value.usage.input_tokens == caught.value.usage.output_tokens == 0
+    else:
+        assert caught.value.usage is None
 
 
 @pytest.mark.parametrize(
@@ -65,10 +72,13 @@ def test_quota_exhaustion_is_not_retried() -> None:
     error = APIStatusError(
         "no quota", response=response, body={"code": "insufficient_quota"}
     )
-    with pytest.raises(APIStatusError) as caught:
+    with pytest.raises(ModelResponseError) as caught:
         with model_transport_errors():
             raise error
-    assert caught.value is error
+    assert not caught.value.recoverable
+    assert str(caught.value) == str(error)
+    assert caught.value.usage is not None
+    assert caught.value.usage.reported_cost == 0
 
 
 def test_cancellation_is_not_normalized() -> None:
@@ -156,6 +166,18 @@ def test_explicit_http_retry_rejection_is_respected(permanent: str) -> None:
         headers={"x-should-retry": "false"} if permanent == "header" else {},
         request=httpx.Request("POST", "https://example.invalid"),
     )
-    with pytest.raises(httpx.HTTPStatusError):
+    with pytest.raises(ModelResponseError) as caught:
         with model_transport_errors():
             response.raise_for_status()
+    assert not caught.value.recoverable
+
+
+def test_http_error_preserves_available_usage_before_zero_fallback() -> None:
+    response = httpx.Response(
+        429, request=httpx.Request("POST", "https://example.invalid")
+    )
+    usage = ModelUsage(12, 3, input_cache_read_tokens=4)
+    with pytest.raises(ModelResponseError) as caught:
+        with model_transport_errors(usage=lambda: usage):
+            response.raise_for_status()
+    assert caught.value.usage is usage

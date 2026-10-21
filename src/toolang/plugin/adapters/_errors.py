@@ -53,6 +53,10 @@ _TRANSIENT_CODES = {
     "DEADLINE_EXCEEDED",
 }
 
+# These HTTP responses reject the request before model generation. Timeouts,
+# conflicts and server failures cannot establish whether tokens were consumed.
+_REQUEST_REJECTIONS = {400, 401, 402, 403, 404, 405, 413, 415, 422, 429}
+
 
 def provider_error(value: object) -> ModelResponseError:
     """Classify an error carried inside an otherwise successful HTTP response."""
@@ -110,10 +114,6 @@ def _classify(error: Exception) -> ModelResponseError | None:
         )
     if isinstance(error, (APIStatusError, httpx.HTTPStatusError)):
         response = error.response
-        if response.status_code not in {408, 409, 429, 500, 502, 503, 504, 529}:
-            return None
-        if response.headers.get("x-should-retry") == "false":
-            return None
         code = getattr(error, "code", None)
         try:
             body = response.json()
@@ -121,7 +121,14 @@ def _classify(error: Exception) -> ModelResponseError | None:
             body = None
         if isinstance(body, dict) and isinstance(body.get("error"), dict):
             code = body["error"].get("code", code)
-        if code == "insufficient_quota":
+        retry = (
+            response.status_code in {408, 409, 429, 500, 502, 503, 504, 529}
+            and response.headers.get("x-should-retry") != "false"
+            and code != "insufficient_quota"
+        )
+        if not retry:
+            if response.status_code in _REQUEST_REJECTIONS:
+                return ModelResponseError(str(error), kind="provider_rejection")
             return None
         return ModelResponseError(
             f"temporary model HTTP failure: {response.status_code}",
@@ -143,7 +150,7 @@ def model_transport_errors(
 ) -> Iterator[None]:
     """Normalize known failures and retain response facts; never catch cancellation."""
 
-    from openai import APIError
+    from openai import APIError, APIStatusError
 
     try:
         yield
@@ -153,6 +160,19 @@ def model_transport_errors(
             raise
         if error.usage is None:
             error.usage = usage()
+        if (
+            error.usage is None
+            and isinstance(exc, (APIStatusError, httpx.HTTPStatusError))
+            and exc.response.status_code in _REQUEST_REJECTIONS
+        ):
+            error.usage = ModelUsage(
+                input_tokens=0,
+                output_tokens=0,
+                input_cache_read_tokens=0,
+                input_cache_write_tokens=0,
+                reported_cost=0,
+                reported_currency="USD",
+            )
         if not error.partial_text:
             error.partial_text = partial_text()
         if error is exc:

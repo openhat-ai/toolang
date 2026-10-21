@@ -2,7 +2,9 @@
 
 import asyncio
 from pathlib import Path
+import time
 
+import httpx
 import pytest
 
 from tests.support.execution_assertions import (
@@ -28,8 +30,12 @@ from toolang.base.types.run import (
     ToolCall,
 )
 from toolang.execution.executor.runs import agic
-from toolang.execution.types import ModelStepReport, ThreadKind
+from toolang.execution.types import ModelStepReport, ThreadKind, TokenUsage
 from toolang.lang.types import Array
+from toolang.plugin.adapters._errors import model_transport_errors
+from toolang.stats.config import StatsConfig
+from toolang.stats.recent import recent_usage
+from toolang.stats.service import StatsService
 
 SOURCE = """
 agic chat() -> Text:
@@ -37,6 +43,85 @@ agic chat() -> Text:
   context = none
   user: Start.
 """
+
+
+def test_http_rejection_keeps_recent_and_archived_consumption_known(
+    tmp_path, monkeypatch
+):
+    response = httpx.Response(
+        401, request=httpx.Request("POST", "https://example.invalid")
+    )
+    with pytest.raises(ModelResponseError) as caught:
+        with model_transport_errors():
+            response.raise_for_status()
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source=SOURCE,
+        responses=[
+            ModelCallResult(
+                message=Message.assistant("done"),
+                usage=ModelUsage(
+                    100,
+                    10,
+                    input_cache_read_tokens=7,
+                    reported_cost=0.1,
+                    reported_currency="USD",
+                ),
+            ),
+            caught.value,
+        ],
+    )
+
+    async def scenario():
+        async with harness:
+            thread = harness.threads.create(kind=ThreadKind.CHAT)
+            for status in ("succeeded", "failed"):
+                run = await harness.executor.run(
+                    harness.run_spec(thread=thread, runnable="chat")
+                )
+                assert run.status == status, run.error
+            assert len(harness.adapter.invocations) == 2
+            assert run.report is not None
+            assert run.report.calls.model_calls == 1
+            assert run.report.usage == TokenUsage(0, 0, 0)
+            assert run.report.cost == 0
+            (step,) = harness.store.list_steps(run_id=run.id)
+            assert isinstance(step.report, ModelStepReport)
+            assert step.report.invoked and step.report.usage == run.report.usage
+            now = int(time.time()) + 1
+            recent = recent_usage(harness.store.db_path, now=now, period=3600).metrics
+            assert recent.model_calls == 2
+            assert (
+                recent.input_tokens,
+                recent.output_tokens,
+                recent.cached_tokens,
+            ) == (
+                100,
+                10,
+                7,
+            )
+            assert recent.spend_micros == 100_000
+            stats = StatsService(
+                harness.store.db_path,
+                tmp_path / "stats.db",
+                config=StatsConfig(),
+                clock=lambda: now,
+            )
+            stats.start()
+            monkeypatch.setattr(stats, "request_refresh", lambda: None)
+            try:
+                assert stats.records.refresh(cutoff=0, now=now) is None
+                before = stats.summary().data
+                assert before is not None
+                assert before[0].model_calls == 2
+                assert (before[0].in_, before[0].out, before[0].cached) == (100, 10, 7)
+                assert before[0].spend == 0.1
+                assert stats.records.refresh(cutoff=now, now=now) is None
+                assert stats.summary().data == before
+            finally:
+                stats.close()
+
+    asyncio.run(scenario())
 
 
 def test_recovery_retains_accounting_and_replay_without_executing_failed_batch(

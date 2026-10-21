@@ -134,6 +134,11 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   anonymous entry runnables, and new Run captions show the accepted runnable
   name.
 
+- HTTP requests rejected before generation, such as authentication or
+  rate-limit failures, now record zero tokens and cost while keeping call
+  counts and retry decisions.
+  ([#893](https://github.com/openhat-ai/toolang/pull/893))
+
 ### Security
 
 - The locked certifi trust store advances to 2026.10.19, resolving trust-store
