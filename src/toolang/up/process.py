@@ -344,7 +344,7 @@ class AgentProcess:
             else:
                 # Synchronous status reads also run during async launch resolution.
                 with ThreadPoolExecutor(max_workers=1) as pool:
-                    alive = pool.submit(asyncio.run, probe()).result()
+                    alive = pool.submit(lambda: asyncio.run(probe())).result()
         except (OSError, RuntimeError, ValueError, TimeoutError):
             alive = None
         if cache:

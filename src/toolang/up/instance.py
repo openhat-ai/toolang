@@ -152,7 +152,9 @@ def runtime_lock(
                 )
 
             with ThreadPoolExecutor(max_workers=1) as pool:
-                return pool.submit(asyncio.run, probe()).result(timeout=3) is False
+                return (
+                    pool.submit(lambda: asyncio.run(probe())).result(timeout=3) is False
+                )
         except (KeyError, OSError, RuntimeError, TypeError, ValueError):
             return False
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import gc
 from pathlib import Path
 import os
 from dataclasses import replace
@@ -105,6 +106,31 @@ def test_status_keeps_one_snapshot_when_a_restart_changes_the_file(
     assert result is not None and result.status == "running"
     assert result.endpoint == state.ref.endpoint
     assert reads == 1
+
+
+def test_status_keeps_unknown_without_leaking_when_worker_rejects_probe(
+    tmp_path, monkeypatch, recwarn
+):
+    layout = AgentLayout.resident(tmp_path, "alice")
+    state = SandboxState(
+        "host", process_ref(os.getpid(), "http://localhost:8123"), "fixture"
+    )
+    state.save(layout.runtime_status)
+    before = layout.runtime_status.read_bytes()
+
+    def reject_worker(*args, **kwargs):
+        raise RuntimeError("cannot start worker thread")
+
+    monkeypatch.setattr(process.ThreadPoolExecutor, "submit", reject_worker)
+
+    async def inspect():
+        return process.AgentProcess(layout).status(ui_base_url="")
+
+    status = asyncio.run(inspect())
+    assert status is not None and status.status == "unknown"
+    assert layout.runtime_status.read_bytes() == before
+    gc.collect()
+    assert not [warning for warning in recwarn if warning.category is RuntimeWarning]
 
 
 def test_status_does_not_adopt_unregistered_process(tmp_path: Path) -> None:

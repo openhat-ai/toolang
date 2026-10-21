@@ -3,6 +3,7 @@
 from toolang.up.workload import ForegroundWorkload
 
 from dataclasses import replace
+import gc
 import json
 import os
 from concurrent.futures import ThreadPoolExecutor
@@ -388,8 +389,9 @@ with runtime_lock(Path(sys.argv[1])):
 
 
 @pytest.mark.parametrize("alive", [None, False, True])
+@pytest.mark.parametrize("worker_available", [True, False])
 def test_foreign_guest_claim_requires_a_definite_dead_probe(
-    tmp_path, monkeypatch, alive
+    tmp_path, monkeypatch, alive, worker_available, recwarn
 ):
     from toolang.up import instance as records, sandbox
 
@@ -415,13 +417,20 @@ def test_foreign_guest_claim_requires_a_definite_dead_probe(
 
     @contextmanager
     def claim(path, *, owner_dead, **kwargs):
-        assert owner_dead(previous) is (alive is False)
+        assert owner_dead(previous) is (worker_available and alive is False)
         yield
 
+    def reject_worker(*args, **kwargs):
+        raise RuntimeError("cannot start worker thread")
+
+    if not worker_available:
+        monkeypatch.setattr(ThreadPoolExecutor, "submit", reject_worker)
     monkeypatch.setattr(records, "file_write_lock", claim)
     monkeypatch.setattr(sandbox, "load_state_sandbox", lambda *args: Backend())
     with runtime_lock(layout.runtime_status):
         pass
+    gc.collect()
+    assert not [warning for warning in recwarn if warning.category is RuntimeWarning]
 
 
 def test_temporary_cleanup_retains_recovery_refs_and_new_generations(tmp_path):
