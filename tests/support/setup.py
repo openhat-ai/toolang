@@ -107,6 +107,11 @@ def replace_materialized_setup(
         compact=(
             setup.compact
             if compact_model is _UNSET
-            else replace(setup.compact, model=cast(ModelOverride | None, compact_model))
+            else replace(
+                setup.compact,
+                model=(cast(ModelOverride, compact_model),)
+                if compact_model is not None
+                else (),
+            )
         ),
     )

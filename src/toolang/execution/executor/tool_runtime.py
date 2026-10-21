@@ -526,23 +526,6 @@ class _ToolRuntime(ToolRuntime):
         execution = self.state.execution
         if execution is None:
             raise RuntimeError("Agic runtime execution is unavailable")
-        previous = execution.store.get_step(ref=self.step)
-        if (
-            previous is not None
-            and previous.output is not None
-            and isinstance(previous.output.value, ToolResultPart)
-        ):
-            if (
-                not isinstance(previous.spec, ToolStepSpec)
-                or previous.spec.call.name != "runtime__spawn"
-                or previous.spec.call.input.get("runnable") != runnable
-                or previous.spec.call.input.get("input", {}) != input
-                or previous.spec.call.input.get("thread") != thread
-            ):
-                return ToolResult(error="conflicting spawn admission")
-            return ToolResult(
-                dict(previous.output.value.output), previous.output.value.error
-            )
         try:
             await accept(
                 execution,
@@ -576,7 +559,9 @@ class _ToolRuntime(ToolRuntime):
             or not isinstance(recorded.output.value, ToolResultPart)
         ):
             raise RuntimeError("spawn admission has no recorded tool result")
-        return ToolResult(dict(recorded.output.value.output))
+        return ToolResult(
+            dict(recorded.output.value.output), recorded.output.value.error
+        )
 
     def _authorize(
         self, operation: Literal["run", "spawn", "exec"], target: ResolvedRunnable

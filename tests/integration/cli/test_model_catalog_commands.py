@@ -1174,14 +1174,14 @@ def test_models_json_uses_the_published_version_without_rereading_source(
 
 
 @pytest.mark.parametrize("command", ["models", "providers"])
-@pytest.mark.parametrize("setting", ["default", "compact"])
+@pytest.mark.parametrize("setting", ["model", "talk.model", "compact.model"])
 def test_full_catalog_can_inspect_unready_configured_models(
     tmp_path, monkeypatch, command, setting
 ):
     _disable_local_discovery(monkeypatch)
     monkeypatch.delenv("TEST_API_KEY", raising=False)
     _write_catalog(tmp_path / "catalog.json", _catalog_data())
-    (tmp_path / "config.toml").write_text(f'[{setting}]\nmodel = "test/one"\n')
+    (tmp_path / "config.toml").write_text(f'[{setting}]\nref = "test/one"\n')
     result = runner.invoke(
         cli.app, ["--root", str(tmp_path), command, "--all", "--json"]
     )

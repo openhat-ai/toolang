@@ -373,14 +373,14 @@ def test_serve_argv_contains_only_server_inputs(tmp_path: Path) -> None:
     assert _option_values(argv, "--placement") == [spec.layout.placement]
     assert _option_values(argv, "--store-schema") == ["63"]
     assert "--sandbox-child" not in argv
-    assert _option_values(argv, "--compact-model") == ["test/compact effort=low"]
+    assert _option_values(argv, "--compact-model") == ["ref=test/compact effort=low"]
     assert _option_values(argv, "--allow") == [
         "models=openai/gpt-5",
         "tools=none",
         "skills=all",
     ]
     assert _option_values(argv, "--default") == [
-        "model=openai/gpt-5",
+        "model=ref=openai/gpt-5",
     ]
     assert _option_values(argv, "--limit") == [
         "agic_model_calls=25",

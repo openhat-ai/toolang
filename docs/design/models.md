@@ -80,10 +80,12 @@ Configure authorization and preference together, at root or agent scope:
 [allow]
 models = ["openai/*", "google/*", "*"]
 # A collection query string is also accepted: "openai/*, google/*, *"
-[default]
-model = "openai/gpt-5 effort=medium"
-[compact]
-model = "openai/gpt-5 effort=low"
+[model]
+ref = "openai/gpt-5"
+effort = "medium"
+[compact.model]
+ref = "openai/gpt-5"
+effort = "low"
 ```
 
 Without `allow.models`, all models retain their exact bundled/selected catalog
@@ -94,7 +96,7 @@ membership changes the model status and effective view, but does not delete
 records from the all view. The effective view contains models that are both
 routable and allowed. `providers` likewise retain catalog-file order.
 
-Omit `default.model` to use the first model in the routable-and-allowed view.
+Omit `[model]` to use the first model in the routable-and-allowed view.
 Omit `compact.model` to follow the current thread model identity, without inheriting
 its `effort` or `max_output`. The thread model is the current root Run's model
 binding, including for nested Runs; a model-free root uses the calling child's
@@ -424,8 +426,9 @@ published models and selects an exact default:
 [allow]
 models = ["gateway/*"]
 
-[default]
-model = "gateway/chat effort=high"
+[model]
+ref = "gateway/chat"
+effort = "high"
 ```
 
 `SetupWatcher` captures `allow.models` with each revision. With no allow query,
@@ -436,25 +439,42 @@ available for inspection, while `models_effective()` contains only records
 marked both routable and allowed. Request and runnable policy can only narrow
 that ready view. Query matching uses `tq-json` without precomputed model
 collection indexes.
-`default.model` uses the same model body as invocation, Chat, and run-input
-settings: an optional concrete ref followed by typed assignments. The current
-assignment is `effort=LEVEL`, `effort=TOKENS`, `effort=auto`,
-`max_output=TOKENS`, or `max_output=auto`. The effective
-ref must be present in the Setup collection, and its parameters are validated
-when the model accessor first materializes a setup's model data. An agent config
-may use a parameter-only body such as `effort=high` to modify the inherited root
-default. Without `default.model`, runtime uses the first ready model in the
-policy-adjusted order. Without `compact.model`, compaction follows the thread
-model identity with independent reasoning and output settings. The normal
-`/model unset` form supports model-free execution; compact configuration does
-not accept `unset`.
+`[model]`, `[talk.model]`, and `[compact.model]` share three typed fields:
+`ref` (an exact model or selection sentinel), `effort` (a level, a non-negative
+integer reasoning budget, or `"auto"`), and `max_output` (a positive integer or
+`"auto"`). Unknown fields and wrong types fail. Model capability checks remain
+lazy and final handler/resource validation happens before Run admission.
 
-The same body is accepted by `TOOLANG_DEFAULT_MODEL`, Agent and Chat startup
-`--default model=BODY`, Script/rerun `--model BODY`, `/model BODY`, and
-`:model BODY`. Multi-token CLI and environment values must be shell-quoted.
-Configuration deliberately supports only the string form under `[default]`;
-there is no `[default.model]` table. Legacy `none` values in Setup default
-sources normalize to canonical `unset`.
+Ordinary model fields apply in root/agent or project-layer order, followed by
+existing environment and startup overrides. A parameter-only table requires an
+inherited model. Supplying an exact `ref`, even unchanged, clears inherited
+parameters before applying the same table's assignments; `"auto"` clears only
+that control. `ref = "default"` retains the preceding ordinary source's value;
+`ref = "unset"` clears its configured preference, leaving entry fallback rules
+unchanged. Explicit `/model unset` selects a model-free Run.
+
+Talk overlays its model tables on the resolved ordinary model or handler fallback.
+Its `default` restores that baseline and its `unset` suppresses fallback. See
+[driver policy](drivers.md#threads-and-observation). Compact overlays its own
+model tables on the calling root's identity with independent effort/output
+settings. Parameter-only compact tables customize that identity; `default`
+restores it, while `unset` is invalid. Exact compact environment/startup choices
+apply after its configuration layers.
+
+String inputs use `[ref=]MODEL` plus `effort=VALUE` and `max_output=VALUE`.
+The `ref=` prefix is optional, and a bare model must be first; named assignments
+may appear in any order. Duplicate identities/parameters and empty values fail.
+The same grammar is accepted by `TOOLANG_DEFAULT_MODEL`, `TOOLANG_COMPACT_MODEL`,
+`--default model=BODY`, `--model BODY`, `--compact-model BODY`, `/model BODY`, and
+`:model BODY`, retaining each surface's existing restrictions and lifetime.
+Quote multi-token shell values, for example `--model 'ref=gateway/chat effort=high'`.
+
+Only structured model tables are read from configuration files. Migrate
+`[default].model` to `[model]` with `ref`, `effort`, and `max_output` fields,
+and compact model strings to `[compact.model]`. The old `[default]` namespace
+and scalar compact model settings have no effect. Model string inputs use
+`unset` to clear a preference; `none` is not a model selection sentinel.
+There is no arbitrary provider-parameter map.
 
 `[models.providers.*]`, `[models].default`, and `[models.aliases.*]` are rejected.
 Custom model identities and aliases will be supplied by a future custom catalog rather than

@@ -263,10 +263,10 @@ def test_chat_latest_uses_selected_history_for_agent_sessions(
     }
 
 
-def test_chat_default_model_none_clears_the_configured_preference() -> None:
+def test_chat_default_model_unset_clears_the_configured_preference() -> None:
     update, clear_runnable = chat._chat_session_override(
         allow_options=None,
-        default_options=["model=none"],
+        default_options=["model=unset"],
         limit_options=None,
     )
 

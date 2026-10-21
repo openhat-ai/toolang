@@ -373,7 +373,9 @@ its elapsed timer. Flow descriptions are unchanged.
 `runtime/spawn({runnable, input?, thread?})` starts an independent root under the
 same agent/executor. Omit `thread` for a new empty `work_` thread, or supply an
 inspected idle local thread of any prefix. Reuse preserves its metadata, history,
-and compaction; launch resources/workdir still come from the caller. It shares
+and compaction; launch resources/workdir still come from the caller. The new
+root selects ordinary Setup model and limit defaults, retaining caller resource
+ceilings while resetting source model/limit overrides. It shares the
 run's input decoder and follows the current spawns route. It accepts no identity,
 source-code, or execution-configuration arguments. Multiple spawn calls
 may share a tool batch; each commits independently.

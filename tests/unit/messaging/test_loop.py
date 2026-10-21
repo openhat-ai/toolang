@@ -13,7 +13,7 @@ from tests.support.execution_harness import (
     ScriptedModelTurn,
 )
 from tests.support.setup import replace_materialized_setup
-from toolang.base.types.message import Message as ModelMessage
+from toolang.base.types.message import Message as ModelMessage, TextPart
 from toolang.base.types.model import ModelRequest
 from toolang.base.types.policy import RunDefaults
 from toolang.base.types.run import ModelCallResult, ToolCall
@@ -862,5 +862,213 @@ def test_membership_loss_during_poll_does_not_block_other_conversations(
             await loop.poll()
             assert remaining in loop.gaps
             assert leaving not in loop.gaps
+
+    asyncio.run(scenario())
+
+
+def test_talk_scoped_model_limits_and_refresh_are_captured_per_batch(tmp_path):
+    from toolang.base.model_settings import parse_model_body
+    from toolang.base.types.policy import RunLimits
+    from toolang.setup.config import resolve_talk_config
+
+    server = FakeServer(server_type="valkey")
+    harness = harness_with_msg(
+        tmp_path,
+        server,
+        [
+            ModelCallResult(message=ModelMessage.assistant("Handled.")),
+            ModelCallResult(message=ModelMessage.assistant("Handled again.")),
+        ],
+    )
+    ordinary = harness.setup.models_effective()[0]
+    router = replace(ordinary, id="router")
+    harness.setup = replace_materialized_setup(
+        harness.setup,
+        models=(ordinary, router),
+        defaults=RunDefaults(model=ModelRequest(ordinary.ref, max_output=512)),
+    )
+    policy = resolve_talk_config(
+        (
+            {
+                "talk": {
+                    "model": {"ref": router.ref, "max_output": 128},
+                    "limit": {"time": 120, "agic_model_calls": 7},
+                }
+            },
+        ),
+        limits=RunLimits(),
+    )
+    harness.setup = replace(harness.setup, talk=policy)
+
+    async def scenario():
+        async with (
+            harness,
+            make_client(server) as client,
+            make_client(server, "human:owner") as human,
+        ):
+            await prepare(client, human)
+            loop = make_loop(tmp_path, client, harness)
+            await human.send("gc_00000001", body="first")
+            await loop.poll()
+            harness.setup = replace(
+                harness.setup,
+                talk=replace(
+                    policy, model=(*policy.model, parse_model_body("max_output=64"))
+                ),
+            )
+            await human.send("gc_00000001", body="second")
+            await loop.poll()
+            controls = [
+                harness.store.get_run_control(run_id=run.id, index=0).payload
+                for run in harness.store.list_runs()
+                if run.parent is None
+            ]
+            assert sorted(control.model_request.max_output for control in controls) == [
+                64,
+                128,
+            ]
+            assert all(
+                control.model_request.ref == router.ref
+                and control.limits == policy.limits
+                for control in controls
+            )
+            assert [
+                call.call.max_output_tokens for call in harness.adapter.invocations
+            ] == [128, 64]
+            assert harness.setup.defaults.model.ref == ordinary.ref
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    "source,body,success",
+    [
+        (
+            "flow talk(_: Json):\n  models -= *\n  let note = handled\n",
+            {"ref": "unset"},
+            True,
+        ),
+        ("agic talk(_: Json):\n  {{_}}\n", {"ref": "unset"}, False),
+        ("agic talk(_: Json):\n  {{_}}\n", {"max_output": 64}, True),
+        ("agic talk(_: Json):\n  models -= *\n  {{_}}\n", {"max_output": 64}, False),
+    ],
+)
+def test_talk_scoped_unset_and_parameter_only_respect_handler_admission(
+    tmp_path, source, body, success
+):
+    from toolang.setup.config import resolve_talk_config
+
+    server = FakeServer(server_type="valkey")
+    harness = harness_with_msg(
+        tmp_path,
+        server,
+        [ModelCallResult(message=ModelMessage.assistant("Handled."))],
+        source=source,
+    )
+    harness.setup = replace_materialized_setup(harness.setup, defaults=RunDefaults())
+    harness.setup = replace(
+        harness.setup,
+        talk=resolve_talk_config(
+            ({"talk": {"model": body}},), limits=harness.setup.limits
+        ),
+    )
+
+    async def scenario():
+        async with (
+            harness,
+            make_client(server) as client,
+            make_client(server, "human:owner") as human,
+        ):
+            await prepare(client, human)
+            await human.send("gc_00000001", body="please handle")
+            loop = make_loop(tmp_path, client, harness)
+            await loop.poll()
+            assert bool(harness.store.list_runs()) is success
+            if not success:
+                assert await client.talk_cursor("gc_00000001") == "0-0"
+                assert not harness.adapter.invocations
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    "agent_talk,explicit,expected_ref,expected_output",
+    [
+        (None, False, "router", 128),
+        ({}, False, "router", 128),
+        ({"max_output": 64}, False, "router", 64),
+        ({"ref": "test/router"}, False, "router", None),
+        ({"ref": "default"}, False, "scripted", 2048),
+        ({"max_output": "auto"}, False, "router", None),
+        ({"ref": "unset"}, False, None, None),
+        (None, True, "scripted", 333),
+    ],
+)
+def test_talk_model_layers_override_general_startup_but_preserve_explicit_requests(
+    tmp_path, agent_talk, explicit, expected_ref, expected_output
+):
+    from toolang.base.model_settings import parse_model_body
+    from toolang.base.types.policy import RunBindings
+    from toolang.execution.executor import RunSpec
+    from toolang.execution.types import ThreadKind
+    from toolang.lang.input import CallInput
+    from toolang.setup.config import resolve_run_defaults, resolve_talk_config
+
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="flow talk(_: Text):\n  let note = handled\n",
+        responses=[],
+    )
+    ordinary = harness.setup.models_effective()[0]
+    router = replace(ordinary, id="router")
+    configs = [
+        {
+            "model": {"ref": ordinary.ref, "max_output": 512},
+            "talk": {"model": {"ref": router.ref, "max_output": 128}},
+        },
+        {"model": {"max_output": 1024}},
+    ]
+    if agent_talk is not None:
+        configs[-1]["talk"] = {"model": agent_talk}
+    defaults = resolve_run_defaults(
+        configs,
+        overrides={"model": parse_model_body(f"ref={ordinary.ref} max_output=2048")},
+    )
+    assert defaults.model == ModelRequest(ordinary.ref, max_output=2048)
+    harness.setup = replace_materialized_setup(
+        harness.setup, models=(ordinary, router), defaults=defaults
+    )
+    harness.setup = replace(
+        harness.setup, talk=resolve_talk_config(configs, limits=harness.setup.limits)
+    )
+    assert harness.setup.talk.limits is not None
+    limits = harness.setup.talk.limits
+    expected = (
+        None
+        if expected_ref is None
+        else ModelRequest(f"test/{expected_ref}", max_output=expected_output)
+    )
+
+    async def scenario():
+        async with harness:
+            run = await harness.executor.run(
+                RunSpec(
+                    setup=harness.setup,
+                    state=harness.state,
+                    thread=harness.threads.create(kind=ThreadKind.TALK),
+                    bindings=RunBindings(),
+                    limits=limits,
+                    model_request=ModelRequest(ordinary.ref, max_output=333)
+                    if explicit
+                    else None,
+                    driver="talk",
+                    input=CallInput({"_": (TextPart("input"),)}),
+                )
+            )
+            assert run.status == "succeeded", run.error
+            entry = harness.store.get_run_control(run_id=run.id, index=0)
+            assert entry is not None and isinstance(entry.payload, RunControlPayload)
+            assert entry.payload.model_request == expected
+            assert not harness.adapter.invocations
 
     asyncio.run(scenario())

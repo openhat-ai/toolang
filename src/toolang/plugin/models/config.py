@@ -18,9 +18,7 @@ _REJECTED_MODELS_FIELDS: Mapping[str, str] = {
         "[models.aliases.*] is not supported; declare the model in a model "
         "catalog plugin"
     ),
-    "default": (
-        "[models].default is not supported; use [default].model with an exact ref"
-    ),
+    "default": ("[models].default is not supported; use [model].ref with an exact ref"),
 }
 
 

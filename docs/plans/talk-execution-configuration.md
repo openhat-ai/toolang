@@ -1,7 +1,7 @@
 # Execution configuration and Talk policy
 
-Feature definition proposed for review. This PR contains no implementation;
-implementation requires human approval of the complete contract.
+Approved execution configuration contract. Configuration files use structured
+model tables.
 
 ## Goal and ownership
 
@@ -23,14 +23,7 @@ spawned work. Explicit caller requests retain their current authority and
 model-free API semantics. Thread kinds `chat_`, `chore_`, `exec_`, `work_`, and
 `talk_` do not select policy; a spawn reusing any idle thread is ordinary work.
 
-## Verified baseline and scope
-
-Current configuration has `[default].model` and `[compact].model` strings using
-the shared model-body grammar. Talk uses general defaults. Chore bodies already
-support `/model`, `/limit`, and narrowing `/allow` through the shared call parser.
-Nested calls and both spawn paths inherit model/limit values; independent spawns
-already have separate accounting. Compaction selects a model independently but
-shares its caller's root budget and allowed model resources.
+## Scope
 
 This definition replaces the canonical configuration model syntax, adds Talk
 model/limit policy, and resets independent spawn defaults. Preserve current
@@ -215,16 +208,11 @@ one-submission overrides follow the same boundary; no Chore namespace is added.
 
 ## Compatibility, capture, and validation
 
-Keep `[default].model` strings and `[compact].model` strings as deprecated
-compatibility inputs until removal is approved separately. Normalize them to
-the same typed operations and emit a migration warning naming the new table,
-once per source path and legacy field per process, rather than on every refresh.
-Do not create compatibility syntax for the unshipped Talk string proposal.
-Reject `[default].model` plus `[model]` in the same source. TOML already rejects
-a compact string and subtable at the same key. Mixed legacy/canonical layers
-retain normal precedence; legacy `none` remains supported only in its existing
-general-default sources. Existing CLI/environment names and lifetimes remain;
-their shared model parser gains the optional explicit `ref=` spelling.
+Read only structured model tables. The old `[default]` namespace and scalar
+compact model settings are ignored without migration warnings or dedicated
+rejection rules. Remove the general-default `none` alias; model selection uses
+`unset` where supported. Existing CLI/environment names and lifetimes remain;
+their shared model parser accepts the optional explicit `ref=` spelling.
 
 Capture typed settings in immutable Setup generations and include them in
 change detection. Syntax/type/unknown-field errors reject initial preparation
@@ -246,7 +234,7 @@ schemas unchanged.
 ## Implementation touchpoints
 
 - `src/toolang/setup/config.py`, `types.py`, and `watcher.py`: structured model
-  parsing, legacy normalization, typed Talk/compact policy, source diagnostics,
+  parsing, typed Talk/compact policy, source diagnostics,
   projection and generation identity. Ordinary defaults stay a concrete
   `ModelRequest`; Talk/compact capture ordered `ModelOverride` values. Setup
   must stay independent of execution.
@@ -273,9 +261,8 @@ schemas unchanged.
    and compact startup override order. Ordinary parameter-only input with no
    prior model fails; ordinary unset permits entry fallback while Talk unset
    suppresses fallback.
-3. Legacy inputs normalize with warnings, conflicting same-source syntax fails,
-   and mixed layers work without repeated refresh warnings. Bare model refs
-   retain support without warnings;
+3. Old configuration has no effect and does not emit migration warnings or
+   alter Setup generations. Bare model refs retain support without warnings;
    named/bare forms match across CLI/environment/slash/colon, parameter-only
    bodies remain valid, duplicate identities fail, and shell-quoted bodies
    remain single option values. API/persistence shapes retain their contracts.
@@ -296,12 +283,11 @@ schemas unchanged.
 9. Before implementation commits run `uv run ruff check .`,
    `uv run ruff format --check .`, `uv run ty check`, and `uv run pytest -n auto`.
 
-## Risks and confirmation
+## Risks
 
-- Structured tables replace a shipped string surface. Compatibility must stay
-  bounded to migration, with explicit conflicts and no untyped parameter map.
+- Structured tables replace a shipped string surface. Existing configuration
+  must migrate to the new tables; old model settings no longer take effect.
 - Spawn resets Chat/Chore source overrides as well as Talk overrides; inherited
   resource ceilings can therefore reject a different ordinary worker model.
 - Compact parameter-only tables extend its current exact-ref-only configuration;
   lazy validation must preserve independent parameters and root accounting.
-- Complete resolution and migration rules await human confirmation.

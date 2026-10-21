@@ -20,7 +20,7 @@ import threading
 import time
 from typing import Any, Concatenate, Literal, ParamSpec, TypeVar, cast
 
-from toolang.base.model_settings import apply_model_override
+from toolang.base.model_settings import apply_model_override, apply_model_overrides
 from toolang.base.types.model import Model, ModelOverride, ModelRequest
 from toolang.base.types.policy import AgentCeiling, RunBindings, RunLimits
 from toolang.base.types.run import ModelUsage
@@ -1750,6 +1750,25 @@ class _Execution:
             names=[p.name for p in captured.params] + (["_"] if captured.input else []),
         )
 
+    def bind_call_input(
+        self,
+        locals: Mapping[str, Local],
+        runnable: AgicDecl | FlowDecl,
+        reference: str,
+        *,
+        state: AgentState,
+        module: str,
+        step: StepRef,
+    ) -> tuple[RunnableInput, CallInput[Value | TypedRef]]:
+        """Project captures and bind input against one captured module contract."""
+
+        return _bind_child_input(
+            runnable,
+            self.project_call_locals(locals, runnable, reference, step=step),
+            reference=reference,
+            structs={item.name: item for item in state_program(state, module).structs},
+        )
+
     def project_handle_locals(
         self,
         locals: Mapping[str, Local],
@@ -2071,16 +2090,13 @@ class _Execution:
         state, target = self.resolve_invocation(
             parent, statement.runnable, action="exec"
         )
-        locals = self.project_call_locals(
-            locals, target.executable, target.ref, step=step
-        )
-        input, provenance = _bind_child_input(
-            target.executable,
+        input, provenance = self.bind_call_input(
             locals,
-            reference=target.ref,
-            structs={
-                item.name: item for item in state_program(state, target.module).structs
-            },
+            target.executable,
+            target.ref,
+            state=state,
+            module=target.module,
+            step=step,
         )
         binding, successor_locals = self.prepare_execute(
             parent,
@@ -2563,6 +2579,7 @@ class _Execution:
         state: AgentState,
         state_ref: ControlRef,
         validate_input: bool = True,
+        ordinary_defaults: bool = False,
     ) -> BoundRun:
         if validate_input:
             _validate_inputs(
@@ -2597,7 +2614,9 @@ class _Execution:
             call="run",
             parent=parent_step,
         )
-        return self.prepare_resources(binding, runnable)
+        return self.prepare_resources(
+            binding, runnable, ordinary_defaults=ordinary_defaults
+        )
 
     def prepare_resources(
         self,
@@ -2605,6 +2624,7 @@ class _Execution:
         runnable: AgicDecl | FlowDecl,
         *,
         state: AgentState | None = None,
+        ordinary_defaults: bool = False,
     ) -> BoundRun:
         """Select fresh resources without changing any accepted code binding."""
         path = self.active_path(binding)
@@ -2632,7 +2652,21 @@ class _Execution:
                 tools=tuple(t for t in resources.tools if t in ceiling.tools),
                 caps=tuple(c for c in resources.caps if c in ceiling.caps),
             )
-        if isinstance(runnable, AgicDecl):
+        if ordinary_defaults:
+            request = binding.setup.defaults.model
+            if request is None and resources.models:
+                request = ModelRequest(resources.models[0])
+            if request is not None:
+                request = materialize_model_request(request, setup=binding.setup)
+            binding = replace(
+                binding,
+                bindings=replace(
+                    binding.bindings, model=request.ref if request is not None else None
+                ),
+                model_request=request,
+                limits=binding.setup.limits,
+            )
+        if ordinary_defaults or isinstance(runnable, AgicDecl):
             validate_model_binding(
                 self.models,
                 runnable=runnable,
@@ -3522,12 +3556,13 @@ def _child_binding(
     state: AgentState,
     state_ref: ControlRef,
 ) -> BoundRun:
-    locals = context.project_call_locals(
-        locals, runnable, effective_name, step=parent_step
-    )
-    structs = {item.name: item for item in state_program(state, module).structs}
-    input, control_input = _bind_child_input(
-        runnable, locals, reference=effective_name, structs=structs
+    input, control_input = context.bind_call_input(
+        locals,
+        runnable,
+        effective_name,
+        state=state,
+        module=module,
+        step=parent_step,
     )
     return BoundRun(
         run_id=context.executor.ids.issue_run(),
@@ -3702,6 +3737,7 @@ def _resolve_driver_spec(spec: RunSpec) -> RunSpec:
                 module=target.module,
             )
             model = ModelRequest(resources.models[0]) if resources.models else None
+        model = apply_model_overrides(model, spec.setup.talk.model)
     return replace(
         spec,
         state=state,

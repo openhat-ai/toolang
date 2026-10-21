@@ -6,23 +6,29 @@ import math
 import os
 import re
 from collections.abc import Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import replace
 from decimal import Decimal
 from pathlib import Path
-from typing import cast
+from typing import Iterator, cast
 
 from dotenv import dotenv_values
 
 from toolang.base.model_settings import apply_model_override, parse_model_body
 from toolang.base.money import normalize_cost
-from toolang.base.types.model import ModelOverride, ModelRequest
+from toolang.base.types.model import (
+    ModelEffort,
+    ModelMaxOutput,
+    ModelOverride,
+    ModelRequest,
+)
 from toolang.base.types.policy import AgentCeiling, RunDefaults, RunLimits
 from toolang.common.errors import ToolangError
 from toolang.common.layout import AgentLayout
 from toolang.common.config_sources import read_config
 from toolang.common.policy import resolve_query_sentinels
 
-from .types import CompactConfig
+from .types import CompactConfig, TalkConfig
 
 _CAP_KIND_BY_FIELD = {
     "psyches": "psyche",
@@ -92,7 +98,7 @@ def project_setup_config(config: Mapping[str, object]) -> dict[str, object]:
 
     projected = {
         name: _mutable_value(config[name])
-        for name in ("models", "default", "compact", "limit")
+        for name in ("models", "model", "compact", "talk", "limit")
         if name in config
     }
     raw_allow = config.get("allow")
@@ -178,38 +184,108 @@ def resolve_setup_allow(
     return ceiling
 
 
+@contextmanager
+def _origin(origins: Sequence[Path], index: int) -> Iterator[None]:
+    try:
+        yield
+    except (TypeError, ValueError) as exc:
+        if index < len(origins):
+            raise type(exc)(f"{origins[index]}: {exc}") from exc
+        raise
+
+
+def _model_table(value: object, label: str) -> ModelOverride | None:
+    if not isinstance(value, Mapping):
+        raise TypeError(f"{label} must be a table")
+    table = cast(Mapping[str, object], value)
+    _reject_unknown(table, frozenset({"ref", "effort", "max_output"}), f"{label} field")
+    if not table:
+        return None
+    if any(value is None for value in table.values()):
+        raise TypeError(f"{label} values cannot be null")
+    if "effort" in table and not isinstance(table["effort"], (str, int)):
+        raise TypeError(f"{label}.effort must be a level, token budget, or auto")
+    if "ref" in table and not isinstance(table["ref"], str):
+        raise TypeError(f"{label}.ref must be a string")
+    try:
+        return ModelOverride(
+            identity=cast(str | None, table.get("ref")),
+            effort=cast(ModelEffort | None, table.get("effort")),
+            max_output=cast(ModelMaxOutput | None, table.get("max_output")),
+        )
+    except (TypeError, ValueError) as exc:
+        raise type(exc)(f"{label}: {exc}") from exc
+
+
 def resolve_compact_config(
     configs: Sequence[Mapping[str, object]],
     *,
     override: ModelOverride | None = None,
+    origins: Sequence[Path] = (),
 ) -> CompactConfig:
-    """Resolve compact fields independently; model overrides replace identity."""
+    """Capture ordered model operations and independently inherited sizes."""
     result = CompactConfig()
-    for config in configs:
-        table = _table(config, "compact")
-        if table is None:
-            continue
-        _reject_unknown(
-            table, frozenset({"model", "summary", "recent", "trigger"}), "compact field"
-        )
-        if "model" in table:
-            selected = parse_model_body(_default_text("model", table["model"]))
-            _validate_compact_model(selected)
-            result = replace(result, model=selected)
-        for name in ("summary", "recent", "trigger"):
-            if name in table:
-                result = replace(result, **{name: _compact_size(name, table[name])})
+    operations: list[ModelOverride] = []
+    for index, config in enumerate(configs):
+        with _origin(origins, index):
+            table = _table(config, "compact")
+            if table is None:
+                continue
+            _reject_unknown(
+                table,
+                frozenset({"model", "summary", "recent", "trigger"}),
+                "compact field",
+            )
+            if isinstance(table.get("model"), Mapping):
+                selected = _model_table(table["model"], "compact.model")
+                if selected is not None:
+                    if selected.identity == "unset":
+                        raise ValueError(
+                            "compact.model requires an exact model or an inherited model; unset is not supported"
+                        )
+                    operations.append(selected)
+            for name in ("summary", "recent", "trigger"):
+                if name in table:
+                    result = replace(result, **{name: _compact_size(name, table[name])})
     if override is not None:
-        _validate_compact_model(override)
-        result = replace(result, model=override)
+        _validate_compact_override(override)
+        operations.append(override)
     if type(result.recent) is type(result.trigger) and result.recent >= result.trigger:
         raise ValueError("compact.recent must be less than compact.trigger")
-    return result
+    return replace(result, model=tuple(operations))
 
 
-def _validate_compact_model(model: ModelOverride) -> None:
+def _validate_compact_override(model: ModelOverride) -> None:
     if model.identity in (None, "default", "unset"):
         raise ValueError("compact.model requires an exact model")
+
+
+def resolve_talk_config(
+    configs: Sequence[Mapping[str, object]],
+    *,
+    limits: RunLimits,
+    origins: Sequence[Path] = (),
+) -> TalkConfig:
+    """Capture Talk model operations above ordinary model and limit defaults."""
+    operations: list[ModelOverride] = []
+    for index, config in enumerate(configs):
+        with _origin(origins, index):
+            table = _table(config, "talk")
+            if table is None:
+                continue
+            _reject_unknown(table, frozenset({"model", "limit"}), "talk field")
+            if "model" in table:
+                selected = _model_table(table["model"], "talk.model")
+                if selected is not None:
+                    operations.append(selected)
+            if "limit" in table:
+                try:
+                    limits = resolve_run_limits(
+                        ({"limit": table["limit"]},), base=limits
+                    )
+                except (TypeError, ValueError) as exc:
+                    raise type(exc)(f"talk.limit: {exc}") from exc
+    return TalkConfig(model=tuple(operations), limits=limits)
 
 
 def _compact_size(name: str, value: object) -> int | float:
@@ -255,25 +331,18 @@ def resolve_run_defaults(
     configs: Sequence[Mapping[str, object]],
     *,
     overrides: Mapping[str, ModelOverride | str | None] | None = None,
+    origins: Sequence[Path] = (),
 ) -> RunDefaults:
-    """Resolve layered ``[default]`` configuration and frozen overrides."""
+    """Resolve layered ``[model]`` configuration and frozen overrides."""
 
     model: ModelRequest | None = None
-    for config in configs:
-        raw_default = _table(config, "default")
-        if raw_default is None:
-            continue
-        if "runnable" in raw_default:
-            raise ValueError(
-                "[default].runnable is no longer supported; declare a named "
-                "chat, talk, or chore handler, or select a Chat session runnable"
-            )
-        _reject_unknown(raw_default, _DEFAULT_FIELDS, "default field")
-        if "model" in raw_default:
-            body = _default_text("model", raw_default["model"])
-            if body.lower() == "none":
-                body = "unset"
-            model = apply_model_override(model, model, parse_model_body(body))
+    for index, config in enumerate(configs):
+        with _origin(origins, index):
+            if "model" in config:
+                selected = _model_table(config["model"], "model")
+            else:
+                selected = None
+            model = apply_model_override(model, model, selected)
     resolved_overrides = overrides or {}
     _reject_unknown(resolved_overrides, _DEFAULT_FIELDS, "default field")
     if "model" in resolved_overrides:
@@ -291,22 +360,25 @@ def resolve_run_limits(
     configs: Sequence[Mapping[str, object]],
     *,
     overrides: Mapping[str, int | float | None] | None = None,
+    base: RunLimits | None = None,
+    origins: Sequence[Path] = (),
 ) -> RunLimits:
     """Resolve layered ``[limit]`` configuration and frozen overrides."""
 
-    limits = RunLimits()
-    for config in configs:
-        raw_limits = _table(config, "limit")
-        if raw_limits is None:
-            continue
-        _reject_unknown(raw_limits, _LIMIT_FIELDS, "run limit")
-        limits = replace(
-            limits,
-            **{
-                str(name): _limit_value(str(name), value)
-                for name, value in raw_limits.items()
-            },
-        )
+    limits = base if base is not None else RunLimits()
+    for index, config in enumerate(configs):
+        with _origin(origins, index):
+            raw_limits = _table(config, "limit")
+            if raw_limits is None:
+                continue
+            _reject_unknown(raw_limits, _LIMIT_FIELDS, "run limit")
+            limits = replace(
+                limits,
+                **{
+                    str(name): _limit_value(str(name), value)
+                    for name, value in raw_limits.items()
+                },
+            )
     resolved_overrides = overrides or {}
     _reject_unknown(resolved_overrides, _LIMIT_FIELDS, "run limit")
     return replace(limits, **resolved_overrides)
@@ -346,15 +418,6 @@ def _query_values(name: str, value: object) -> tuple[str, ...] | None:
         )
     except ToolangError as error:
         raise ValueError(str(error)) from error
-
-
-def _default_text(name: str, value: object) -> str:
-    if not isinstance(value, str):
-        raise TypeError(f"default {name} must be a string")
-    normalized = value.strip()
-    if not normalized:
-        raise ValueError(f"default {name} must not be empty")
-    return normalized
 
 
 def _load_dotenv(path: Path) -> dict[str, str]:

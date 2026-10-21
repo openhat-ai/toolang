@@ -65,7 +65,7 @@ def test_visiting_chat_reclaims_or_explicitly_stops_an_automatic_container(
     root = tmp_path / "root"
     root.mkdir()
     (root / "config.toml").write_text(
-        f'[teaming]\nenabled = false\n[default]\nmodel = "{_MODEL}"\n'
+        f'[teaming]\nenabled = false\n[model]\nref = "{_MODEL}"\n'
         '[allow]\nmodels = ["ollama/*"]\ntools = []\n'
     )
     source = ThreadingHTTPServer(("127.0.0.1", 0), Source)

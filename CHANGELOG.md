@@ -23,6 +23,11 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   usage, or replayed events.
   ([#884](https://github.com/openhat-ai/toolang/pull/884))
 
+- Structured `[model]`, `[talk.model]`, `[talk.limit]`, and `[compact.model]`
+  tables configure model ref, effort, and output limits, and model strings
+  accept `ref=`.
+  ([#907](https://github.com/openhat-ai/toolang/pull/907))
+
 ### Changed
 
 - **Breaking:** Stop every running agent with `too AGENT stop` or Ctrl+C before
@@ -112,6 +117,20 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   other labels unchanged.
   ([#911](https://github.com/openhat-ai/toolang/pull/911))
 
+- **Breaking:** Independent flows and `runtime__spawn` use captured `[model]`
+  and `[limit]` defaults instead of caller Talk, Chat, or Chore overrides;
+  set worker defaults there.
+  ([#907](https://github.com/openhat-ai/toolang/pull/907))
+
+- **Breaking:** Legacy `[default].model` strings and scalar `compact.model`
+  settings are ignored; move them to `[model]` ref, effort, and max_output
+  fields and `[compact.model]` with the same fields.
+  ([#907](https://github.com/openhat-ai/toolang/pull/907))
+
+- **Breaking:** Model strings no longer normalize `none` to unset, so write
+  `unset` to clear a model preference.
+  ([#907](https://github.com/openhat-ai/toolang/pull/907))
+
 ### Fixed
 
 - Failed preparation no longer leaves active registrations; runtime references
@@ -187,6 +206,10 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   and completed tree text aligns under its column title.
   ([#897](https://github.com/openhat-ai/toolang/pull/897))
 
+- CLI tables show chore next-run and inspect control, thread, run, and step
+  timestamps in the local timezone, while stored records and JSON keep UTC.
+  ([#898](https://github.com/openhat-ai/toolang/pull/898))
+
 - An empty Hub roster renders as a dim `└── no agents` tree leaf beneath the
   Hub row, and as `\-- no agents` in ASCII output.
   ([#905](https://github.com/openhat-ai/toolang/pull/905))
@@ -195,6 +218,15 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   environment or inferred defaults, while explicit startup differences still
   reject with restart guidance.
   ([#901](https://github.com/openhat-ai/toolang/pull/901))
+
+- Replayed Flow spawns keep captured Json, struct, and Parts inputs and
+  recorded handle identities, so later worker status changes no longer
+  invalidate an accepted spawn.
+  ([#907](https://github.com/openhat-ai/toolang/pull/907))
+
+- Spawn replays that conflict with a recorded source-output handle or lack
+  their target thread are rejected instead of accepted.
+  ([#907](https://github.com/openhat-ai/toolang/pull/907))
 
 ### Security
 

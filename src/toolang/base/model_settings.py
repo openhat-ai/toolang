@@ -48,7 +48,12 @@ def parse_model_body(body: str) -> ModelOverride:
                 ModelRequest(identity)
             continue
         field, raw = _assignment(token)
-        if field == "effort":
+        if field == "ref":
+            if identity is not None:
+                raise ValueError("duplicate model identity: ref")
+            identity = raw.lower() if raw.lower() in {"default", "unset"} else raw
+            ModelOverride(identity=identity)
+        elif field == "effort":
             if effort is not None:
                 raise ValueError("duplicate model parameter: effort")
             effort = _effort_value(raw)
@@ -98,6 +103,18 @@ def apply_model_override(
     return replace(model, reasoning=reasoning, max_output=max_output)
 
 
+def apply_model_overrides(
+    baseline: ModelRequest | None,
+    overrides: Sequence[ModelOverride],
+) -> ModelRequest | None:
+    """Apply ordered operations while keeping one fixed default selection."""
+
+    request = baseline
+    for override in overrides:
+        request = apply_model_override(request, baseline, override)
+    return request
+
+
 def compose_model_overrides(
     overrides: Sequence[ModelOverride],
 ) -> ModelOverride | None:
@@ -127,7 +144,7 @@ def format_model_body(override: ModelOverride) -> str:
 
     tokens: list[str] = []
     if override.identity is not None:
-        tokens.append(override.identity)
+        tokens.append(f"ref={override.identity}")
     if override.effort is not None:
         tokens.append(f"effort={override.effort}")
     if override.max_output is not None:
@@ -165,6 +182,7 @@ def _effort_value(raw: str) -> ModelEffort:
 
 __all__ = [
     "apply_model_override",
+    "apply_model_overrides",
     "compose_model_overrides",
     "format_model_body",
     "parse_model_body",

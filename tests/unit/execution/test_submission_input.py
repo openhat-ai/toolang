@@ -21,6 +21,10 @@ from toolang.lang.input import CallInput
             RunOverride(model=ModelOverride(identity="openai/gpt-5")),
         ),
         (
+            "/model ref=openai/gpt-5",
+            RunOverride(model=ModelOverride(identity="openai/gpt-5")),
+        ),
+        (
             "/model effort=high",
             RunOverride(model=ModelOverride(effort="high")),
         ),
@@ -86,7 +90,6 @@ def test_prefix_merges_allow_lines_and_multiple_fields() -> None:
     [
         ("/model", "requires"),
         ("/model openai/gpt-5 high", "first token"),
-        ("/model ref=openai/gpt-5", "unknown model parameter"),
         ("/model reasoning=high", "unknown model parameter"),
         ("/model none", "was removed"),
         ("/allow", "requires"),

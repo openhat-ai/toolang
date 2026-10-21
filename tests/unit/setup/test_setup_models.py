@@ -135,21 +135,29 @@ def test_exact_model_lookup_and_subsets_do_not_parse_queries(monkeypatch):
 
 def test_compact_config_layers_are_independent_complete_model_requests():
     root = {
-        "default": {"model": "normal/a effort=high"},
-        "compact": {"model": "other/a effort=low"},
+        "model": {"ref": "normal/a", "effort": "high"},
+        "compact": {"model": {"ref": "other/a", "effort": "low"}},
     }
-    agent = {"compact": {"model": "other/b"}}
+    agent = {"compact": {"model": {"ref": "other/b"}}}
     assert resolve_compact_config(({},)) == CompactConfig()
-    assert resolve_compact_config((root, agent)).model == parse_model_body("other/b")
+    assert resolve_compact_config((root, agent)).model == (
+        parse_model_body("other/a effort=low"),
+        parse_model_body("other/b"),
+    )
     assert resolve_compact_config(
         (root, agent), override=parse_model_body("other/c")
-    ).model == parse_model_body("other/c")
+    ).model == (
+        parse_model_body("other/a effort=low"),
+        parse_model_body("other/b"),
+        parse_model_body("other/c"),
+    )
 
 
-@pytest.mark.parametrize("value", ["default", "effort=low", "unset"])
-def test_compact_config_requires_an_exact_model(value):
-    with pytest.raises(ValueError, match="exact model"):
-        resolve_compact_config(({"compact": {"model": value}},))
+@pytest.mark.parametrize(
+    "value", ["test/one effort=low", "default", "effort=low", "unset"]
+)
+def test_compact_config_ignores_model_strings(value):
+    assert resolve_compact_config(({"compact": {"model": value}},)) == CompactConfig()
 
 
 def test_compact_selection_filters_capabilities_and_preserves_order():
@@ -160,35 +168,34 @@ def test_compact_selection_filters_capabilities_and_preserves_order():
         model("test/second"),
         model("test/first"),
     )
-    assert (
-        select_compact_model(models, None, default="test/second").ref == "test/second"
-    )
+    assert select_compact_model(models, (), default="test/second").ref == "test/second"
     assert (
         select_compact_model(
-            filter_models(models, ("test/first", "*")), None, default="test/second"
+            filter_models(models, ("test/first", "*")), (), default="test/second"
         ).ref
         == "test/second"
     )
     assert (
-        select_compact_model(models, parse_model_body("test/first")).ref == "test/first"
+        select_compact_model(models, (parse_model_body("test/first"),)).ref
+        == "test/first"
     )
     for ref in ("test/unknown", "test/no-schema"):
-        assert select_compact_model(models, parse_model_body(ref)).ref == ref
+        assert select_compact_model(models, (parse_model_body(ref),)).ref == ref
     for ref in ("test/missing", "test/no-tools"):
         with pytest.raises(ToolangError, match="available, allowed"):
-            select_compact_model(models, parse_model_body(ref))
+            select_compact_model(models, (parse_model_body(ref),))
         with pytest.raises(ToolangError, match="available, allowed"):
-            select_compact_model(models, None, default=ref)
+            select_compact_model(models, (), default=ref)
     with pytest.raises(ToolangError, match="exact model"):
-        select_compact_model(models, parse_model_body("unset"))
+        select_compact_model(models, (parse_model_body("unset"),))
     with pytest.raises(ToolangError, match="requires a thread model"):
-        select_compact_model((), None)
+        select_compact_model((), ())
 
 
 def test_unknown_catalog_tool_capability_does_not_qualify():
     models = (model("test/unknown", tools=None),)
     with pytest.raises(ToolangError, match="available, allowed"):
-        select_compact_model(models, None, default="test/unknown")
+        select_compact_model(models, (), default="test/unknown")
 
 
 def test_model_directives_apply_tq_set_operations_in_catalog_order():
@@ -333,14 +340,21 @@ def test_tq_model_queries_match_identity_scalar_predicates_and_missing_fields():
 
 def test_compact_fields_layer_independently():
     root = {
-        "compact": {"model": "test/one effort=low", "summary": "2.5%", "recent": 6000}
+        "compact": {
+            "model": {"ref": "test/one", "effort": "low"},
+            "summary": "2.5%",
+            "recent": 6000,
+        }
     }
     agent = {"compact": {"trigger": "75%"}}
     result = resolve_compact_config(
         (root, agent), override=parse_model_body("test/two")
     )
     assert result == CompactConfig(
-        model=parse_model_body("test/two"), summary=0.025, recent=6000, trigger=0.75
+        model=(parse_model_body("test/one effort=low"), parse_model_body("test/two")),
+        summary=0.025,
+        recent=6000,
+        trigger=0.75,
     )
 
 
@@ -363,3 +377,44 @@ def test_compact_rejects_unknown_fields(field):
 def test_compact_recent_must_be_below_trigger(recent, trigger):
     with pytest.raises(ValueError, match="recent must be less"):
         resolve_compact_config(({"compact": {"recent": recent, "trigger": trigger}},))
+
+
+def test_compact_structured_operations_follow_calling_identity_without_parameters():
+    models = (model("test/one"), model("test/two"))
+    config = resolve_compact_config(
+        (
+            {"compact": {"model": {"ref": "test/two", "max_output": 4096}}},
+            {"compact": {"model": {"ref": "default", "max_output": 512}}},
+        )
+    )
+    request = select_compact_model(models, config.model, default="test/one")
+    assert (
+        request.ref == "test/one"
+        and request.max_output == 512
+        and request.reasoning is None
+    )
+    param = resolve_compact_config(({"compact": {"model": {"max_output": 1024}}},))
+    assert (
+        select_compact_model(models, param.model, default="test/two").max_output == 1024
+    )
+    with pytest.raises(ValueError, match="unset"):
+        resolve_compact_config(({"compact": {"model": {"ref": "unset"}}},))
+
+
+def test_scalar_compact_model_does_not_replace_inherited_model_or_sizing():
+    result = resolve_compact_config(
+        (
+            {
+                "compact": {
+                    "model": {"ref": "test/one", "max_output": 512},
+                    "summary": 2048,
+                }
+            },
+            {"compact": {"model": "test/old effort=high", "recent": "20%"}},
+        )
+    )
+    assert result == CompactConfig(
+        model=(parse_model_body("ref=test/one max_output=512"),),
+        summary=2048,
+        recent=0.2,
+    )

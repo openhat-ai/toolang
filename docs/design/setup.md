@@ -34,14 +34,19 @@ environment. Each generation keeps its own copied environment map.
 
 Policy resolves field by field from built-in defaults through root/home or
 project configuration, process-derived overrides, and explicit CLI overrides.
-Request/session policy applies when preparing a Run. Model/tool allow policy
-belongs to Setup; cap allow policy belongs to State. External resource ceilings
-can only narrow the published bases. An empty allow set denies that resource;
+`setup.config` parses source tables; `setup.models` validates configured model
+choices when the lazy catalog loads. The watcher coordinates publication;
+execution supplies handler/thread baselines and applies the shared typed model
+operations. Request/session policy applies when preparing a Run. Model/tool
+allow policy belongs to Setup; cap allow policy belongs to State. External
+resource ceilings can only narrow the published bases. An empty allow set denies that resource;
 a zero limit is active, while `none` disables a limit.
 
-The policy layers are `allow`, `default`, `limit`, and `compact`. Allow queries
-select resources, defaults supply a model request, and limits apply at the
-scopes defined by [Execution](execution.md#run-execution). There is no runtime
+The configuration groups are `allow`, `model`, `limit`, `talk`, and `compact`.
+Allow queries select common resources; model and limit settings supply ordinary
+root defaults. Talk overlays model/limit settings for automatic message handling,
+and compact settings apply to all thread kinds. Limits use the scopes defined by
+[Execution](execution.md#run-execution). There is no runtime
 default-runnable setting; [Drivers](drivers.md) resolve their handlers. Chat's
 runnable default is session state.
 

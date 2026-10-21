@@ -263,7 +263,7 @@ def test_workspace_commands_preserve_config_and_never_delete_data(
     _create_agent(root)
     layout = AgentLayout.resident(root, "alice")
     layout.config.write_text(
-        '# Keep this comment\n[default]\nmodel = "openai/gpt-5"\n',
+        '# Keep this comment\n[model]\nref = "openai/gpt-5"\n',
         encoding="utf-8",
     )
     workspace = tmp_path / "source" / "Toolang.SDK"
@@ -4416,7 +4416,7 @@ def test_tool_setup_matches_full_setup_and_captures_only_tool_inputs(
     assert tuple(newer.tools().user) == ()
     # Invalid model semantics and catalogs are irrelevant to the same tool view.
     layout.root_config.write_text(
-        '[allow]\ntools = ["none"]\nmodels = 7\n[default]\nmodel = []\n'
+        '[allow]\ntools = ["none"]\nmodels = 7\n[model]\nref = []\n'
     )
     bad_catalog = tmp_path / "bad-catalog.json"
     bad_catalog.write_text("invalid JSON")

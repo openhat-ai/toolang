@@ -170,10 +170,18 @@ class _LazyValues:
 class CompactConfig:
     """Captured compaction settings; fractional sizes refer to thread context."""
 
-    model: ModelOverride | None = None
+    model: tuple[ModelOverride, ...] = ()
     summary: int | float = 4096
     recent: int | float = 0.30
     trigger: int | float = 0.80
+
+
+@dataclass(frozen=True, slots=True)
+class TalkConfig:
+    """Deferred model operations and concrete limits for new Talk batches."""
+
+    model: tuple[ModelOverride, ...] = ()
+    limits: RunLimits | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -246,6 +254,7 @@ class AgentSetup:
     defaults: RunDefaults = RunDefaults()
     limits: RunLimits = RunLimits()
     compact: CompactConfig = CompactConfig()
+    talk: TalkConfig = TalkConfig()
     teaming: TeamingSetup | None = None
     catalog_sources: Mapping[str, tuple[str, str]] = field(default_factory=dict)
     _load_models: Callable[[AgentSetup], _ModelData] = field(

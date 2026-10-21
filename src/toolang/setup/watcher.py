@@ -30,7 +30,6 @@ from toolang.plugin.catalogs.models_dev.catalog import (
 )
 from toolang.plugin.catalogs.models_dev.path import resolve_model_catalog_path
 from toolang.plugin.models.config import validate_models_config
-from toolang.plugin.models.resolution import resolve_model_reasoning
 from .tools import capture_toolset_loader, materialize_tools
 from toolang.setup.routes import RouteAdapter, resolve_catalog_providers
 
@@ -48,12 +47,12 @@ from .config import (
     resolve_compact_config,
     resolve_run_defaults,
     resolve_run_limits,
+    resolve_talk_config,
     resolve_setup_allow,
 )
 from .errors import SetupDiagnostic
-from .models import order_models, select_compact_model
-from toolang.plugin.models.query import resolve_model
-from .types import AgentEnvironment, AgentSetup, CompactConfig, _ModelData
+from .models import order_models, validate_model_defaults
+from .types import AgentEnvironment, AgentSetup, CompactConfig, TalkConfig, _ModelData
 
 DEFAULT_INTERVAL_MS = 5_000.0
 logger = logging.getLogger(__name__)
@@ -186,9 +185,17 @@ class SetupWatcher:
         configs = inputs.configs
         config_value = tuple(project_setup_config(config) for config in configs)
         allow = resolve_setup_allow(configs, overrides=self._allow_overrides)
-        defaults = resolve_run_defaults(configs, overrides=self._default_overrides)
-        compact = resolve_compact_config(configs, override=self._compact_override)
-        limits = resolve_run_limits(configs, overrides=self._limit_overrides)
+        origins = tuple(source.path for source in inputs.sources)
+        defaults = resolve_run_defaults(
+            configs, overrides=self._default_overrides, origins=origins
+        )
+        compact = resolve_compact_config(
+            configs, override=self._compact_override, origins=origins
+        )
+        limits = resolve_run_limits(
+            configs, overrides=self._limit_overrides, origins=origins
+        )
+        talk = resolve_talk_config(configs, limits=limits, origins=origins)
         validate_models_config(configs)
         adapter_configs = merge_plugin_configs(configs, family="model_adapter")
         toolset_configs = merge_plugin_configs(configs, family="toolset")
@@ -253,6 +260,7 @@ class SetupWatcher:
                 "defaults": defaults,
                 "limits": limits,
                 "compact": compact,
+                "talk": talk,
             },
             allow_models=allow.models,
             plugin_provenance=self._setup_plugin_provenance,
@@ -286,6 +294,7 @@ class SetupWatcher:
             allow=allow,
             defaults=defaults,
             compact=compact,
+            talk=talk,
             limits=limits,
             validate_defaults=self._validate_defaults,
         )
@@ -452,6 +461,7 @@ def _build_setup(
     defaults: RunDefaults,
     limits: RunLimits,
     compact: CompactConfig,
+    talk: TalkConfig,
     teaming: TeamingSetup | None,
     validate_defaults: bool,
 ) -> AgentSetup:
@@ -499,11 +509,13 @@ def _build_setup(
         providers_effective = [
             provider for provider in providers if provider._toolang.ready_count > 0
         ]
-        if validate_defaults and compact.model is not None:
-            select_compact_model(models_effective, compact.model)
-        if validate_defaults and defaults.model is not None:
-            model = resolve_model(models_effective, defaults.model.ref)
-            resolve_model_reasoning(model, defaults.model.reasoning)
+        if validate_defaults:
+            validate_model_defaults(
+                models_effective,
+                default=defaults.model,
+                compact=compact.model,
+                talk=talk.model,
+            )
         data = _ModelData(
             models=tuple(models),
             providers=tuple(providers),
@@ -521,6 +533,7 @@ def _build_setup(
         defaults=defaults,
         limits=limits,
         compact=compact,
+        talk=talk,
         teaming=teaming,
         catalog_sources=catalog_sources,
         _load_models=load_model_data,

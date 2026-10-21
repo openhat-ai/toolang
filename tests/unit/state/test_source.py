@@ -175,7 +175,7 @@ def test_config_snapshot_checks_for_concurrent_change(
     root = tmp_path / "toolang"
     root.mkdir()
     config = root / "config.toml"
-    config.write_text("[default]\nmodel = 'one'\n", encoding="utf-8")
+    config.write_text("[model]\nref = 'one'\n", encoding="utf-8")
 
     read_bytes = Path.read_bytes
 

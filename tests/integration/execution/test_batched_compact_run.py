@@ -732,7 +732,7 @@ def test_restart_inside_one_root_keeps_accepted_step_coverage(tmp_path, monkeypa
                     (
                         {
                             "compact": {
-                                "model": "test/reducer",
+                                "model": {"ref": "test/reducer"},
                                 "summary": 128,
                                 "recent": 1,
                             }

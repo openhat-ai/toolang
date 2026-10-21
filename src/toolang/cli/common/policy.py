@@ -206,7 +206,7 @@ def _parse_default_value(name: str, value: str, *, source: str) -> str | None:
     if not normalized:
         raise ValueError(f"{source} default {name} must not be empty")
     if name == "model":
-        return "unset" if normalized.lower() == "none" else normalized
+        return normalized
     return None if normalized.lower() == "none" else normalized
 
 

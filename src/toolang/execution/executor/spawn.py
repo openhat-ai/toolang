@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import replace
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, cast
 
 from toolang.common.errors import ToolangError
 from toolang.common.template import template_runtime_names
@@ -17,11 +17,12 @@ from toolang.lang.ast import (
     AskStmt,
     SeekStmt,
     GenerateStmt,
+    SpawnStmt,
 )
 from toolang.lang.contracts import OutputContract
 from toolang.state.state import AgentState, state_program
 
-from ..records import LaunchContext
+from ..records import LaunchContext, RunControlPayload
 from ..events import ThreadCreated
 from ..runnables import ResolvedRunnable, resolve_call_target
 from ..settings import resolve_settings
@@ -32,6 +33,7 @@ from ..types import (
     StepRef,
     ThreadKind,
     RunnableSettings,
+    ToolStepSpec,
 )
 from .common import BoundRun, Local, _RunRejected
 
@@ -52,11 +54,33 @@ async def accept(
     state_snapshot: tuple[AgentState, ControlRef] | None = None,
     thread: str | None = None,
 ) -> AwaitableHandle:
-    from .executor import _bound_runnable, _child_binding, _setup_sandbox
+    from .executor import (
+        _bound_runnable,
+        _child_binding,
+        _setup_sandbox,
+    )
 
     def admit() -> AwaitableHandle:
         executor = execution.executor
         executor._require_available()
+        try:
+            previous = execution.store.get_spawn_receipt(step)
+        except ValueError as exc:
+            raise ToolangError(str(exc)) from exc
+        if previous is not None:
+            payload, handle = previous
+            _validate_replay(
+                execution,
+                parent,
+                locals,
+                step,
+                name,
+                payload=payload,
+                resolution=resolution,
+                raw_input=raw_input,
+                thread=thread,
+            )
+            return handle
         state, state_ref = state_snapshot or (parent.state, parent.state_ref)
         try:
             state, target = execution.resolve_invocation(
@@ -84,6 +108,7 @@ async def accept(
                     parent_step=step,
                     state=state,
                     state_ref=state_ref,
+                    ordinary_defaults=True,
                 )
             else:
                 bound = _child_binding(
@@ -98,7 +123,9 @@ async def accept(
                     state=state,
                     state_ref=state_ref,
                 )
-                bound = execution.prepare_resources(bound, runnable)
+                bound = execution.prepare_resources(
+                    bound, runnable, ordinary_defaults=True
+                )
             iterations = execution.iteration_values(parent, step=step)
             for template in _outer_templates(
                 state, bound.module, runnable, bound.settings
@@ -227,6 +254,68 @@ async def accept(
         async with execution._root_run.boundary_lock:
             handle = admit()
     return handle
+
+
+def _validate_replay(
+    execution: _Execution,
+    parent: BoundRun,
+    locals: Mapping[str, Local],
+    step: StepRef,
+    name: str,
+    *,
+    payload: RunControlPayload,
+    resolution: Literal["module", "state"],
+    raw_input: Mapping[str, object] | None,
+    thread: str | None,
+) -> None:
+    """Verify the source binding without discovering code or selecting policy."""
+
+    recorded = execution.store.get_step(ref=step)
+    if recorded is None or payload.spawn_thread != thread:
+        raise ToolangError(f"conflicting spawn admission: {step}")
+    if resolution == "state":
+        if (
+            not isinstance(recorded.spec, ToolStepSpec)
+            or recorded.spec.call.name != "runtime__spawn"
+            or recorded.spec.trigger != "model"
+            or recorded.spec.call.input.get("runnable") != name
+            or recorded.spec.call.input.get("input", {}) != (raw_input or {})
+            or recorded.spec.call.input.get("thread") != thread
+        ):
+            raise ToolangError(f"conflicting spawn admission: {step}")
+        return
+    if not isinstance(recorded.spec, SpawnStmt) or recorded.spec.runnable != name:
+        raise ToolangError(f"conflicting spawn admission: {step}")
+    try:
+        # The accepted caller pins the original contract and handle status.
+        target = resolve_call_target(parent.state, parent.module, name)
+        replay_locals = dict(locals)
+        for key, value in payload.input.items():
+            local = locals.get(key)
+            if (
+                local is None
+                or not isinstance(local.value, AwaitableHandle)
+                or not isinstance(value, Mapping)
+            ):
+                continue
+            snapshot = cast(Mapping[str, object], value)
+            if (
+                snapshot.get("id") == local.value.id
+                and snapshot.get("thread") == local.value.thread
+            ):
+                replay_locals[key] = Local(value=value, type_name="Json")
+        _, replay_input = execution.bind_call_input(
+            replay_locals,
+            target.executable,
+            name,
+            state=parent.state,
+            module=target.module,
+            step=step,
+        )
+    except (ToolangError, TypeError, ValueError) as exc:
+        raise ToolangError(f"conflicting spawn input: {step}") from exc
+    if replay_input != payload.input:
+        raise ToolangError(f"conflicting spawn input: {step}")
 
 
 def _outer_templates(

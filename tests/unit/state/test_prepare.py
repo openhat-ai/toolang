@@ -537,14 +537,14 @@ def test_setup_only_config_changes_revision_but_not_state_terms(
     (home / "agent.too").write_text("# Agent alice\n", encoding="utf-8")
     config = toolang_root / "config.toml"
     config.write_text(
-        '[default]\nmodel = "openai/one"\n\n[allow]\nmodels = ["openai/*"]\n',
+        '[model]\nref = "openai/one"\n\n[allow]\nmodels = ["openai/*"]\n',
         encoding="utf-8",
     )
     layout = _layout(toolang_root)
     first = prepare_agent_state(layout)
     first_root = load_root_layer(layout, first.root_revision)
     config.write_text(
-        '[default]\nmodel = "openai/two"\n\n[allow]\nmodels = ["local/*"]\n',
+        '[model]\nref = "openai/two"\n\n[allow]\nmodels = ["local/*"]\n',
         encoding="utf-8",
     )
 
@@ -576,7 +576,7 @@ def test_setup_only_config_creation_and_removal_changes_dependency_revision(
     first = prepare_agent_state(layout)
     config = toolang_root / "config.toml"
     config.write_text(
-        '[default]\nmodel = "openai/one"\n\n[allow]\nmodels = ["openai/*"]\n',
+        '[model]\nref = "openai/one"\n\n[allow]\nmodels = ["openai/*"]\n',
         encoding="utf-8",
     )
 
