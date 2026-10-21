@@ -1044,8 +1044,22 @@ flow child(_: Text) -> Text:
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize(
+    ("source_type", "target_type", "text"),
+    [
+        ("Text", "Text", "input"),
+        ("Part[]", "Text", "input"),
+        ("Part[]", "Json", '{"answer": 42}'),
+        ("Part[]", "Json", '"input"'),
+        ("Part[]", "Number", "42"),
+        ("Part[]", "Text[]", '["input"]'),
+        ("Part[]", "Report", '{"answer": 42}'),
+        ("Part[]", "Report[]", '[{"answer": 42}]'),
+        ("Json", "Json", '"input"'),
+    ],
+)
 def test_flow_spawn_replay_uses_receipt_before_changed_defaults_or_source(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, source_type, target_type, text
 ):
     from dataclasses import replace
     from toolang.base.types.model import ModelRequest
@@ -1056,7 +1070,7 @@ def test_flow_spawn_replay_uses_receipt_before_changed_defaults_or_source(
 
     harness = ExecutionHarness.create(
         tmp_path,
-        source="flow parent(_: Text):\n  spawn child\nflow child(_: Text):\n  let note = child\n",
+        source=f"struct Report:\n  answer: Number\nflow parent(_: {source_type}):\n  spawn child\nflow child(_: {target_type}):\n  let note = child\n",
         responses=[],
     )
     original = spawn.accept
@@ -1077,6 +1091,7 @@ def test_flow_spawn_replay_uses_receipt_before_changed_defaults_or_source(
 
         with monkeypatch.context() as context:
             context.setattr(execution, "resolve_invocation", reject)
+            context.setattr(execution, "latest_state", reject)
             assert (
                 await original(execution, changed, locals, step, name, **kwargs)
                 == handle
@@ -1104,11 +1119,95 @@ def test_flow_spawn_replay_uses_receipt_before_changed_defaults_or_source(
                 harness.run_spec(
                     thread=harness.threads.create(kind=ThreadKind.CHORE),
                     runnable="parent",
-                    primary=(TextPart("input"),),
+                    primary=(TextPart(text),),
                 )
             )
             assert parent.status == "succeeded", parent.error
             assert len(seen) == 1 and len(harness.store.list_threads()) == 2
+
+    asyncio.run(scenario())
+
+
+def test_inline_spawn_replay_keeps_handle_snapshot_and_native_json(
+    tmp_path, monkeypatch
+):
+    from toolang.common.errors import ToolangError
+    from toolang.execution.executor import spawn
+    from toolang.execution.executor.common import Local
+
+    gate = AsyncGate()
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="""
+flow parent(_: Json):
+  let job = spawn child
+  spawn: {{job.id}} {{job.status}} {{_}}
+agic child():
+  Work.
+""",
+        responses=[
+            ScriptedModelTurn(
+                ModelCallResult(message=Message.assistant("child")), gate=gate
+            ),
+            ModelCallResult(message=Message.assistant("inline")),
+        ],
+    )
+    accept = spawn.accept
+    seen = []
+
+    async def replay(execution, parent, locals, step, name, **kwargs):
+        handle = await accept(execution, parent, locals, step, name, **kwargs)
+        if name == "child":
+            await gate.wait_until_entered()
+        else:
+            source = locals["job"].value
+            gate.release()
+            await harness.executor._root_runs[source.id].task
+            # A reconstructed replay must keep the originally captured status.
+            execution.reset_handle_views(step)
+            assert (
+                await accept(execution, parent, locals, step, name, **kwargs) == handle
+            )
+            with pytest.raises(ToolangError, match="conflicting spawn"):
+                await accept(
+                    execution,
+                    parent,
+                    {**locals, "job": Local(value=handle)},
+                    step,
+                    name,
+                    **kwargs,
+                )
+        seen.append(handle)
+        return handle
+
+    monkeypatch.setattr("toolang.execution.executor.stmts.spawn.accept", replay)
+
+    async def scenario():
+        async with harness:
+            parent = await harness.executor.run(
+                harness.run_spec(
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
+                    runnable="parent",
+                    primary=(TextPart('"input"'),),
+                )
+            )
+            assert parent.status == "succeeded", parent.error
+            await asyncio.gather(
+                *(root.task for root in tuple(harness.executor._root_runs.values()))
+            )
+            assert len(seen) == 2 and len(harness.store.list_runs()) == 3
+            assert all(run.status == "succeeded" for run in harness.store.list_runs())
+            inline = next(
+                entry.payload
+                for handle in seen
+                if (entry := harness.store.get_run_control(run_id=handle.id, index=0))
+                and isinstance(entry.payload, RunControlPayload)
+                and "job" in entry.payload.input
+            )
+            captured = harness.store.resolve_value(inline.input["job"])
+            assert isinstance(captured, Mapping)
+            assert cast(Mapping[str, object], captured)["status"] != "succeeded"
+            assert harness.store.resolve_value(inline.input["_"]) == "input"
 
     asyncio.run(scenario())
 

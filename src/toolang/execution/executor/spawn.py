@@ -19,7 +19,6 @@ from toolang.lang.ast import (
     GenerateStmt,
     SpawnStmt,
 )
-from toolang.lang.input import coerce_input
 from toolang.lang.contracts import OutputContract
 from toolang.state.state import AgentState, state_program
 
@@ -35,9 +34,6 @@ from ..types import (
     ThreadKind,
     RunnableSettings,
     ToolStepSpec,
-    TypedRef,
-    value_type,
-    value_for_type,
 )
 from .common import BoundRun, Local, _RunRejected
 
@@ -58,7 +54,12 @@ async def accept(
     state_snapshot: tuple[AgentState, ControlRef] | None = None,
     thread: str | None = None,
 ) -> AwaitableHandle:
-    from .executor import _bound_runnable, _child_binding, _setup_sandbox
+    from .executor import (
+        _bind_child_input,
+        _bound_runnable,
+        _child_binding,
+        _setup_sandbox,
+    )
 
     def admit() -> AwaitableHandle:
         executor = execution.executor
@@ -87,36 +88,44 @@ async def accept(
                     or recorded.spec.runnable != name
                 ):
                     raise ToolangError(f"conflicting spawn admission: {step}")
-                for key, value in payload.input.items():
-                    local = locals.get(key)
-                    if local is None or not local.has_value:
-                        raise ToolangError(f"conflicting spawn input: {step}")
-                    if isinstance(value, TypedRef) and value.ref == local.ref:
-                        continue
-                    expected = execution.store.resolve_value(value)
-                    if isinstance(local.value, AwaitableHandle) and isinstance(
-                        expected, Mapping
-                    ):
-                        expected = cast(Mapping[str, object], expected)
+                try:
+                    # The accepted caller pins the original input contract; do
+                    # not infer it from converted values or discover new code.
+                    target = resolve_call_target(parent.state, parent.module, name)
+                    replay_locals = dict(locals)
+                    # Handle metadata keeps the admission's captured status.
+                    for key, value in payload.input.items():
+                        local = locals.get(key)
                         if (
-                            expected.get("id") == local.value.id
-                            and expected.get("thread") == local.value.thread
+                            local is None
+                            or not isinstance(local.value, AwaitableHandle)
+                            or not isinstance(value, Mapping)
                         ):
                             continue
-                    type_name = (
-                        value.type if isinstance(value, TypedRef) else value_type(value)
+                        snapshot = cast(Mapping[str, object], value)
+                        if (
+                            snapshot.get("id") == local.value.id
+                            and snapshot.get("thread") == local.value.thread
+                        ):
+                            replay_locals[key] = Local(value=value, type_name="Json")
+                    replay_locals = execution.project_call_locals(
+                        replay_locals, target.executable, name, step=step
                     )
-                    try:
-                        actual = value_for_type(type_name, local.value)
-                    except (TypeError, ValueError):
-                        try:
-                            actual = coerce_input(local.value, type_name)
-                        except (TypeError, ValueError) as exc:
-                            raise ToolangError(
-                                f"conflicting spawn input: {step}"
-                            ) from exc
-                    if actual != expected:
-                        raise ToolangError(f"conflicting spawn input: {step}")
+                    _, replay_input = _bind_child_input(
+                        target.executable,
+                        replay_locals,
+                        reference=name,
+                        structs={
+                            item.name: item
+                            for item in state_program(
+                                parent.state, target.module
+                            ).structs
+                        },
+                    )
+                except (ToolangError, TypeError, ValueError) as exc:
+                    raise ToolangError(f"conflicting spawn input: {step}") from exc
+                if replay_input != payload.input:
+                    raise ToolangError(f"conflicting spawn input: {step}")
             run = execution.store.get_run(run_id=str(previous.target))
             if run is None or run.parent is not None or payload.launch_context is None:
                 raise ToolangError(f"invalid spawn admission: {step}")
