@@ -99,6 +99,11 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   names.
   ([#888](https://github.com/openhat-ai/toolang/pull/888))
 
+- Talk keeps human sender names in the default foreground with bright cyan
+  markers, applies member colors only to agents, and uses a thin dotted
+  divider in default dim.
+  ([#889](https://github.com/openhat-ai/toolang/pull/889))
+
 ### Security
 
 - The locked certifi trust store advances to 2026.10.19, resolving trust-store
