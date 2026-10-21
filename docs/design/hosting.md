@@ -96,7 +96,10 @@ concrete instance. Explicit `--enable` must match the bound drivers, while omiss
 retains them for attachment and `start` promotion.
 
 Other explicit startup settings compare only their supplied fields against saved,
-secret-free bindings. Explicit workspace additions must already be bound to the
+secret-free bindings. Parameter-only model defaults retain the running identity
+and omitted parameters; selecting an identity follows the shared
+[model replacement rules](models.md#runtime-configuration).
+Explicit workspace additions must already be bound to the
 same paths; unrelated existing grants need not be repeated. Conflicting or
 unverifiable requirements report that stopping and restarting is necessary,
 without changing the owner. Chat session defaults, limits, allows, and workdir

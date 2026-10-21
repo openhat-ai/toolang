@@ -53,6 +53,53 @@ def test_only_explicit_requirements_need_saved_startup_bindings(tmp_path):
         require_compatible(layout, {"port": 8123})
 
 
+@pytest.mark.parametrize(
+    "model, compatible",
+    [
+        ("max_output=128", True),
+        ("effort=low", True),
+        ("effort=low max_output=128", True),
+        ("max_output=256", False),
+        ("effort=auto", False),
+        ("test/model", False),
+        ("test/model effort=low max_output=128", True),
+        ("test/other effort=low max_output=128", False),
+    ],
+)
+def test_parameter_only_model_requirements_retain_composed_startup_defaults(
+    tmp_path, model, compatible
+):
+    from toolang.cli.common.startup import (
+        resolve_attachment_requirements,
+        resolve_runtime_launch,
+    )
+
+    layout = AgentLayout.resident(tmp_path, "aid")
+    spec = resolve_runtime_launch(
+        layout,
+        toolang_root=tmp_path,
+        environ={"TOOLANG_DEFAULT_MODEL": "test/model effort=low"},
+        sandbox="host",
+        dev=None,
+        lifetime="persistent",
+        background=True,
+        port=8123,
+        defaults=["model=max_output=128"],
+    )
+    update_instance(
+        layout.runtime_status,
+        lambda entry: entry["control"].update(startup_contract=startup_contract(spec)),
+    )
+    requested = resolve_attachment_requirements(
+        sandbox="host", defaults=[f"model={model}"]
+    )
+    if compatible:
+        require_compatible(layout, requested)
+    else:
+        with pytest.raises(ValueError, match="run defaults.*restart"):
+            require_compatible(layout, requested)
+
+
 def test_environment_and_launch_bookkeeping_do_not_change_settings(tmp_path):
     layout = AgentLayout.resident(tmp_path, "aid")
     spec = asyncio.run(
@@ -71,6 +118,35 @@ def test_environment_and_launch_bookkeeping_do_not_change_settings(tmp_path):
             dotenv_envs={"OTHER": "changed"},
         )
     )
+
+
+def test_legacy_model_bindings_require_an_exact_operation(tmp_path):
+    layout = AgentLayout.resident(tmp_path, "aid")
+    model = ModelOverride(identity="test/model", max_output=128)
+    spec = asyncio.run(
+        resolve_launch(
+            layout=layout,
+            sandbox="host",
+            port=8123,
+            environ={},
+            default_overrides={"model": model},
+        )
+    )
+    saved = {
+        key: value
+        for key, value in startup_contract(spec).items()
+        if key.count(".") <= 1
+    }
+    update_instance(
+        layout.runtime_status,
+        lambda entry: entry["control"].update(startup_contract=saved),
+    )
+    require_compatible(layout, {"default_overrides": {"model": model}})
+    with pytest.raises(ValueError, match="run defaults.*restart"):
+        require_compatible(
+            layout,
+            {"default_overrides": {"model": ModelOverride(max_output=128)}},
+        )
 
 
 def test_legacy_aggregate_bindings_still_verify_exact_explicit_settings(tmp_path):

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from dataclasses import fields, is_dataclass
 from enum import Enum
 from hashlib import sha256
@@ -10,6 +10,7 @@ import json
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
+from toolang.base.types.model import ModelOverride
 from toolang.plugin.catalogs.models_dev.path import MODEL_CATALOG_ENV
 from .instance import read_instance
 from .types import ALL_DRIVERS, ExecutionDrivers
@@ -53,13 +54,11 @@ def startup_contract(spec: LaunchSpec) -> dict[str, str]:
         model_catalog={**spec.dotenv_envs, **spec.environ}.get(MODEL_CATALOG_ENV),
     )
     bindings.update(development_bindings(spec.dev_artifact))
-    saved = {key: _digest(value) for key, value in bindings.items()}
-    for key, value in bindings.items():
-        if isinstance(value, Mapping):
-            saved.update(
-                {f"{key}.{name}": _digest(item) for name, item in value.items()}
-            )
-    return saved
+    return dict(
+        binding
+        for key, value in bindings.items()
+        for binding in _binding_fingerprints(key, value)
+    )
 
 
 def development_bindings(artifact: Path | None) -> dict[str, object]:
@@ -74,6 +73,34 @@ def development_bindings(artifact: Path | None) -> dict[str, object]:
 
 def _digest(value: object) -> str:
     return sha256(json.dumps(_value(value), sort_keys=True).encode()).hexdigest()
+
+
+def _binding_fingerprints(key: str, value: object) -> Iterator[tuple[str, str]]:
+    yield key, _digest(value)
+    if isinstance(value, Mapping):
+        for name, item in value.items():
+            yield from _binding_fingerprints(f"{key}.{name}", item)
+    elif isinstance(value, ModelOverride):
+        for field in fields(value):
+            yield f"{key}.{field.name}", _digest(getattr(value, field.name))
+
+
+def _matches(saved: Mapping[str, str], key: str, value: object) -> bool:
+    if saved.get(key) == _digest(value):
+        return True
+    if isinstance(value, Mapping):
+        return all(
+            _matches(saved, f"{key}.{name}", item) for name, item in value.items()
+        )
+    # Selecting an identity resets omitted parameters; parameter-only operations
+    # retain the running identity and all parameters they do not mention.
+    if isinstance(value, ModelOverride) and value.identity is None:
+        return all(
+            saved.get(f"{key}.{field.name}") == _digest(item)
+            for field in fields(value)
+            if (item := getattr(value, field.name)) is not None
+        )
+    return False
 
 
 def require_compatible(
@@ -96,14 +123,7 @@ def require_compatible(
             key
             for requirement in requirements
             for key, value in requirement.items()
-            if saved.get(key) != _digest(value)
-            and not (
-                isinstance(value, Mapping)
-                and all(
-                    saved.get(f"{key}.{name}") == _digest(item)
-                    for name, item in value.items()
-                )
-            )
+            if not _matches(saved, key, value)
         }
     )
     if different:
