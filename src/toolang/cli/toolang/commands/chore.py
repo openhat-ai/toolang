@@ -25,7 +25,8 @@ from toolang.cli.common.output import (
 from toolang.cli.common.records import _clip_location
 from toolang.cli.common.terminal_title import clip_title, label_text, safe_text
 from toolang.cli.common.parameters import TextType
-from toolang.cli.common.routing import PrefixAgentChoreGroup, RequiredPrefixAgentCommand
+from toolang.cli.common.agent_argument import AgentArgument
+from toolang.cli.common.help import CliCommand, CliGroup
 from toolang.catalog.chore_authoring import (
     allocate_authored_chore_name,
     create_chore,
@@ -269,15 +270,22 @@ def _path(chore: ChoreFile) -> Path:
     return chore.path
 
 
+def _bind_agent(
+    ctx: typer.Context, agent: Annotated[str, AgentArgument("resident,before")]
+) -> None:
+    """Bind selection without preparing sources in the group callback."""
+
+
 def _create_app() -> typer.Typer:
     app = typer.Typer(
-        cls=PrefixAgentChoreGroup,
+        cls=CliGroup,
         help="Manage one-off and scheduled tasks",
         add_completion=False,
         no_args_is_help=True,
         pretty_exceptions_enable=False,
         pretty_exceptions_show_locals=False,
     )
+    app.callback()(_bind_agent)
     for name, command, short_help in (
         ("list", list_chores, "List chores and status"),
         ("new", new_chore, "Create a chore"),
@@ -293,7 +301,7 @@ def _create_app() -> typer.Typer:
         app.command(
             name,
             short_help=short_help,
-            cls=RequiredPrefixAgentCommand,
+            cls=CliCommand,
             no_args_is_help=name not in {"list", "new"},
         )(command)
     return app

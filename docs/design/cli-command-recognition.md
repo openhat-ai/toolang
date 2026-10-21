@@ -1,7 +1,5 @@
 # CLI Command Recognition and Agent Parameters
 
-Status: proposed design; awaiting confirmation before implementation.
-
 Treat AGENT as an ordinary command parameter whose value may appear before the
 command. Recognize the command first, then use its parameter contract for
 binding, validation, and usage. Script execution participates in the same
@@ -10,7 +8,7 @@ recognition flow and supplies its signature dynamically.
 This design covers command lookup, agent parameters, script entry selection,
 help, diagnostics, and completion. It leaves runtime acquisition, source
 providers, instance identity, and authored-language semantics with their current
-owners. [CLI](cli.md#routing) describes current behavior;
+owners. [CLI](cli.md#routing) describes the command surface;
 [Scripts](scripts.md#runnable-input-and-help) defines script input syntax.
 
 ## Agent parameter declaration
@@ -21,14 +19,14 @@ factory compatible with Typer's `Annotated` parameter declarations:
 ```python
 def top(
     agent: Annotated[
-        AgentSelector | None,
+        str | None,
         AgentArgument("resident,before"),
     ] = None,
 ): ...
 
 def info(
     agent: Annotated[
-        AgentSelector,
+        str,
         AgentArgument("resident,visiting,roaming,after"),
     ],
 ): ...
@@ -197,8 +195,8 @@ command-specific no-arguments behavior.
 | Unknown command | Native `No such command 'NAME'.`, with ordinary typo suggestions |
 | Prefix supplied to a command without AGENT | `Command 'list' does not accept AGENT.` |
 | Prefix supplied to an after-only command | `AGENT must follow 'info'.` |
-| Malformed selector | Native `Invalid value for AGENT: ...` from its owner |
-| Unsupported placement | `Invalid value for AGENT: command 'top' does not support remote agents.` |
+| Malformed selector | Native `Invalid value for 'AGENT': ...` from its owner |
+| Unsupported placement | `Invalid value for 'AGENT': command 'top' does not support remote agents.` |
 | Invalid command options/operands | Native option, conversion, missing-argument, or extra-argument diagnostics |
 
 Presence/position routing errors happen after command selection and before its
@@ -216,8 +214,8 @@ residents.
 ## Command capabilities
 
 Retain the current inventory and placement restrictions, with lifecycle/info
-commands declared after-only as agreed. The following groups define the
-declarations to migrate; they are not another runtime registry.
+commands declared after-only as agreed. The following groups summarize parameter declarations; they are not another
+runtime registry.
 
 | Commands | AGENT tags | Required |
 | --- | --- | --- |
@@ -279,8 +277,8 @@ Offline CLI tests should establish these observable guarantees:
   artifacts; static agent-command recognition does not parse local script files.
 - Reusing one command tree across targets, forms, roots, and concurrent calls
   preserves command/parameter identity and keeps Context values isolated.
-- A script invocation parses Program once and builds only the selected signature;
+- CLI script recognition parses Program once and builds only the selected signature;
   root help and ordinary routing do not import unrelated command implementations.
 
-Implementation acceptance also requires the repository's default checks and
-updated CLI/script documentation. There are no unresolved design choices.
+The repository's default checks and CLI/script documentation are part of
+implementation acceptance.

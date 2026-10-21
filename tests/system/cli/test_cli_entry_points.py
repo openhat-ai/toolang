@@ -16,6 +16,7 @@ from typer.core import TyperGroup
 from typer.testing import CliRunner
 
 from toolang.cli.common.lazy import LazyCommand
+from toolang.cli.common.agent_argument import agent_parameter
 from toolang.cli.toolang.main import app as toolang_app
 from toolang.common.version import displayed_toolang_version
 from tests import PROJECT_ROOT
@@ -264,7 +265,19 @@ def test_inspect_help_is_concise_and_consistent() -> None:
 def test_every_cli_command_renders_help(
     name: str, app: typer.Typer, path: tuple[str, ...]
 ) -> None:
-    result = CliRunner().invoke(app, [*path, "--help"], prog_name=name)
+    arguments = list(path)
+    if len(path) > 1:
+        root = typer.main.get_command(app)
+        assert isinstance(root, TyperGroup)
+        owner = root.commands[path[0]]
+        if isinstance(owner, LazyCommand):
+            owner = owner.load()
+        agent = agent_parameter(owner)
+        if agent is not None and agent.required:
+            arguments.insert(
+                0 if agent.contract.recommended == "before" else 1, "agent:example"
+            )
+    result = CliRunner().invoke(app, [*arguments, "--help"], prog_name=name)
 
     assert result.exit_code == 0, result.output
     if name == "toolang" and path == ("more",):

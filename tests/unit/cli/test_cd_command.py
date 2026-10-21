@@ -8,6 +8,7 @@ from typing import Any
 
 import pytest
 import typer
+from typer.core import TyperGroup
 from typer._click.exceptions import ClickException
 from typer._click.utils import strip_ansi
 
@@ -520,7 +521,9 @@ def test_cd_resident_name_is_available_through_explicit_selector(
 
     assert cli.main(["agent:cd", "cd"]) == 0
     assert working_directories == [expected_home]
-    assert {"home", "shell"}.isdisjoint(cli.routing.COMMAND_SPECS)
+    group = typer.main.get_command(cli.app)
+    assert isinstance(group, TyperGroup)
+    assert {"home", "shell"}.isdisjoint(group.commands)
 
 
 @pytest.mark.parametrize("placement", ["roaming", "visiting"])

@@ -15,29 +15,36 @@ formatting conventions. Command help describes their options and output modes.
 
 | Input | Interpretation |
 | --- | --- |
-| `too new NAME`, `too clone SOURCE [NAME]`, `too remove NAME`, `too list` | Agent catalog commands; command first |
-| `too serve TARGET`, `too TARGET serve` | Foreground server; target can be resident, visiting, or local `.too` |
-| `too start TARGET`, `too stop TARGET` | Background lifecycle for resident/visiting targets; either target order |
-| `too TARGET info` | Agent information; command-first form is also accepted |
-| `too cd`, `too TARGET cd` | Interactive shell in the Toolang root or selected agent home; `exit` returns to the calling shell |
-| `too TARGET chat`, `too TARGET chore list`, `too TARGET inspect runs` | Targeted work, authoring, and history |
-| `too run FILE [RUNNABLE]`, `too FILE [RUNNABLE]` | Local script execution |
+| `too new NAME`, `too clone SOURCE [NAME]`, `too remove AGENT`, `too list` | Agent catalog commands; command first |
+| `too serve AGENT`, `too start AGENT`, `too stop AGENT` | Foreground/background lifecycle for resident or visiting agents; AGENT follows the command |
+| `too info AGENT` | Resident, visiting, or roaming agent information |
+| `too cd`, `too AGENT cd` | Interactive shell in the Toolang root or selected agent home; `exit` returns to the calling shell |
+| `too AGENT chat`, `too AGENT chore list`, `too AGENT inspect runs` | Agent work, authoring, and history |
+| `too run FILE [RUNNABLE]`, `too FILE [RUNNABLE]` | Two entry forms of the same local script command |
 | `too init DIR` | Create executable `aid.too` and comment-only `toolang.toml` without overwriting |
 
-A command name wins when an unassigned token could name either a command or a
-dynamic target. `agent:NAME` forces a resident target. After a `.too` target,
-`agic:NAME`, `flow:NAME`, and `runnable:NAME` force a colliding runnable name.
-A `.too` suffix selects a local source path even if absent; an explicit resident
-prefix can select a resident name ending in `.too`. Once a command is selected,
-its operands are not rerouted.
+The root Typer group recognizes the command, then its native parameter contract
+binds AGENT from the permitted position. [Command recognition](cli-command-recognition.md)
+owns precedence, declarations, usage, diagnostics, and completion. Commands are
+registered once; each invocation keeps selection in Context. Executable leaf
+callbacks own source preparation after native argument validation.
 
-A target alone shows its supported commands. An incomplete selected command
-shows command help before target/runtime validation. Remote target help does
-not fetch source. Agent names, explicit remote refs, and placement are defined
-in [Architecture](architecture.md#agent-sources).
+A registered command wins a name collision; `agent:NAME` explicitly selects a
+resident. Following a `.too` operand with a registered command selects that
+command, even if it rejects AGENT. Use `run FILE RUNNABLE`, `agic:NAME`,
+`flow:NAME`, or `runnable:NAME` to select colliding script runnables. Other command
+operands are never rerouted. A local `.too` suffix selects script syntax even if
+the file is absent; explicit source schemes take precedence over that suffix.
 
-Top-level `--root`/`-r` and `TOOLANG_ROOT` select the resident root. Source-local
-scripts use their own layout and do not accept the global root override.
+A known resident or explicit agent selector alone reports a missing command;
+adding `--help` displays root help. A bare unknown name reports an unknown
+command. Allowed command forms use native eager help before selector conversion
+or source preparation. [Architecture](architecture.md#agent-sources) owns agent
+names, remote refs, and placements.
+
+Global options, including `--root`/`-r`, precede the command or AGENT.
+`TOOLANG_ROOT` supplies the default resident root. Source-local scripts do not
+accept an explicit global root override.
 
 ## Script selection and output
 
@@ -87,7 +94,7 @@ exits. [Hosting](hosting.md) owns startup compatibility and recovery.
 
 ## Resource and plugin inspection
 
-`too TARGET info` (also `too info TARGET`) shows enabled `Drivers` immediately
+`too info AGENT` shows enabled `Drivers` immediately
 after `Status` while the agent is running. It reads existing runtime metadata
 and formats selections in `chat,talk,chore` order, with `none` for an empty set
 and `-` for unavailable metadata. Nonrunning agents omit the row.

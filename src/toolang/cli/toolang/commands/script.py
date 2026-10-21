@@ -25,7 +25,7 @@ from typer.models import CommandInfo
 
 from toolang.api.version import AGENT_API_VERSION
 from toolang.common.errors import ToolangError
-from toolang.common.typer.ui import HelpFormatter as UIHelpFormatter
+from toolang.common.typer.ui import HelpFormatter as UIHelpFormatter, inherit_ui
 from toolang.common.typer.options import (
     OptionalValue,
     OptionalValueCommand,
@@ -54,6 +54,7 @@ from ...common.workspaces import (
 )
 from ...common.output import echo_error
 from ...common.help import CliCommand, CliGroup, HelpContext
+from ...common.lazy import LazyCommand
 from ...common.parameters import (
     DEVELOPMENT_WHEEL_HELP,
     AllowOptions,
@@ -79,6 +80,54 @@ if TYPE_CHECKING:
 Runnable = AgicDecl | FlowDecl
 _LINE_INPUT_MARKER = "\ue002"
 _UNPERSISTED_THREAD = "<unpersisted-script-thread>"
+_IMPLICIT_ENTRY = f"{__name__}.implicit"
+
+
+def implicit_entry(ctx: Context) -> None:
+    """Remember the original spelling without changing the registered command."""
+    ctx.meta[_IMPLICIT_ENTRY] = True
+
+
+def script_context(
+    info_name: str | None, args: list[str], *, parent: Context | None, **extra: Any
+) -> Context:
+    """Resolve one file and let the dynamic native command parse its tail."""
+    if parent is None:
+        raise TypeError("script entry requires a root context")
+    if parent.get_parameter_source("toolang_root") == ParameterSource.COMMANDLINE:
+        raise UsageError(
+            "Script invocation does not support global --root / -r", parent
+        )
+    remaining = args[1:] if args[0] == "--" else args
+    if not remaining:
+        raise UsageError("Missing argument 'FILE'.", parent)
+    label, *tail = remaining
+    command = inherit_ui(source_command(label), parent)
+    assert isinstance(command, TyperGroup)
+    shown = label if parent.meta.get(_IMPLICIT_ENTRY) else f"{info_name} {label}"
+    if not tail and _entry_command_name(command) is None:
+        tail = ["--help"]
+    return command.make_context(shown, tail, parent=parent, **extra)
+
+
+def source_command(label: str, *, stdin: TextIO | None = None) -> TyperGroup:
+    """Read one selected script, without preparing state or reading input."""
+    if ":" in label.split("/", 1)[0]:
+        raise UsageError(f"URLs are not supported: {label}")
+    source = Path(label).expanduser().resolve()
+    if source.is_dir():
+        raise UsageError(f"expected a file, got a directory: {label}")
+    if source.suffix != ".too":
+        raise UsageError(f"expected a .too file: {label}")
+    try:
+        program = Program.from_source(source.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
+        raise ClickException(f"script not found: {label}") from exc
+    except (OSError, UnicodeError, ValueError, ToolangError) as exc:
+        raise ClickException(str(exc)) from exc
+    return _program_command(
+        program, source_path=source, source_label=label, stdin=stdin or sys.stdin
+    )
 
 
 class _IncompleteRunnableInput(Exception):
@@ -160,7 +209,7 @@ class _ScriptHelpFormatter(UIHelpFormatter):
             return
         for _title, (_marker, label, _description) in super()._command_rows(ctx):
             command = ctx.command.get_command(ctx, label.plain)
-            if isinstance(command, _RunnableCommand):
+            if isinstance(command, (_RunnableCommand, _RunnableStub)):
                 kind = "flow" if command._flow is not None else "agic"
                 shown = display_runnable_ref(
                     f"{kind}:{label.plain}",
@@ -205,10 +254,30 @@ class _RunnableCommand(OptionalValueCommand, CliCommand):
 
     def invoke(self, ctx: Context) -> Any:
         try:
-            return TyperCommand.invoke(self, ctx)
+            result = TyperCommand.invoke(self, ctx)
+            if isinstance(result, int) and result:
+                raise typer.Exit(result)
+            return result
         except _IncompleteRunnableInput:
             typer.echo(ctx.get_help(), color=ctx.color)
             ctx.exit(2)
+
+
+class _RunnableStub(LazyCommand):
+    """File help needs declaration metadata, not a runnable's full signature."""
+
+    def __init__(
+        self, name: str, runnable: Runnable, *, identity: str, **kwargs: Any
+    ) -> None:
+        self._flow = runnable if isinstance(runnable, FlowDecl) else None
+        kind = runnable.kind
+        doc = (runnable.doc or "").strip()
+        short_help = (
+            f"{identity} {doc}".rstrip()
+            if runnable.name is None
+            else doc or f"{kind.capitalize()} {name}"
+        )
+        super().__init__(name, help=short_help, short_help=short_help, **kwargs)
 
 
 def _entry_command_name(group: TyperGroup) -> str | None:
@@ -259,18 +328,18 @@ class _ScriptGroup(OptionalValueGroup, CliGroup):
         if separator and kind in {"agic", "flow", "runnable"}:
             lookup = name.strip()
             if not lookup:
-                raise ValueError(f"{kind} target cannot be empty")
+                raise UsageError(f"{kind} target cannot be empty", ctx)
             requested_kind = None if kind == "runnable" else kind
         else:
             lookup = token
         command = self.get_command(ctx, lookup)
         if separator and kind in {"agic", "flow", "runnable"}:
-            if not isinstance(command, _RunnableCommand):
-                raise ValueError(f"runnable not found: {lookup}")
+            if not isinstance(command, (_RunnableCommand, _RunnableStub)):
+                raise UsageError(f"runnable not found: {lookup}", ctx)
             if requested_kind == "agic" and command._flow is not None:
-                raise ValueError(f"runnable is not an agic: {lookup}")
+                raise UsageError(f"runnable is not an agic: {lookup}", ctx)
             if requested_kind == "flow" and command._flow is None:
-                raise ValueError(f"runnable is not a flow: {lookup}")
+                raise UsageError(f"runnable is not a flow: {lookup}", ctx)
             args = [lookup, *args[1:]]
         return super().resolve_command(ctx, args)
 
@@ -351,13 +420,7 @@ def dispatch(
         echo_error(f"script not found: {argv[0]}")
         return 1
     try:
-        program = Program.from_source(source_path.read_text(encoding="utf-8"))
-        command = _program_command(
-            program,
-            source_path=source_path,
-            source_label=argv[0],
-            stdin=stdin or sys.stdin,
-        )
+        command = source_command(argv[0], stdin=stdin)
         result = command.main(
             args=argv[1:]
             or ([] if _entry_command_name(command) is not None else ["--help"]),
@@ -395,19 +458,27 @@ def _program_command(
         params=[param for param in options if isinstance(param, TyperOption)],
         help=f"Execute a runnable from {source_label}.",
         no_args_is_help=False,
+        invoke_without_command=True,
         rich_markup_mode="rich",
         subcommand_metavar="[RUNNABLE]" if default is not None else "<RUNNABLE>",
     )
     for name, runnable in runnables.items():
         command_name = "_" if name.startswith("<entry:") else name
         group.add_command(
-            _runnable_command(
+            _RunnableStub(
+                command_name,
                 runnable,
-                name=command_name,
                 identity=name,
-                program=program,
-                source_path=source_path,
-                stdin=stdin,
+                loader=lambda runnable=runnable, command_name=command_name, name=name: (
+                    _runnable_command(
+                        runnable,
+                        name=command_name,
+                        identity=name,
+                        program=program,
+                        source_path=source_path,
+                        stdin=stdin,
+                    )
+                ),
             )
         )
     return group

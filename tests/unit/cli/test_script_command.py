@@ -1641,7 +1641,7 @@ def test_script_rejects_an_explicit_runnable_kind_mismatch(
         stdin=StringIO(),
     )
 
-    assert result == 1
+    assert result == 2
     assert "runnable is not a flow: demo" in capsys.readouterr().err
 
 

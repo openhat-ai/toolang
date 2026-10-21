@@ -16,19 +16,13 @@ def test_roaming_chat_help_does_not_allocate_an_instance(tmp_path, monkeypatch):
     assert not list((tmp_path / ".toolang").glob("aid@r*"))
 
 
-def test_roaming_argument_failure_finalizes_the_published_identity(
-    tmp_path, monkeypatch
-):
-    from toolang.up.instance import read_instance
-
+def test_roaming_argument_failure_does_not_publish_an_identity(tmp_path, monkeypatch):
     source = tmp_path / "aid.too"
     source.write_text("flow main():\n  pass\n")
     root = tmp_path / "global"
     monkeypatch.setenv("TOOLANG_ROOT", str(root))
     assert main([str(source), "chat", "--unknown"]) == 2
-    layout = select_roaming(source)
-    entry = read_instance(layout.runtime_status)
-    assert entry is not None and entry["workload"]["status"] == "failed"
+    assert not (tmp_path / ".toolang").exists()
     assert not list((root / ".runtime" / "instances").glob("*.json"))
 
 
@@ -74,7 +68,7 @@ def test_resident_stop_selects_and_fences_the_original_owner(tmp_path, monkeypat
         return True
 
     monkeypatch.setattr(AgentProcess, "stop", stop)
-    assert main(["aid", "stop"]) == 0
+    assert main(["stop", "aid"]) == 0
     assert captured["layout"].root == layout.root
     assert captured["expected_launch_id"] == "selected-owner"
 

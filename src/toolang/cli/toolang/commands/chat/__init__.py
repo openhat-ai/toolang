@@ -6,9 +6,13 @@ from pathlib import Path
 from typing import Annotated
 
 import typer
+from typer._click.exceptions import ClickException
+
+from toolang.cli.common.agent_argument import AgentArgument
 
 from toolang.cli.common.agent_server import DEVELOPMENT_WHEEL_HELP
-from toolang.cli.common.context import ModelCatalogOption
+from toolang.cli.common.context import ModelCatalogOption, cli_context, user_call
+from toolang.common.typer.options import BARE_VALUE
 from toolang.cli.common.workspaces import (
     WorkspaceOptions,
     WorkdirOption,
@@ -26,6 +30,7 @@ from toolang.cli.common.parameters import (
 
 def chat_command(
     ctx: typer.Context,
+    agent: Annotated[str, AgentArgument("resident,visiting,roaming,before")],
     thread: Annotated[
         str | None,
         typer.Option(
@@ -59,17 +64,66 @@ def chat_command(
 ) -> None:
     from .main import chat_command as run
 
-    run(
-        ctx,
-        thread=thread,
-        model_catalog=model_catalog,
-        allows=allows,
-        defaults=defaults,
-        compact_model=compact_model,
-        driver=driver,
-        sandbox=sandbox,
-        dev=dev,
-        limits=limits,
-        workspace=workspace,
-        workdir=single_workdir(workdir),
-    )
+    owned = _prepare_roaming_chat(ctx, thread)
+    try:
+        run(
+            ctx,
+            thread=thread,
+            model_catalog=model_catalog,
+            allows=allows,
+            defaults=defaults,
+            compact_model=compact_model,
+            driver=driver,
+            sandbox=sandbox,
+            dev=dev,
+            limits=limits,
+            workspace=workspace,
+            workdir=single_workdir(workdir),
+        )
+    finally:
+        if owned:
+            from toolang.up.workload import finish_preparation
+
+            layout = cli_context(ctx).layout
+            assert layout is not None
+            finish_preparation(layout, "Chat ended before runtime startup")
+
+
+def _prepare_roaming_chat(ctx: typer.Context, thread: str | None) -> bool:
+    """Allocate or continue a roaming owner after native parsing has completed."""
+    state = cli_context(ctx)
+    if state.source is None or state.prepared or state.instance_selected:
+        return False
+    from toolang.up.identity import allocate_roaming, select_roaming
+    from toolang.up.source import materialize_roaming_program
+
+    if not state.source.is_file():
+        raise ClickException(f"agent program not found: {state.source}")
+    continuation = None
+    if thread is not None:
+        try:
+            continuation = select_roaming(state.source)
+        except FileNotFoundError:
+            pass
+    if continuation is not None and continuation.run_store.is_file():
+        from toolang.up.replay import prepare_continuation
+
+        state.layout = user_call(
+            prepare_continuation,
+            continuation,
+            toolang_root=state.root,
+            source_thread="latest" if thread == BARE_VALUE else thread,
+        )
+    else:
+        state.layout = user_call(
+            allocate_roaming, state.source, toolang_root=state.root
+        )
+        try:
+            user_call(materialize_roaming_program, state.source, layout=state.layout)
+        except BaseException:
+            from toolang.up.workload import finish_preparation
+
+            finish_preparation(state.layout, "Chat source preparation failed")
+            raise
+    state.prepared = True
+    return True

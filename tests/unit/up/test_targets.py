@@ -436,24 +436,19 @@ def test_explicit_agent_prefix_cannot_normalize_or_select_a_remote_source(name):
 def test_roaming_queries_reject_normalized_home_owned_by_another_source(
     tmp_path, capsys, command
 ):
-    from toolang.cli.toolang.routing import dispatch_roaming
+    from toolang.cli.toolang import main as cli
 
     original = tmp_path / "daily-report.too"
     other = tmp_path / "daily_report.too"
     for source in (original, other):
         source.write_text("flow main():\n  pass\n")
     layout = agent_sources.materialize_roaming_program(original)
-    dispatched = []
-    result = dispatch_roaming(
-        [str(other), *command],
-        prog_name="too",
-        run_app=lambda *args: dispatched.append(args) or 0,
-    )
+    args = ["info", str(other)] if command[0] == "info" else [str(other), *command]
+    result = cli.main(args)
     assert result == 1
     assert (
         "already belongs" if command[0] == "workspace" else "no retained instance"
     ) in " ".join(capsys.readouterr().err.split())
-    assert dispatched == []
     assert layout.program.resolve() == original
 
 

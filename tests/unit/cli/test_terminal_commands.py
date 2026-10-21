@@ -23,11 +23,11 @@ from toolang.up.types import AgentServerRef
         ["talk"],
         ["top"],
         ["serve"],
-        ["hub", "serve"],
+        ["serve", "hub"],
         ["rerun"],
         ["rerun"],
         ["agent:sample", "chat"],
-        ["agent:sample", "serve"],
+        ["serve", "agent:sample"],
         ["agent:sample", "top"],
     ],
 )
@@ -250,7 +250,7 @@ def test_agent_serve_publishes_once_at_outer_cli(tmp_path, monkeypatch, publicat
         typer.main.get_command(cli.app), obj=CliContext(tmp_path, layout=layout)
     )
     with pytest.raises(typer.Exit) as error:
-        runtime.run(context)
+        runtime.run(context, agent="alice")
     assert error.value.exit_code == 0
     assert entries[0][0] == "serve" and entries[0][1]["label"] == "serve alice"
     assert entries[0][1]["layout"] == layout

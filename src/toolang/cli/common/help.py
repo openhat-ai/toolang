@@ -69,6 +69,19 @@ class CliCommand(TyperCommand):
 
     context_class = HelpContext
 
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        from .agent_argument import install_agent_parameter
+
+        install_agent_parameter(self)
+
+    def format_usage(self, ctx: Context, formatter: NativeHelpFormatter) -> None:
+        from .agent_argument import usage_path
+
+        write_usage(
+            formatter, usage_path(ctx), " ".join(self.collect_usage_pieces(ctx))
+        )
+
     def write_help_sections(self, ctx: Context, formatter: HelpFormatter) -> None:
         """Write option fields; subclasses can append caller-owned sections."""
         write_field_sections(ctx, formatter)
@@ -100,6 +113,16 @@ class CliGroup(TyperGroup):
                 else subcommand_metavar
             ),
             **kwargs,
+        )
+        from .agent_argument import install_agent_parameter
+
+        install_agent_parameter(self)
+
+    def format_usage(self, ctx: Context, formatter: NativeHelpFormatter) -> None:
+        from .agent_argument import usage_path
+
+        write_usage(
+            formatter, usage_path(ctx), " ".join(self.collect_usage_pieces(ctx))
         )
 
     def resolve_command(

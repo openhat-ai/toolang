@@ -368,7 +368,7 @@ def test_entry_selector_requires_an_entry_of_the_requested_kind(
         script, "_run", lambda *args, **kwargs: pytest.fail("ran wrong kind")
     )
     other = "flow" if kind == "agic" else "agic"
-    assert cli.main([path, f"{other}:_"]) == 1
+    assert cli.main([path, f"{other}:_"]) == 2
     article = "an" if other == "agic" else "a"
     assert f"runnable is not {article} {other}" in capsys.readouterr().err
     Path(path).write_text("agic main():\n  Named.\n")
@@ -614,10 +614,10 @@ def test_run_rejects_global_root_overrides(root_args, capsys):
 
 
 @pytest.mark.parametrize("target", ["alice", "demo.too"])
-def test_target_first_run_points_to_serve(target, capsys):
+def test_target_first_run_rejects_agent(target, capsys):
     _source()
     assert cli.main([target, "run"]) == 2
-    assert "serve TARGET" in capsys.readouterr().err
+    assert "does not accept AGENT" in capsys.readouterr().err
 
 
 def test_script_cannot_select_a_synthetic_runtime_runnable(monkeypatch, capsys):
