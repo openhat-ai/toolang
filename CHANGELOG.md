@@ -262,6 +262,16 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   allocate instances.
   ([#916](https://github.com/openhat-ai/toolang/pull/916))
 
+- Shell completion ignores invalid agent command forms, missing or invalid
+  scripts, and help flags without printing execution errors or help, while
+  valid scripts still complete their selected runnable's signature.
+  ([#916](https://github.com/openhat-ai/toolang/pull/916))
+
+- Roaming `rerun`, `fork --chat`, and `rewind --chat` preserve the
+  invocation's `--root` for continuation instances instead of re-reading
+  `TOOLANG_ROOT`.
+  ([#916](https://github.com/openhat-ai/toolang/pull/916))
+
 ### Security
 
 - The locked certifi trust store advances to 2026.10.19, resolving trust-store
