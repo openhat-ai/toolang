@@ -73,7 +73,8 @@ names and punctuation retain normal foreground. Summaries wrap inside their
 padded columns, omitting captions when the terminal is too narrow. Active roots
 and their entire visible subtrees use normal text; finished roots use dim text
 across the whole row, including when selected. Active roots have a leading `+` whether expanded or
-collapsed. Child rows retain tree branches, and finished roots show only their
+collapsed. STATUS aligns with the root's status text after the two-cell marker
+space. Child rows retain tree branches, and finished roots show only their
 state. The physical cursor stays hidden.
 
 Interactive OSC titles are `top` or `AGENT top`, using the existing

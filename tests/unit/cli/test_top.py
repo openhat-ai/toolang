@@ -518,16 +518,22 @@ def test_whole_rows_follow_root_intensity_and_selection_keeps_finished_dim(statu
         assert style.bgcolor.get_truecolor() == (0, 95, 95)
 
 
-def test_active_root_marker_stays_lightweight_when_expanded_folded_or_listed():
+@pytest.mark.parametrize("width", [140, 200])
+def test_active_root_marker_stays_lightweight_when_expanded_folded_or_listed(width):
     completed = root(id="run_finished", status="succeeded", finished_at=AT)
     snapshot = frame((root(), step()), completed=(completed,))
     view = TopView()
 
     def statuses():
-        lines = view.render(snapshot, width=140, height=25).plain.splitlines()
+        lines = view.render(snapshot, width=width, height=25).plain.splitlines()
         start = next(line.index("STATUS") for line in lines if "AGENT THREAD" in line)
+        active = next(line for line in lines if ROOT in line)
+        finished = next(line for line in lines if completed.id in line)
+        assert active.index("flow:review") == start
+        assert active[start - 2 : start] == "+ "
+        assert finished.index("succeeded") == start
         return [
-            line[start:].rstrip()
+            line[start - 2 :].rstrip()
             for line in lines
             if ROOT in line or completed.id in line
         ]

@@ -671,7 +671,7 @@ class TopView:
             )
 
         if show_heading:
-            lines.append(Text(prefix(headings) + "STATUS", style=TABLE_HEADER))
+            lines.append(Text(prefix(headings) + "  STATUS", style=TABLE_HEADER))
         panel = []
         if self.help:
             panel = [
