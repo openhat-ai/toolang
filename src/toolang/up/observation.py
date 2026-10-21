@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from contextlib import contextmanager
+from dataclasses import dataclass, replace
 import json
 import re
 from pathlib import Path
@@ -11,7 +12,9 @@ from typing import Any, TypeGuard, cast
 
 
 from toolang.common.files import atomic_write_text, file_write_lock
+from toolang.common import layout as paths
 from toolang.common.layout import AgentLayout
+from toolang.up.identity import layout_from_control, verify_identity
 from toolang.up.instance import (
     AGENT_INSTANCE_FORMAT,
     read_document,
@@ -22,28 +25,6 @@ from toolang.up.types import (
     RuntimeInstance as RuntimeInstance,
     RuntimeInstanceSnapshot as RuntimeInstanceSnapshot,
 )
-
-
-def _registered_layout(control: dict) -> AgentLayout:
-    """Recover discovery identity from control bindings, never workload policy."""
-    return AgentLayout(
-        Path(control["root"]),
-        control["name"],
-        control["placement"],
-        instance=control["runtime_instance"],
-        project_inputs=control.get("project_inputs"),
-        managed_membership=control.get("managed_membership"),
-        source_id=control.get("source_id"),
-        instance_id=control.get("instance_id"),
-        source_path=Path(control["source_path"])
-        if control.get("source_path")
-        else None,
-        source_ref=control.get("source_ref"),
-        request_order_ns=control.get("request_order_ns"),
-        source_edit_lock=Path(control["source_edit_lock"])
-        if control.get("source_edit_lock")
-        else None,
-    )
 
 
 def instance_identity(layout: AgentLayout) -> str:
@@ -59,28 +40,57 @@ def _read_reference(path: Path) -> dict[str, Any] | None:
         reference = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
         return None
+    if not isinstance(reference, dict):
+        raise ValueError("invalid runtime reference")
     if (
-        not isinstance(reference, dict)
-        or type(reference.get("version")) is not int
+        type(reference.get("version")) is not int
         or reference["version"] != AGENT_INSTANCE_FORMAT
     ):
-        raise ValueError("invalid runtime reference")
+        raise ValueError("unsupported runtime reference version")
     if not isinstance(reference.get("status"), str) or not isinstance(
         reference.get("launch_id"), str
     ):
         raise ValueError("incomplete runtime reference")
+    status = Path(reference["status"])
+    if (
+        not status.is_absolute()
+        or str(status) != reference["status"]
+        or ".." in status.parts
+    ):
+        raise ValueError("runtime reference requires a normalized absolute status path")
     return reference
 
 
-def _registration_current(path: Path, launch_id: str | None) -> bool:
+def _registration_current(
+    path: Path, launch_id: str | None, status_path: Path | None = None
+) -> bool:
     reference = _read_reference(path)
-    return reference is not None and (
-        launch_id is None or reference["launch_id"] == launch_id
+    return (
+        reference is not None
+        and (launch_id is None or reference["launch_id"] == launch_id)
+        and (status_path is None or reference["status"] == str(status_path))
     )
 
 
 def _register_lock(path: Path) -> Path:
     return path.parent / "register.lock"
+
+
+@contextmanager
+def registration_lock(toolang_root: Path):
+    """Serialize candidate checks and publication across source-local allocators."""
+    with file_write_lock(toolang_root / ".runtime" / "instances" / "register.lock"):
+        yield
+
+
+def verify_registration(layout: AgentLayout, *, toolang_root: Path) -> None:
+    """Reject an occupied name before attempting this caller's publication."""
+    path = toolang_root / ".runtime" / "instances" / instance_filename(layout)
+    reference = _read_reference(path)
+    if reference is not None and reference["status"] != str(layout.runtime_status):
+        raise ValueError(
+            f"instance ID collision in runtime registry: {layout.instance_name}"
+        )
 
 
 class RuntimeRegistration:
@@ -94,7 +104,11 @@ class RuntimeRegistration:
         launch_id: str,
     ) -> None:
         self.token = launch_id
-        self.path = toolang_root / ".runtime" / "instances" / instance_filename(layout)
+        self.toolang_root = toolang_root.expanduser().resolve()
+        self.layout = replace(layout, toolang_root=self.toolang_root)
+        self.path = (
+            self.toolang_root / ".runtime" / "instances" / instance_filename(layout)
+        )
         self.payload = {
             "version": AGENT_INSTANCE_FORMAT,
             "status": str(layout.runtime_status),
@@ -102,28 +116,39 @@ class RuntimeRegistration:
         }
 
     def __enter__(self) -> RuntimeRegistration:
-        try:
-            with file_write_lock(_register_lock(self.path)):
+        with registration_lock(self.toolang_root):
+            verify_registration(self.layout, toolang_root=self.toolang_root)
+            entry = read_instance(self.layout.runtime_status, self.layout.instance)
+            if entry is None or entry["launch_id"] != self.token:
+                raise ValueError(
+                    "runtime publication requires matching instance identity"
+                )
+            verify_identity(self.layout, entry["control"])
+            try:
                 atomic_write_text(self.path, json.dumps(self.payload))
-        except BaseException:
-            self.close()
-            raise
+            except BaseException:
+                self.close()
+                raise
         return self
 
     def close(self) -> None:
-        _remove_reference(self.path, self.token)
+        _remove_reference(self.path, self.token, self.layout.runtime_status)
 
     def __exit__(self, *exc: object) -> None:
         self.close()
 
 
-def _remove_reference(path: Path, launch_id: str) -> None:
+def _remove_reference(path: Path, launch_id: str, status_path: Path) -> None:
     try:
         if not path.is_file():
             return
         with file_write_lock(_register_lock(path)):
-            reference = json.loads(path.read_text())
-            if isinstance(reference, dict) and reference.get("launch_id") == launch_id:
+            reference = _read_reference(path)
+            if (
+                reference is not None
+                and reference["launch_id"] == launch_id
+                and reference["status"] == str(status_path)
+            ):
                 path.unlink(missing_ok=True)
     except (OSError, ValueError):
         pass
@@ -139,8 +164,9 @@ def remove_registration(layout: AgentLayout, launch_id: str) -> None:
             Path(root)
             / ".runtime"
             / "instances"
-            / instance_filename(_registered_layout(entry["control"])),
+            / instance_filename(layout_from_control(entry["control"])),
             launch_id,
+            layout.runtime_status,
         )
 
 
@@ -148,6 +174,7 @@ def running_instances(root: Path) -> tuple[dict, ...]:
     """Follow references and reconcile only definitively dead workload identities."""
     from toolang.up.process import AgentProcess
 
+    root = root.expanduser().resolve()
     candidates = []
     records: dict[Path, dict] = {}
     for path in sorted((root / ".runtime" / "instances").glob("*.json")):
@@ -174,7 +201,7 @@ def running_instances(root: Path) -> tuple[dict, ...]:
             if entry is None:
                 continue
             control = entry["control"]
-            layout = _registered_layout(control)
+            layout = _runtime_layout(control, status_path, root)
             if (
                 layout.runtime_status != status_path
                 or instance_filename(layout) != path.name
@@ -205,7 +232,9 @@ def running_instances(root: Path) -> tuple[dict, ...]:
             )
             if status is None or status.status != "running":
                 continue
-            if not _registration_current(path, entry["launch_id"]):
+            if not _registration_current(
+                path, entry["launch_id"], layout.runtime_status
+            ):
                 continue
             agent = f"agent:{layout.name}"
             if (
@@ -238,9 +267,18 @@ class RuntimeSource:
     registration: Path | None
     launch_id: str | None
 
+    def validate_history_identity(self) -> None:
+        """Residents have fixed homes; nonresidents require full source ownership."""
+        if self.layout.placement == "resident":
+            return
+        entry = read_instance(self.layout.runtime_status, self.layout.instance)
+        if entry is None:
+            raise ValueError("runtime source ownership record is unavailable")
+        verify_identity(self.layout, entry["control"])
+
     def is_current(self) -> bool:
         return self.registration is not None and _registration_current(
-            self.registration, self.launch_id
+            self.registration, self.launch_id, self.layout.runtime_status
         )
 
 
@@ -262,7 +300,7 @@ class _SnapshotCandidate:
 
 
 _REFERENCE_NAME = re.compile(
-    r"(?P<name>[a-z][a-z0-9_]{0,63})(?:@(?P<instance>[vr][0-9a-f]+))?\.json\Z"
+    r"(?P<name>[a-z][a-z0-9_]{0,63})(?:@(?P<instance>[vr][0-9abcdefghjkmnpqrstvwxyz]{16}))?\.json\Z"
 )
 
 
@@ -297,6 +335,18 @@ def _fallback_layout(
         toolang_root=toolang_root,
         instance_id=instance_id,
     )
+    if placement == "resident" and layout.root != toolang_root:
+        return None
+    if (
+        placement == "visiting"
+        and layout.root != paths.VISITING_ROOT / layout.instance_name
+    ):
+        return None
+    if placement == "roaming" and (
+        layout.root.parent.name != ".toolang"
+        or layout.root.name != layout.instance_name
+    ):
+        return None
     return (
         layout if _resolved(layout.runtime_status) == _resolved(status_path) else None
     )
@@ -317,7 +367,7 @@ def _runtime_layout(
     control: dict, status_path: Path, toolang_root: Path
 ) -> AgentLayout:
     """Validate persisted identity before probing its runtime."""
-    layout = _registered_layout(control)
+    layout = layout_from_control(control)
     recorded_toolang_root = control.get("toolang_root")
     if not isinstance(recorded_toolang_root, str):
         raise ValueError("runtime identity has no Toolang root")
@@ -331,13 +381,6 @@ def _runtime_layout(
         toolang_root
     ):
         raise ValueError("resident runtime is outside the selected Toolang root")
-    if layout.placement == "visiting" and (
-        _resolved(layout.root.parent) != _resolved(Path("/tmp"))
-        or layout.root.name != layout.instance_name
-    ):
-        raise ValueError("visiting runtime path does not match its source identity")
-    if layout.placement == "roaming" and layout.root.name != layout.instance_name:
-        raise ValueError("roaming runtime path is invalid")
     return layout
 
 
@@ -754,7 +797,9 @@ def runtime_inventory(
     current: dict[str, _SnapshotCandidate] = {}
     for candidate in candidates_list:
         try:
-            if not _registration_current(candidate.registration, candidate.launch_id):
+            if not _registration_current(
+                candidate.registration, candidate.launch_id, candidate.status_path
+            ):
                 continue
         except (OSError, ValueError, TypeError) as exc:
             diagnostics.append(f"runtime registry {candidate.registration.name}: {exc}")

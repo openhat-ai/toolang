@@ -25,7 +25,7 @@ from toolang.common.files import (
     reap_file_lock,
 )
 
-AGENT_INSTANCE_FORMAT = 3
+AGENT_INSTANCE_FORMAT = 4
 
 
 def read_document(path: Path, *, location: str = "host") -> dict[str, Any] | None:
@@ -356,6 +356,11 @@ def management_operation(
     if key in held:
         yield
         return
+    if layout.placement == "visiting":
+        from .identity import visiting_home_guard
+
+        with visiting_home_guard(layout):
+            pass
     owner = {
         "token": uuid4().hex,
         **control_owner(),

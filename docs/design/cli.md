@@ -72,7 +72,9 @@ exits. [Hosting](hosting.md) owns startup compatibility and recovery.
 ### Instance selection
 
 - Existing targets accept `--instance` / `-i` on history/control commands.
-- Values include the complete `v…` or `r…` prefix; residents need no extra ID.
+- `-i I` / `--instance I` takes the complete 17-character ID, including `v`/`r`.
+  Top displays `A@I`; selectors reject `A@I`, markerless bodies and noncanonical
+  spellings. Residents need no extra ID.
 - Default roaming selection is the latest startup request, including failure/exit,
   derived from retained local metadata. Completion time and mtime never reorder it.
 - `info`/`inspect` calculate agent roots without global references or preparation;

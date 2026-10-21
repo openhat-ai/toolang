@@ -9,11 +9,13 @@ import re
 from typing import Literal
 
 from .source import AcquiredSource
+from .instance_ids import decode_instance_id, roaming_timestamp_ms, visiting_instance_id
 
 AgentPlacement = Literal["resident", "visiting", "roaming"]
 
 IMPLICIT_WORKSPACE_NAME = "lab"
 IMPLICIT_WORKSPACE_DIRECTORY = ".lab"
+VISITING_ROOT = Path("/tmp").resolve() / "toolang"
 _AGENT_NAME = re.compile(r"[a-z][a-z0-9_]{0,63}\Z")
 
 
@@ -68,14 +70,11 @@ class AgentLayout:
         if self.placement not in {"resident", "visiting", "roaming"}:
             raise ValueError(f"invalid agent placement: {self.placement!r}")
         if self.instance_id is not None:
-            pattern = (
-                r"v[0-9a-f]{16}" if self.placement == "visiting" else r"r[0-9a-f]{32}"
-            )
-            if (
-                self.placement == "resident"
-                or re.fullmatch(pattern, self.instance_id) is None
-            ):
+            if self.placement == "resident":
                 raise ValueError("instance ID does not match its placement")
+            decode_instance_id(
+                self.instance_id, marker="v" if self.placement == "visiting" else "r"
+            )
         if self.instance is not None and (
             not self.instance or not self.instance.isalnum()
         ):
@@ -83,9 +82,12 @@ class AgentLayout:
         if self.source_id is not None and (
             not isinstance(self.source_id, str)
             or len(self.source_id) != 16
-            or any(char not in "0123456789abcdef" for char in self.source_id)
+            or any(
+                char not in "0123456789abcdefghjkmnpqrstvwxyz"
+                for char in self.source_id
+            )
         ):
-            raise ValueError("source identity must be 16 lowercase hex characters")
+            raise ValueError("source identity must be 16 lowercase base32 characters")
         object.__setattr__(self, "root", root)
         object.__setattr__(self, "name", name)
         if self.toolang_root is not None:
@@ -108,15 +110,14 @@ class AgentLayout:
         """Create the stable temporary layout for one remote Source Ref."""
 
         validate_agent_name(name)
-        identity = f"{toolang_root.expanduser().resolve()}\0{source}"
-        digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:16]
+        token = visiting_instance_id(str(toolang_root.expanduser().resolve()), source)
         return cls(
-            root=Path("/tmp") / f"{name}@v{digest}",
+            root=VISITING_ROOT / f"{name}@{token}",
             name=name,
             placement="visiting",
             toolang_root=toolang_root,
-            source_id=digest,
-            instance_id=f"v{digest}",
+            source_id=token[1:],
+            instance_id=token,
             source_ref=source,
         )
 
@@ -136,7 +137,7 @@ class AgentLayout:
             source_id=hashlib.sha256(str(source).encode("utf-8")).hexdigest()[:16],
             instance_id=instance_id,
             source_path=source,
-            request_order_ns=int(instance_id[1:17], 16)
+            request_order_ns=roaming_timestamp_ms(instance_id) * 1_000_000
             if instance_id is not None
             else None,
         )

@@ -199,7 +199,7 @@ def required_record(layout):
     return entry
 
 
-@pytest.mark.parametrize("version", [2, 4, 3.0, True])
+@pytest.mark.parametrize("version", [2, 3, 4.0, True])
 @pytest.mark.parametrize("reader", [read_document, read_instance])
 def test_noncurrent_instance_is_rejected_without_mutation(tmp_path, version, reader):
     layout = AgentLayout.resident(tmp_path, "alice")

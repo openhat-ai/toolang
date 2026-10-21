@@ -435,3 +435,59 @@ def test_http_rejection_is_a_live_error_only_for_a_current_binding(
     assert (result.live_error is None) == departed
     if not departed:
         assert result.live_error is not None and "401" in result.live_error
+
+
+@pytest.mark.parametrize("placement", ["visiting", "roaming"])
+@pytest.mark.parametrize("read_kind", ["activity", "usage", "page"])
+def test_nonresident_history_requires_full_ownership_before_any_data_read(
+    tmp_path, monkeypatch, placement, read_kind
+):
+    import json
+    from toolang.common.layout import AgentLayout
+    from toolang.up.identity import allocate_roaming
+    from toolang.up.observation import runtime_inventory
+    from toolang.up.workload import ForegroundWorkload
+    from toolang.up.activity import ActivityReader
+    from toolang.up import activity
+
+    layout = (
+        AgentLayout.visiting(
+            "https://example.com/alice.too", "alice", toolang_root=tmp_path
+        )
+        if placement == "visiting"
+        else allocate_roaming(tmp_path / "alice.too", toolang_root=tmp_path)
+    )
+    with ForegroundWorkload(layout, toolang_root=tmp_path, drivers=frozenset()):
+        source = runtime_inventory(tmp_path, read_only=True).sources[0]
+        document = json.loads(layout.runtime_status.read_text())
+        field = "source_ref" if placement == "visiting" else "source_path"
+        document["instances"]["default"]["control"][field] = (
+            "https://foreign.example/alice.too"
+            if placement == "visiting"
+            else str(tmp_path / "other.too")
+        )
+        original = layout.runtime_status.read_bytes()
+        layout.runtime_status.write_text(json.dumps(document))
+        before = layout.runtime_status.read_bytes()
+        monkeypatch.setattr(
+            activity,
+            "recent_source",
+            lambda *_a, **_k: pytest.fail("read unverified history"),
+        )
+        monkeypatch.setattr(
+            activity,
+            "recent_usage",
+            lambda *_a, **_k: pytest.fail("read unverified usage"),
+        )
+        reader = ActivityReader()
+        try:
+            with pytest.raises(ValueError, match="identity|ownership"):
+                if read_kind == "activity":
+                    reader.read_activity(source, 300)
+                elif read_kind == "usage":
+                    reader.read_usage(source, 3600)
+                else:
+                    reader.read_page(source, 300, ("2026-10-21T00:00:00Z", "run"), 0)
+            assert layout.runtime_status.read_bytes() == before
+        finally:
+            layout.runtime_status.write_bytes(original)

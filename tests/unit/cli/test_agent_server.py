@@ -92,6 +92,11 @@ def _set_status(
     layout: AgentLayout,
     status: AgentStatus | None,
 ) -> None:
+    if layout.placement == "visiting":
+        from toolang.up.identity import visiting_home_guard
+
+        with visiting_home_guard(layout):
+            pass
     if status is not None and status.status == "running":
         from toolang.up.instance import update_instance
         from toolang.up.contract import startup_contract

@@ -207,7 +207,7 @@ def test_automatic_port_selection_ignores_invalid_legacy_peers(
         '{"version": 2, "instances": {}}',
         '{"version": 4, "instances": {}}',
         '{"status": "running", "pid": 123}',
-        '{"version": 3, "instances": {"default": {}}}',
+        '{"version": 4, "instances": {"default": {}}}',
         "{broken",
     ],
 )

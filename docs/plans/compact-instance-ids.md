@@ -1,7 +1,7 @@
 # Scoped and ordered instance IDs
 
-Status: proposed for user review. This definition builds on merged PR #897 and
-ships no implementation. Existing formats and layouts are not supported.
+Status: approved in PR #899. This definition builds on merged PR #897.
+Existing formats and layouts are not supported.
 
 ## Goal and scope
 
@@ -191,4 +191,4 @@ CLI boundary tests, [layout](../design/layout.md), [CLI](../design/cli.md),
    reject `A@I` and markerless bodies. #897 scope semantics remain intact.
    Default static checks and the offline test suite pass.
 
-Open questions: none; the proposed definition awaits user approval.
+Open questions: none.

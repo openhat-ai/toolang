@@ -16,6 +16,7 @@ import pytest
 
 from tests.support.chat_tui_pty import ChatTuiPtySession
 from toolang.up.instance import update_instance
+from toolang.up.identity import visiting_home_guard
 from toolang.up.process import AgentProcess
 from toolang.up.source import visiting_layout
 
@@ -54,6 +55,8 @@ def _visiting_chat(tmp_path: Path):
         agent_port = listener.getsockname()[1]
     url = f"http://127.0.0.1:{source.server_port}/dev.too"
     layout = visiting_layout(url, toolang_root=root)
+    with visiting_home_guard(layout):
+        pass
     update_instance(
         layout.runtime_status,
         lambda entry: entry["control"].update(

@@ -1,7 +1,6 @@
 from toolang.up.workload import ForegroundWorkload
 from dataclasses import replace
 import asyncio
-import hashlib
 import json
 import os
 
@@ -75,13 +74,13 @@ def test_reference_names_use_stable_host_source_identity(tmp_path):
     resident = AgentLayout.resident(root, "gus")
     source = "https://example.com/lex.too"
     visiting = AgentLayout.visiting(source, "lex", toolang_root=root)
-    visiting_hash = hashlib.sha256(f"{root.resolve()}\0{source}".encode()).hexdigest()
     roaming = _roaming(tmp_path / "aid.too")
 
     assert instance_filename(resident) == "gus.json"
-    assert instance_filename(visiting) == f"lex@v{visiting_hash[:16]}.json"
-    assert visiting.root.name == f"lex@v{visiting_hash[:16]}"
-    assert visiting.source_id == visiting_hash[:16]
+    assert instance_filename(visiting) == f"lex@{visiting.instance_id}.json"
+    assert visiting.root.name == f"lex@{visiting.instance_id}"
+    assert visiting.instance_id is not None
+    assert visiting.source_id == visiting.instance_id[1:]
     assert instance_filename(roaming) == f"aid@{roaming.instance_id}.json"
     assert instance_filename(replace(roaming)) == instance_filename(roaming)
     assert instance_filename(
@@ -178,7 +177,7 @@ def test_discovery_ignores_invalid_status_instances(tmp_path, instances):
         before = layout.runtime_status.read_bytes()
         try:
             layout.runtime_status.write_text(
-                json.dumps({"version": 3, "instances": instances})
+                json.dumps({"version": 4, "instances": instances})
             )
             assert running_instances(tmp_path) == ()
         finally:
@@ -186,7 +185,7 @@ def test_discovery_ignores_invalid_status_instances(tmp_path, instances):
 
 
 @pytest.mark.parametrize("owner", ["reference", "status"])
-@pytest.mark.parametrize("version", [2, 4, 3.0, True])
+@pytest.mark.parametrize("version", [2, 3, 4.0, True])
 def test_discovery_rejects_noncurrent_formats_without_mutation(
     tmp_path, owner, version
 ):
@@ -401,7 +400,7 @@ def test_missing_reference_cleanup_does_not_create_discovery_directories(tmp_pat
     from toolang.up.observation import _remove_reference
 
     path = tmp_path / ".runtime" / "instances" / "gus.json"
-    _remove_reference(path, "finished")
+    _remove_reference(path, "finished", tmp_path / "status.json")
     assert not path.parent.exists()
 
 
@@ -446,7 +445,7 @@ def test_placement_free_workload_cleans_the_reference_using_control_bindings(
 
     layout = (
         AgentLayout.visiting(
-            "https://example.com/alice.too", "alice", toolang_root=tmp_path
+            "https://example.com/alice.too", "alice", toolang_root=tmp_path / "toolang"
         )
         if placement == "visiting"
         else _roaming(tmp_path / "alice.too")
@@ -882,3 +881,71 @@ def test_first_liveness_probe_excludes_a_departed_temporary_instance(
     with ForegroundWorkload(temporary, toolang_root=tmp_path, drivers=frozenset()):
         snapshot = runtime_snapshot(tmp_path)
         assert snapshot.instances == ()
+
+
+@pytest.mark.parametrize("fault", ["foreign_status", "unsupported"])
+def test_rejected_publication_preserves_an_existing_reference_even_with_equal_uuid(
+    tmp_path, fault
+):
+    from toolang.up.instance import read_instance
+
+    layout = allocate_roaming(tmp_path / "aid.too", toolang_root=tmp_path)
+    entry = read_instance(layout.runtime_status)
+    assert entry is not None
+    registration = RuntimeRegistration(
+        layout, toolang_root=tmp_path, launch_id=entry["launch_id"]
+    )
+    reference = json.loads(registration.path.read_text())
+    if fault == "foreign_status":
+        reference["status"] = str(tmp_path / "peer" / "status.json")
+    else:
+        reference["version"] = 3
+    registration.path.write_text(json.dumps(reference))
+    before = registration.path.read_bytes()
+    with pytest.raises(ValueError):
+        registration.__enter__()
+    registration.close()
+    assert registration.path.read_bytes() == before
+
+
+def test_failed_publication_cleanup_checks_status_and_uuid_after_attempting_a_write(
+    tmp_path, monkeypatch
+):
+    from toolang.up import observation
+    from toolang.up.instance import read_instance
+
+    layout = allocate_roaming(tmp_path / "aid.too", toolang_root=tmp_path)
+    entry = read_instance(layout.runtime_status)
+    assert entry is not None
+    registration = RuntimeRegistration(
+        layout, toolang_root=tmp_path, launch_id=entry["launch_id"]
+    )
+    peer = dict(registration.payload, status=str(tmp_path / "peer" / "status.json"))
+
+    def replaced_then_failed(path, _content):
+        path.write_text(json.dumps(peer))
+        raise OSError("publication failed")
+
+    monkeypatch.setattr(observation, "atomic_write_text", replaced_then_failed)
+    with pytest.raises(OSError, match="publication failed"):
+        registration.__enter__()
+    assert json.loads(registration.path.read_text()) == peer
+
+
+def test_foreign_root_references_cannot_supply_a_fallback_home_or_hub_member(tmp_path):
+    root = tmp_path / "one"
+    foreign = tmp_path / "two"
+    layout = AgentLayout.resident(root, "alice")
+    with ForegroundWorkload(
+        layout, toolang_root=root, drivers=frozenset()
+    ) as registration:
+        copied = foreign / ".runtime" / "instances" / registration.path.name
+        copied.parent.mkdir(parents=True)
+        copied.write_bytes(registration.path.read_bytes())
+        before = layout.runtime_status.read_bytes()
+        assert running_instances(foreign) == ()
+        inventory = runtime_inventory(foreign, read_only=True)
+        assert inventory.snapshot.partial
+        assert not inventory.sources
+        assert layout.runtime_status.read_bytes() == before
+        assert not (foreign / "agents").exists()
