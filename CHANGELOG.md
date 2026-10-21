@@ -143,6 +143,10 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   roster across summaries and tables.
   ([#897](https://github.com/openhat-ai/toolang/pull/897))
 
+- Stats and Top time-window reads stay indexed on SQLite 3.45 because writable
+  execution stores now replace the legacy call-start index.
+  ([#897](https://github.com/openhat-ai/toolang/pull/897))
+
 ### Security
 
 - The locked certifi trust store advances to 2026.10.19, resolving trust-store
