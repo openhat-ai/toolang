@@ -656,7 +656,11 @@ class LocalChatSession:
         if self._closed and not allow_closed:
             coroutine.close()
             raise RuntimeError("local chat session is closed")
-        return asyncio.run_coroutine_threadsafe(coroutine, self._loop)
+        try:
+            return asyncio.run_coroutine_threadsafe(coroutine, self._loop)
+        except Exception:
+            coroutine.close()
+            raise
 
     def _run_loop(self) -> None:
         asyncio.set_event_loop(self._loop)
