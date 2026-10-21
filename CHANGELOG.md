@@ -233,6 +233,11 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   their target thread are rejected instead of accepted.
   ([#907](https://github.com/openhat-ai/toolang/pull/907))
 
+- Cap and tool lists use the full terminal width without wrapping, shorten
+  descriptions and source locations together ahead of identities and tags, and
+  retain complete JSON records.
+  ([#910](https://github.com/openhat-ai/toolang/pull/910))
+
 ### Security
 
 - The locked certifi trust store advances to 2026.10.19, resolving trust-store
