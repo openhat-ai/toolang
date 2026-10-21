@@ -28,17 +28,17 @@ def _record(**changes):
 
 @pytest.mark.parametrize("terminal", [False, True])
 @pytest.mark.parametrize(
-    ("width", "optional"),
+    ("width", "columns"),
     [
-        (126, ["INPUT", "FEATURES", "MAX_OUTPUT", "OUTPUT"]),
-        (125, ["INPUT", "FEATURES", "MAX_OUTPUT"]),
-        (117, ["INPUT", "FEATURES"]),
-        (105, ["INPUT"]),
-        (84, []),
+        (126, "MODEL CONTEXT MAX_OUTPUT PRICE ($/1M) INPUT OUTPUT FEATURES STATUS"),
+        (125, "MODEL CONTEXT MAX_OUTPUT PRICE ($/1M) INPUT FEATURES STATUS"),
+        (117, "MODEL CONTEXT PRICE ($/1M) INPUT FEATURES STATUS"),
+        (105, "MODEL CONTEXT PRICE ($/1M) INPUT STATUS"),
+        (84, "MODEL CONTEXT PRICE ($/1M) STATUS"),
     ],
 )
-def test_optional_columns_drop_in_priority_order(
-    monkeypatch, terminal, width, optional
+def test_display_order_is_independent_of_removal_priority(
+    monkeypatch, terminal, width, columns
 ):
     stream = StringIO()
     monkeypatch.setattr(
@@ -53,14 +53,7 @@ def test_optional_columns_drop_in_priority_order(
 
     lines = strip_ansi(stream.getvalue()).splitlines()
     assert len(lines) == 3
-    assert lines[0].split() == [
-        "MODEL",
-        "CONTEXT",
-        "PRICE",
-        "($/1M)",
-        "STATUS",
-        *optional,
-    ]
+    assert lines[0].split() == columns.split()
     assert lines[0].startswith("MODEL") and lines[2].startswith(records[0]["ref"])
     assert set(lines[1]) == {"─"}
     assert all(wcswidth(line) <= width for line in lines)

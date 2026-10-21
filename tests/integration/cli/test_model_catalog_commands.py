@@ -51,18 +51,13 @@ def test_model_columns_follow_priority_without_changing_json_or_selection(
 
     assert before.exit_code == result.exit_code == 0, result.exception
     lines = strip_ansi(result.stdout).splitlines()
-    optional = ["INPUT", "FEATURES", "MAX_OUTPUT", "OUTPUT"]
-    expected = (
-        optional[:1] if width <= 80 else optional[:3] if width == 120 else optional
-    )
-    assert lines[0].split() == [
-        "MODEL",
-        "CONTEXT",
-        "PRICE",
-        "($/1M)",
-        "STATUS",
-        *expected,
-    ]
+    if width <= 80:
+        expected = "MODEL CONTEXT PRICE ($/1M) INPUT STATUS"
+    elif width == 120:
+        expected = "MODEL CONTEXT MAX_OUTPUT PRICE ($/1M) INPUT FEATURES STATUS"
+    else:
+        expected = "MODEL CONTEXT MAX_OUTPUT PRICE ($/1M) INPUT OUTPUT FEATURES STATUS"
+    assert lines[0].split() == expected.split()
     assert len(lines) == 6 and lines[-2:] == ["", "2 models, 1 provider"]
     assert all(wcswidth(line) <= max(width, 80) for line in lines)
     assert all(
@@ -102,9 +97,12 @@ def test_models_read_width_on_each_call_and_fall_back_to_120(tmp_path, monkeypat
         result = runner.invoke(cli.app, ["--root", str(tmp_path), "models"])
         assert result.exit_code == 0, result.exception
         headers.append(result.stdout.splitlines()[0].split())
-    assert headers[0][-1] == "INPUT"
-    assert headers[1][-1] == "OUTPUT"
-    assert all(header[-1] == "MAX_OUTPUT" for header in headers[2:])
+    assert headers[0] == "MODEL CONTEXT PRICE ($/1M) INPUT STATUS".split()
+    assert "OUTPUT" in headers[1]
+    assert all(
+        "MAX_OUTPUT" in header and "OUTPUT" not in header for header in headers[2:]
+    )
+    assert all(header[-1] == "STATUS" for header in headers)
 
 
 @pytest.mark.parametrize("width", [40, 80, 120, 240])
@@ -879,7 +877,7 @@ def test_catalog_reasons_only_appear_inside_model_status(
 
     assert result.exit_code == 0, result.stderr
     if command == "models":
-        assert all(row[3] == "no env,no adapter" for row in rows)
+        assert all(row[-1] == "no env,no adapter" for row in rows)
     else:
         assert rows == [("test", "0/2", "-", "TEST_API_KEY")]
 
@@ -1378,7 +1376,7 @@ def test_catalog_cli_uses_published_environment_for_route_failures(
     assert result.exit_code == 0, result.exception
     assert rows
     if command == "models":
-        assert all(row[3] == "no env" for row in rows)
+        assert all(row[-1] == "no env" for row in rows)
     else:
         assert rows[0][1] == "0/2" and rows[0][-1] == "TEST_API_KEY"
     assert all("added-after-publication" not in str(row) for row in rows)

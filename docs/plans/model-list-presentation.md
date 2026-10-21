@@ -10,10 +10,12 @@ retain selection, ordering, queries, JSON records, and summary counts.
 
 ## Decisions
 
-- Display `MODEL`, `CONTEXT`, `PRICE ($/1M)`, `STATUS`, `INPUT`, `FEATURES`,
-  `MAX_OUTPUT`, and `OUTPUT`, in that order.
-- Always retain the first four columns. When the selection does not fit, omit
-  whole optional columns in order: `OUTPUT`, `MAX_OUTPUT`, `FEATURES`, `INPUT`.
+- Display `MODEL`, `CONTEXT`, `MAX_OUTPUT`, `PRICE ($/1M)`, `INPUT`, `OUTPUT`,
+  `FEATURES`, and `STATUS`, in that order.
+- Always retain `MODEL`, `CONTEXT`, `PRICE`, and `STATUS`. When the selection does
+  not fit, omit whole optional columns in order: `OUTPUT`, `MAX_OUTPUT`,
+  `FEATURES`, `INPUT`.
+  Retain the display order of remaining columns, independently of drop priority.
   All rows in one invocation use the same columns.
 - Use the full terminal width with an 80-cell minimum and a 120-cell fallback.
   Keep model identities and displayed values complete on single logical rows.

@@ -37,13 +37,14 @@ from toolang.setup.watcher import load_setup
 MODEL_COLUMNS = (
     "model",
     "context",
-    "price",
-    "status",
-    "input",
-    "features",
     "max_output",
+    "price",
+    "input",
     "output",
+    "features",
+    "status",
 )
+MODEL_DROP_ORDER = ("output", "max_output", "features", "input")
 PROVIDER_COLUMNS = ("provider", "models", "api", "env")
 
 
@@ -147,17 +148,24 @@ def _echo_models(records: Sequence[Mapping[str, object]], *, width: int) -> None
         max(wcswidth(header), *(wcswidth(row[index]) for row in rows))
         for index, header in enumerate(headers)
     ]
-    count = len(headers)
-    while count > 4 and sum(widths[:count]) + 2 * (count - 1) > width:
-        count -= 1
+    indices = list(range(len(MODEL_COLUMNS)))
+    table_width = sum(widths) + 2 * (len(indices) - 1)
+    for column in MODEL_DROP_ORDER:
+        if table_width <= width:
+            break
+        index = MODEL_COLUMNS.index(column)
+        indices.remove(index)
+        table_width -= widths[index] + 2
     echo_table(
-        headers[:count],
-        [row[:count] for row in rows],
+        [headers[index] for index in indices],
+        [tuple(row[index] for index in indices) for row in rows],
         justify=tuple(
-            "right" if column in {"context", "price", "max_output"} else "left"
-            for column in MODEL_COLUMNS[:count]
+            "right"
+            if MODEL_COLUMNS[index] in {"context", "price", "max_output"}
+            else "left"
+            for index in indices
         ),
-        width=max(width, sum(widths[:count]) + 2 * (count - 1)),
+        width=max(width, table_width),
     )
 
 

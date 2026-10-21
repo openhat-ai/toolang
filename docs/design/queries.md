@@ -15,7 +15,7 @@ effective resources. Visible columns retain this order in both views.
 
 | Collection | Identity | Human columns, in order |
 | --- | --- | --- |
-| Models | `ref`: `provider/id` | `MODEL`, `CONTEXT`, `PRICE ($/1M)`, `STATUS`; optional `INPUT`, `FEATURES`, `MAX_OUTPUT`, `OUTPUT` |
+| Models | `ref`: `provider/id` | `MODEL`, `CONTEXT`, `MAX_OUTPUT`, `PRICE ($/1M)`, `INPUT`, `OUTPUT`, `FEATURES`, `STATUS` |
 | Providers | `id` (external TQ only) | `PROVIDER`, `MODELS`, `API` (when space permits), `ENV` |
 | Tools | `ref`: `toolset/name` | `TOOL`, `DESCRIPTION`, `STATUS` |
 | Caps | `cap`: `kind/name` | `CAP`, `DESCRIPTION`, `LOCATION`, `STATUS` |
@@ -33,9 +33,11 @@ These lists do not offer `--long`; use `--json` for complete field values.
 Except for provider ENV rules, arrays display comma-separated values; missing
 values and empty arrays display `-`.
 
-Model optional columns are omitted from right to left until the selected rows
-fit the terminal budget, with an 80-cell minimum and 120-cell fallback. All rows
-use the same columns. Mandatory columns and model identities remain complete on
+`MODEL`, `CONTEXT`, `PRICE`, and `STATUS` are mandatory for models. Optional
+columns are omitted in order `OUTPUT`, `MAX_OUTPUT`, `FEATURES`, `INPUT` until
+the selected rows fit the terminal budget, with an 80-cell minimum and 120-cell
+fallback. Remaining columns retain their display order; all rows use the same
+columns. Mandatory columns and model identities remain complete on
 single logical rows, even when this requires a wider table. Model `CONTEXT` and
 `MAX_OUTPUT` display comma thousands separators; these and `PRICE` are
 right-aligned. JSON and query values remain unchanged. Human `STATUS` includes
