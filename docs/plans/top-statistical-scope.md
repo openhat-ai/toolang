@@ -4,8 +4,6 @@ Status: approved for implementation by the user on 2026-10-21, including the
 statistical scope and systematic implementation requirements below. This PR
 contains the definition only; implementation is a separate change.
 
-The compact instance-label amendment below is proposed and awaits user approval.
-
 ## Goal
 
 Make agent counts, Run summaries, usage summaries and table eligibility describe
@@ -94,24 +92,9 @@ confirmed running instances within it, though neither appears in the agents
 line. Summary placement counts, source results and table projection use the same
 scoped roster. Incomplete coverage remains nullable with diagnostics.
 
-### Compact instance labels (proposed)
-
-Shorten only Top's AGENT display. A canonical visiting/roaming instance name
-keeps the agent name, `@`, placement marker and the final eight hex digits of
-its ID: `aid@r18e078d20e70c838099841bb6e0c7117` becomes `aid@r6e0c7117`.
-Roaming IDs begin with a time sequence, so use the random suffix rather than
-the shared time prefix. Resident names and existing legacy labels keep their
-current presentation, including omission of private `#runtime` suffixes.
-
-Compare labels across the complete current scoped roster, including sources
-without table rows. Extend colliding suffixes one digit at a time until each
-label is unique. Folding, paging and loaded history must not affect this
-comparison; membership changes can change the required suffix length.
-
-Keep this pure formatting rule in `cli.common.top_view`, shared by column
-measurement and row rendering. Keep complete identities for ownership,
-selection, sorting, registration, paths, CLI selectors and JSON. Other CLI
-views retain their current names; short display labels are not new selectors.
+The separately approved [compact instance IDs](https://github.com/openhat-ai/toolang/blob/f6500f42/docs/plans/compact-instance-ids.md)
+definition covers generation, all CLI displays and selection. It replaces the
+earlier Top-only label proposal and is implemented in a separate PR.
 
 ## Implementation boundaries
 
@@ -178,11 +161,6 @@ Update current design/help text and generate the user-visible changelog entry.
    counts only for agents; and no aggregate completed count in the runs text.
    Runs and table share Recent while usage keeps Period. JSON retains its
    keys/types, including completion totals, and exposes the scoped roster.
-9. For the compact-label amendment, direct presentation tests verify resident,
-   visiting, roaming and legacy labels; the example above; extension of
-   colliding suffixes even when a peer has no rows; aligned column measurement;
-   and unchanged full identities, selection and JSON. Observer tests need no
-   changes for display formatting.
 
 ## Risks
 
