@@ -80,6 +80,16 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   separate dim time ranges, omitting the running, total, and completed counts.
   ([#897](https://github.com/openhat-ai/toolang/pull/897))
 
+- Instance IDs use `v`/`r` plus 16 Base32 characters; roaming IDs order launches
+  per source, Top shows `A@I`, and `--instance/-i` takes `I`.
+  ([#902](https://github.com/openhat-ai/toolang/pull/902))
+
+- **Breaking:** Stop old workloads with the previous version, then archive old
+  visiting/roaming roots, resident `status.json` files, and global discovery
+  records outside runtime paths before restarting with format 4. Visiting homes
+  use `/tmp/toolang/A@I/agents/A/`; no migration or automatic deletion is provided.
+  ([#902](https://github.com/openhat-ai/toolang/pull/902))
+
 ### Fixed
 
 - Failed preparation no longer leaves active registrations; runtime references
