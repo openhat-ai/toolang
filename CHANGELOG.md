@@ -90,6 +90,11 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   use `/tmp/toolang/A@I/agents/A/`; no migration or automatic deletion is provided.
   ([#902](https://github.com/openhat-ai/toolang/pull/902))
 
+- Agent, workspace, chore, and inspection lists start their tables at column
+  zero with one header separator, show displayed-record counts, and omit
+  headers when empty.
+  ([#903](https://github.com/openhat-ai/toolang/pull/903))
+
 ### Fixed
 
 - Failed preparation no longer leaves active registrations; runtime references
