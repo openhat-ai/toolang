@@ -4,6 +4,7 @@ import asyncio
 from datetime import datetime
 
 import typer
+from rich import box
 from rich.console import Console
 from rich.table import Table
 from rich.text import Text
@@ -11,6 +12,7 @@ from typer._click.exceptions import ClickException
 
 from toolang.cli.common.context import context_root
 from toolang.cli.common.messaging import settings
+from toolang.cli.common.output import MIN_TABLE_WIDTH
 from toolang.teaming.client import HubClient
 from toolang.teaming.errors import TeamingError
 from toolang.teaming.schemas import ConversationSummary, stream_id, target
@@ -37,8 +39,9 @@ def _print_directory(
     human: str | None = None,
 ) -> None:
     """Render a snapshot using the caller's console and local clock."""
+    console.width = max(MIN_TABLE_WIDTH, console.width)
     if not conversations:
-        console.print("0 conversations")
+        console.print("0 conversations", highlight=False)
         return
 
     times = {
@@ -105,40 +108,39 @@ def _print_directory(
     members_min_width = max(len("MEMBERS"), max(map(len, member_suffixes)) + 1)
     # Protect timestamps and previews, then share the remaining space between
     # names and members. Short cells release their unused space to the other column.
-    padding_width = len(headers) - 1
+    # Each gap includes collapsed cell padding and the box separator's space.
+    padding_width = 2 * (len(headers) - 1)
     preview_width = min(message_width, _PREVIEW_MIN_WIDTH)
-    metadata_width = max(
-        len("NAME") + members_min_width,
+    metadata_width = (
         console.width
         - id_width
         - time_width
         - joined_width
         - padding_width
-        - preview_width,
+        - preview_width
     )
     members_limit = min(
         members_width, max(members_min_width, metadata_width - len("NAME"))
     )
     name_limit = min(name_width, metadata_width - members_limit)
-    message_limit = max(
-        len("MESSAGE"),
+    message_limit = (
         console.width
         - id_width
         - name_limit
         - members_limit
         - time_width
         - padding_width
-        - joined_width,
+        - joined_width
     )
     table = Table(
-        box=None,
+        box=box.HORIZONTALS,
+        show_edge=False,
         header_style="",
         show_lines=False,
         pad_edge=False,
         collapse_padding=True,
     )
-    # Rich may shrink fixed widths when the terminal is too narrow. Keep IDs
-    # and the pre-truncated member counts intact with explicit minimum widths.
+    # Keep IDs and the allocated member summaries intact.
     table.add_column("CONVO", min_width=id_width, no_wrap=True)
     table.add_column("NAME", max_width=name_limit, no_wrap=True, overflow="ellipsis")
     table.add_column(
@@ -153,7 +155,7 @@ def _print_directory(
         "MESSAGE", max_width=message_limit, no_wrap=True, overflow="ellipsis"
     )
     if human is not None:
-        table.add_column("JOINED", width=joined_width, no_wrap=True)
+        table.add_column("JOINED", width=joined_width, justify="right", no_wrap=True)
     for row, suffix in zip(rows, member_suffixes):
         if suffix and row[2].cell_len > members_limit:
             names = Text(row[2].plain[: -len(suffix)])
@@ -163,7 +165,9 @@ def _print_directory(
     console.print(table)
     console.print()
     count = len(conversations)
-    console.print(f"{count} {'conversation' if count == 1 else 'conversations'}")
+    console.print(
+        f"{count} {'conversation' if count == 1 else 'conversations'}", highlight=False
+    )
 
 
 def directory_command(ctx: typer.Context) -> None:

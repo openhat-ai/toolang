@@ -160,7 +160,7 @@ def list_agents(ctx: typer.Context) -> None:
     rows = [
         (
             item.name,
-            item.status,
+            "not running" if item.status == "stopped" else item.status,
             item.sandbox if item.status == "running" and item.sandbox else "-",
             str(item.port) if item.port is not None else "-",
             item.webui_url or "-",

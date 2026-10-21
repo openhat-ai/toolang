@@ -104,6 +104,14 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   shows the conversation directory.
   ([#903](https://github.com/openhat-ai/toolang/pull/903))
 
+- `too convo list` uses a minimum 80-column layout, the shared header separator,
+  right-aligned `JOINED`, and unhighlighted summary counts.
+  ([#911](https://github.com/openhat-ai/toolang/pull/911))
+
+- `too list` shows stopped agents as `not running`, leaving process states and
+  other labels unchanged.
+  ([#911](https://github.com/openhat-ai/toolang/pull/911))
+
 ### Fixed
 
 - Failed preparation no longer leaves active registrations; runtime references
