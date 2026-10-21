@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 import os
 from dataclasses import replace
@@ -15,8 +16,13 @@ from toolang.up.instance import SandboxState
 
 
 @pytest.mark.parametrize("matching", [True, False])
+@pytest.mark.parametrize("running_loop", [True, False])
 def test_status_uses_saved_identity_not_live_pid_in_report(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, matching: bool
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    matching: bool,
+    running_loop: bool,
+    recwarn: pytest.WarningsRecorder,
 ) -> None:
     layout = AgentLayout.resident(tmp_path, "alice")
     layout.home.mkdir(parents=True)
@@ -37,7 +43,11 @@ def test_status_uses_saved_identity_not_live_pid_in_report(
 
     monkeypatch.setattr(sandbox, "_health_ready", lambda _url: False)
     runtime = process.AgentProcess(layout)
-    status = runtime.status(ui_base_url="")
+
+    async def inspect():
+        return runtime.status(ui_base_url="")
+
+    status = asyncio.run(inspect()) if running_loop else runtime.status(ui_base_url="")
     assert status is not None
     assert status.status == ("starting" if matching else "stopped")
     assert status.endpoint == (ref.endpoint if matching else None)
@@ -46,6 +56,7 @@ def test_status_uses_saved_identity_not_live_pid_in_report(
         "PID",
         str(os.getpid()),
     )
+    assert not [warning for warning in recwarn if warning.category is RuntimeWarning]
 
 
 def test_status_keeps_one_snapshot_when_a_restart_changes_the_file(
