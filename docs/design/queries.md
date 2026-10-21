@@ -17,13 +17,19 @@ effective resources. Visible columns retain this order in both views.
 | --- | --- | --- |
 | Models | `ref`: `provider/id` | `REF`, `CONTEXT`, `MAX_OUTPUT`, `PRICE`, `INPUT`, `OUTPUT`, `FEATURES`, `TAGS` |
 | Providers | `id` (external TQ only) | `PROVIDER`, `MODELS`, `API` (when space permits), `ENV` |
-| Tools | `ref`: `toolset/name` | `REF`, `DESCRIPTION`, `TAGS` |
+| Tools | `ref`: `toolset/name` | `TOOL`, `DESCRIPTION`, `TAGS` |
 | Caps | `cap`: `kind/name` | `CAP`, `DESCRIPTION`, `LOCATION`, `TAGS` |
 
-`REF` and `CAP` are at most 40 display cells wide; longer refs wrap, preferably after `/`,
-without losing characters. Except for provider ENV rules, arrays display
-comma-separated values; missing values
-and empty arrays display `-`. Locations remain complete for copying.
+Cap and tool lists use the full terminal width, falling back to 120 cells when
+terminal geometry is unavailable. Each resource occupies one row. Column sizing
+shrinks descriptions and locations first, preserving identities and tags when
+they fit. Cells that remain too long use `…`; locations retain their beginning
+and end. Very narrow terminals may also shorten headers, identities, or tags.
+These lists do not offer `--long`; use `--json` for complete field values.
+
+Model `REF` columns are at most 40 display cells wide; longer refs wrap,
+preferably after `/`, without losing characters. Except for provider ENV rules,
+arrays display comma-separated values; missing values and empty arrays display `-`.
 Model REF continuation lines are right-aligned; other fields start on the second
 line when the ref wraps. Model `CONTEXT` and `MAX_OUTPUT` display comma thousands
 separators, while JSON and query values remain integers.

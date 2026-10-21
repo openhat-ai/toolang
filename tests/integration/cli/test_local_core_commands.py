@@ -7,8 +7,6 @@ from toolang.up import source as agent_sources
 from toolang.lang.types import Value
 from toolang.execution.types import TypedRef, value_for_type
 
-from toolang.cli.common import records as record_output
-
 from tests.support.setup import materialized_setup
 
 import asyncio
@@ -26,6 +24,7 @@ import httpx
 import pytest
 import typer
 from typer._click.utils import strip_ansi
+from wcwidth import clip as clip_cells, wcswidth
 from typer.testing import CliRunner
 
 import toolang.cli.toolang.commands.agent as agent_commands
@@ -89,6 +88,25 @@ from toolang.base.protocols.tool import Tool
 from toolang.common.layout import root_edit_lock_path
 
 runner = CliRunner()
+
+
+def _human_record_rows(output: str, columns: tuple[str, ...]) -> list[dict[str, str]]:
+    lines = strip_ansi(output).splitlines()
+    if lines[0].startswith("0 "):
+        return []
+    headings = ["TOOL" if column == "ref" else column.upper() for column in columns]
+    starts = [lines[0].index(heading) for heading in headings]
+    return [
+        {
+            column: clip_cells(
+                line,
+                start,
+                starts[index + 1] - 2 if index + 1 < len(starts) else wcswidth(line),
+            ).rstrip()
+            for index, (column, start) in enumerate(zip(columns, starts))
+        }
+        for line in lines[2:-2]
+    ]
 
 
 @pytest.mark.parametrize(
@@ -3197,11 +3215,7 @@ def test_tools_visibility_queries_and_counts(
         assert result.stdout.strip() == "0 tools"
         return
     header = next(line for line in result.stdout.splitlines() if "DESCRIPTION" in line)
-    assert header.split() == [
-        "REF",
-        "DESCRIPTION",
-        "TAGS",
-    ]
+    assert header.split() == ["TOOL", "DESCRIPTION", "TAGS"]
     tool_count = len(visible) + int("shell" in visible)
     toolset_count = len(visible)
     tool_plural = "" if tool_count == 1 else "s"
@@ -3212,6 +3226,35 @@ def test_tools_visibility_queries_and_counts(
     )
     assert "Echo text." in result.stdout
     assert "SOURCE" not in header
+
+
+@pytest.mark.parametrize("width", [80, 240])
+def test_tools_use_terminal_width_without_wrapping_or_changing_json(
+    tmp_path, plugin_inventory, monkeypatch, width
+):
+    monkeypatch.setenv("COLUMNS", str(width))
+    description = "Review stdout and stderr. " * 20 + "Complete tail."
+    monkeypatch.setattr(
+        _FakeTool,
+        "definition",
+        lambda self: ToolDefinition(name=self.name, description=description),
+    )
+    root = tmp_path / "toolang"
+    args = ("tools", "--query", "shell/echo")
+    before = _invoke(root, *args, "--json")
+    human = _invoke(root, *args)
+    after = _invoke(root, *args, "--json")
+
+    assert before.exit_code == human.exit_code == after.exit_code == 0
+    assert json.loads(before.stdout) == json.loads(after.stdout)
+    assert json.loads(before.stdout)[0]["description"] == description
+    lines = strip_ansi(human.stdout).splitlines()
+    assert len(lines) == 5
+    assert max(map(wcswidth, lines)) == width
+    assert lines[0].split() == ["TOOL", "DESCRIPTION", "TAGS"]
+    assert lines[2].startswith("shell/echo") and lines[2].endswith("ready")
+    assert "…" in lines[2]
+    assert lines[-2:] == ["", "1 tool"]
 
 
 @pytest.mark.parametrize(
@@ -3367,19 +3410,11 @@ def test_tools_status_column_distinguishes_allow_without_internal_badges(
     root = tmp_path / "toolang"
     root.mkdir()
     (root / "config.toml").write_text('[allow]\ntools = ["shell/echo"]\n')
-    rows = []
-    monkeypatch.setattr(
-        record_output,
-        "echo_table",
-        lambda headers, values, **kwargs: rows.extend(
-            dict(zip((key.lower() for key in headers), row, strict=True))
-            for row in values
-        ),
-    )
 
     result = _invoke(root, "tools", *(("--all",) if all_ else ()))
 
     assert result.exit_code == 0, result.stderr
+    rows = _human_record_rows(result.stdout, ("ref", "description", "tags"))
     by_tool = {row["ref"]: row for row in rows}
     if all_:
         assert by_tool["shell/echo"]["tags"] == "ready"
@@ -3435,15 +3470,6 @@ def test_cap_lists_apply_scope_allow_and_display_status(
                 name=name,
             )
         )
-    rows = []
-    monkeypatch.setattr(
-        record_output,
-        "echo_table",
-        lambda headers, values, **kwargs: rows.extend(
-            dict(zip((key.lower() for key in headers), row, strict=True))
-            for row in values
-        ),
-    )
 
     result = _invoke(
         tmp_path,
@@ -3453,6 +3479,7 @@ def test_cap_lists_apply_scope_allow_and_display_status(
     )
 
     assert result.exit_code == 0, result.stderr
+    rows = _human_record_rows(result.stdout, ("cap", "description", "location", "tags"))
     identities = {str(row["cap"]): row for row in rows}
     # The collection formatter renders kind-qualified identities for every list.
     by_name = {identity.rsplit("/", 1)[-1]: row for identity, row in identities.items()}
@@ -4360,28 +4387,25 @@ def test_resource_json_human_and_external_tq_select_identical_records(
     assert tq_main(["-M", "-c", "-k", identity, query, str(path)]) == 0
     external = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
     assert external == records
-    rows = []
-    monkeypatch.setattr(
-        record_output,
-        "echo_table",
-        lambda headers, values, **kwargs: rows.extend(
-            dict(zip((key.lower() for key in headers), row, strict=True))
-            for row in values
-        ),
-    )
     human = _invoke(tmp_path, *command, *options, "--query", query, "--human")
     assert human.exit_code == 0, human.stderr
-    assert [row[identity] for row in rows] == [record[identity] for record in records]
     expected_columns = (
         ("ref", "description", "tags")
         if command == ("tools",)
         else ("cap", "description", "location", "tags")
     )
+    rows = _human_record_rows(human.stdout, expected_columns)
+    assert [row[identity] for row in rows] == [record[identity] for record in records]
     assert all(tuple(row) == expected_columns for row in rows)
     for row, record in zip(rows, records, strict=True):
         assert row["tags"] == ",".join(record["tags"])
         if "location" in row:
-            assert row["location"] == record["location"]
+            if "…" in row["location"]:
+                prefix, suffix = row["location"].split("…", 1)
+                assert record["location"].startswith(prefix)
+                assert record["location"].endswith(suffix)
+            else:
+                assert row["location"] == record["location"]
         assert "id" not in record
 
 

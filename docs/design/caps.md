@@ -45,7 +45,11 @@ agent home. Remote content follows the same cache and refresh behavior as agent
 State preparation.
 
 `--all` includes resources excluded by allow in the same scope. Both views
-show `CAP`, `DESCRIPTION`, `LOCATION`, and `TAGS`; availability is `ready` or
+show `CAP`, `DESCRIPTION`, `LOCATION`, and `TAGS` in one row per cap, sized to
+the full terminal width (120 cells when unavailable). Descriptions and locations
+shrink first; long cells use `…`, with locations retaining their beginning and
+end. Complete values remain available through `--json`; there is no `--long`.
+Availability is `ready` or
 `not_allowed`, alongside origin, scope, and form tags. The full view does not restore
 shadowed definitions or grant runtime access. This applies to aggregate and
 kind-specific lists through `too`, for example `too alice caps --all`,

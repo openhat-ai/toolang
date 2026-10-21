@@ -1,20 +1,144 @@
 """JSON records and tables sharing the same public field paths."""
 
 import json
+from shutil import get_terminal_size
 from collections.abc import Mapping, Sequence
 from typing import cast
 
 from rich.cells import cell_len, chop_cells
+from rich.console import Console
+from rich.text import Text
+from wcwidth import iter_graphemes_reverse, wcswidth
 
 import typer
 from typer._click.exceptions import UsageError
 
-from .output import echo_table
+from .output import _table_cell_text, echo_table
+from .terminal_title import clip_title, safe_text
 
 
 def check_output_options(*, human: bool, json_: bool) -> None:
     if human and json_:
         raise UsageError("--human and --json are mutually exclusive")
+
+
+def echo_compact_records(
+    records: Sequence[Mapping[str, object]],
+    columns: Sequence[str],
+    *,
+    heading: str,
+    json_: bool,
+) -> None:
+    """Fit descriptive records into single rows using the current terminal width."""
+    if json_:
+        echo_records(records, columns, json_=True)
+        return
+    if not records:
+        return
+    width = get_terminal_size(fallback=(120, 24)).columns
+    console = Console(width=width, highlight=False)
+    headers = [heading, *(column.upper() for column in columns[1:])]
+    rows = [
+        tuple(
+            _compact_value(record.get(column), prose=column in {"description", "title"})
+            for column in columns
+        )
+        for record in records
+    ]
+    gap = 2
+    if width < len(columns) + gap * (len(columns) - 1):
+        console.print(Text(clip_title("  ".join(headers), width=width)), soft_wrap=True)
+        console.print(Text("─" * width, style="dim"), soft_wrap=True)
+        for row in rows:
+            console.print(
+                _table_cell_text(clip_title("  ".join(row), width=width)),
+                soft_wrap=True,
+            )
+        return
+
+    minimums = [len(header) for header in headers]
+    if sum(minimums) + gap * (len(columns) - 1) > width:
+        minimums = [1] * len(columns)
+    widths = [
+        max(len(header), *(wcswidth(row[index]) for row in rows))
+        for index, header in enumerate(headers)
+    ]
+    excess = max(0, sum(widths) + gap * (len(columns) - 1) - width)
+    flexible = [
+        index
+        for index, column in enumerate(columns)
+        if column in {"description", "title", "location"}
+    ]
+    for indices in (
+        flexible,
+        [0],
+        [index for index in range(1, len(columns)) if index not in flexible],
+    ):
+        capacity = sum(widths[index] - minimums[index] for index in indices)
+        reduction = min(excess, capacity)
+        remaining = reduction
+        for index in indices:
+            share = (
+                reduction * (widths[index] - minimums[index]) // capacity
+                if capacity
+                else 0
+            )
+            widths[index] -= share
+            remaining -= share
+        for index in indices:
+            if remaining and widths[index] > minimums[index]:
+                widths[index] -= 1
+                remaining -= 1
+        excess -= reduction
+
+    def print_row(values: Sequence[str], *, header: bool = False) -> None:
+        line = Text()
+        for index, (value, column_width) in enumerate(zip(values, widths)):
+            cell = (
+                _clip_location(value, column_width)
+                if not header and columns[index] == "location"
+                else clip_title(value, width=column_width)
+            )
+            line.append(Text(cell) if header else _table_cell_text(cell))
+            if index < len(columns) - 1:
+                line.append(" " * (column_width - wcswidth(cell) + gap))
+        console.print(line, soft_wrap=True)
+
+    print_row(headers, header=True)
+    console.print(
+        Text("─" * (sum(widths) + gap * (len(columns) - 1)), style="dim"),
+        soft_wrap=True,
+    )
+    for row in rows:
+        print_row(row)
+
+
+def _compact_value(value: object, *, prose: bool = False) -> str:
+    if value is None:
+        return "-"
+    if isinstance(value, bool):
+        return "yes" if value else "no"
+    if isinstance(value, (list, tuple)):
+        value = ",".join(str(item) for item in value)
+    text = safe_text(
+        str(value).replace("\r", " ").replace("\n", " ").replace("\t", " ")
+    )
+    return (" ".join(text.split()) if prose else text) or "-"
+
+
+def _clip_location(value: str, width: int) -> str:
+    if wcswidth(value) <= width:
+        return value
+    prefix = clip_title(value, width=(width - 1) // 2 + 1).removesuffix("…")
+    budget = width - wcswidth(prefix) - 1
+    suffix = []
+    for cluster in iter_graphemes_reverse(value):
+        size = max(0, wcswidth(cluster))
+        if size > budget:
+            break
+        suffix.append(cluster)
+        budget -= size
+    return prefix + "…" + "".join(reversed(suffix))
 
 
 def echo_records(

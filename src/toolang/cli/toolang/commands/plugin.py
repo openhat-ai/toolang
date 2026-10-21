@@ -12,7 +12,7 @@ import typer
 
 from ...common.context import context_agent, context_root
 from ...common.output import echo_collection_summary, echo_table
-from ...common.records import check_output_options, echo_records
+from ...common.records import check_output_options, echo_compact_records
 from ...common.progress import make_cli_progress
 from tq import Query
 from ...common.context import user_call
@@ -71,7 +71,9 @@ def list_tools(
     if query:
         parsed = user_call(lambda: Query.parse(query).validate({"key": "ref"}))
         records = [record for record in records if parsed.match(record) is not None]
-    echo_records(records, ("ref", "description", "tags"), json_=json_)
+    echo_compact_records(
+        records, ("ref", "description", "tags"), heading="TOOL", json_=json_
+    )
     if not json_:
         echo_collection_summary(
             len(records),

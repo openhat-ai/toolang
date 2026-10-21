@@ -4,13 +4,77 @@ import json
 from pathlib import Path
 
 import pytest
+from wcwidth import wcswidth
 from typer._click.utils import strip_ansi
 from typer.testing import CliRunner
 
 from toolang.cli.toolang.main import app as toolang_app
+from toolang.catalog import templates
+from toolang.catalog.cap import AuthoredCaps, CapFile
+from toolang.common.layout import root_edit_lock_path
 
 
 runner = CliRunner()
+
+
+@pytest.mark.parametrize("command", [("caps",), ("skill", "list")])
+@pytest.mark.parametrize("width", [80, 120, 240])
+def test_cap_lists_keep_single_rows_and_complete_json(
+    tmp_path, monkeypatch, command, width
+):
+    monkeypatch.setenv("COLUMNS", str(width))
+    root = tmp_path / ("nested-source-" * 8)
+    root.mkdir()
+    description = "Complete workflow description. " * 12 + "Final instructions."
+    source = templates.load_template("skill").raw_text.replace(
+        "Trigger this skill for requests that need this workflow.", description
+    )
+    AuthoredCaps(root, lock_path=root_edit_lock_path(root)).create(
+        CapFile.parse(source, kind="skill", name="review")
+    )
+    args = ["--root", str(root), *command, "--query", "skill/review"]
+    before = runner.invoke(toolang_app, [*args, "--json"])
+    human = runner.invoke(toolang_app, args)
+    after = runner.invoke(toolang_app, [*args, "--json"])
+
+    assert before.exit_code == human.exit_code == after.exit_code == 0
+    assert json.loads(before.stdout) == json.loads(after.stdout)
+    record = json.loads(before.stdout)[0]
+    assert record["description"] == description.strip()
+    assert record["location"].endswith("/skills/review/SKILL.md")
+    lines = strip_ansi(human.stdout).splitlines()
+    assert len(lines) == 5
+    assert max(map(wcswidth, lines)) == width
+    assert lines[0].split() == ["CAP", "DESCRIPTION", "LOCATION", "TAGS"]
+    assert lines[2].startswith("skill/review")
+    assert lines[2].endswith("ready,local,root,authored")
+    assert "…" in lines[2]
+    assert lines[-2] == ""
+    assert lines[-1] == "1 " + ("cap" if command == ("caps",) else "skill")
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        ("tools",),
+        ("caps",),
+        *((kind, "list") for kind in ("psyche", "skill", "service", "prompt")),
+    ],
+)
+def test_compact_resource_lists_do_not_expose_long(tmp_path, monkeypatch, command):
+    def reject_loading(*args, **kwargs):
+        pytest.fail("Unknown options must be rejected before resource loading")
+
+    monkeypatch.setattr("toolang.cli.caps.commands._cap_entries", reject_loading)
+    monkeypatch.setattr(
+        "toolang.cli.toolang.commands.plugin.load_tool_setup", reject_loading
+    )
+    help_result = runner.invoke(toolang_app, [*command, "--help"])
+    assert help_result.exit_code == 0
+    assert "--long" not in help_result.stdout
+    result = runner.invoke(toolang_app, ["--root", str(tmp_path), *command, "--long"])
+    assert result.exit_code == 2
+    assert "No such option: --long" in result.stderr
 
 
 def test_query_command_is_removed() -> None:
