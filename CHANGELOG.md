@@ -95,6 +95,15 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   headers when empty.
   ([#903](https://github.com/openhat-ai/toolang/pull/903))
 
+- List headers label plugin, workspace, and chore identifiers by kind, use
+  `CONVO` for conversation IDs, and right-align agent ports and inspection
+  counts.
+  ([#903](https://github.com/openhat-ai/toolang/pull/903))
+
+- Bare `too talk` prints help without contacting the Hub, while `too convo list`
+  shows the conversation directory.
+  ([#903](https://github.com/openhat-ai/toolang/pull/903))
+
 ### Fixed
 
 - Failed preparation no longer leaves active registrations; runtime references
