@@ -53,12 +53,12 @@ Use this order, with left-hand names and right-aligned time ranges:
 
 ```text
 agents: 2 resident, 0 visiting, 0 roaming                                              right now
-stats: 191 model calls, 198 tool calls, 100k input, 80k cached, 10k output, $1.0000      last 4h
+usage: 191 model calls, 198 tool calls, 100k input, 80k cached, 10k output, $1.0000      last 4h
 runs: 0 active, 0 succeeded, 0 failed, 0 canceled                                        last 5m
 AGENT THREAD RUN MODEL TOOL INPUT CACHED OUTPUT SPEND TIME+ STATUS
 ```
 
-Render `agents:`, `stats:` and `runs:` in normal intensity, without dim or bold.
+Render `agents:`, `usage:` and `runs:` in normal intensity, without dim or bold.
 The right column contains only `right now` or `last <window>`, in dim;
 retain the existing numeric coloring and width-dependent wrapping rules.
 
@@ -66,7 +66,7 @@ The agents line counts scoped source identities by placement. Remove its
 `running` and `total` prefix: "right now" describes membership at observation
 time, not whether every member has a running instance.
 
-The stats line aggregates that scope with the independent Period setting (`4h`
+The usage line aggregates that scope with the independent Period setting (`4h`
 in the example; preserve the `1h` default). The runs line and table share the
 same scope and Recent setting: current active
 root Runs of any age plus terminal roots completed within Recent. Child Runs
@@ -76,8 +76,8 @@ lifetime values; changing Period does not filter rows.
 
 Omit the aggregate `N completed:` from the runs line; show active, succeeded,
 failed and canceled counts directly. Keep the completion total in JSON and
-paging logic. "Usage" includes model/tool invocation counts, tokens and spend;
-the displayed line name remains `stats:`.
+paging logic. The usage line includes model/tool invocation counts, tokens and
+spend.
 
 Keep active-root proof and unknown-coverage rules: instance departure never
 invents a terminal Run status, and unreadable live/history state never becomes
@@ -128,7 +128,7 @@ Likely tests: `tests/unit/up/test_scope.py`, reader and observer unit tests,
 5. Home enumeration and registration errors retain unknown coverage; corrupt
    databases and lost established history remain unavailable. No alternate
    source catalog or observation side effects are created.
-6. At wide and narrow widths, verify agents, stats, runs, table order; normal
+6. At wide and narrow widths, verify agents, usage, runs, table order; normal
    left-hand names with colons; dim time ranges only at the right; placement
    counts only for agents; and no aggregate completed count in the runs text.
    Runs and table share Recent while usage keeps Period. JSON retains its
