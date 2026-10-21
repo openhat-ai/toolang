@@ -330,10 +330,21 @@ class AgentProcess:
             and previous[1] == fingerprint
         ):
             return previous[2]
-        try:
-            alive = asyncio.run(
-                asyncio.wait_for(implementation.running(reference.ref), timeout=2)
+
+        async def probe():
+            return await asyncio.wait_for(
+                implementation.running(reference.ref), timeout=2
             )
+
+        try:
+            try:
+                asyncio.get_running_loop()
+            except RuntimeError:
+                alive = asyncio.run(probe())
+            else:
+                # Synchronous status reads also run during async launch resolution.
+                with ThreadPoolExecutor(max_workers=1) as pool:
+                    alive = pool.submit(lambda: asyncio.run(probe())).result()
         except (OSError, RuntimeError, ValueError, TimeoutError):
             alive = None
         if cache:

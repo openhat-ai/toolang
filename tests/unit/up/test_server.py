@@ -140,6 +140,34 @@ def test_resident_default_port_reuses_free_record_or_selects_available(
     )
 
 
+def test_async_launch_resolution_reserves_running_peer_ports(
+    tmp_path, monkeypatch, recwarn
+):
+    from toolang.plugin.sandboxes.host import process_ref
+    from toolang.up.instance import SandboxState
+    from toolang.up.sandbox import resolve_launch
+    from toolang.up.workload import ForegroundWorkload
+
+    peer = AgentLayout.resident(tmp_path, "bob")
+    endpoint = "http://localhost:7002"
+    monkeypatch.setattr(server, "_port_is_available", lambda host, port: True)
+    with ForegroundWorkload(
+        peer, toolang_root=tmp_path, drivers=frozenset(), endpoint=endpoint
+    ) as workload:
+        SandboxState("host", process_ref(os.getpid(), endpoint), workload.token).save(
+            peer.runtime_status
+        )
+        spec = asyncio.run(
+            resolve_launch(
+                layout=AgentLayout.resident(tmp_path, "alice"),
+                sandbox="host",
+                environ={},
+            )
+        )
+        assert spec.serve.port == 7003
+    assert not [warning for warning in recwarn if warning.category is RuntimeWarning]
+
+
 @pytest.mark.parametrize("preferred", [None, 7123])
 def test_automatic_port_selection_ignores_invalid_legacy_peers(
     tmp_path, monkeypatch, preferred

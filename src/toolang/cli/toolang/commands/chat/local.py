@@ -141,6 +141,7 @@ class LocalChatSession:
         self._stop_signal: asyncio.Event | None = None
         self._watch_tasks: tuple[asyncio.Task[None], ...] = ()
         self._thread = threading.Thread(target=self._run_loop, daemon=True)
+        self._submission_lock = threading.Lock()
         self._closed = False
         self._thread.start()
         self._ready.wait()
@@ -515,14 +516,19 @@ class LocalChatSession:
         )
 
     def close(self) -> None:
-        if self._closed:
-            return
-        self._closed = True
-        if self._thread.is_alive() and self._ready.is_set():
-            self._submit(self._close(), allow_closed=True).result()
-            self._loop.call_soon_threadsafe(self._loop.stop)
-            self._thread.join()
-        self.store.close()
+        with self._submission_lock:
+            if self._closed:
+                return
+            self._closed = True
+        try:
+            if self._thread.is_alive() and self._ready.is_set():
+                try:
+                    self._submit(self._close(), allow_closed=True).result()
+                finally:
+                    self._loop.call_soon_threadsafe(self._loop.stop)
+                    self._thread.join()
+        finally:
+            self.store.close()
 
     async def _initialize(self) -> None:
         self.executor.start()
@@ -653,10 +659,15 @@ class LocalChatSession:
         *,
         allow_closed: bool = False,
     ) -> Future[Any]:
-        if self._closed and not allow_closed:
-            coroutine.close()
-            raise RuntimeError("local chat session is closed")
-        return asyncio.run_coroutine_threadsafe(coroutine, self._loop)
+        with self._submission_lock:
+            if self._closed and not allow_closed:
+                coroutine.close()
+                raise RuntimeError("local chat session is closed")
+            try:
+                return asyncio.run_coroutine_threadsafe(coroutine, self._loop)
+            except Exception:
+                coroutine.close()
+                raise
 
     def _run_loop(self) -> None:
         asyncio.set_event_loop(self._loop)

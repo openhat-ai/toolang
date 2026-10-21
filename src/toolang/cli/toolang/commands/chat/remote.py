@@ -138,6 +138,7 @@ class RemoteChatSession:
         self.last_accepted_run_id: str | None = None
         self._blocked_run_id: str | None = None
         self._blocked_message: str | None = None
+        self._submission_lock = threading.Lock()
         self._closed = False
         self._thread.start()
         self._ready.wait()
@@ -375,13 +376,16 @@ class RemoteChatSession:
         )
 
     def close(self) -> None:
-        if self._closed:
-            return
-        self._closed = True
+        with self._submission_lock:
+            if self._closed:
+                return
+            self._closed = True
         if self._thread.is_alive() and self._ready.is_set():
-            self._submit(self._close(), allow_closed=True).result()
-            self._loop.call_soon_threadsafe(self._loop.stop)
-            self._thread.join()
+            try:
+                self._submit(self._close(), allow_closed=True).result()
+            finally:
+                self._loop.call_soon_threadsafe(self._loop.stop)
+                self._thread.join()
 
     async def _check_retention(self, _request: httpx.Request) -> None:
         if self._server is not None and self._server.check_retention is not None:
@@ -1024,10 +1028,15 @@ class RemoteChatSession:
         *,
         allow_closed: bool = False,
     ) -> Future[Any]:
-        if self._closed and not allow_closed:
-            coroutine.close()
-            raise RuntimeError("remote chat session is closed")
-        return asyncio.run_coroutine_threadsafe(coroutine, self._loop)
+        with self._submission_lock:
+            if self._closed and not allow_closed:
+                coroutine.close()
+                raise RuntimeError("remote chat session is closed")
+            try:
+                return asyncio.run_coroutine_threadsafe(coroutine, self._loop)
+            except Exception:
+                coroutine.close()
+                raise
 
     def _run_loop(self) -> None:
         asyncio.set_event_loop(self._loop)
