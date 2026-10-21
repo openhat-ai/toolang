@@ -146,6 +146,16 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   when unset.
   ([#912](https://github.com/openhat-ai/toolang/pull/912))
 
+- **Breaking:** `info`, `start`, `stop`, and `serve` accept AGENT only after
+  the command, with global options before the command or agent, so rewrite
+  `too AGENT info` as `too info AGENT`.
+  ([#916](https://github.com/openhat-ai/toolang/pull/916))
+
+- Known residents and explicit agent refs alone report `Missing command`, while
+  unknown commands, unsupported agent forms, and invalid selectors have
+  distinct errors.
+  ([#916](https://github.com/openhat-ai/toolang/pull/916))
+
 ### Fixed
 
 - Failed preparation no longer leaves active registrations; runtime references
@@ -247,6 +257,10 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   local paths, availability STATUS, and single rows; only descriptions and
   locations shrink, with JSON unchanged.
   ([#910](https://github.com/openhat-ai/toolang/pull/910))
+
+- Help and native CLI parameter errors no longer prepare agent sources or
+  allocate instances.
+  ([#916](https://github.com/openhat-ai/toolang/pull/916))
 
 ### Security
 
