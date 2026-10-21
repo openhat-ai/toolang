@@ -59,6 +59,11 @@ class TopSnapshot(BaseModel):
         return self.inventory_updating or bool(self.inventory.diagnostics)
 
     @property
+    def scoped_sources(self) -> tuple[SourceActivity, ...]:
+        identities = {item.identity for item in self.inventory.instances}
+        return tuple(source for source in self.sources if source.identity in identities)
+
+    @property
     def live_identities(self) -> set[str]:
         """Instances whose active roots still require live observation."""
         return {
@@ -80,7 +85,7 @@ class TopSnapshot(BaseModel):
         current = self.live_identities
         live_sources = {
             source.identity: source
-            for source in self.sources
+            for source in self.scoped_sources
             if source.identity in current
         }
         active = (
@@ -100,14 +105,14 @@ class TopSnapshot(BaseModel):
             and not self._missing_sources()
             and all(
                 source.completed is not None and source.activity_error is None
-                for source in self.sources
+                for source in self.scoped_sources
             )
         ):
             completed = CompletionCounts(
                 **{
                     state: sum(
                         getattr(source.completed.counts, state)
-                        for source in self.sources
+                        for source in self.scoped_sources
                         if source.completed
                     )
                     for state in ("succeeded", "failed", "canceled")
@@ -134,12 +139,12 @@ class TopSnapshot(BaseModel):
         if self.membership_unknown or self._missing_sources():
             return None
         result = Metrics()
-        for source in self.sources:
+        for source in self.scoped_sources:
             if source.usage is None or source.usage_error is not None:
                 return None
             result += source.usage.metrics
         return result
 
     def _missing_sources(self) -> bool:
-        available = {source.identity for source in self.sources}
+        available = {source.identity for source in self.scoped_sources}
         return any(item.identity not in available for item in self.inventory.instances)

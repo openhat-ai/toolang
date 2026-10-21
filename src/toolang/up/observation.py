@@ -54,6 +54,31 @@ def instance_filename(layout: AgentLayout) -> str:
     return f"{layout.instance_name}.json"
 
 
+def _read_reference(path: Path) -> dict[str, Any] | None:
+    try:
+        reference = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None
+    if (
+        not isinstance(reference, dict)
+        or type(reference.get("version")) is not int
+        or reference["version"] != AGENT_INSTANCE_FORMAT
+    ):
+        raise ValueError("invalid runtime reference")
+    if not isinstance(reference.get("status"), str) or not isinstance(
+        reference.get("launch_id"), str
+    ):
+        raise ValueError("incomplete runtime reference")
+    return reference
+
+
+def _registration_current(path: Path, launch_id: str | None) -> bool:
+    reference = _read_reference(path)
+    return reference is not None and (
+        launch_id is None or reference["launch_id"] == launch_id
+    )
+
+
 def _register_lock(path: Path) -> Path:
     return path.parent / "register.lock"
 
@@ -127,13 +152,9 @@ def running_instances(root: Path) -> tuple[dict, ...]:
     records: dict[Path, dict] = {}
     for path in sorted((root / ".runtime" / "instances").glob("*.json")):
         try:
-            reference = json.loads(path.read_text())
-            if (
-                not isinstance(reference, dict)
-                or type(reference.get("version")) is not int
-                or reference.get("version") != AGENT_INSTANCE_FORMAT
-            ):
-                continue  # Never adopt legacy registrations.
+            reference = _read_reference(path)
+            if reference is None:
+                continue
             status_path = Path(reference["status"])
             if status_path not in records:
                 document = read_document(status_path)
@@ -184,6 +205,8 @@ def running_instances(root: Path) -> tuple[dict, ...]:
             )
             if status is None or status.status != "running":
                 continue
+            if not _registration_current(path, entry["launch_id"]):
+                continue
             agent = f"agent:{layout.name}"
             if (
                 layout.placement != "resident"
@@ -212,6 +235,13 @@ class RuntimeSource:
     instance: RuntimeInstance
     layout: AgentLayout
     endpoint: str | None
+    registration: Path | None
+    launch_id: str | None
+
+    def is_current(self) -> bool:
+        return self.registration is not None and _registration_current(
+            self.registration, self.launch_id
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -222,6 +252,7 @@ class RuntimeInventory:
 
 @dataclass(slots=True)
 class _SnapshotCandidate:
+    registration: Path
     status_path: Path
     instance_key: str
     launch_id: str | None
@@ -315,8 +346,10 @@ def runtime_snapshot(root: Path) -> RuntimeInstanceSnapshot:
     return runtime_inventory(root).snapshot
 
 
-def runtime_inventory(root: Path, *, agent: str | None = None) -> RuntimeInventory:
-    """Discover active registrations only; retain bounded unknown diagnostics."""
+def runtime_inventory(
+    root: Path, *, agent: str | None = None, read_only: bool = False
+) -> RuntimeInventory:
+    """Discover registrations; read-only consumers retain stopped references."""
     from toolang.up.process import AgentProcess, AgentStatus
 
     root = _resolved(root)
@@ -395,15 +428,10 @@ def runtime_inventory(root: Path, *, agent: str | None = None) -> RuntimeInvento
     for reference_path in reference_paths:
         fallback: AgentLayout | None = None
         try:
-            reference = json.loads(reference_path.read_text(encoding="utf-8"))
-            raw_status_path = (
-                reference.get("status") if isinstance(reference, dict) else None
-            )
-            status_path = (
-                root / Path(raw_status_path).expanduser()
-                if isinstance(raw_status_path, str)
-                else None
-            )
+            reference = _read_reference(reference_path)
+            if reference is None:
+                continue
+            status_path = root / Path(reference["status"]).expanduser()
             if (
                 selected_status is not None
                 and status_path is not None
@@ -415,26 +443,13 @@ def runtime_inventory(root: Path, *, agent: str | None = None) -> RuntimeInvento
                         f"runtime registry {reference_path.name}: resident status does not match the selected agent"
                     )
                 continue
-            if (
-                not isinstance(reference, dict)
-                or type(reference.get("version")) is not int
-                or reference.get("version") != AGENT_INSTANCE_FORMAT
-            ):
-                diagnostics.append(
-                    f"runtime registry {reference_path.name}: invalid reference"
-                )
-                continue
-            launch_id = reference.get("launch_id")
-            if status_path is None or not isinstance(launch_id, str):
-                diagnostics.append(
-                    f"runtime registry {reference_path.name}: incomplete reference"
-                )
-                continue
+            launch_id = reference["launch_id"]
             fallback = _fallback_layout(reference_path, status_path, root)
             document, error = read_once(status_path)
             if error is not None:
                 add(
                     _SnapshotCandidate(
+                        reference_path,
                         status_path,
                         fallback.instance
                         if fallback and fallback.instance
@@ -449,6 +464,7 @@ def runtime_inventory(root: Path, *, agent: str | None = None) -> RuntimeInvento
             if document is None:
                 add(
                     _SnapshotCandidate(
+                        reference_path,
                         status_path,
                         fallback.instance
                         if fallback and fallback.instance
@@ -469,6 +485,7 @@ def runtime_inventory(root: Path, *, agent: str | None = None) -> RuntimeInvento
             if len(matches) != 1:
                 add(
                     _SnapshotCandidate(
+                        reference_path,
                         status_path,
                         fallback.instance
                         if fallback and fallback.instance
@@ -493,6 +510,7 @@ def runtime_inventory(root: Path, *, agent: str | None = None) -> RuntimeInvento
             except (KeyError, OSError, RuntimeError, TypeError, ValueError) as exc:
                 add(
                     _SnapshotCandidate(
+                        reference_path,
                         status_path,
                         instance_key if isinstance(instance_key, str) else "default",
                         launch_id,
@@ -504,6 +522,7 @@ def runtime_inventory(root: Path, *, agent: str | None = None) -> RuntimeInvento
                 continue
             add(
                 _SnapshotCandidate(
+                    reference_path,
                     status_path,
                     instance_key,
                     launch_id,
@@ -518,6 +537,7 @@ def runtime_inventory(root: Path, *, agent: str | None = None) -> RuntimeInvento
             if fallback is not None:
                 add(
                     _SnapshotCandidate(
+                        reference_path,
                         fallback.runtime_status,
                         fallback.instance or "default",
                         None,
@@ -532,9 +552,6 @@ def runtime_inventory(root: Path, *, agent: str | None = None) -> RuntimeInvento
     result: list[RuntimeInstance] = []
     for candidate in candidates_list:
         if candidate.layout is None:
-            diagnostics.append(
-                candidate.diagnostic or "runtime identity is unavailable"
-            )
             continue
         if candidate.diagnostic is not None:
             result.append(
@@ -586,7 +603,19 @@ def runtime_inventory(root: Path, *, agent: str | None = None) -> RuntimeInvento
             and entry["control"].get("operation") is None
             and entry["control"].get("ref") is None
         ):
-            remove_registration(candidate.layout, entry["launch_id"])
+            if not read_only:
+                remove_registration(candidate.layout, entry["launch_id"])
+            else:
+                result.append(
+                    RuntimeInstance(
+                        candidate.layout.name,
+                        candidate.layout.placement,
+                        candidate.layout.instance,
+                        instance_identity(candidate.layout),
+                        "not running",
+                        None,
+                    )
+                )
             continue
         probes.append((candidate, candidate.layout, entry))
 
@@ -620,7 +649,11 @@ def runtime_inventory(root: Path, *, agent: str | None = None) -> RuntimeInvento
         candidate, layout, entry = item
         try:
             status = AgentProcess(layout).status(
-                ui_base_url="", check_health=False, cache=True, snapshot=entry
+                ui_base_url="",
+                check_health=False,
+                cache=True,
+                snapshot=entry,
+                read_only=read_only,
             )
             return candidate, layout, entry, status, None
         except Exception as exc:
@@ -680,10 +713,12 @@ def runtime_inventory(root: Path, *, agent: str | None = None) -> RuntimeInvento
             diagnostic = f"{detail[:180]}"
         if normalized_state == "not running":
             if entry["control"].get("ref") is None:
-                remove_registration(layout, entry["launch_id"])
-                continue
-            normalized_state = "unknown"
-            diagnostic = "runtime resources have not been released"
+                if not read_only:
+                    remove_registration(layout, entry["launch_id"])
+                    continue
+            else:
+                normalized_state = "unknown"
+                diagnostic = "runtime resources have not been released"
         if diagnostic is not None:
             observed_state = str(workload_state or reported_state)
         else:
@@ -716,6 +751,22 @@ def runtime_inventory(root: Path, *, agent: str | None = None) -> RuntimeInvento
             priority = 4
         return priority, item.label.casefold(), item.identity
 
+    # Discovery references are observations, not leases. A completed probe or
+    # read failure cannot speak for a registration that departed or was replaced.
+    current: dict[str, _SnapshotCandidate] = {}
+    for candidate in candidates_list:
+        try:
+            if not _registration_current(candidate.registration, candidate.launch_id):
+                continue
+        except (OSError, ValueError, TypeError) as exc:
+            diagnostics.append(f"runtime registry {candidate.registration.name}: {exc}")
+        if candidate.layout is None:
+            diagnostics.append(
+                candidate.diagnostic or "runtime identity is unavailable"
+            )
+        else:
+            current[instance_identity(candidate.layout)] = candidate
+    result = [item for item in result if item.identity in current]
     result.sort(key=sort_key)
     diagnostics = sorted(set(diagnostics), key=str.casefold)
     layouts = {
@@ -731,7 +782,13 @@ def runtime_inventory(root: Path, *, agent: str | None = None) -> RuntimeInvento
     return RuntimeInventory(
         RuntimeInstanceSnapshot(tuple(result), tuple(diagnostics)),
         tuple(
-            RuntimeSource(item, layouts[item.identity], endpoints.get(item.identity))
+            RuntimeSource(
+                item,
+                layouts[item.identity],
+                endpoints.get(item.identity),
+                current[item.identity].registration,
+                current[item.identity].launch_id,
+            )
             for item in result
         ),
     )

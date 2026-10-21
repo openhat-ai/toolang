@@ -1,6 +1,9 @@
 """Recover unusable model turns without executing or replaying their tools."""
 
 import asyncio
+import time
+
+import httpx
 from pathlib import Path
 
 import pytest
@@ -30,6 +33,7 @@ from toolang.base.types.run import (
 from toolang.execution.executor.runs import agic
 from toolang.execution.types import ModelStepReport, ThreadKind
 from toolang.lang.types import Array
+from toolang.stats.recent import recent_usage
 
 SOURCE = """
 agic chat() -> Text:
@@ -425,5 +429,47 @@ def test_run_time_limit_stops_long_backoff(
                 if not task.done():
                     handle.cancel(reason="test cleanup")
                     await task
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("known_usage", [False, True])
+def test_rejected_call_preserves_error_invocation_and_available_usage(
+    tmp_path, known_usage
+):
+    response = httpx.Response(
+        401, request=httpx.Request("POST", "https://example.invalid")
+    )
+    error = (
+        ModelResponseError(
+            "rejected", kind="provider_rejection", usage=ModelUsage(100, 10)
+        )
+        if known_usage
+        else httpx.HTTPStatusError(
+            "rejected", request=response.request, response=response
+        )
+    )
+    harness = ExecutionHarness.create(tmp_path, source=SOURCE, responses=[error])
+
+    async def scenario():
+        async with harness:
+            run = await harness.executor.run(
+                harness.run_spec(
+                    thread=harness.threads.create(kind=ThreadKind.CHAT), runnable="chat"
+                )
+            )
+            assert run.status == "failed" and run.error is not None
+            assert "rejected" in harness.store.resolve_error(run.error)
+            assert len(harness.adapter.invocations) == 1
+            (step,) = harness.store.list_steps(run_id=run.id)
+            assert step.status == "failed" and "rejected" in str(step.error)
+            assert isinstance(step.report, ModelStepReport) and step.report.invoked
+            assert (step.report.usage is not None) == known_usage
+            metrics = recent_usage(
+                harness.store.db_path, now=int(time.time()) + 1, period=3600
+            ).metrics
+            assert metrics.model_calls == 1
+            assert metrics.input_tokens == (100 if known_usage else None)
+            assert metrics.output_tokens == (10 if known_usage else None)
 
     asyncio.run(scenario())

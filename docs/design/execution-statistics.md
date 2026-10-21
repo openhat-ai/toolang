@@ -23,7 +23,9 @@ dates. Today's row is partial; local dates respect timezone and DST boundaries.
 The seven quantities are `in`, `out`, `cached`, `spend`, `model_calls`,
 `tool_calls`, and `root_runs`. Cached tokens are already included in input.
 Spend sums recorded USD amounts; `spend_approximate` preserves the recorded cost
-classification. Unknown quantities stay null and known zero stays zero. Model
+classification. Unknown quantities stay null and known zero stays zero. Failed
+model calls preserve available usage; missing usage stays unknown, regardless of
+HTTP status. Known invocation counts do not imply known token consumption. Model
 rows have `root_runs=null`, since a root start has no model attribution.
 
 Root counts belong to root start, including still-running roots. Invocation counts

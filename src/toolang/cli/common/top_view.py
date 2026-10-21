@@ -180,7 +180,7 @@ class TopView:
             tuple[SourceActivity, RunNode, tuple[LiveNode, ...], str | None]
         ] = []
         current = snapshot.live_identities
-        for source in snapshot.sources:
+        for source in snapshot.scoped_sources:
             active_roots = set()
             known_completed = (
                 {node.id for node in source.completed.roots}
@@ -372,7 +372,7 @@ class TopView:
             waiting = next(
                 (
                     source
-                    for source in snapshot.sources
+                    for source in snapshot.scoped_sources
                     if self.selected is not None
                     and source.identity == self.selected[0]
                     and source.completed is None
@@ -483,7 +483,7 @@ class TopView:
             f"F5 {'Tree' if self.list_mode else 'List'}   "
             f"F6 {'Apply' if self.sort_menu else 'Sort'}   "
             f"F7 Runs({window(next_value(RECENTS, snapshot.recent))})   "
-            f"F8 Stats({window(next_value(PERIODS, snapshot.period))})   F10 Quit"
+            f"F8 Usage({window(next_value(PERIODS, snapshot.period))})   F10 Quit"
         )
         if width is not None and cell_len(labels) > width:
             labels = " ".join(labels.split())
@@ -497,17 +497,15 @@ class TopView:
         notices = []
         if snapshot.inventory.diagnostics:
             notices.append("agents unavailable")
-        elif not snapshot.inventory_updating and snapshot.summary.running is None:
-            notices.append("agents unavailable")
-        if any(source.activity_error for source in snapshot.sources):
+        if any(source.activity_error for source in snapshot.scoped_sources):
             notices.append("runs unavailable")
         elif any(
             source.live_error and source.identity in snapshot.live_identities
-            for source in snapshot.sources
+            for source in snapshot.scoped_sources
         ):
             notices.append("live unavailable")
-        if any(source.usage_error for source in snapshot.sources):
-            notices.append("stats unavailable")
+        if any(source.usage_error for source in snapshot.scoped_sources):
+            notices.append("usage unavailable")
         return notices
 
     def header(self, snapshot: TopSnapshot, width: int) -> list[Text]:
@@ -553,20 +551,12 @@ class TopView:
                 (summary.roaming, "roaming"),
             )
         )
-        agents = Text.assemble(
-            metric(count(summary.running), "running"),
-            ", ",
-            metric(count(summary.total), "total"),
-            ": ",
-            placements,
-            style=NORMAL,
-        )
+        agents = Text.assemble("agents: ", placements, style=NORMAL)
         terminal = summary.completed
         runs = Text.assemble(
+            "runs: ",
             metric(count(summary.active), "active"),
             ", ",
-            metric(str(terminal.total) if terminal else "-", "completed"),
-            ": ",
             style=NORMAL,
         )
         runs.append_text(
@@ -576,24 +566,27 @@ class TopView:
             )
         )
         total = summary.usage
-        stats = Text(", ", style=NORMAL).join(
-            metric(value, label)
-            for value, label in (
-                (compact(total.model_calls) if total else "-", "model calls"),
-                (compact(total.tool_calls) if total else "-", "tool calls"),
-                (compact(total.input_tokens) if total else "-", "input"),
-                (compact(total.cached_tokens) if total else "-", "cached"),
-                (compact(total.output_tokens) if total else "-", "output"),
-                (
-                    spend(
-                        total.spend_micros / 1e6
-                        if total.spend_micros is not None
-                        else None
-                    )
-                    if total
-                    else "-",
-                    "spend",
-                ),
+        usage = Text("usage: ", style=NORMAL)
+        usage.append_text(
+            Text(", ", style=NORMAL).join(
+                metric(value, label)
+                for value, label in (
+                    (compact(total.model_calls) if total else "-", "model calls"),
+                    (compact(total.tool_calls) if total else "-", "tool calls"),
+                    (compact(total.input_tokens) if total else "-", "input"),
+                    (compact(total.cached_tokens) if total else "-", "cached"),
+                    (compact(total.output_tokens) if total else "-", "output"),
+                    (
+                        spend(
+                            total.spend_micros / 1e6
+                            if total.spend_micros is not None
+                            else None
+                        )
+                        if total
+                        else "-",
+                        "spend",
+                    ),
+                )
             )
         )
         inner_width = max(1, width - 4)
@@ -601,9 +594,9 @@ class TopView:
         left_width = max(1, inner_width - caption_width - (2 if caption_width else 0))
         console = Console(width=left_width)
         for text, caption in (
-            (agents, "agents"),
-            (runs, f"runs last {window(snapshot.recent)}"),
-            (stats, f"stats last {window(snapshot.period)}"),
+            (agents, "right now"),
+            (usage, f"last {window(snapshot.period)}"),
+            (runs, f"last {window(snapshot.recent)}"),
         ):
             for index, part in enumerate(text.wrap(console, left_width)):
                 line = Text("  ", style=NORMAL)

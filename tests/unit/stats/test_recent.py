@@ -280,3 +280,16 @@ def test_known_completion_lookup_is_bounded_and_keeps_physical_root_window_rules
         edge: "chat_edge",
         fresh: "chat_fresh",
     }
+
+
+@pytest.mark.parametrize("known_usage", [False, True])
+def test_failed_invocation_keeps_calls_independent_of_consumption(source, known_usage):
+    run = source.root("rejected", NOW - 100)
+    source.call(
+        run, NOW - 50, NOW - 40, status="failed", unknown=not known_usage, spend=None
+    )
+    total = recent_usage(source.source.db_path, now=NOW, period=3600).metrics
+    assert total.model_calls == 1
+    assert total.input_tokens == (100 if known_usage else None)
+    assert total.output_tokens == (10 if known_usage else None)
+    assert total.spend_micros is None

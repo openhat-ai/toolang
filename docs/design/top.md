@@ -1,26 +1,28 @@
 # Current and recent activity
 
-`too top` discovers only active references in the selected Toolang root's
-`.runtime/instances/`. `too alice top` selects that resident's exact instance name;
-other placements with the same agent name are excluded. Installed/stopped homes
-are not scanned. Observation starts no runtime and acquires no server lease.
-Discovery refreshes every five seconds; already observed sources remain in memory
-for eight hours to supply historical windows. A new session starts from current
-registrations only and creates no second source registry.
-These retained sources contribute historical completions and usage only; their
-departure stops polling the old live endpoint and does not make current
-active-root coverage unavailable. Queued live requests are canceled; running
-requests may supply durable completions but cannot restore an obsolete live
-sample. Rediscovery updates the existing source binding without counting its
-history twice. Instances confirmed `not running` contribute zero active roots
-without live diagnostics; their durable completions and usage remain visible.
-Live diagnostics distinguish failed published endpoints from pending or
-unsupported observation.
-For an embedded instance without an HTTP endpoint, a pinned local source with
-no pending or running physical roots proves zero active roots. Unfinished roots
-of any age keep live coverage unknown; failed endpoints and unreadable stores
-also remain unknown.
-Instance departure or shutdown never implies a Run's terminal status.
+`too top` includes every materialized resident home under the selected Toolang
+root, whether running or stopped, plus visiting/roaming identities in the current
+validated `.runtime/instances/` registry. `too alice top` selects only that
+resident home and its optional runtime binding. Hub keeps its runtime-only
+inventory. Observation starts no runtime, creates no stores and acquires no lease.
+
+Discovery refreshes every five seconds. Resident departure removes its live
+binding while preserving its home, usage and completions. Visiting/roaming
+departure removes the complete source from summaries and table immediately on
+successful rediscovery; there is no session history retention or alternate source
+catalog. Removing an unregistered resident home also removes its source.
+Identical homes, registrations and data produce the same scope after reopening.
+Discovery failures retain unknown coverage rather than proving departure.
+Registration launch IDs fence reads and probes: obsolete live results and errors
+cannot republish a departed or replaced launch. A current unreadable registration
+remains diagnostic. Queued jobs for removed sources are canceled; running jobs
+receive cancellation and cannot restore removed results.
+
+Instances confirmed `not running` contribute zero active roots without live
+warnings. Embedded instances without an endpoint can prove idle from a pinned
+source with no unfinished physical roots. Otherwise live coverage stays unknown;
+shutdown never implies a Run's terminal status. Genuine failures of a current
+endpoint or history store remain visible.
 
 ```sh
 too top
@@ -35,16 +37,20 @@ positive polling interval in seconds (default `1`). JSON and non-TTY output take
 one snapshot. JSON includes per-source observations and a scope-wide `summary`;
 incomplete totals are null rather than partial values presented as complete.
 
-The agents summary shows `N running, M total: R resident, V visiting, O roaming`.
-These are agent-instance counts, independent of root Runs: a running idle agent
-still counts as running, and multiple roots do not add agents. Installed stopped
-residents remain in total; retained departed sources contribute history only.
-Known preparing/starting instances are not yet running. Unknown liveness leaves
-running unknown while complete membership still supplies total and placements;
-unrelated driver metadata does not invalidate readable statistics.
+The summary order is `agents:`, `usage:`, `runs:`, followed by the table.
+Their left-hand names have normal intensity. Only the right-aligned time captions
+are dim: `right now`, `last <Period>`, and `last <Recent>`. The agents line shows
+resident, visiting and roaming scope counts. It does not show running/total
+counts. JSON retains `summary.running` for confirmed running instances and
+`summary.total` for the complete roster, including stopped residents.
 
-The other summaries count current active roots and recent terminal statuses,
-then model/tool calls, input/cached/output tokens and USD spend.
+Usage includes model/tool calls, input/cached/output tokens and USD spend within
+Period. Runs shows active, succeeded, failed and canceled root counts; the
+aggregate completed total remains in JSON and paging, without a separate text
+field. All summaries and table use the same scope. Runs and table share Recent:
+active roots of any age plus roots completed within Recent. Child Runs do not
+inflate root counts. Loading pages, folding or selecting rows changes no totals.
+
 The table combines active trees and recently completed roots. Row consumption is
 lifetime consumption; a parent Run includes descendants, while a Step shows only
 its own invocation facts. Large numeric values use compact units to keep columns
@@ -76,13 +82,24 @@ its pane identity through the same terminal session and clears both publishers
 on exit. Snapshot and JSON output do not publish titles or pane identity.
 
 Top reads persisted facts through `toolang.stats.recent` and current paths through
-LiveTree. The recent reader opens only `runs.db`, read-only, without historical
-receipts, `stats.db` or an archival worker. For UTC second T, usage uses `[T-W,T)`
+LiveTree. `up.scope.ScopeReader` composes resident homes and runtime registrations
+and owns membership failure/recovery policy. `up.observation` validates runtime
+identity and launch generations. Top explicitly requests read-only inventory
+and process probes, leaving registration cleanup and status repair to runtime
+management callers. `up.activity.ActivityReader` owns endpoint,
+history and paging reads, sharing established-history knowledge across workers
+and resident rebindings. `up.top.TopObserver` schedules bounded independent jobs
+and reconciles scope; `up.schemas` derives coverage and totals without I/O, and
+the CLI presenter formats snapshots. The recent reader opens only `runs.db`,
+read-only, without historical receipts, `stats.db` or an archival worker. For UTC second T, usage uses `[T-W,T)`
 and root completions use `[T-R,T]`. Terminal model/tool invocation facts belong to
 Step start; model tokens and cost belong to Step completion. Unfinished calls
 appear in live rows immediately and enter window counters after settlement.
-Unknown usage/pricing remains unknown. Offline readable stores still contribute
-durable usage and completions; disconnected live paths freeze and are marked stale.
+Unknown usage/pricing remains unknown. Failed model calls retain errors and any
+reported usage; HTTP status never implies zero consumption. Known invocation
+counts can coexist with unknown tokens or spend. Offline readable stores still
+contribute durable usage and completions; disconnected live paths freeze and
+are marked stale.
 An inactive agent whose history store has not been created contributes zero
 completions and usage without creating a database. A previously observed store
 that disappears, or an existing unreadable/corrupt store, remains unavailable.
