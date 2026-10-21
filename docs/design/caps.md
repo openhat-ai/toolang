@@ -45,8 +45,9 @@ agent home. Remote content follows the same cache and refresh behavior as agent
 State preparation.
 
 `--all` includes resources excluded by allow in the same scope. Both views
-show `CAP`, `DESCRIPTION`, `LOCATION`, and `TAGS` in one row per cap, sized to
-the full terminal width (120 cells when unavailable). Descriptions and locations
+show `CAP`, `DESCRIPTION`, `LOCATION`, and `TAGS` in one row per cap, following
+the [CLI table width policy](cli.md) with 120 cells when geometry is unavailable.
+Descriptions and locations
 shrink first; long cells use `…`, with locations retaining their beginning and
 end. Complete values remain available through `--json`; there is no `--long`.
 Availability is `ready` or

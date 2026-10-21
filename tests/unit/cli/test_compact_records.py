@@ -14,7 +14,7 @@ from toolang.cli.common import records as output
 from toolang.cli.common.records import echo_compact_records
 
 
-@pytest.mark.parametrize("width", [1, 20, 40, 80, 120, 240])
+@pytest.mark.parametrize("width", [80, 120, 240])
 @pytest.mark.parametrize("terminal", [False, True])
 def test_resource_rows_stay_single_line_at_the_full_terminal_width(
     monkeypatch, width, terminal
@@ -59,8 +59,7 @@ def test_resource_rows_stay_single_line_at_the_full_terminal_width(
     assert not lines[0].startswith(" ")
     assert not lines[2].startswith(" ")
     assert records == before
-    if width >= 80:
-        assert "not_allowed,local,root,authored" in lines[2]
+    assert "not_allowed,local,root,authored" in lines[2]
     if width >= 240:
         assert "SKILL.md" in lines[2]
 
@@ -75,7 +74,7 @@ def test_compact_rows_use_fresh_width_and_unavailable_terminal_fallback(
     monkeypatch.setattr(os, "get_terminal_size", no_terminal)
     record = {"ref": "shell/run", "description": "description " * 50, "tags": ["ready"]}
     widths = []
-    for columns in (None, "80", "240", "invalid", "0"):
+    for columns in (None, "40", "80", "240", "invalid", "0"):
         if columns is not None:
             monkeypatch.setenv("COLUMNS", columns)
         echo_compact_records(
@@ -86,7 +85,7 @@ def test_compact_rows_use_fresh_width_and_unavailable_terminal_fallback(
         assert lines[0].split() == ["TOOL", "DESCRIPTION", "TAGS"]
         assert lines[2].startswith("shell/run") and lines[2].endswith("ready")
         widths.append(wcswidth(lines[1]))
-    assert widths == [120, 80, 240, 120, 120]
+    assert widths == [120, 80, 80, 240, 120, 120]
 
 
 def test_compact_output_sanitizes_controls_and_preserves_literal_markup(

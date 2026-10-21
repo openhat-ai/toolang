@@ -20,11 +20,11 @@ effective resources. Visible columns retain this order in both views.
 | Tools | `ref`: `toolset/name` | `TOOL`, `DESCRIPTION`, `TAGS` |
 | Caps | `cap`: `kind/name` | `CAP`, `DESCRIPTION`, `LOCATION`, `TAGS` |
 
-Cap and tool lists use the full terminal width, falling back to 120 cells when
-terminal geometry is unavailable. Each resource occupies one row. Column sizing
-shrinks descriptions and locations first, preserving identities and tags when
+Cap and tool lists follow the [CLI table width policy](cli.md), falling back to
+120 cells when terminal geometry is unavailable. Each resource occupies one row.
+Column sizing shrinks descriptions and locations first, preserving identities and tags when
 they fit. Cells that remain too long use `…`; locations retain their beginning
-and end. Very narrow terminals may also shorten headers, identities, or tags.
+and end. Longer identities or tag lists may also be shortened after these fields.
 These lists do not offer `--long`; use `--json` for complete field values.
 
 Model `REF` columns are at most 40 display cells wide; longer refs wrap,

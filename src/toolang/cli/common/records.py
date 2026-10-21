@@ -13,7 +13,7 @@ from wcwidth import iter_graphemes_reverse, wcswidth
 import typer
 from typer._click.exceptions import UsageError
 
-from .output import _table_cell_text, echo_table
+from .output import MIN_TABLE_WIDTH, _table_cell_text, echo_table
 from .terminal_title import clip_title, safe_text
 
 
@@ -35,7 +35,7 @@ def echo_compact_records(
         return
     if not records:
         return
-    width = get_terminal_size(fallback=(120, 24)).columns
+    width = max(MIN_TABLE_WIDTH, get_terminal_size(fallback=(120, 24)).columns)
     console = Console(width=width, highlight=False)
     headers = [heading, *(column.upper() for column in columns[1:])]
     rows = [
@@ -46,19 +46,7 @@ def echo_compact_records(
         for record in records
     ]
     gap = 2
-    if width < len(columns) + gap * (len(columns) - 1):
-        console.print(Text(clip_title("  ".join(headers), width=width)), soft_wrap=True)
-        console.print(Text("─" * width, style="dim"), soft_wrap=True)
-        for row in rows:
-            console.print(
-                _table_cell_text(clip_title("  ".join(row), width=width)),
-                soft_wrap=True,
-            )
-        return
-
     minimums = [len(header) for header in headers]
-    if sum(minimums) + gap * (len(columns) - 1) > width:
-        minimums = [1] * len(columns)
     widths = [
         max(len(header), *(wcswidth(row[index]) for row in rows))
         for index, header in enumerate(headers)
