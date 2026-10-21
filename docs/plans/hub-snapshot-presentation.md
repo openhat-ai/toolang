@@ -35,7 +35,7 @@ retain the existing `no agents` line without a count summary.
 
 - Render agent-name portions by placement: roaming uses Rich `bright_magenta`,
   visiting uses `bright_yellow`, and resident uses `bright_cyan`. Keep `hub`
-  in `cyan`. Names use no bold or dim.
+  in `bright_cyan`. Names use no bold or dim.
 - Render the complete instance suffix (`@r…` or `@v…`, including any existing
   `#…` discriminator) in the default terminal foreground with `dim`, without
   bold or an inherited name color (Rich `default dim`). Derive styled segments
@@ -81,7 +81,7 @@ retain the existing `no agents` line without a count summary.
 | Scenario | Pass condition |
 | --- | --- |
 | Online and offline Hub | Hub status starts at the same cell as agent status; known version shares the Talk column's right edge. Offline Hub has an empty third field. Empty rosters retain the same layout rules. |
-| Colors and intensity | Roaming, visiting, and resident names use bright magenta, bright yellow, and bright cyan respectively; `hub` remains cyan. Every instance suffix uses the default foreground with dim and does not inherit the name color. Positive fields are normal; negative and unknown fields are dim without affecting names. |
+| Colors and intensity | Roaming, visiting, and resident names use bright magenta, bright yellow, and bright cyan respectively; `hub` is bright cyan. Every instance suffix uses the default foreground with dim and does not inherit the name color. Positive fields are normal; negative and unknown fields are dim without affecting names. |
 | Wide layout | At 80, 120, and 160 cells, short-name status starts at cell offset 34; long names/versions expand their columns when they fit, and rows remain sized to content. |
 | Narrow layout and encoding | At 20, 32, and 40 cells, long versions, IDs, wide Unicode names, and ASCII-escaped names retain all text and field styles within the existing effective minimum width of 20. |
 | Plain terminals | Pipes, `NO_COLOR`, and `TERM=dumb` preserve readable values and alignment without ANSI controls; existing tree fallback remains intact. |

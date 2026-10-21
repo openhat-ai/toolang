@@ -149,7 +149,7 @@ def test_hub_row_shows_aligned_status_and_version_or_empty_field(
     console = Console()
     hub_style = row.get_style_at_offset(console, 0)
     assert hub_style.color is not None
-    assert hub_style.color.number == Color.parse("cyan").number
+    assert hub_style.color.number == Color.parse("bright_cyan").number
     assert not hub_style.dim
     for token in expected.split()[1:]:
         offset = row.plain.index(token)

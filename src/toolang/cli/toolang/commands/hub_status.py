@@ -231,7 +231,7 @@ def render_hub_snapshot(snapshot: HubSnapshot, console: Console | None = None) -
     hub_status, hub_version = _hub_fields(snapshot)
     for line in _row_lines(
         console,
-        Text("hub", style="cyan"),
+        Text("hub", style="bright_cyan"),
         hub_status,
         hub_version,
         name_width=name_width,
