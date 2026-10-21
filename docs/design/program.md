@@ -86,9 +86,10 @@ effective name `talk` and FQN `talk::talk`.
 
 Accepted public runnable names must be unique in effective State. A layout may
 contain both `agent::talk` and `talk::talk`; a duplicate public export excludes
-the conflicting runnable module during preparation rather than making calls
-ambiguous. The filenames `_.too` and `agent.too` under `runnables/` are reserved
-for builtin and main module names. Direct files under `runnables/` are discovered.
+all source files contributing that name during preparation, including
+`agent.too`. Unrelated valid modules remain available. The filenames `_.too`
+and `agent.too` under `runnables/` are reserved for builtin and main module names.
+Direct files under `runnables/` are discovered.
 Other HOME-level `.too` files, `flows/`, `agics/`, nested files, non-`.too` files,
 and Toolang-root modules are ignored.
 There is no compatibility discovery or automatic source migration.
