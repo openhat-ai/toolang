@@ -11,7 +11,7 @@ from uuid import uuid4
 
 import psutil
 
-from toolang.common.files import EditLock, atomic_write_text, file_write_lock
+from toolang.common.files import EditLock, atomic_write_text
 from toolang.common.instance_ids import (
     decode_instance_id,
     roaming_instance_id,
@@ -87,15 +87,20 @@ def layout_from_control(control: dict) -> AgentLayout:
             raise ValueError("roaming instance identity follows an invalid root link")
     else:
         raise ValueError("invalid instance identity placement")
+    runtime_instance = control.get("runtime_instance")
+    if runtime_instance is not None and not isinstance(runtime_instance, str):
+        raise ValueError("invalid runtime instance in identity bindings")
     layout = replace(
         layout,
-        instance=control.get("runtime_instance"),
+        instance=runtime_instance,
         project_inputs=control.get("project_inputs"),
         managed_membership=control.get("managed_membership"),
     )
     expected = identity_bindings(layout)
     if any(
-        type(control.get(key)) is not type(value) or control[key] != value
+        key not in control
+        or type(control[key]) is not type(value)
+        or control[key] != value
         for key, value in expected.items()
     ):
         raise ValueError("inconsistent instance identity bindings")
@@ -142,7 +147,9 @@ def _retained_layout(root: Path) -> AgentLayout:
     name, _, token = root.name.partition("@")
     entry = read_instance(root / "agents" / name / ".runtime" / "status.json")
     if entry is None:
-        raise ValueError(f"invalid retained instance identity: {root}")
+        raise ValueError(
+            f"invalid retained instance identity: {root}"
+        ) from FileNotFoundError(root / "agents" / name / ".runtime" / "status.json")
     decode_instance_id(token, marker="r")
     layout = layout_from_control(entry["control"])
     if layout.placement != "roaming" or layout.root != root:
@@ -155,6 +162,11 @@ def select_roaming(source: Path, instance_id: str | None = None) -> AgentLayout:
     source = source.expanduser().resolve()
     if instance_id is not None:
         decode_instance_id(instance_id, marker="r")
+    guard = EditLock(source.parent / ".toolang" / ".state" / "launch.lock")
+    return guard.read(lambda: _select_retained_roaming(source, instance_id))
+
+
+def _select_retained_roaming(source: Path, instance_id: str | None) -> AgentLayout:
     name = derive_agent_name(source.stem)
     cache = source.parent / ".toolang"
     roots = (
@@ -181,7 +193,7 @@ def allocate_roaming(source: Path, *, toolang_root: Path) -> AgentLayout:
     if source.suffix != ".too":
         raise ValueError(f"agent program must be a .too file: {source}")
     cache = source.parent / ".toolang"
-    with file_write_lock(cache / ".state" / "launch.lock"):
+    with EditLock(cache / ".state" / "launch.lock").write():
         highest = -1
         for root in cache.glob("*@r*"):
             previous = _retained_layout(root)
@@ -198,7 +210,7 @@ def allocate_roaming(source: Path, *, toolang_root: Path) -> AgentLayout:
                 raise FileExistsError(
                     f"roaming instance ID collision: {layout.instance_name}"
                 )
-            verify_registration(layout, toolang_root=toolang_root)
+            verify_registration(layout, toolang_root=toolang_root, require_absent=True)
             # Exclusive creation cannot replace even an empty preexisting root.
             layout.root.mkdir(mode=0o700)
             payload = {

@@ -949,3 +949,31 @@ def test_foreign_root_references_cannot_supply_a_fallback_home_or_hub_member(tmp
         assert not inventory.sources
         assert layout.runtime_status.read_bytes() == before
         assert not (foreign / "agents").exists()
+
+
+@pytest.mark.parametrize("fault", ["missing_field", "invalid_type"])
+def test_invalid_identity_is_isolated_from_a_healthy_discovery_peer(tmp_path, fault):
+    broken = AgentLayout.resident(tmp_path, "alice")
+    healthy = AgentLayout.resident(tmp_path, "bob")
+    with (
+        ForegroundWorkload(broken, toolang_root=tmp_path, drivers=frozenset()),
+        ForegroundWorkload(healthy, toolang_root=tmp_path, drivers=frozenset()),
+    ):
+        original = broken.runtime_status.read_bytes()
+        document = json.loads(original)
+        control = document["instances"]["default"]["control"]
+        if fault == "missing_field":
+            control.pop("runtime_instance")
+        else:
+            control["runtime_instance"] = 1
+        broken.runtime_status.write_text(json.dumps(document))
+        before = broken.runtime_status.read_bytes()
+        try:
+            snapshot = runtime_inventory(tmp_path, read_only=True).snapshot
+            states = {item.name: item for item in snapshot.instances}
+            assert states["bob"].state == "running"
+            assert states["alice"].state == "unknown"
+            assert "identity" in (states["alice"].diagnostic or "")
+            assert broken.runtime_status.read_bytes() == before
+        finally:
+            broken.runtime_status.write_bytes(original)

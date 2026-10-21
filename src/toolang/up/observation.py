@@ -83,11 +83,15 @@ def registration_lock(toolang_root: Path):
         yield
 
 
-def verify_registration(layout: AgentLayout, *, toolang_root: Path) -> None:
+def verify_registration(
+    layout: AgentLayout, *, toolang_root: Path, require_absent: bool = False
+) -> None:
     """Reject an occupied name before attempting this caller's publication."""
     path = toolang_root / ".runtime" / "instances" / instance_filename(layout)
     reference = _read_reference(path)
-    if reference is not None and reference["status"] != str(layout.runtime_status):
+    if reference is not None and (
+        require_absent or reference["status"] != str(layout.runtime_status)
+    ):
         raise ValueError(
             f"instance ID collision in runtime registry: {layout.instance_name}"
         )

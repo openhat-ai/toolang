@@ -298,3 +298,180 @@ def test_a_shared_path_tag_does_not_mix_retained_source_order_or_selection(
     assert select_roaming(source).root == second.root
     assert other.source_path is not None
     assert select_roaming(other.source_path).root == other.root
+
+
+def test_new_roaming_allocation_rejects_a_dangling_reference_to_its_candidate(
+    tmp_path, monkeypatch
+):
+    from dataclasses import replace
+    import json
+    from toolang.common.instance_ids import roaming_instance_id
+    from toolang.common.layout import AgentLayout
+
+    source = tmp_path / "aid.too"
+    root = tmp_path / "global"
+    monkeypatch.setattr("toolang.up.identity.time.time_ns", lambda: 100_000_000)
+    candidate = replace(
+        AgentLayout.roaming(source, instance_id=roaming_instance_id(str(source), 100)),
+        toolang_root=root,
+    )
+    reference = root / ".runtime" / "instances" / instance_filename(candidate)
+    reference.parent.mkdir(parents=True)
+    reference.write_text(
+        json.dumps(
+            {
+                "version": 4,
+                "status": str(candidate.runtime_status),
+                "launch_id": UUID(int=1).hex,
+            }
+        )
+    )
+    before = reference.read_bytes()
+    with pytest.raises(ValueError, match="collision"):
+        allocate_roaming(source, toolang_root=root)
+    assert reference.read_bytes() == before
+    assert not candidate.root.exists()
+
+
+@pytest.mark.parametrize(
+    "field", ["runtime_instance", "source_path", "source_ref", "request_order_ns"]
+)
+def test_missing_identity_fields_raise_a_protocol_error_instead_of_key_error(
+    tmp_path, field
+):
+    from toolang.common.layout import AgentLayout
+    from toolang.up.identity import identity_bindings, layout_from_control
+
+    control = identity_bindings(AgentLayout.resident(tmp_path, "alice"))
+    control.pop(field)
+    with pytest.raises(ValueError, match="identity"):
+        layout_from_control(control)
+
+
+@pytest.mark.parametrize(
+    "runtime_instance", [1, True, {"invalid": "value"}, ["invalid"]]
+)
+def test_invalid_runtime_instance_types_raise_a_protocol_error(
+    tmp_path, runtime_instance
+):
+    from toolang.common.layout import AgentLayout
+    from toolang.up.identity import identity_bindings, layout_from_control
+
+    control = identity_bindings(AgentLayout.resident(tmp_path, "alice"))
+    control["runtime_instance"] = runtime_instance
+    with pytest.raises(ValueError, match="identity"):
+        layout_from_control(control)
+
+
+@pytest.mark.parametrize("component", ["cache", "state", "guard"])
+def test_roaming_allocation_rejects_linked_cache_guards_before_any_foreign_write(
+    tmp_path, component
+):
+    source = tmp_path / "project" / "aid.too"
+    source.parent.mkdir()
+    cache = source.parent / ".toolang"
+    peer = tmp_path / "peer"
+    peer.mkdir()
+    marker = peer / "keep"
+    marker.write_text("peer data")
+    if component == "cache":
+        cache.symlink_to(peer, target_is_directory=True)
+    else:
+        cache.mkdir()
+        if component == "state":
+            (cache / ".state").symlink_to(peer, target_is_directory=True)
+        else:
+            (cache / ".state").mkdir()
+            (cache / ".state" / "launch.lock").symlink_to(peer / "other.lock")
+    with pytest.raises((OSError, ValueError)):
+        allocate_roaming(source, toolang_root=tmp_path / "global")
+    assert set(peer.iterdir()) == {marker}
+    assert marker.read_text() == "peer data"
+    assert not (tmp_path / "global" / ".runtime" / "instances").exists()
+
+
+@pytest.mark.parametrize("guard_already_exists", [False, True])
+def test_retained_selection_waits_for_initial_status_publication(
+    tmp_path, monkeypatch, guard_already_exists
+):
+    from contextlib import contextmanager
+    from threading import Event, current_thread
+    from toolang.common import files
+    from toolang.up import identity
+
+    source = tmp_path / "aid.too"
+    root = tmp_path / "global"
+    launch_guard = tmp_path / ".toolang" / ".state" / "launch.lock"
+    preparing = Event()
+    selector_reached_boundary = Event()
+    finish_publication = Event()
+    original_write = identity.atomic_write_text
+    original_read = identity.read_instance
+    original_lock = files.file_write_lock
+    original_select = identity._select_retained_roaming
+
+    def paused_write(path, content, **kwargs):
+        if path.name == "status.json":
+            preparing.set()
+            assert finish_publication.wait(5)
+        return original_write(path, content, **kwargs)
+
+    def observed_read(path, *args, **kwargs):
+        result = original_read(path, *args, **kwargs)
+        if current_thread().name.startswith("selector") and result is None:
+            selector_reached_boundary.set()
+        return result
+
+    @contextmanager
+    def observed_lock(path, **kwargs):
+        if path == launch_guard and current_thread().name.startswith("selector"):
+            selector_reached_boundary.set()
+        with original_lock(path, **kwargs):
+            yield
+
+    monkeypatch.setattr(identity, "atomic_write_text", paused_write)
+    monkeypatch.setattr(identity, "read_instance", observed_read)
+    monkeypatch.setattr(files, "file_write_lock", observed_lock)
+    with (
+        ThreadPoolExecutor(max_workers=1, thread_name_prefix="allocator") as allocator,
+        ThreadPoolExecutor(max_workers=1, thread_name_prefix="selector") as selector,
+    ):
+        allocations = []
+
+        def start_allocation_then_select(source, instance_id):
+            if not allocations:
+                allocations.append(
+                    allocator.submit(allocate_roaming, source, toolang_root=root)
+                )
+                assert preparing.wait(5)
+            return original_select(source, instance_id)
+
+        monkeypatch.setattr(
+            identity, "_select_retained_roaming", start_allocation_then_select
+        )
+        try:
+            if guard_already_exists:
+                allocations.append(
+                    allocator.submit(allocate_roaming, source, toolang_root=root)
+                )
+                assert preparing.wait(5)
+            else:
+                assert not launch_guard.exists()
+            selection = selector.submit(select_roaming, source)
+            assert selector_reached_boundary.wait(5)
+        finally:
+            finish_publication.set()
+        published = allocations[0].result(timeout=5)
+        selected = selection.result(timeout=5)
+    assert selected.root == published.root
+
+
+def test_retained_selection_does_not_recreate_a_missing_source_guard(tmp_path):
+    source = tmp_path / "aid.too"
+    layout = allocate_roaming(source, toolang_root=tmp_path / "global")
+    guard = tmp_path / ".toolang" / ".state" / "launch.lock"
+    guard.unlink()
+    before = layout.runtime_status.read_bytes()
+    assert select_roaming(source).root == layout.root
+    assert not guard.exists()
+    assert layout.runtime_status.read_bytes() == before
