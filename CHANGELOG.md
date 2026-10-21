@@ -130,6 +130,10 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   protocol sentinels.
   ([#895](https://github.com/openhat-ai/toolang/pull/895))
 
+- Earlier Run and exec labels follow the current naming rules, including
+  anonymous entry runnables, and new Run captions show the accepted runnable
+  name.
+
 ### Security
 
 - The locked certifi trust store advances to 2026.10.19, resolving trust-store
