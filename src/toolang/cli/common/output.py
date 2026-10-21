@@ -30,6 +30,8 @@ if TYPE_CHECKING:
 TableJustify = Literal["default", "left", "center", "right", "full"]
 TableCell = str | Text
 
+MIN_TABLE_WIDTH = 80
+
 _TABLE_CONSOLE = Console(highlight=False, width=4096)
 _INFO_CONSOLE = Console(highlight=False)
 

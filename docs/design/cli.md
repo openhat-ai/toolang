@@ -105,7 +105,9 @@ and distribution packages. They do not invoke factories or load agent settings.
 from the configured resources exposed by `tools` and `models`.
 
 Shared list and inspection tables start at terminal column zero, with one header
-separator and no outer border rules. Agent, workspace, chore, and plugin inventory
+separator and no outer border rules. Responsive human tables use at least 80
+display cells and otherwise use the full terminal width; terminals narrower than
+80 retain the 80-cell layout. Agent, workspace, chore, and plugin inventory
 lists label the first column with the singular object kind, such as `AGENT`,
 `WORKSPACE`, `CHORE`, or `ADAPTER`. Nonempty lists end with one blank line
 followed by an unindented count of the displayed records; resource lists retain

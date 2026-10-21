@@ -592,7 +592,7 @@ def test_directory_summarizes_three_or_more_members(participants, expected):
     assert not any(character in rendered for character in "│┌┐└┘·")
 
 
-@pytest.mark.parametrize("width", [60, 80, 120, 240])
+@pytest.mark.parametrize("width", [80, 120, 240])
 def test_directory_keeps_timestamps_and_messages_aligned(width):
     times = ["2026-10-10T09:10", "2026-10-09T09:10", "2025-10-10T09:10"]
     conversations = [
@@ -643,16 +643,16 @@ def test_directory_keeps_timestamps_and_messages_aligned(width):
     for line, stamp in zip(lines[2:5], ("09:10", "10-09 09:10", "2025-10-10 09:10")):
         assert cell_len(line[: line.index(stamp) + len(stamp)]) == time_end
         assert cell_len(line[: line.index("bob:")]) == message_column
-        assert ("alice,… (5)" if width == 60 else "alice,bob,… (5)") in line
+        assert "alice,bob,… (5)" in line
         name = line.split("alice", 1)[0].split(maxsplit=1)[1].strip()
         assert cell_len(name) <= 24 and name.endswith("…")
     assert lines[-1].rstrip().endswith("-")
 
 
-@pytest.mark.parametrize("width", [24, 32, 40, 48, 60, 80, 120])
+@pytest.mark.parametrize("width", [80, 120, 240])
 @pytest.mark.parametrize("name", ["long-agent-" * 24, "开发助手" * 32])
 @pytest.mark.parametrize("member_count", [3, 12])
-def test_directory_preserves_ids_and_member_counts_in_narrow_terminals(
+def test_directory_preserves_ids_and_member_counts_at_supported_widths(
     width, name, member_count
 ):
     timestamp = datetime(2025, 12, 31, 18, 5, tzinfo=timezone.utc)
@@ -673,6 +673,33 @@ def test_directory_preserves_ids_and_member_counts_in_narrow_terminals(
     assert row.split()[0] == "gc_abcd1234"
     assert f"… ({member_count})" in row
     assert all(cell_len(line) <= width for line in rendered.splitlines())
+
+
+@pytest.mark.parametrize("human", [None, "human:bryan"])
+@pytest.mark.parametrize("name", [None, "开发讨论" * 16])
+def test_directory_uses_the_minimum_layout_below_80_columns(human, name):
+    timestamp = datetime(2025, 12, 31, 18, 5, tzinfo=timezone.utc)
+    conversations = [
+        {
+            "conversation": "gc_abcd1234",
+            "name": name,
+            "participants": ["agent:" + "long-agent-" * 24]
+            + [f"human:member{index}" for index in range(11)],
+            "latest": f"{int(timestamp.timestamp() * 1000)}-0",
+            "preview": {"sender": "agent:alice", "body": "hello world " * 30},
+        }
+    ]
+    rendered = render_directory(conversations=conversations, width=40, human=human)
+    assert rendered == render_directory(
+        conversations=conversations, width=80, human=human
+    )
+    rows = [line for line in rendered.splitlines() if line.startswith("gc_")]
+    assert len(rows) == 1
+    assert "2025-12-31 18:05" in rows[0]
+    assert "… (12)" in rows[0]
+    assert all(cell_len(line) <= 80 for line in rendered.splitlines())
+    if human is not None:
+        assert rows[0].rstrip().endswith("no")
 
 
 def test_directory_empty_list():
