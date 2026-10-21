@@ -136,9 +136,7 @@ def _set_status(
     monkeypatch.setattr(agent_server.agents, "AgentProcess", Process)
 
 
-def test_visiting_reuse_validates_effective_parameters_before_fetch(
-    tmp_path, monkeypatch
-):
+def test_visiting_reuse_checks_explicit_settings_without_fetch(tmp_path, monkeypatch):
     layout = AgentLayout.visiting(
         "https://example.test/strict.too", "strict", toolang_root=tmp_path
     )
@@ -168,7 +166,49 @@ def test_visiting_reuse_validates_effective_parameters_before_fetch(
         layout, sandbox=None, ui_base_url="https://ui.test", show_progress=False
     ) as ref:
         assert ref is not None
-    assert prepared == [layout]
+    assert prepared == []
+
+
+@pytest.mark.parametrize("placement", ["resident", "visiting"])
+def test_running_server_reuses_bound_settings_without_resolving_startup(
+    tmp_path, monkeypatch, placement
+):
+    from toolang.up.instance import read_instance
+
+    layout = (
+        AgentLayout.resident(tmp_path, "alice")
+        if placement == "resident"
+        else AgentLayout.visiting(
+            "https://example.test/alice.too", "alice", toolang_root=tmp_path
+        )
+    )
+    _set_status(
+        monkeypatch,
+        layout,
+        _status(value="running", endpoint="http://localhost:8123", sandbox="host"),
+    )
+    original = read_instance(layout.runtime_status)
+    monkeypatch.setenv("PWD", "/different/directory")
+    monkeypatch.setenv("TERM", "different-terminal")
+    monkeypatch.setenv("TOOLANG_LIMIT_TOKENS", "invalid-startup-value")
+    layout.root_config.write_text('[sandbox]\ndriver = "docker"\n')
+    monkeypatch.setattr(
+        agent_server,
+        "_resolve_launch",
+        lambda *_a, **_k: pytest.fail("attachment must not resolve a new launch"),
+    )
+    monkeypatch.setattr(
+        agent_server,
+        "_prepare_source",
+        lambda *_a, **_k: pytest.fail("attachment must not prepare source"),
+    )
+
+    with agent_server.acquire_agent_server(
+        layout, sandbox=None, ui_base_url="https://ui.test", required_driver="chat"
+    ) as server:
+        assert server is not None and server.endpoint == "http://localhost:8123"
+
+    assert read_instance(layout.runtime_status) == original
 
 
 @pytest.mark.parametrize("placement", ["resident", "visiting", "roaming"])
@@ -280,9 +320,73 @@ def test_startup_override_cannot_be_silently_ignored_by_an_existing_runtime(
             pytest.fail("existing runtime must not ignore startup overrides")
 
 
+@pytest.mark.parametrize("selection", ["omitted", "same", "changed"])
+def test_running_server_retains_or_verifies_explicit_startup_settings(
+    tmp_path, monkeypatch, selection
+):
+    from toolang.up.contract import startup_contract
+    from toolang.up.instance import update_instance
+
+    layout = AgentLayout.resident(tmp_path, "alice")
+    _set_status(
+        monkeypatch,
+        layout,
+        _status(
+            value="running",
+            endpoint="http://localhost:8123",
+            sandbox="docker:python:3.13-slim",
+        ),
+    )
+    wheel = tmp_path / "toolang-0.0.0-py3-none-any.whl"
+    wheel.write_bytes(b"original wheel")
+    catalog = tmp_path / "models.json"
+    compact = ModelOverride(identity="test/compact")
+    spec = agent_server._resolve_launch(
+        layout,
+        sandbox="docker:python:3.13-slim",
+        dev=wheel,
+        model_catalog=catalog,
+        base_environ={},
+        compact_override=compact,
+        drivers=frozenset({"chat"}),
+        active_port=8123,
+    )
+    update_instance(
+        layout.runtime_status,
+        lambda entry: entry["control"].update(startup_contract=startup_contract(spec)),
+    )
+    monkeypatch.setattr(
+        agent_server,
+        "_resolve_launch",
+        lambda *_a, **_k: pytest.fail("attachment must not resolve a launch"),
+    )
+    options: dict[str, Any] = (
+        {}
+        if selection == "omitted"
+        else {"dev": wheel, "model_catalog": catalog, "compact_override": compact}
+    )
+    if selection == "changed":
+        wheel.write_bytes(b"changed wheel")
+        with pytest.raises(
+            agent_server.AgentServerAcquisitionError,
+            match="development_digest.*restart",
+        ):
+            with agent_server.acquire_agent_server(
+                layout, sandbox="docker", ui_base_url="https://ui.test", **options
+            ):
+                pytest.fail("changed explicit wheel must not be ignored")
+    else:
+        with agent_server.acquire_agent_server(
+            layout, sandbox="docker", ui_base_url="https://ui.test", **options
+        ) as server:
+            assert server is not None
+
+
+@pytest.mark.parametrize("requested", [None, "docker", "docker:python:3.13-slim"])
 def test_agent_server_attaches_to_a_compatible_running_agent(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    requested: str | None,
 ) -> None:
     layout = AgentLayout.resident(tmp_path, "alice")
     _set_status(
@@ -297,7 +401,7 @@ def test_agent_server_attaches_to_a_compatible_running_agent(
 
     with agent_server.acquire_agent_server(
         layout,
-        sandbox="docker:python:3.13-slim",
+        sandbox=requested,
         ui_base_url="https://ui.test",
     ) as selected:
         assert selected == AgentServerRef(
@@ -1132,7 +1236,13 @@ def test_sandbox_match_accepts_driver_or_exact_spec() -> None:
 
 @pytest.mark.parametrize(
     "requested,compatible",
-    [(None, False), ({}, False), ({"repo": "/one"}, True), ({"repo": "/two"}, False)],
+    [
+        (None, True),
+        ({}, True),
+        ({"repo": "/one"}, True),
+        ({"repo": "/two"}, False),
+        ({"new": "/three"}, False),
+    ],
 )
 def test_running_server_cannot_rebind_workspace_names(
     tmp_path, monkeypatch, requested, compatible
@@ -1148,7 +1258,7 @@ def test_running_server_cannot_rebind_workspace_names(
         dev=None,
         model_catalog=None,
         base_environ=None,
-        workspace_additions={"repo": "/one"},
+        workspace_additions={"repo": "/one", "other": "/three"},
         active_port=7001,
         drivers=frozenset({"chat"}),
     )

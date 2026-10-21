@@ -1125,7 +1125,7 @@ def test_resolve_dev_artifact_accepts_one_toolang_wheel(tmp_path: Path) -> None:
     wheel = tmp_path / "toolang-1.2.3-py3-none-any.whl"
     wheel.write_bytes(b"wheel")
 
-    assert sandbox._resolve_dev_artifact(wheel, sandbox="docker") == wheel
+    assert sandbox.resolve_dev_artifact(wheel, sandbox="docker") == wheel
 
 
 def test_resolve_dev_artifact_selects_newest_wheel_recursively(
@@ -1144,7 +1144,7 @@ def test_resolve_dev_artifact_selects_newest_wheel_recursively(
     os.utime(older, ns=(1_000_000_000, 1_000_000_000))
     os.utime(newer, ns=(2_000_000_000, 2_000_000_000))
 
-    assert sandbox._resolve_dev_artifact(tmp_path, sandbox="docker") == newer
+    assert sandbox.resolve_dev_artifact(tmp_path, sandbox="docker") == newer
 
 
 def test_resolve_dev_artifact_breaks_timestamp_ties_by_path(tmp_path: Path) -> None:
@@ -1155,7 +1155,7 @@ def test_resolve_dev_artifact_breaks_timestamp_ties_by_path(tmp_path: Path) -> N
     os.utime(first, ns=(1_000_000_000, 1_000_000_000))
     os.utime(second, ns=(1_000_000_000, 1_000_000_000))
 
-    assert sandbox._resolve_dev_artifact(tmp_path, sandbox="docker") == first
+    assert sandbox.resolve_dev_artifact(tmp_path, sandbox="docker") == first
 
 
 def test_resolve_dev_artifact_rejects_invalid_paths(tmp_path: Path) -> None:
@@ -1170,22 +1170,22 @@ def test_resolve_dev_artifact_rejects_invalid_paths(tmp_path: Path) -> None:
     (unrelated / unrelated_wheel.name).write_bytes(b"wheel")
 
     with pytest.raises(FileNotFoundError, match="--dev path not found"):
-        sandbox._resolve_dev_artifact(tmp_path / "missing", sandbox="docker")
+        sandbox.resolve_dev_artifact(tmp_path / "missing", sandbox="docker")
     with pytest.raises(ValueError, match="--dev file is not a Toolang wheel"):
-        sandbox._resolve_dev_artifact(text_file, sandbox="docker")
+        sandbox.resolve_dev_artifact(text_file, sandbox="docker")
     with pytest.raises(ValueError, match="--dev file is not a Toolang wheel"):
-        sandbox._resolve_dev_artifact(unrelated_wheel, sandbox="docker")
+        sandbox.resolve_dev_artifact(unrelated_wheel, sandbox="docker")
     with pytest.raises(FileNotFoundError, match="No Toolang wheels found"):
-        sandbox._resolve_dev_artifact(empty, sandbox="docker")
+        sandbox.resolve_dev_artifact(empty, sandbox="docker")
     with pytest.raises(FileNotFoundError, match="No Toolang wheels found"):
-        sandbox._resolve_dev_artifact(unrelated, sandbox="docker")
+        sandbox.resolve_dev_artifact(unrelated, sandbox="docker")
 
 
 def test_resolve_dev_artifact_rejects_host_before_path_validation(
     tmp_path: Path,
 ) -> None:
     with pytest.raises(ValueError, match="only applies to guest sandboxes"):
-        sandbox._resolve_dev_artifact(tmp_path / "missing", sandbox="host")
+        sandbox.resolve_dev_artifact(tmp_path / "missing", sandbox="host")
 
 
 def test_select_sandbox_keeps_selection_separate_from_plugin_config() -> None:
@@ -1573,8 +1573,6 @@ def test_adapter_assigned_port_is_the_compatible_effective_port(tmp_path, monkey
     monkeypatch.setattr(sandbox, "_wait_ready", ready)
     asyncio.run(sandbox.launch(spec))
     try:
-        require_compatible(
-            spec.serve.layout, replace(spec, serve=replace(spec.serve, port=9184))
-        )
+        require_compatible(spec.serve.layout, {"port": 9184})
     finally:
         asyncio.run(sandbox.stop(spec.serve.layout))

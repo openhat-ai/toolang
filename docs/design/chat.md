@@ -111,10 +111,12 @@ Receipt/event reordering cannot change completed transcript history.
 
 ## Server acquisition and recovery
 
-An active server is checked for compatibility and reused. An explicit sandbox
-must match it. Without a server, hosting resolves CLI, configuration, remembered
-selector, then host. Concurrent starters converge on one generation. Fresh
-implicit resident/visiting Chat servers enable chat only: residents persist,
+An active server is reused with its current settings; caller environment and local
+startup defaults are not compared. Required drivers and explicit requirements,
+including sandbox and workspace bindings, must match it. Without a server, hosting
+resolves CLI, configuration, remembered selector, then host. Concurrent starters
+converge on one generation. Fresh implicit resident/visiting Chat servers enable
+chat only: residents persist,
 visiting servers automatically reclaim after leases and accepted work finish.
 Explicit start retains either placement. See [Hosting](hosting.md) and
 [server lifetime](hosting.md#server-lifetime-and-client-leases) for concrete timing and cleanup.

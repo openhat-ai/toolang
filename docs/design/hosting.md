@@ -55,8 +55,8 @@ and resource-release ordering. Identity/root calculation and source preparation
 are separate boundaries; sandbox transport and foreground ownership are execution
 modes, not additional placement implementations.
 
-- [Startup](../../src/toolang/cli/common/startup.py) resolves one `LaunchSpec`
-  for both new launches and compatible attachment; no parallel startup wrapper exists.
+- [Startup](../../src/toolang/cli/common/startup.py) resolves a concrete `LaunchSpec`
+  for new launches and only explicit requirements for attachment.
 - [Placement policy](../../src/toolang/up/config.py) centralizes executor reuse,
   hosted/client driver defaults, and implicit lifetime. History continuation uses
   the same reuse boundary; controls may attach to existing owners in every placement.
@@ -85,15 +85,22 @@ Chat initializes its own multi-run session. Default/limit fields occur once;
 repeated allow values accumulate within the CLI layer. Driver handler selection
 belongs to [Drivers](drivers.md#handler-selection).
 
-Resident/visiting attachment compares all normalized effective executor startup
-bindings, including inferred environment/config/defaults, before preparation.
-Mismatches and unverifiable legacy contracts reject without changing the owner.
-An omitted `--enable` retains the bound drivers for attachment and `start`
-promotion; placement defaults apply when creating an executor.
-Visiting source fetch/materialization occurs only after this check; help and
-read-only history commands do not fetch sources or allocate roaming instances.
-Align `--enable` explicitly when command defaults differ. Run inputs/request model
-options may differ; attachment preserves lifetime. Controls use saved bindings.
+Resident/visiting attachment retains the running executor's settings when options
+are omitted. It checks identity, API compatibility, required drivers, and explicit
+requirements without resolving a new launch or preparing/fetching source. Caller
+environment and current local startup configuration do not constrain attachment.
+Explicit sandbox selectors must match; a driver-only selector accepts its running
+concrete instance. Explicit `--enable` must match the bound drivers, while omission
+retains them for attachment and `start` promotion.
+
+Other explicit startup settings compare only their supplied fields against saved,
+secret-free bindings. Explicit workspace additions must already be bound to the
+same paths; unrelated existing grants need not be repeated. Conflicting or
+unverifiable requirements report that stopping and restarting is necessary,
+without changing the owner. Chat session defaults, limits, allows, and workdir
+remain request/session settings validated by the executor. Attachment preserves
+lifetime; controls use saved bindings. Placement defaults and full startup input
+precedence apply when creating an executor.
 
 ## Sandbox selection and development wheels
 
@@ -113,13 +120,13 @@ retention, and command combinations.
 If an AgentServer is already running, Chat attaches to it and rejects an explicit
 incompatible selector without executing or restarting the server.
 `chat --dev [PATH]` installs a local Toolang wheel in a new non-host runtime;
-bare `--dev` searches the working directory. It is rejected for host execution
-or when Chat attaches to an existing
-AgentServer. Use `too stop <agent-or-ref>` to stop a retained server explicitly.
+bare `--dev` searches the working directory. It is rejected for host execution.
+Attachment accepts an explicit wheel only when its path and content match the
+running selection. Use `too stop <agent-or-ref>` to stop a retained server explicitly.
 
-For execution commands, `--catalog` and `--compact-model` apply only when
-starting a runtime. Stop the existing agent before changing those startup
-settings; an attached command rejects them rather than ignoring them.
+For execution commands, `--catalog` and `--compact-model` configure new runtimes.
+On attachment, explicit values must match saved settings; omitted values retain
+the running settings. Stop the existing agent before changing them.
 
 Commands that start a new guest accept `--dev [PATH]`. This includes `serve`,
 `start`, `chat`, Script `run`, and `rerun`. Omitting `--dev` keeps the
@@ -306,8 +313,9 @@ precedence, including `7001`. Running processes are not relocated.
 ## Server lifetime and client leases
 
 Terminal Chat shares a compatible AgentServer for the same agent, Toolang root,
-source identity, and startup settings. Resident implicit servers remain running;
-visiting implicit servers exit once no client leases or accepted work remain.
+and source identity, retaining its startup settings. Resident implicit servers
+remain running; visiting implicit servers exit once no client leases or accepted
+work remain.
 Fresh implicit resident/visiting servers enable chat only. Fresh start/serve
 keep placement defaults: resident chat,talk,chore; visiting chat,talk. Roaming
 Chat owns a fresh server and stops it on exit. Standalone scripts use embedded

@@ -1,4 +1,4 @@
-"""Secret-free comparison of effective executor startup bindings."""
+"""Secret-free comparison of explicitly requested executor settings."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ import json
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
+from toolang.plugin.catalogs.models_dev.path import MODEL_CATALOG_ENV
 from .instance import read_instance
 from .types import ALL_DRIVERS, ExecutionDrivers
 
@@ -36,55 +37,67 @@ def _value(value):
 
 def startup_contract(spec: LaunchSpec) -> dict[str, str]:
     bindings = {
-        field.name: getattr(spec.serve, field.name)
-        for field in fields(spec.serve)
-        if field.name not in {"layout", "launch_id", "lifetime", "automatic_port"}
+        name: getattr(spec.serve, name)
+        for name in (
+            "host",
+            "endpoint_host",
+            "port",
+            "ceiling_overrides",
+            "default_overrides",
+            "limit_overrides",
+            "compact_override",
+            "workspace_additions",
+        )
     }
     bindings.update(
-        sandbox=spec.sandbox,
-        config=spec.config,
-        root=str(spec.serve.layout.root),
-        source=str(spec.serve.layout.source_path or spec.serve.layout.program),
-        project_inputs=spec.serve.layout.project_inputs,
-        source_edit_lock=str(spec.serve.layout.root_edit_lock),
-        environ={
-            key: value
-            for key, value in {**spec.dotenv_envs, **spec.environ}.items()
-            if key
-            not in {
-                "TOOLANG_LOG_PATH",
-                "TOOLANG_PROGRESS_MAX_WIDTH",
-                "TOOLANG_UI_BASE_URL",
-                "TOOLANG_HOST_LAUNCH",
-            }
-        },
+        model_catalog=spec.environ.get(MODEL_CATALOG_ENV),
         development=str(spec.dev_artifact) if spec.dev_artifact else None,
     )
     if spec.dev_artifact is not None:
         bindings["development_digest"] = sha256(
             spec.dev_artifact.read_bytes()
         ).hexdigest()
-    return {
-        key: sha256(json.dumps(_value(value), sort_keys=True).encode()).hexdigest()
-        for key, value in bindings.items()
-    }
+    saved = {key: _digest(value) for key, value in bindings.items()}
+    for key, value in bindings.items():
+        if isinstance(value, Mapping):
+            saved.update(
+                {f"{key}.{name}": _digest(item) for name, item in value.items()}
+            )
+    return saved
 
 
-def require_compatible(layout: AgentLayout, requested: LaunchSpec) -> None:
+def _digest(value: object) -> str:
+    return sha256(json.dumps(_value(value), sort_keys=True).encode()).hexdigest()
+
+
+def require_compatible(layout: AgentLayout, requested: Mapping[str, object]) -> None:
+    """Compare only supplied requirements; omission retains the running binding."""
+    if not requested:
+        return
     entry = read_instance(layout.runtime_status) or {}
     saved = entry.get("control", {}).get("startup_contract")
     if not isinstance(saved, dict):
         raise ValueError(
             "running startup parameters are unverifiable; stop and restart the agent"
         )
-    desired = startup_contract(requested)
     different = sorted(
         key
-        for key in saved.keys() | desired.keys()
-        if saved.get(key) != desired.get(key)
+        for key, value in requested.items()
+        if saved.get(key) != _digest(value)
+        and not (
+            isinstance(value, Mapping)
+            and all(
+                saved.get(f"{key}.{name}") == _digest(item)
+                for name, item in value.items()
+            )
+        )
     )
     if different:
-        raise ValueError("startup parameters differ: " + ", ".join(different))
+        raise ValueError(
+            "startup parameters differ: "
+            + ", ".join(different)
+            + "; stop and restart the agent to change these settings"
+        )
 
 
 def bound_drivers(layout: AgentLayout) -> ExecutionDrivers:
