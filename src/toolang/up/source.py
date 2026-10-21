@@ -10,7 +10,7 @@ from pathlib import Path
 from stat import S_ISLNK
 import time
 from urllib.error import HTTPError, URLError
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 from urllib.request import Request, urlopen
 from typing import Literal
 
@@ -30,12 +30,23 @@ from toolang.common.source import (
     RemoteSource,
     parse_remote_source,
 )
+from .identity import visiting_home_guard
 
 AgentTargetForm = Literal["name", "shorthand", "ref"]
 _MAX_ROAMING_PROJECTION_ATTEMPTS = 3
 
 
 AgentRef = HttpRef | GitHubRef
+
+
+def _display_ref(value: str) -> str:
+    """Keep URL credentials, signed queries and fragments out of progress/errors."""
+    parsed = urlsplit(value)
+    if parsed.scheme not in {"http", "https"}:
+        return value
+    return parsed._replace(
+        netloc=parsed.netloc.rsplit("@", 1)[-1], query="", fragment=""
+    ).geturl()
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,7 +106,7 @@ def fetch_agent_ref(
 ) -> str:
     """Fetch one remote authored agent program by canonical ref."""
 
-    detail = ref.render()
+    detail = _display_ref(ref.render())
     item_id = progress_id or f"agent:{detail}"
     url = ref.url if isinstance(ref, HttpRef) else github_raw_url(ref)
     emit_progress(
@@ -105,7 +116,7 @@ def fetch_agent_ref(
         stage="fetch",
         label="Fetching agent...",
         status="running",
-        detail=url,
+        detail=_display_ref(url),
         subject="agent",
         ref=detail,
     )
@@ -160,7 +171,7 @@ def resolve_agent_source(
         status="running",
         detail=target.text,
         subject="agent",
-        ref=target.text,
+        ref=_display_ref(target.text),
     )
     try:
         ref = _resolve_github_agent_shorthand(
@@ -178,7 +189,7 @@ def resolve_agent_source(
             status="failed",
             detail=str(exc),
             subject="agent",
-            ref=target.text,
+            ref=_display_ref(target.text),
             complete=True,
         )
         raise
@@ -417,19 +428,20 @@ def materialize_visiting_program(
     )
     # This receipt belongs to the visiting source cache, outside State revisions.
     # Write it after the program; a mismatched pair is never reused.
-    atomic_write_text(layout.program, source_text)
-    atomic_write_text(
-        layout.home / "agent.source.json",
-        json.dumps(
-            {
-                "declared_ref": acquired.declared_ref,
-                "resolved_ref": acquired.acquisition.resolved_ref,
-                "entry": acquired.acquisition.entry,
-                "sha256": sha256(content).hexdigest(),
-            },
-            sort_keys=True,
-        ),
-    )
+    with visiting_home_guard(layout):
+        atomic_write_text(layout.program, source_text)
+        atomic_write_text(
+            layout.home / "agent.source.json",
+            json.dumps(
+                {
+                    "declared_ref": acquired.declared_ref,
+                    "resolved_ref": acquired.acquisition.resolved_ref,
+                    "entry": acquired.acquisition.entry,
+                    "sha256": sha256(content).hexdigest(),
+                },
+                sort_keys=True,
+            ),
+        )
     return replace(layout, program_acquisition=acquired)
 
 
@@ -505,9 +517,21 @@ def _resolve_visiting_layout(
     progress: ProgressSink | None,
     toolang_root: Path,
 ) -> AgentLayout:
-    from toolang.state.prepare import parse_visiting_agent
-
     layout = _visiting_layout(target, toolang_root=toolang_root)
+    with visiting_home_guard(layout):
+        return _prepare_visiting_source(
+            target, layout, progress=progress, toolang_root=toolang_root
+        )
+
+
+def _prepare_visiting_source(
+    target: AgentTarget,
+    layout: AgentLayout,
+    *,
+    progress: ProgressSink | None,
+    toolang_root: Path,
+) -> AgentLayout:
+    from toolang.state.prepare import parse_visiting_agent
 
     captured = _cached_visiting_source(layout)
     if (
@@ -518,12 +542,12 @@ def _resolve_visiting_layout(
         layout = replace(layout, program_acquisition=captured)
         parse_visiting_agent(
             layout,
-            ref=target.text,
+            ref=_display_ref(target.text),
             progress=progress,
-            progress_id=f"agent:{target.text}",
+            progress_id=f"agent:{_display_ref(target.text)}",
         )
         return layout
-    progress_id = f"agent:{target.text}"
+    progress_id = f"agent:{_display_ref(target.text)}"
     resolved_ref = resolve_agent_source(
         target,
         progress=progress,
@@ -538,7 +562,7 @@ def _resolve_visiting_layout(
     )
     parse_visiting_agent(
         layout,
-        ref=resolved_ref.render(),
+        ref=_display_ref(resolved_ref.render()),
         source=source_text,
         progress=progress,
         progress_id=progress_id,
@@ -650,7 +674,9 @@ def _github_repo_default_branch(owner: str, repo: str) -> str:
 
 def _require_too_path(path: str, text: str) -> None:
     if Path(path).suffix != ".too":
-        raise ValueError(f"agent ref must point to a .too program: {text}")
+        raise ValueError(
+            f"agent ref must point to a .too program: {_display_ref(text)}"
+        )
 
 
 def _fetch_http_text(url: str) -> str:
@@ -659,7 +685,7 @@ def _fetch_http_text(url: str) -> str:
         with urlopen(request, timeout=30) as response:
             return response.read().decode("utf-8")
     except (HTTPError, URLError) as exc:
-        raise ValueError(f"could not fetch agent program: {url}") from exc
+        raise ValueError(f"could not fetch agent program: {_display_ref(url)}") from exc
 
 
 def _visiting_program_cache_fresh(program_path: Path) -> bool:

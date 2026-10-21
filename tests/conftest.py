@@ -88,6 +88,20 @@ def pytest_collection_modifyitems(
 
 
 @pytest.fixture(autouse=True)
+def isolated_visiting_root(tmp_path, request):
+    """Keep temporary visiting homes isolated, including under parallel workers."""
+    from toolang.common import layout
+
+    if "integration" in request.node.path.parts:
+        yield layout.VISITING_ROOT
+        return
+    with pytest.MonkeyPatch.context() as patch:
+        parent = tmp_path / "visiting"
+        patch.setattr(layout, "VISITING_ROOT", parent)
+        yield parent
+
+
+@pytest.fixture(autouse=True)
 def isolated_toolang_root(tmp_path):
     """Discovery and default CLI writes must never reach the user's real root."""
     with pytest.MonkeyPatch.context() as patch:

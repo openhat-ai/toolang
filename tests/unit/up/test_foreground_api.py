@@ -33,8 +33,12 @@ def test_shared_foreground_api_observes_and_cancels_the_owning_executor(
         layout = AgentLayout.resident(tmp_path, "alice")
         target = ["--root", str(tmp_path), "alice"]
     elif placement == "visiting":
+        from toolang.up.source import HttpRef, materialize_visiting_program
+
         source_ref = "https://example.test/alice.too"
-        layout = AgentLayout.visiting(source_ref, "alice", toolang_root=tmp_path)
+        layout = materialize_visiting_program(
+            HttpRef(source_ref), "agic work():\n  Do work.\n", toolang_root=tmp_path
+        )
         target = ["--root", str(tmp_path), source_ref]
     else:
         source = tmp_path / "alice.too"

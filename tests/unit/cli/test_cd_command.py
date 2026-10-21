@@ -56,15 +56,15 @@ def _context(root: Path, agent: str | None = "alice") -> Any:
         ),
         (
             "visiting",
-            "/tmp/gus@v0123456789abcdef",
+            "/tmp/toolang/gus@v0123456789abcdef",
             "v0123456789abcdef",
-            "/tmp/gus@v0123456789abcdef/agents/gus",
+            "/tmp/toolang/gus@v0123456789abcdef/agents/gus",
         ),
         (
             "roaming",
-            "/toolang-project/.toolang/gus@r0123456789abcdef0123456789abcdef",
-            "r0123456789abcdef0123456789abcdef",
-            "/toolang-project/.toolang/gus@r0123456789abcdef0123456789abcdef/agents/gus",
+            "/toolang-project/.toolang/gus@r0123456789abcdef",
+            "r0123456789abcdef",
+            "/toolang-project/.toolang/gus@r0123456789abcdef/agents/gus",
         ),
     ],
 )
@@ -438,11 +438,8 @@ def test_cd_prepares_nonresident_home_and_reuses_it(
             if selector_kind == "url"
             else "https://agents.example/alice.too"
         )
-        layout = AgentLayout(tmp_path / "visiting", "alice", "visiting")
-        monkeypatch.setattr(
-            AgentLayout,
-            "visiting",
-            classmethod(lambda _cls, source, name, **kwargs: layout),
+        layout = AgentLayout.visiting(
+            selector, "alice", toolang_root=tmp_path / "unrelated"
         )
 
     def fetch(ref: agent_sources.AgentRef, **_kwargs: Any) -> str:
@@ -470,25 +467,23 @@ def test_cd_prepares_nonresident_home_and_reuses_it(
     assert (
         calls == [(["/custom/shell", "-i"], {"cwd": layout.home, "check": False})] * 2
     )
-    assert not layout.runtime.exists()
     assert not (tmp_path / "unrelated").exists()
     if selector_kind == "roaming":
+        assert not layout.runtime.exists()
         assert layout.program.is_symlink()
         assert layout.program.resolve() == source
         assert layout.config.is_file()
         assert fetches == []
     else:
+        assert layout.runtime_status.exists()
         assert fetches == ["https://agents.example/alice.too"]
 
 
 def test_cd_reports_remote_preparation_failure_without_launching(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
-    layout = AgentLayout(tmp_path, "alice", "visiting")
-    monkeypatch.setattr(
-        AgentLayout,
-        "visiting",
-        classmethod(lambda _cls, source, name, **kwargs: layout),
+    layout = AgentLayout.visiting(
+        "https://agents.example/alice.too", "alice", toolang_root=tmp_path / "toolang"
     )
 
     def fetch(*_args: Any, **_kwargs: Any) -> str:
@@ -505,7 +500,8 @@ def test_cd_reports_remote_preparation_failure_without_launching(
 
     assert cli.main(["https://agents.example/alice.too", "cd"]) == 1
     assert "remote source unavailable" in capsys.readouterr().err
-    assert not layout.home.exists()
+    assert not layout.program.exists()
+    assert not layout.run_store.exists()
 
 
 def test_cd_resident_name_is_available_through_explicit_selector(

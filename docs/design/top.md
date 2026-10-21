@@ -59,8 +59,9 @@ JSON retains source amounts and approximation metadata. Period and folds do not
 change these values. THREAD appears between AGENT and RUN and shows the full
 owning root's thread ID on every row, or `-` when unavailable. RUN always shows
 the full owning physical root ID. Terminal Runs show
-only their state. AGENT shows the existing instance name
-(for example, `aid@r18e03d00e6223810692a4880f56a5894`).
+only their state. AGENT shows the complete instance name `A@I`
+(for example, `aid@r0123456789abcdef`). Other commands take only `I`, including
+its `v`/`r` marker, with `-i` / `--instance`.
 
 Interactive Top fills the terminal: a green table heading, deep cyan selected
 row, and one cyan function-key bar anchored at the bottom. Fn numbers use

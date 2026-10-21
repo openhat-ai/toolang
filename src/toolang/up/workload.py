@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from contextlib import nullcontext
 import os
 from pathlib import Path
 from uuid import uuid4
@@ -10,7 +11,7 @@ from uuid import uuid4
 import psutil
 
 from toolang.common.layout import AgentLayout
-from .identity import identity_bindings
+from .identity import identity_bindings, visiting_home_guard
 from .instance import (
     control_owner,
     patch_workload,
@@ -68,7 +69,16 @@ def begin_workload(
             entry["control"]["owner"] = control_owner()
         entry["workload"] = dict(workload)
 
-    update_instance(layout.runtime_status, begin, instance=layout.instance)
+    guard = (
+        visiting_home_guard(layout) if layout.placement == "visiting" else nullcontext()
+    )
+    with guard:
+        if (
+            layout.placement == "visiting"
+            and layout.toolang_root != toolang_root.resolve()
+        ):
+            raise ValueError("visiting identity belongs to a different Toolang root")
+        update_instance(layout.runtime_status, begin, instance=layout.instance)
 
 
 class ForegroundWorkload:

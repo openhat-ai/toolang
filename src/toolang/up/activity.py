@@ -165,6 +165,7 @@ class ActivityReader:
         previous: LiveSnapshot | None = None,
         cancelled: Callable[[], bool] | None = None,
     ) -> ActivitySnapshot:
+        binding.validate_history_identity()
         try:
             empty = self._empty_history(binding)
         except OSError:
@@ -201,6 +202,7 @@ class ActivityReader:
         period: int,
         cancelled: Callable[[], bool] | None = None,
     ) -> RecentUsage:
+        binding.validate_history_identity()
         if not self._empty_history(binding):
             try:
                 result = recent_usage(
@@ -231,6 +233,7 @@ class ActivityReader:
         completed_at: int,
         cancelled: Callable[[], bool] | None = None,
     ) -> CompletedRoots:
+        source.validate_history_identity()
         with recent_source(source.layout.run_store, cancelled=cancelled) as reader:
             self._remember_history()
             reader.pin()

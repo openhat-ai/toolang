@@ -166,16 +166,6 @@ def test_resolve_visiting_layout_materializes_and_reuses_program(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Exercise source caching without leaving a stable visiting root in /tmp.
-    monkeypatch.setattr(
-        AgentLayout,
-        "visiting",
-        classmethod(
-            lambda cls, source, name, **kwargs: cls(
-                root=tmp_path / "visitor", name=name, placement="visiting", **kwargs
-            )
-        ),
-    )
     source = "https://agents.example/researcher.too"
     fetches: list[str] = []
 
@@ -210,12 +200,20 @@ def test_resolve_visiting_layout_materializes_and_reuses_program(
 def test_visiting_cache_survives_interrupted_write(
     tmp_path: Path, cached: bool
 ) -> None:
-    layout = AgentLayout(tmp_path, "researcher", "visiting")
-    layout.home.mkdir(parents=True)
+    from toolang.up.identity import visiting_home_guard
+
+    layout = AgentLayout.visiting(
+        "https://example.com/researcher.too", "researcher", toolang_root=tmp_path
+    )
+    with visiting_home_guard(layout):
+        pass
     if cached:
-        layout.program.write_text("agic:\n  Original source.\n", encoding="utf-8")
+        from toolang.common.files import atomic_write_text
+
+        atomic_write_text(layout.program, "agic:\n  Original source.\n")
         os.utime(layout.program, (1, 1))
     before = layout.program.read_bytes() if cached else None
+    entries = set(layout.home.iterdir())
 
     # Limit only the child process: a real partial write must not publish a
     # truncated source or make an old cache look fresh.
@@ -228,12 +226,10 @@ import resource
 import signal
 import sys
 from pathlib import Path
-from toolang.common.layout import AgentLayout
+from toolang.common import layout as paths
 from toolang.up import source as agent_sources
 
-AgentLayout.visiting = classmethod(
-    lambda cls, source, name, **kwargs: cls(Path(sys.argv[1]), name, "visiting")
-)
+paths.VISITING_ROOT = Path(sys.argv[1]) / "visiting"
 signal.signal(signal.SIGXFSZ, signal.SIG_IGN)
 resource.setrlimit(resource.RLIMIT_FSIZE, (128, 128))
 try:
@@ -256,7 +252,7 @@ sys.exit("expected a partial-write failure")
     assert result.returncode == 0, result.stderr
     assert (layout.program.read_bytes() if layout.program.exists() else None) == before
     assert not agent_sources._visiting_program_cache_fresh(layout.program)
-    assert set(layout.home.iterdir()) == ({layout.program} if cached else set())
+    assert set(layout.home.iterdir()) == entries
 
 
 def test_visiting_agent_keeps_one_progress_id_across_prepare_stages(
@@ -264,15 +260,6 @@ def test_visiting_agent_keeps_one_progress_id_across_prepare_stages(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     selector = "gh:owner/researcher"
-    monkeypatch.setattr(
-        AgentLayout,
-        "visiting",
-        classmethod(
-            lambda cls, source, name, **kwargs: cls(
-                root=tmp_path, name=name, placement="visiting"
-            )
-        ),
-    )
     monkeypatch.setattr(
         agent_sources,
         "_resolve_github_agent_shorthand",
@@ -582,3 +569,54 @@ def test_visiting_reuse_honors_an_explicit_commit():
         target, f"github://owner/repo/dev.too@{'a' * 40}"
     )
     assert agent_sources.reusable_agent_source(target, requested)
+
+
+def test_visiting_identity_and_acquisition_keep_full_urls_while_progress_hides_credentials(
+    tmp_path, monkeypatch
+):
+    from dataclasses import asdict
+    import json
+
+    url = "https://secret-user:secret-pass@example.com/alice.too?token=secret-token#secret-fragment"
+    fetched = []
+
+    def fetch(value):
+        fetched.append(value)
+        return "flow:\n  pass\n"
+
+    monkeypatch.setattr(agent_sources, "_fetch_http_text", fetch)
+    events = []
+    layout = agent_sources.resolve_visiting_layout(
+        url, toolang_root=tmp_path, progress=events.append
+    )
+    assert fetched == [url]
+    repeated = agent_sources.resolve_visiting_layout(
+        url, toolang_root=tmp_path, progress=events.append
+    )
+    assert repeated == layout and fetched == [url]
+    assert layout == agent_sources.visiting_layout(url, toolang_root=tmp_path)
+    assert layout.program_acquisition is not None
+    assert layout.program_acquisition.declared_ref == url
+    output = json.dumps([asdict(event) for event in events])
+    assert "secret-" not in output
+    assert "secret-" not in layout.instance_name
+    assert "https://example.com/alice.too" in output
+
+
+def test_visiting_fetch_failure_does_not_print_url_credentials(monkeypatch):
+    from urllib.error import URLError
+
+    def denied(*_args, **_kwargs):
+        raise URLError("denied")
+
+    monkeypatch.setattr(agent_sources, "urlopen", denied)
+    events = []
+    with pytest.raises(ValueError) as error:
+        agent_sources.fetch_agent_ref(
+            agent_sources.HttpRef(
+                "https://secret-user:secret-pass@example.com/alice.too?token=secret-token"
+            ),
+            progress=events.append,
+        )
+    assert "secret-" not in str(error.value)
+    assert all("secret-" not in str(event) for event in events)

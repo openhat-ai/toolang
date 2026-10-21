@@ -263,7 +263,7 @@ def test_sandbox_state_round_trips(tmp_path: Path) -> None:
     state.save(path)
 
     assert SandboxState.load(path) == state
-    assert '"version": 3' in path.read_text(encoding="utf-8")
+    assert '"version": 4' in path.read_text(encoding="utf-8")
 
 
 def test_sandbox_state_does_not_adopt_a_version_one_reference(
@@ -601,7 +601,11 @@ def test_guest_roaming_mounts_the_shared_project_edit_guard(monkeypatch, tmp_pat
 
     monkeypatch.setattr(sandbox, "_wait_ready", ready)
     source = tmp_path / "aid.too"
-    layout = AgentLayout.roaming(source, instance_id="r" + "1" * 32)
+    from toolang.common.instance_ids import roaming_instance_id
+
+    layout = AgentLayout.roaming(
+        source, instance_id=roaming_instance_id(str(source), 1)
+    )
     layout.home.mkdir(parents=True)
     spec = _launch_spec(tmp_path / "global")
     spec = replace(spec, serve=replace(spec.serve, layout=layout))

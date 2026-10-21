@@ -674,6 +674,9 @@ def _instance_option(body: list[str], command: str) -> tuple[list[str], str | No
                 )
             if not instance_id:
                 raise ValueError("--instance requires a value")
+            from toolang.common.instance_ids import decode_instance_id
+
+            decode_instance_id(instance_id)
         else:
             result.append(token)
         index += 1

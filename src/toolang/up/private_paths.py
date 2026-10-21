@@ -1,0 +1,133 @@
+"""Link-safe access to visiting homes beneath the shared temporary namespace."""
+
+from collections.abc import Iterator
+from contextlib import ExitStack, contextmanager
+from dataclasses import dataclass
+import os
+from pathlib import Path
+import stat
+
+from toolang.common import layout as paths
+from toolang.common.layout import AgentLayout
+from toolang.common.files import file_write_lock
+
+
+@dataclass
+class VisitingPaths:
+    created: bool
+    directories: list[tuple[Path, int]]
+
+    def recheck(self) -> None:
+        """Do not use a path replaced while waiting for its write guard."""
+        for path, descriptor in self.directories:
+            current = path.lstat()
+            opened = os.fstat(descriptor)
+            if (current.st_dev, current.st_ino) != (opened.st_dev, opened.st_ino):
+                raise ValueError(f"visiting directory changed: {path}")
+            _validate_directory(path, current, shared=path == paths.VISITING_ROOT)
+
+
+def _validate_directory(
+    path: Path, info: os.stat_result, *, shared: bool = False
+) -> None:
+    mode = stat.S_IMODE(info.st_mode)
+    private = info.st_uid == os.geteuid() and mode == 0o700
+    shared_parent = shared and info.st_uid == 0 and mode == 0o1777
+    if not stat.S_ISDIR(info.st_mode) or not (private or shared_parent):
+        raise ValueError(f"unsafe visiting directory owner or mode: {path}")
+
+
+@contextmanager
+def visiting_paths(layout: AgentLayout) -> Iterator[VisitingPaths]:
+    """Pin every untrusted directory with O_NOFOLLOW and directory-relative I/O."""
+    parent = paths.VISITING_ROOT
+    if layout.root != parent / layout.instance_name:
+        raise ValueError("visiting root does not match its instance identity")
+    descriptors: list[tuple[Path, int]] = []
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+
+    def open_directory(path: Path, parent_fd: int, *, create: bool) -> tuple[int, bool]:
+        created = False
+        if create:
+            try:
+                os.mkdir(path.name, mode=0o700, dir_fd=parent_fd)
+                created = True
+            except FileExistsError:
+                pass
+        descriptor = os.open(path.name, flags, dir_fd=parent_fd)
+        descriptors.append((path, descriptor))
+        _validate_directory(path, os.fstat(descriptor), shared=path == parent)
+        return descriptor, created
+
+    # Only the platform /tmp alias is resolved. Never resolve toolang or its
+    # descendants through an existing link before opening them.
+    base = os.open(parent.parent, flags)
+    locks = ExitStack()
+    try:
+        parent_fd, _ = open_directory(parent, base, create=True)
+        # A sidecar guard serializes first creation before the home guard exists.
+        lock = parent / f".{layout.instance_name}.lock"
+        try:
+            lock_fd = os.open(
+                lock.name,
+                os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                0o600,
+                dir_fd=parent_fd,
+            )
+        except FileExistsError:
+            lock_fd = os.open(lock.name, os.O_RDWR | os.O_NOFOLLOW, dir_fd=parent_fd)
+        try:
+            info = os.fstat(lock_fd)
+            if (
+                not stat.S_ISREG(info.st_mode)
+                or info.st_uid != os.geteuid()
+                or stat.S_IMODE(info.st_mode) != 0o600
+            ):
+                raise ValueError(f"unsafe visiting guard: {lock}")
+            locks.enter_context(file_write_lock(lock, create=False))
+            current = lock.lstat()
+            if (current.st_dev, current.st_ino) != (info.st_dev, info.st_ino):
+                raise ValueError(f"visiting guard changed: {lock}")
+        finally:
+            os.close(lock_fd)
+        root_fd, created = open_directory(layout.root, parent_fd, create=True)
+        agents_fd, _ = open_directory(layout.root / "agents", root_fd, create=created)
+        home_fd, _ = open_directory(layout.home, agents_fd, create=created)
+        open_directory(layout.runtime, home_fd, create=created)
+        state_fd, _ = open_directory(layout.home / ".state", home_fd, create=created)
+        home_state_fd, _ = open_directory(layout.home_state, state_fd, create=created)
+        if created:
+            descriptor = os.open(
+                layout.home_edit_lock.name,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                0o600,
+                dir_fd=home_state_fd,
+            )
+            os.close(descriptor)
+        for path in (
+            layout.home_edit_lock,
+            layout.runtime_status,
+            layout.program,
+            layout.home / "agent.source.json",
+        ):
+            try:
+                info = path.lstat()
+            except FileNotFoundError:
+                continue
+            if (
+                not stat.S_ISREG(info.st_mode)
+                or info.st_uid != os.geteuid()
+                or (
+                    path != layout.home_edit_lock
+                    and stat.S_IMODE(info.st_mode) != 0o600
+                )
+            ):
+                raise ValueError(f"unsafe visiting file owner or mode: {path}")
+        pinned = VisitingPaths(created, descriptors)
+        pinned.recheck()
+        yield pinned
+    finally:
+        locks.close()
+        for _, descriptor in reversed(descriptors):
+            os.close(descriptor)
+        os.close(base)

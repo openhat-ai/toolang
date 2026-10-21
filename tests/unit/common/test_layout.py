@@ -47,7 +47,9 @@ def test_resident_layout_derives_agent_paths(tmp_path: Path) -> None:
     assert layout.stats_store == layout.home / ".runtime" / "stats.db"
 
 
-def test_visiting_layout_is_stable_and_root_and_source_specific(tmp_path: Path) -> None:
+def test_visiting_layout_is_stable_and_root_and_source_specific(
+    tmp_path: Path, isolated_visiting_root: Path
+) -> None:
     root = tmp_path / "toolang"
     first = AgentLayout.visiting(
         "gh:octo/agents/researcher", "researcher", toolang_root=root
@@ -64,7 +66,7 @@ def test_visiting_layout_is_stable_and_root_and_source_specific(tmp_path: Path) 
 
     assert first == repeated
     assert first.placement == "visiting"
-    assert first.root.parent == Path("/tmp").resolve()
+    assert first.root.parent == isolated_visiting_root
     assert first.source_id is not None and len(first.source_id) == 16
     assert first.root.name == f"researcher@v{first.source_id}"
     assert first.root != other.root

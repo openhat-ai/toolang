@@ -32,7 +32,7 @@ ${TOOLANG_ROOT}/
   .runtime/
     instances/
       gus.json                       # Resident
-      lex@v<source-hash>.json         # Visiting
+      lex@<instance_id>.json         # Visiting
       aid@<instance_id>.json         # Roaming
       register.lock
   hub/
@@ -76,18 +76,21 @@ Each resident agent lives under:
 Visiting agents fetched by Chat, start, or serve use a stable temporary agent
 root derived from the resolved Toolang root and Source Ref:
 
-- `/tmp/<agent>@v<hash:16>/`
+- `/tmp/toolang/<agent>@<instance_id>/`
 
-Agent Names are bounded to 64 ASCII characters; the complete 16-character
-source hash is retained without shortening either component. See
-[Agent Sources](architecture.md#agent-sources) for derivation and migration rules.
+Agent Names are bounded to 64 ASCII characters. Instance IDs contain a `v` or
+`r` marker followed by 16 lowercase Crockford Base32 characters; display and
+selection retain the complete ID. [Agent Sources](architecture.md#agent-sources)
+owns Source Ref alias normalization.
 
 Repeated launches of the same source under the same Toolang root reuse this
-agent root; a different Toolang root gets a different visiting root. Earlier
-eight-character roots are left untouched and are no longer selected. Stop old
-visiting workloads before upgrading; retain old roots for manual history
-migration. Temporary directory cleanup can remove its state and remembered
-settings. The cached
+agent root; a different Toolang root changes its root hash prefix. Stop old
+workloads with the previous version, then archive old visiting/roaming roots,
+resident `status.json` files and global discovery records outside runtime paths
+before restarting. Resident databases and history remain in their existing homes.
+Earlier formats are unsupported and left untouched; there is no automatic
+migration or old-home lookup.
+Temporary directory cleanup can remove its state and remembered settings. The cached
 remote `agent.too` is refetched after one hour. Its source-owned
 `agent.source.json` cache receipt records the acquired ref and byte digest;
 State captures the same Program and provenance. Each roaming execution gets a
@@ -97,6 +100,15 @@ on one event loop; neither executor nor history is shared with another launch.
 Visiting idle shutdown stops its server and automatic Docker container, preserving
 this root and its history. Host control/stage files can be cleaned by the next
 management call.
+
+Visiting preparation and management claim full source ownership under the home
+write guard before changing caches or history. An existing unbound home is an
+error. `/tmp/toolang` is either current-user-owned `0700` or an administrator's
+root-owned `01777` parent; new parents and instance roots are private `0700`.
+Instance records are `0600`. Directory-relative, no-follow access rejects links,
+unsafe owners/modes and path replacement without adopting or repairing them.
+Predictable names can still be pre-created to deny a launch. IDs are public names,
+not authorization secrets or content signatures.
 
 Key paths:
 
@@ -120,7 +132,7 @@ state, and runtime path from that identity.
 | Placement | Root calculation |
 | --- | --- |
 | `resident` | The explicit Toolang root |
-| `visiting` | `/tmp/<agent>@v<toolang-root-and-source-hash:16>/` |
+| `visiting` | `/tmp/toolang/<agent>@<instance_id>/` |
 | `roaming` | `<source-directory>/.toolang/<agent>@<instance_id>/` |
 
 All three placements use the same layout below their calculated root:
@@ -145,16 +157,24 @@ Discovery references live under `${TOOLANG_ROOT}/.runtime/instances/`:
 | Placement | Reference name |
 | --- | --- |
 | Resident | `gus.json` |
-| Visiting | `lex@v<hash>.json` |
+| Visiting | `lex@<instance_id>.json` |
 | Roaming | `aid@<instance_id>.json` |
 
-- Visiting IDs are `v` plus the existing 16-hex source hash: canonical Toolang root,
-  NUL, canonical Source Ref; alias normalization is unchanged.
-- Roaming IDs are `r` plus 16 hex digits of startup order and 16 hex digits of a
-  SHA-256 prefix over canonical source path, NUL, and a fresh UUID nonce.
-- Startup order is `max(time_ns(), highest_retained_order_ns + 1)` under the source
-  cache's `.state/launch.lock`. Publish identity/status before preparation;
-  hidden staging is unselectable. Compare complete IDs lexically.
+- Pack 32 prefix bits and 48 suffix bits into one 80-bit value, encoded as 16
+  lowercase Crockford Base32 characters with an additional placement marker.
+- Visiting IDs use `v`, a hash of the canonical Toolang root and a hash of the
+  canonical requested Source Ref. Resolving an upstream commit does not change
+  that identity; alias normalization is unchanged.
+- Roaming IDs use `r`, a hash of the canonical source file path and a logical
+  Unix-millisecond launch timestamp. Under the source cache's `.state/launch.lock`,
+  assign `max(time_ns() // 1_000_000, highest_retained_ms_for_this_path + 1)` and
+  persist `request_order_ns = timestamp_ms * 1_000_000`. Actual wall time is separate.
+- IDs sort lexically by launch within one canonical source path. Across paths,
+  compare decoded timestamps. Hashes are compact tags: verify full bindings on
+  retained reads. Missing/corrupt ownership and timestamp overflow fail explicitly.
+- Check candidate roots and references under source/registry guards. A complete-ID
+  ownership collision fails immediately, without retry, ID adjustment or overwriting
+  existing data. Publish initialized identity/status before expensive preparation.
 - `instance_name` is agent name plus `@<instance_id>` for nonresidents; resident
   names stay unchanged. Top ownership uses the complete instance name.
 - `launch_id` remains a private UUID4 workload-generation fence for every placement.
@@ -163,17 +183,19 @@ Discovery references live under `${TOOLANG_ROOT}/.runtime/instances/`:
   supplement them; deleting references loses no history and proves no process death.
 
 Each reference contains only its version, absolute authoritative status path,
-and launch ID. `RuntimeRegistration` publishes into one Toolang root and uses
+and launch ID. Read and write only format 4; rejected or unsupported records
+remain untouched. `RuntimeRegistration` publishes into one Toolang root and uses
 one shared `instances/register.lock` for publication and conditional removal.
 It does not initialize or stop workloads; removing a reference changes no
-authoritative lifecycle state.
+authoritative lifecycle state. Removal is fenced by both status path and UUID;
+failed publication cleans up only after attempting its own write.
 The guard is released before starting or waiting for a workload. Pure reads
 neither acquire nor create it. Cleanup of an existing reference creates a missing
 guard, including when only an old guard remains after an upgrade; cleanup of an
 absent reference creates no files. Old guards are retained. For example:
 
 ```json
-{"version": 3, "status": "/project/.toolang/aid@<instance_id>/agents/aid/.runtime/status.json", "launch_id": "<fresh-launch-id>"}
+{"version": 4, "status": "/project/.toolang/aid@<instance_id>/agents/aid/.runtime/status.json", "launch_id": "<fresh-launch-id>"}
 ```
 
 Each agent runtime stores operational state under:
@@ -184,7 +206,7 @@ Key paths:
 
 | Path           | Purpose                                                      |
 | -------------- | ------------------------------------------------------------ |
-| `status.json` | Version 3 authoritative control/workload data in the `default` entry |
+| `status.json` | Version 4 authoritative control/workload data in the `default` entry |
 | `agent.log`    | Runtime log                                                  |
 | `logs/<agic>/<run_id>.log` | Per-run script logs when `PY_LOG` is set |
 | `runs.db` | Threads, controls, runs, steps, model inputs, chore checkpoints, and ID sequences |
@@ -201,8 +223,8 @@ in the record; no lock is held across startup, execution, or shutdown.
 
 Stop, exit, and failure retain every published root, agent home, status, and
 history. Only process/container/bootstrap resources and matching global references
-are released. Runtime paths never add an execution-instance subdirectory. Old
-shared roots and nested histories remain untouched for explicit migration.
+are released. Runtime paths never add an execution-instance subdirectory. Earlier
+roots and histories remain untouched and outside the new runtime scope.
 [Hosting](hosting.md#runtime-recovery-and-logs) owns resource recovery.
 
 Docker mounts the target agent home read-write, necessary inputs/workspaces,

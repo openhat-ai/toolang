@@ -1464,3 +1464,41 @@ def test_visiting_serve_prepares_with_the_acquired_source_receipt(
     )
     assert len(acquired) == 1 and acquired[0] is not None
     assert acquired[0].acquisition.resolved_ref == "https://example.test/receipt.too"
+
+
+@pytest.mark.parametrize("placement", ["visiting", "roaming"])
+@pytest.mark.parametrize("option", ["-i", "--instance"])
+def test_instance_selector_takes_the_complete_id_while_top_displays_its_name(
+    tmp_path, placement, option
+):
+    from toolang.up.identity import allocate_roaming
+    from toolang.cli.toolang.routing import _instance_option
+    from toolang.cli.common.top_view import instance_name
+    from toolang.up.schemas import SourceActivity
+
+    layout = (
+        agent_sources.visiting_layout("gh:owner/alice", toolang_root=tmp_path)
+        if placement == "visiting"
+        else allocate_roaming(tmp_path / "alice.too", toolang_root=tmp_path)
+    )
+    assert layout.instance_id is not None
+    assert len(layout.instance_id) == 17 and layout.instance_id[0] == placement[0]
+    body, selected = _instance_option(["info", option, layout.instance_id], "info")
+    assert body == ["info"] and selected == layout.instance_id
+    assert (
+        instance_name(
+            SourceActivity(
+                identity=layout.instance_name,
+                label=layout.instance_name,
+                placement=layout.placement,
+            )
+        )
+        == layout.instance_name
+    )
+    for invalid in (
+        layout.instance_name,
+        layout.instance_id[1:],
+        layout.instance_id.upper(),
+    ):
+        with pytest.raises(ValueError):
+            _instance_option(["info", option, invalid], "info")
