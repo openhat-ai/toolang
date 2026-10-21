@@ -63,20 +63,32 @@ def test_cap_lists_keep_single_rows_and_complete_json(
         *((kind, "list") for kind in ("psyche", "skill", "service", "prompt")),
     ],
 )
-def test_compact_resource_lists_do_not_expose_long(tmp_path, monkeypatch, command):
+@pytest.mark.parametrize("force_color", [False, True])
+def test_compact_resource_lists_do_not_expose_long(
+    tmp_path, monkeypatch, command, force_color
+):
     def reject_loading(*args, **kwargs):
         pytest.fail("Unknown options must be rejected before resource loading")
 
+    monkeypatch.setattr("typer.rich_utils.FORCE_TERMINAL", force_color)
+    monkeypatch.setenv("TERM", "xterm-256color")
+    if force_color:
+        monkeypatch.delenv("NO_COLOR", raising=False)
+    else:
+        monkeypatch.setenv("NO_COLOR", "1")
     monkeypatch.setattr("toolang.cli.caps.commands._cap_entries", reject_loading)
     monkeypatch.setattr(
         "toolang.cli.toolang.commands.plugin.load_tool_setup", reject_loading
     )
-    help_result = runner.invoke(toolang_app, [*command, "--help"])
+    help_result = runner.invoke(toolang_app, [*command, "--help"], color=force_color)
     assert help_result.exit_code == 0
-    assert "--long" not in help_result.stdout
-    result = runner.invoke(toolang_app, ["--root", str(tmp_path), *command, "--long"])
+    assert "--long" not in strip_ansi(help_result.stdout)
+    result = runner.invoke(
+        toolang_app, ["--root", str(tmp_path), *command, "--long"], color=force_color
+    )
     assert result.exit_code == 2
-    assert "No such option: --long" in result.stderr
+    assert ("\x1b[" in result.stderr) is force_color
+    assert "No such option: --long" in strip_ansi(result.stderr)
 
 
 def test_query_command_is_removed() -> None:
