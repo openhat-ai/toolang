@@ -68,7 +68,7 @@ _AGENT_PANEL_COMMAND_ORDER = (
     "cd",
 )
 _RUNTIME_PANEL_COMMAND_ORDER = ("serve", "start", "stop", "hub")
-_WORK_PANEL_COMMAND_ORDER = ("chat", "talk", "chore", "convo", "workspace")
+_WORK_PANEL_COMMAND_ORDER = ("chat", "chore", "talk", "convo", "workspace")
 _CAPS_PANEL_COMMAND_ORDER = ("psyche", "skill", "service", "prompt")
 _RUN_PANEL_COMMAND_ORDER = ("steer", "cancel", "rerun")
 _THREAD_PANEL_COMMAND_ORDER = ("fork", "rewind")
@@ -543,7 +543,7 @@ _registered_command(
 _registered_command(
     "top",
     "toolang.cli.toolang.commands.top:top",
-    help="Monitor active runs",
+    help="Monitor agent runs",
     cls=_TopCommand,
     rich_help_panel=INSPECTION_COMMAND_PANEL,
 )
