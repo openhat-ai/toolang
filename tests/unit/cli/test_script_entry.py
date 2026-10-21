@@ -33,8 +33,13 @@ def _source(text: str = "agic():\n  Hello.\n") -> str:
 
 
 @pytest.mark.parametrize("explicit", [False, True])
-@pytest.mark.parametrize("source", ["missing", "invalid", "directory", "root_option"])
-def test_completion_suppresses_script_header_errors(explicit, source, tmp_path, capsys):
+@pytest.mark.parametrize(
+    "source",
+    ["missing", "invalid", "directory", "root_option", "expanduser", "resolve"],
+)
+def test_completion_suppresses_script_header_errors(
+    explicit, source, tmp_path, monkeypatch, capsys
+):
     from typer._click.shell_completion import _resolve_context
 
     label = "demo.too"
@@ -44,6 +49,16 @@ def test_completion_suppresses_script_header_errors(explicit, source, tmp_path, 
         Path(label).mkdir()
     elif source == "root_option":
         _source()
+    elif source in {"expanduser", "resolve"}:
+        original = getattr(Path, source)
+
+        def fail_script_path(self, *args, **kwargs):
+            if self == Path(label):
+                error = RuntimeError if source == "expanduser" else OSError
+                raise error("cannot resolve script path")
+            return original(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, source, fail_script_path)
     command = typer.main.get_command(cli.app)
     before = set(tmp_path.rglob("*"))
     ctx = _resolve_context(
@@ -61,6 +76,10 @@ def test_completion_suppresses_script_header_errors(explicit, source, tmp_path, 
     assert set(tmp_path.rglob("*")) == before
     output = capsys.readouterr()
     assert not output.out and not output.err
+    if source in {"expanduser", "resolve"}:
+        assert cli.main([*(["run"] if explicit else []), label]) == 1
+        assert "cannot resolve script path" in capsys.readouterr().err
+        assert set(tmp_path.rglob("*")) == before
 
 
 @pytest.mark.parametrize("explicit", [False, True])

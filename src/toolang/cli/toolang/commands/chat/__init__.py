@@ -64,6 +64,7 @@ def chat_command(
 ) -> None:
     from .main import chat_command as run
 
+    selected_workdir = single_workdir(workdir)
     owned = _prepare_roaming_chat(ctx, thread)
     try:
         run(
@@ -78,7 +79,7 @@ def chat_command(
             dev=dev,
             limits=limits,
             workspace=workspace,
-            workdir=single_workdir(workdir),
+            workdir=selected_workdir,
         )
     finally:
         if owned:

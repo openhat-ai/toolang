@@ -132,16 +132,21 @@ def select_agent_instance(ctx: Context) -> AgentLayout:
     if layout.placement == "resident" and not layout.home.is_dir():
         raise ClickException(f"Agent {layout.name} not found")
     instance = ctx.params.get("instance")
-    if state.source is not None:
-        from toolang.up.identity import select_roaming
-
-        layout = user_call(select_roaming, state.source, instance)
-    elif instance is not None and instance != layout.instance_id:
+    # The native option callback has already checked canonical ID syntax.
+    if instance is not None and not (
+        instance.startswith("r")
+        if state.source is not None
+        else instance == layout.instance_id
+    ):
         raise typer.BadParameter(
             "instance does not match the selected target",
             param_hint="--instance",
             ctx=ctx,
         )
+    if state.source is not None:
+        from toolang.up.identity import select_roaming
+
+        layout = user_call(select_roaming, state.source, instance)
     from toolang.up.instance import read_instance
 
     entry = read_instance(layout.runtime_status)

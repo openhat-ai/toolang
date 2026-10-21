@@ -114,16 +114,16 @@ def source_command(label: str, *, stdin: TextIO | None = None) -> TyperGroup:
     """Read one selected script, without preparing state or reading input."""
     if ":" in label.split("/", 1)[0]:
         raise UsageError(f"URLs are not supported: {label}")
-    source = Path(label).expanduser().resolve()
-    if source.is_dir():
-        raise UsageError(f"expected a file, got a directory: {label}")
-    if source.suffix != ".too":
-        raise UsageError(f"expected a .too file: {label}")
     try:
+        source = Path(label).expanduser().resolve()
+        if source.is_dir():
+            raise UsageError(f"expected a file, got a directory: {label}")
+        if source.suffix != ".too":
+            raise UsageError(f"expected a .too file: {label}")
         program = Program.from_source(source.read_text(encoding="utf-8"))
     except FileNotFoundError as exc:
         raise ClickException(f"script not found: {label}") from exc
-    except (OSError, UnicodeError, ValueError, ToolangError) as exc:
+    except (OSError, RuntimeError, UnicodeError, ValueError, ToolangError) as exc:
         raise ClickException(str(exc)) from exc
     return _program_command(
         program, source_path=source, source_label=label, stdin=stdin or sys.stdin

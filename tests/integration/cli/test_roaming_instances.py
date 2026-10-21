@@ -26,6 +26,60 @@ def test_roaming_argument_failure_does_not_publish_an_identity(tmp_path, monkeyp
     assert not list((root / ".runtime" / "instances").glob("*.json"))
 
 
+def test_duplicate_chat_workdir_does_not_prepare_a_roaming_instance(
+    tmp_path, monkeypatch, capsys
+):
+    from toolang.up import source as sources
+
+    source = tmp_path / "aid.too"
+    source.write_text("flow main():\n  pass\n")
+    monkeypatch.setenv("TOOLANG_ROOT", str(tmp_path / "global"))
+    monkeypatch.setattr(
+        sources,
+        "materialize_roaming_program",
+        lambda *_args, **_kwargs: pytest.fail("invalid workdir prepared a source"),
+    )
+    before = set(tmp_path.rglob("*"))
+    assert main([str(source), "chat", "-d", ".", "--workdir", "."]) == 2
+    assert "--workdir may only be specified once" in capsys.readouterr().err
+    assert set(tmp_path.rglob("*")) == before
+
+
+@pytest.mark.parametrize("command", ["info", "inspect"])
+@pytest.mark.parametrize("placement", ["resident", "visiting", "roaming"])
+def test_mismatched_instance_placement_is_a_parameter_error(
+    tmp_path, monkeypatch, capsys, command, placement
+):
+    from toolang.catalog.agent import LocalAgents
+    from toolang.common.instance_ids import encode_instance_id
+    from toolang.up import source as sources
+
+    root = tmp_path / "global"
+    monkeypatch.setenv("TOOLANG_ROOT", str(root))
+    if placement == "resident":
+        LocalAgents(root / "agents").create("aid", content="flow main():\n  pass\n")
+        selector = "aid"
+    elif placement == "visiting":
+        selector = "gh:owner/aid"
+    else:
+        source = tmp_path / "aid.too"
+        source.write_text("flow main():\n  pass\n")
+        selector = str(source)
+    instance = encode_instance_id("v" if placement == "roaming" else "r", 1, 2)
+    monkeypatch.setattr(
+        sources,
+        "resolve_visiting_layout",
+        lambda *_args, **_kwargs: pytest.fail("instance validation fetched a source"),
+    )
+    args = ["info", selector] if command == "info" else [selector, "inspect", "runs"]
+    before = set(tmp_path.rglob("*"))
+    assert main([*args, "--instance", instance]) == 2
+    error = capsys.readouterr().err
+    assert "Invalid value for --instance" in error
+    assert "instance does not match the selected target" in error
+    assert set(tmp_path.rglob("*")) == before
+
+
 def test_interrupted_script_preparation_keeps_failed_history_without_registration(
     tmp_path, monkeypatch
 ):
