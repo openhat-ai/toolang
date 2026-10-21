@@ -52,7 +52,8 @@ organized by responsibility. Read the system overview before the relevant chapte
 ## Clients and interaction
 
 - [CLI](design/cli.md): command routing, inspection, server acquisition, and terminal metadata.
-- [CLI command recognition](design/cli-command-recognition.md): agent parameter contracts, unified script selection, and dynamic signatures.
+- [CLI command recognition](design/cli-command-recognition.md): target grammar, native agent parameters, Script selection, and concise help.
+- [agent addresses](design/agent-addresses.md): target home identities, namespace layout, lookup, active discovery, and bound execution.
 - [Scripts](design/scripts.md): source-local projects, invocation/help, and file-input origins.
 - [Chat](design/chat.md): session commands, queued request snapshots, steering, recovery, and control/status UI.
 - [Terminal UI](design/terminal-ui.md): shared terminal ownership, geometry, Markdown, palettes, and scrollback.
