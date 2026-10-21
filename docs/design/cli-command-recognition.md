@@ -54,8 +54,9 @@ Placement order has no behavioral effect; omitted tags grant no capability.
 Requiredness is not another tag.
 
 An optional parameter that accepts `after` must be the last positional argument
-and cannot coexist with a variadic positional argument. Reject declarations that
-would require guessing whether a value belongs to AGENT or another parameter.
+and cannot coexist with a variadic positional argument or belong to a command
+group, where it would consume an omitted AGENT's subcommand. Reject declarations
+that would require guessing whether a value belongs to AGENT or another parameter.
 Before-only optional AGENT does not impose this restriction.
 
 Static and script-generated commands expose the same parameter metadata.

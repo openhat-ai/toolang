@@ -178,3 +178,43 @@ def test_offline_edit_chat_starts_a_fresh_chat_executor(tmp_path, monkeypatch, c
     assert entry["control"]["drivers"] == ["chat"]
     assert entry["workload"]["status"] == "stopped"
     assert not list((root / ".runtime" / "instances").glob("*.json"))
+
+
+@pytest.mark.parametrize("command", ["rerun", "fork", "rewind"])
+def test_roaming_continuation_uses_the_invocation_root(tmp_path, monkeypatch, command):
+    from io import StringIO
+
+    from toolang.up.instance import read_instance
+
+    source = tmp_path / "aid.too"
+    source.write_text("flow main(_: Text) -> Text:\n  pass\n")
+    monkeypatch.setenv("TOOLANG_ROOT", str(tmp_path / "environment-root"))
+    assert main([str(source), "main", "--quiet", "hello"]) == 0
+    original = select_roaming(source)
+    store = RunStore(original.run_store, read_only=True)
+    try:
+        (run,) = store.list_runs()
+    finally:
+        store.close()
+
+    selected_root = tmp_path / "invocation-root"
+    monkeypatch.setattr("sys.stdin", StringIO("/exit\n"))
+    assert (
+        main(
+            [
+                "--root",
+                str(selected_root),
+                str(source),
+                command,
+                run.id,
+                *(["--chat"] if command != "rerun" else []),
+            ]
+        )
+        == 0
+    )
+    continued = select_roaming(source)
+    assert continued.root != original.root
+    assert continued.toolang_root == selected_root
+    entry = read_instance(continued.runtime_status)
+    assert entry is not None
+    assert entry["control"]["toolang_root"] == str(selected_root)

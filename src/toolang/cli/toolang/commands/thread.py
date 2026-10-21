@@ -618,12 +618,11 @@ def _continue_instance(
     source = context_layout(ctx)
     if placement_policy(source.placement).reuse_executor:
         return source
-    from toolang.cli.common.context import resolve_root
     from toolang.up.replay import prepare_continuation
 
     destination = prepare_continuation(
         source,
-        toolang_root=resolve_root(None),
+        toolang_root=cli_context(ctx).root,
         source_run=source_run,
         source_thread=thread_id,
     )

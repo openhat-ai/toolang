@@ -13,7 +13,7 @@ from typer._click import Command, Context, Parameter
 from typer._click.core import ParameterSource
 from typer._click.shell_completion import CompletionItem
 from typer._click.types import StringParamType
-from typer.core import TyperArgument
+from typer.core import TyperArgument, TyperGroup
 from typer.models import ArgumentInfo
 
 from toolang.common.layout import AgentPlacement
@@ -199,6 +199,8 @@ def install_agent_parameter(command: Command) -> None:
         raise ValueError("AGENT must be a single value")
     positional = [param for param in command.params if isinstance(param, TyperArgument)]
     if not agent.required and "after" in agent.contract.positions:
+        if isinstance(command, TyperGroup):
+            raise ValueError("optional after AGENT cannot precede a group subcommand")
         if positional[-1] is not agent or any(
             param.nargs == -1 for param in positional
         ):

@@ -32,6 +32,57 @@ def _source(text: str = "agic():\n  Hello.\n") -> str:
     return "demo.too"
 
 
+@pytest.mark.parametrize("explicit", [False, True])
+@pytest.mark.parametrize("source", ["missing", "invalid", "directory", "root_option"])
+def test_completion_suppresses_script_header_errors(explicit, source, tmp_path, capsys):
+    from typer._click.shell_completion import _resolve_context
+
+    label = "demo.too"
+    if source == "invalid":
+        Path(label).write_text("flow broken(:\n")
+    elif source == "directory":
+        Path(label).mkdir()
+    elif source == "root_option":
+        _source()
+    command = typer.main.get_command(cli.app)
+    before = set(tmp_path.rglob("*"))
+    ctx = _resolve_context(
+        command,
+        {},
+        "too",
+        [
+            *(["--root", str(tmp_path)] if source == "root_option" else []),
+            *(["run"] if explicit else []),
+            label,
+        ],
+    )
+    assert ctx.command.name == "run"
+    assert ctx.resilient_parsing
+    assert set(tmp_path.rglob("*")) == before
+    output = capsys.readouterr()
+    assert not output.out and not output.err
+
+
+@pytest.mark.parametrize("explicit", [False, True])
+def test_completion_keeps_valid_script_signatures(explicit, monkeypatch, tmp_path):
+    from typer._click.shell_completion import _resolve_context
+
+    label = _source("flow research(topic: Text):\n  pass\n")
+    monkeypatch.setattr(
+        script, "_run", lambda *_args, **_kwargs: pytest.fail("completion ran script")
+    )
+    before = set(tmp_path.rglob("*"))
+    ctx = _resolve_context(
+        typer.main.get_command(cli.app),
+        {},
+        "too",
+        [*(["run"] if explicit else []), label, "research"],
+    )
+    assert ctx.command.name == "research"
+    assert any(param.name == "topic" and param.required for param in ctx.command.params)
+    assert set(tmp_path.rglob("*")) == before
+
+
 @pytest.mark.parametrize("executable", ["too", "toolang"])
 @pytest.mark.parametrize("arguments", [[], ["--help"], ["-h"]])
 def test_init_without_directory_only_shows_help(

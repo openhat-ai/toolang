@@ -48,6 +48,8 @@ def resolve_command(
             command = command.load()
         agent = agent_parameter(command)
         if agent is None or "before" not in agent.contract.positions:
+            if ctx.resilient_parsing:
+                return None, None, args
             message = (
                 f"Command '{name}' does not accept AGENT."
                 if agent is None
@@ -66,7 +68,7 @@ def resolve_command(
         # The root has recognized FILE; preserve it as a literal in run's header.
         return "run", group.commands["run"], ["--", *args]
     if _agent_candidate(ctx, first):
-        if args[1:] in (["--help"], ["-h"]):
+        if not ctx.resilient_parsing and args[1:] in (["--help"], ["-h"]):
             show_help(ctx)
         if len(args) == 1:
             if ctx.resilient_parsing:

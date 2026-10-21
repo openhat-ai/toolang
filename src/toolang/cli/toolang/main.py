@@ -103,7 +103,11 @@ class _ScriptEntryCommand(CliCommand):
         if args and (args[0] == "--" or not args[0].startswith("-")):
             from .commands.script import script_context
 
-            return script_context(info_name, args, parent=parent, **extra)
+            try:
+                return script_context(info_name, args, parent=parent, **extra)
+            except ClickException:
+                if not extra.get("resilient_parsing"):
+                    raise
         return super().make_context(info_name, args, parent=parent, **extra)
 
     def format_usage(self, ctx: Context, formatter: NativeHelpFormatter) -> None:

@@ -209,6 +209,21 @@ def test_ambiguous_agent_declarations_fail_at_command_construction(kind):
         CliCommand(name="call", callback=invoke, params=params)
 
 
+@pytest.mark.parametrize("positions", ["after", "before,after", "after,before"])
+def test_optional_after_agent_is_rejected_on_groups(positions):
+    info = AgentArgument(f"resident,{positions}")
+    with pytest.raises(ValueError, match="optional after AGENT.*group"):
+        CliGroup(
+            name="group",
+            params=[
+                TyperArgument(
+                    param_decls=["agent"], type=info.click_type, required=False
+                )
+            ],
+            commands={"leaf": CliCommand(name="leaf")},
+        )
+
+
 @pytest.mark.parametrize(
     "selector", ["agent:", "gh:", "alice@r-invalid", "https://invalid.test/a.txt"]
 )
@@ -350,6 +365,26 @@ def test_native_completion_keeps_prefix_binding_and_uses_agent_metadata(tmp_path
     assert [item.value for item in parameter.shell_complete(ctx, "al")] == ["alice"]
     ctx = _resolve_context(command, {}, "too", ["--root", str(tmp_path), "agent:alice"])
     assert [item.value for item in ctx.command.shell_complete(ctx, "ca")] == ["call"]
+
+
+@pytest.mark.parametrize(
+    "tail",
+    [
+        ["agent:alice", "list"],
+        ["agent:alice", "info"],
+        ["agent:alice", "--help"],
+        ["agent:alice", "-h"],
+    ],
+)
+def test_completion_suppresses_routing_errors_and_help(tail, tmp_path, capsys):
+    from typer._click.shell_completion import _resolve_context
+
+    command = typer.main.get_command(cli.app)
+    ctx = _resolve_context(command, {}, "too", ["--root", str(tmp_path), *tail])
+    assert ctx.command is command
+    assert ctx.resilient_parsing
+    output = capsys.readouterr()
+    assert not output.out and not output.err
 
 
 def test_concurrent_first_use_loads_one_shared_lazy_command(tmp_path):
