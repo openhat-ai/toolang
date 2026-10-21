@@ -348,7 +348,7 @@ def test_cli_visible_commands_follow_the_public_panel_order(arguments, capsys) -
         ),
         "Cap commands": ("psyche", "skill", "service", "prompt"),
         "Runtime commands": ("serve", "start", "stop", "hub"),
-        "Work commands": ("chat", "talk", "chore", "convo", "workspace"),
+        "Work commands": ("chat", "chore", "talk", "convo", "workspace"),
         "Inspection commands": (
             "caps",
             "tools",

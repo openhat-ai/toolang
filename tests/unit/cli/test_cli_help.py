@@ -301,7 +301,7 @@ def test_lazy_command_exposes_short_help_without_loading():
         ("convo", "Manage conversations and rules"),
         ("start", "Start an agent in the background"),
         ("inspect", "Inspect agent runs"),
-        ("top", "Monitor active runs"),
+        ("top", "Monitor agent runs"),
     ],
 )
 def test_command_descriptions_match_root_and_command_help(
