@@ -52,14 +52,14 @@ Hub's runtime-only inventory.
 Use this order, with left-hand names and right-aligned time ranges:
 
 ```text
-agents: 2 resident, 0 visiting, 0 roaming                                                   right now
-stats: 191 model calls, 198 tool calls, 100k input, 80k cached, 10k output, $1.0000    in the last 4h
-runs: 0 active, 0 succeeded, 0 failed, 0 canceled                                      in the last 5m
+agents: 2 resident, 0 visiting, 0 roaming                                              right now
+stats: 191 model calls, 198 tool calls, 100k input, 80k cached, 10k output, $1.0000      last 4h
+runs: 0 active, 0 succeeded, 0 failed, 0 canceled                                        last 5m
 AGENT THREAD RUN MODEL TOOL INPUT CACHED OUTPUT SPEND TIME+ STATUS
 ```
 
 Render `agents:`, `stats:` and `runs:` in normal intensity, without dim or bold.
-The right column contains only `right now` or `in the last <window>`, in dim;
+The right column contains only `right now` or `last <window>`, in dim;
 retain the existing numeric coloring and width-dependent wrapping rules.
 
 The agents line counts scoped source identities by placement. Remove its
