@@ -89,7 +89,12 @@ def test_human_table_never_truncates_a_pointer_in_a_narrow_terminal() -> None:
         for line in rendered.splitlines()
         if line.strip() and set(line.strip()) == {"─"}
     ]
-    assert len(rules) == 3
+    assert len(rules) == 1
+    assert rendered.startswith("POINTER")
+    assert rules[0].startswith("─")
+    assert next(line for line in rendered.splitlines() if pointer in line).startswith(
+        pointer
+    )
     assert pointer in rendered
     assert "POINTER" in rendered
     assert "TYPE" in rendered

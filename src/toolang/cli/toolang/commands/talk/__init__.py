@@ -38,7 +38,7 @@ def talk_command(
         str | None,
         typer.Argument(
             metavar="conversation",
-            help="Conversation ID or shorthand; omit to list conversations",
+            help="Conversation ID or shorthand; use 'too convo list' to list conversations",
         ),
     ] = None,
     body: Annotated[
@@ -50,9 +50,7 @@ def talk_command(
     ] = None,
 ) -> None:
     if target is None:
-        from .directory import directory_command
-
-        directory_command(ctx)
+        typer.echo(ctx.get_help())
         return
     root = context_root(ctx)
     words = list(body or [])

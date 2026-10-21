@@ -193,7 +193,7 @@ class _TalkCommand(CliCommand):
         with formatter.section("Examples"):
             formatter.write_dl(
                 [
-                    (prefix, "List conversations"),
+                    (f"{ctx.find_root().info_name} convo list", "List conversations"),
                     (f"{prefix} alice", "Open a conversation with an agent"),
                     (f"{prefix} all", "Open the system group"),
                     (f"{prefix} alice,bob", "View a conversation between agents"),

@@ -74,7 +74,11 @@ from toolang.execution.types import (
 )
 
 from ...common.execution import open_execution
-from ...common.output import echo_table, format_local_timestamp
+from ...common.output import (
+    echo_collection_summary,
+    echo_table,
+    format_local_timestamp,
+)
 
 _SubjectKind = Literal[
     "agent",
@@ -495,10 +499,11 @@ def _render_execution_table(
             )
         )
         for index, header in enumerate(headers)
-    ) + 2 * len(headers)
+    ) + 2 * max(0, len(headers) - 1)
 
     table = Table(
         box=box.HORIZONTALS,
+        show_edge=False,
         header_style="",
         show_lines=False,
         pad_edge=False,
@@ -506,7 +511,14 @@ def _render_execution_table(
         width=minimum_width if minimum_width > console.width else None,
     )
     for header in headers:
-        table.add_column(header, no_wrap=True, overflow="ignore")
+        numeric = header in {"STEPS", "CHILD RUNS", "CHILD STEPS"}
+        table.add_column(
+            header,
+            justify="right" if numeric else "left",
+            no_wrap=True,
+            # Rich skips Text justification with overflow="ignore".
+            overflow="fold" if numeric else "ignore",
+        )
     for row in normalized:
         table.add_row(*row)
     console.print(table, crop=False)
@@ -1009,7 +1021,10 @@ def _render_projection_human(
     projection: _InspectProjection,
 ) -> None:
     if projection.kind == "records":
-        _render_collection(store, projection.subject)
+        subject = projection.subject
+        if subject.records:
+            _render_collection(store, subject)
+        echo_collection_summary(len(subject.records), subject.kind.removesuffix("s"))
         return
     if projection.kind == "fields":
         selected = projection.subject.selection
@@ -1061,7 +1076,11 @@ def _render_collection(
             )
             for item in items
         ]
-        echo_table(("THREAD", "TITLE", "RUNS", "STATUS", "UPDATED"), rows)
+        echo_table(
+            ("THREAD", "TITLE", "RUNS", "STATUS", "UPDATED"),
+            rows,
+            justify=("left", "left", "right", "left", "left"),
+        )
         return
     if subject.kind == "runs":
         items = tuple(
@@ -1767,6 +1786,7 @@ def _print_human_table(
     )
     table = Table(
         box=box.HORIZONTALS,
+        show_edge=False,
         header_style="",
         show_lines=False,
         collapse_padding=True,

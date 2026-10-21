@@ -126,7 +126,7 @@ def _list_plugins(
             if row[0] != "runtime" and not is_internal_toolset_name(row[0])
         ]
     if rows:
-        echo_table(("NAME", "PACKAGE"), rows)
+        echo_table((noun.upper(), "PACKAGE"), rows)
     echo_collection_summary(len(rows), noun)
 
 

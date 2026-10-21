@@ -60,6 +60,9 @@ preserves its history and rules; conversation deletion is unsupported. The syste
 listed with the initial name `all`; open it with `too talk all` or its ID from the
 directory. Its membership is maintained by Hub, while its name can change.
 
+`too convo list` displays the conversation directory. Bare `too talk` displays
+command help without reading Hub settings or connecting to Hub.
+
 Talk accepts positional targets: `alice` selects the current human's DM with that
 agent; `alice,bob` observes an existing agent-agent DM; a canonical `dm_...` or
 `gc_...` selects that existing conversation. Missing agent-agent DMs and unknown

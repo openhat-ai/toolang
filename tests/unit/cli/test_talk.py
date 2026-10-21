@@ -140,14 +140,36 @@ def test_directory_lists_conversations_and_interactive_requires_tty(
         AsyncMock(side_effect=AssertionError("unexpected metadata request")),
     )
     monkeypatch.setenv("TOOLANG_INPUTBOX_MAX_WIDTH", "invalid")
-    assert cli.main(["--root", str(tmp_path), "talk"]) == 0
+    assert cli.main(["--root", str(tmp_path), "convo", "list"]) == 0
     output = capsys.readouterr().out
     assert "gc_00000001" in output and "gc_00000000" in output
-    assert "CONVERSATION" in output and "2 conversations" in output
+    assert "CONVO" in output and "2 conversations" in output
     assert cli.main(["--root", str(tmp_path), "talk", "alice"]) == 1
     assert "TTY" in capsys.readouterr().err
     assert cli.main(["--root", str(tmp_path), "team"]) != 0
     assert cli.main(["--root", str(tmp_path), "alice,", "hello"]) != 0
+
+
+def test_talk_without_target_shows_help_without_reading_settings(
+    tmp_path, capsys, monkeypatch
+):
+    def reject_settings(*args, **kwargs):
+        pytest.fail("Talk help must not read settings or contact Hub")
+
+    (tmp_path / "config.toml").write_text("invalid TOML [")
+    monkeypatch.setattr(talk, "settings", reject_settings)
+    monkeypatch.setattr(talk, "HubClient", reject_settings)
+
+    assert cli.main(["--root", str(tmp_path), "talk"]) == 0
+
+    output = capsys.readouterr().out
+    assert "Usage:" in output
+    assert "too convo list" in output
+    assert "CONVO" not in output
+    listing_example = next(
+        line for line in output.splitlines() if "List conversations" in line
+    )
+    assert "convo list" in listing_example
 
 
 def test_system_shortcut_and_id_share_history_and_terminal_identity(
@@ -428,7 +450,7 @@ def test_directory_shows_previews_without_loading_agents_or_creating_conversatio
             return pair, own, {g["conversation"] for g in await human.contacts()}
 
     pair, own, before = asyncio.run(prepare())
-    assert cli.main(["--root", str(tmp_path), "talk"]) == 0
+    assert cli.main(["--root", str(tmp_path), "convo", "list"]) == 0
     output = capsys.readouterr().out
     rows = [row.split() for row in output.splitlines() if row.strip()]
     assert [row[0] for row in rows if row[0].startswith(("gc_", "dm_"))] == [
@@ -437,7 +459,7 @@ def test_directory_shows_previews_without_loading_agents_or_creating_conversatio
         "gc_00000001",
         "gc_00000000",
     ]
-    assert "CONVERSATION" in output and "NAME" in output
+    assert "CONVO" in output and "NAME" in output
     assert (
         "Team" not in output and "Presence" not in output and "too talk" not in output
     )
@@ -488,7 +510,7 @@ def test_directory_summarizes_three_or_more_members(participants, expected):
         ]
     )
     header, row, blank, summary = rendered.splitlines()
-    assert header.split() == ["CONVERSATION", "NAME", "MEMBERS", "UPDATED", "MESSAGE"]
+    assert header.split() == ["CONVO", "NAME", "MEMBERS", "UPDATED", "MESSAGE"]
     assert row[header.index("MEMBERS") : header.index("UPDATED")].strip() == expected
     assert blank == "" and summary == "1 conversation"
     assert max(map(cell_len, rendered.splitlines())) < 120
@@ -529,7 +551,7 @@ def test_directory_keeps_timestamps_and_messages_aligned(width):
     table, summary = rendered.strip().split("\n\n")
     lines = table.splitlines()
     assert summary == "4 conversations"
-    assert lines[0].split() == ["CONVERSATION", "NAME", "MEMBERS", "UPDATED", "MESSAGE"]
+    assert lines[0].split() == ["CONVO", "NAME", "MEMBERS", "UPDATED", "MESSAGE"]
     assert len(lines) == 5
     assert [line.split()[0] for line in lines[1:]] == [
         "gc_00000000",
@@ -1012,7 +1034,9 @@ def test_follow_reconnects_from_last_displayed_id_without_replaying_history(
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("arguments", [["talk"], ["talk", "gc_00000000", "hello"]])
+@pytest.mark.parametrize(
+    "arguments", [["convo", "list"], ["talk", "gc_00000000", "hello"]]
+)
 def test_messaging_commands_work_without_config_file(
     tmp_path, monkeypatch, capsys, arguments
 ):

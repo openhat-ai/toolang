@@ -7,6 +7,7 @@ import tempfile
 import pytest
 from rich.console import Console
 from rich.text import Text
+from typer._click.utils import strip_ansi
 
 from toolang.cli.common import output
 from toolang.cli.common.output import (
@@ -89,6 +90,33 @@ def test_table_preserves_explicit_cell_styles(monkeypatch) -> None:
     echo_table(("VALUE",), ((Text("unavailable", style="red"),),))
 
     assert "\x1b[31munavailable\x1b[0m" in rendered.getvalue()
+
+
+@pytest.mark.parametrize("terminal", [False, True])
+def test_table_starts_at_column_zero_with_only_a_header_rule(
+    monkeypatch, terminal
+) -> None:
+    rendered = StringIO()
+    monkeypatch.setattr(
+        output,
+        "_TABLE_CONSOLE",
+        Console(
+            file=rendered,
+            width=120,
+            force_terminal=terminal,
+            color_system="standard" if terminal else None,
+            _environ={},
+        ),
+    )
+
+    echo_table(("NAME", "STATUS"), ((Text("alice", style="cyan"), "ready"),))
+
+    header, rule, row = strip_ansi(rendered.getvalue()).splitlines()
+    assert header.startswith("NAME")
+    assert rule.startswith("─") and set(rule) == {"─"}
+    assert row.startswith("alice")
+    assert header.index("STATUS") == row.index("ready")
+    assert len(header) <= 120
 
 
 def test_info_avatar_uses_compact_logo(monkeypatch) -> None:

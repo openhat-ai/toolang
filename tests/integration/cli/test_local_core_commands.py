@@ -91,6 +91,125 @@ from toolang.common.layout import root_edit_lock_path
 runner = CliRunner()
 
 
+@pytest.mark.parametrize(
+    "command,noun",
+    [
+        (("list",), "agents"),
+        (("alice", "workspace", "list"), "workspaces"),
+        (("alice", "chore", "list"), "chores"),
+        (("alice", "inspect", "threads"), "threads"),
+        (("alice", "inspect", "runs"), "runs"),
+        (("alice", "inspect", "controls"), "controls"),
+    ],
+)
+def test_empty_lists_print_only_their_summary(tmp_path, command, noun):
+    root = tmp_path / "toolang"
+    if command != ("list",):
+        _create_agent(root)
+        if "inspect" in command:
+            RunStore(AgentLayout.resident(root, "alice").run_store).close()
+
+    result = _invoke(root, *command)
+
+    assert result.exit_code == 0, result.stderr
+    assert result.stdout == f"0 {noun}\n"
+
+
+@pytest.mark.parametrize("count", [1, 2])
+@pytest.mark.parametrize(
+    "collection,noun,heading",
+    [
+        ("agents", "agent", "AGENT"),
+        ("workspaces", "workspace", "WORKSPACE"),
+        ("chores", "chore", "CHORE"),
+        ("threads", "thread", "THREAD"),
+        ("runs", "run", "RUN"),
+        ("steps", "step", "STEP"),
+        ("controls", "control", "CONTROL"),
+    ],
+)
+def test_lists_have_flush_left_tables_and_displayed_record_summaries(
+    tmp_path, collection, noun, heading, count
+):
+    root = tmp_path / "toolang"
+    if collection == "agents":
+        for index in range(count):
+            _create_agent(root, name=f"agent{index}")
+        command = ("list",)
+    else:
+        _create_agent(root)
+        layout = AgentLayout.resident(root, "alice")
+        if collection == "workspaces":
+            layout.config.write_text(
+                "[workspaces]\n"
+                + "".join(
+                    f'work{index} = "/tmp/work{index}"\n' for index in range(count)
+                )
+            )
+            command = ("alice", "workspace", "list")
+        elif collection == "chores":
+            layout.program.write_text(
+                "agic:\n  {{_}}\n\n"
+                + "\n".join(f"chore work{index}:\n  Work.\n" for index in range(count))
+            )
+            command = ("alice", "chore", "list")
+        else:
+            with closing(RunStore(layout.run_store)) as store:
+                if collection in {"threads", "controls"}:
+                    for index in range(count):
+                        store.create_thread(
+                            thread_id=f"chat_list_{index}",
+                            created_at="2026-01-01T00:00:00Z",
+                        )
+                else:
+                    for index in range(1 if collection == "steps" else count):
+                        run = project_run_start(
+                            store,
+                            run_id=f"run_list_{index}",
+                            thread_id="chat_list",
+                            input=Message.user("List this run"),
+                        )
+                        if collection == "steps":
+                            for step_index in range(count):
+                                project_step(
+                                    store,
+                                    run_id=run.id,
+                                    step_index=step_index,
+                                    kind="value",
+                                    status="succeeded",
+                                    input=(),
+                                    output=(),
+                                    started_at="2026-01-01T00:00:00Z",
+                                    finished_at="2026-01-01T00:00:01Z",
+                                )
+                        project_run_end(store, run_id=run.id)
+            command = (
+                ("alice", "inspect", "run_list_0", "steps")
+                if collection == "steps"
+                else ("alice", "inspect", collection)
+            )
+
+    result = _invoke(root, *command)
+
+    assert result.exit_code == 0, result.stderr
+    lines = strip_ansi(result.stdout).splitlines()
+    assert lines[0].startswith(heading)
+    assert lines[1].startswith("─") and set(lines[1]) == {"─"}
+    assert lines[2] and not lines[2].startswith(" ")
+    assert lines[-2] == ""
+    assert lines[-1] == f"{count} {noun if count == 1 else noun + 's'}"
+    assert sum(set(line) == {"─"} for line in lines) == 1
+    numeric_headers = {
+        "agents": ("PORT",),
+        "threads": ("RUNS",),
+        "runs": ("STEPS",),
+        "steps": ("CHILD RUNS", "CHILD STEPS"),
+    }
+    for header in numeric_headers.get(collection, ()):
+        right_edge = lines[0].index(header) + len(header)
+        assert all(row[right_edge - 1] != " " for row in lines[2:-2])
+
+
 def test_workspace_list_excludes_implicit_lab_and_does_not_prepare_state(
     tmp_path: Path,
 ) -> None:
@@ -101,7 +220,7 @@ def test_workspace_list_excludes_implicit_lab_and_does_not_prepare_state(
 
     assert result.exit_code == 0, result.stderr
     assert "lab" not in result.stdout
-    assert "AVAILABLE" in result.stdout
+    assert result.stdout == "0 workspaces\n"
     assert "Workdir:" not in result.stdout
     layout = AgentLayout.resident(root, "alice")
     assert not layout.agent_state.exists()
@@ -128,7 +247,7 @@ def test_workspace_commands_preserve_config_and_never_delete_data(
     assert added.exit_code == 0, added.stderr
     assert f"Workspace toolang-sdk added: {workspace}" in added.stdout
     assert listed.exit_code == 0, listed.stderr
-    assert "NAME" in listed.stdout
+    assert "WORKSPACE" in listed.stdout
     assert "PATH" in listed.stdout
     assert "AVAILABLE" in listed.stdout
     assert "toolang-sdk" in listed.stdout
@@ -1066,6 +1185,7 @@ def test_inspect_lists_root_and_related_record_subjects(
         "run_subject_first",
     ]
     assert human_runs.exit_code == 0, human_runs.stderr
+    assert human_runs.stdout.endswith("\n\n4 runs\n")
     human_run_lines = [
         " ".join(line.split()) for line in strip_ansi(human_runs.stdout).splitlines()
     ]
@@ -1081,6 +1201,7 @@ def test_inspect_lists_root_and_related_record_subjects(
     assert "agic:test succeeded 0 chat_subject run_subject_first.2" in child_run_line
     assert child_run_line.split()[-1] == "2026-01-01T20:00:00+08:00"
     assert human_scoped_runs.exit_code == 0, human_scoped_runs.stderr
+    assert human_scoped_runs.stdout.endswith("\n\n3 runs\n")
     human_scoped_lines = [
         " ".join(line.split())
         for line in strip_ansi(human_scoped_runs.stdout).splitlines()
@@ -1207,8 +1328,7 @@ def test_inspect_collections_are_unbounded_and_empty_stores_succeed(
     assert empty_threads.exit_code == 0, empty_threads.stderr
     assert json.loads(empty_threads.stdout) == []
     assert empty_runs.exit_code == 0, empty_runs.stderr
-    assert "RUN" in empty_runs.stdout
-    assert "STEPS" in empty_runs.stdout
+    assert empty_runs.stdout == "0 runs\n"
     assert empty_controls.exit_code == 0, empty_controls.stderr
     assert json.loads(empty_controls.stdout) == []
 
@@ -1697,6 +1817,7 @@ def test_inspect_projects_run_tree_and_container_step_call(tmp_path: Path) -> No
     assert child_runs.exit_code == 0, child_runs.stderr
     assert [item["id"] for item in json.loads(child_runs.stdout)] == [child.id]
     assert human_child_runs.exit_code == 0, human_child_runs.stderr
+    assert human_child_runs.stdout.endswith("\n\n1 run\n")
     child_run_lines = [
         " ".join(line.split())
         for line in strip_ansi(human_child_runs.stdout).splitlines()
@@ -1972,10 +2093,7 @@ def test_inspect_empty_step_relations_and_container_call_succeed(
     assert loop_runs.exit_code == 0 and json.loads(loop_runs.stdout) == []
     assert loop_steps.exit_code == 0 and json.loads(loop_steps.stdout) == []
     assert loop_steps_human.exit_code == 0, loop_steps_human.stderr
-    assert "STEP ACTIVITY CHILD RUNS CHILD STEPS CREATED OCCUR" in " ".join(
-        loop_steps_human.stdout.split()
-    )
-    assert "PARENT STEP" not in loop_steps_human.stdout
+    assert loop_steps_human.stdout == "0 steps\n"
     assert loop_call.exit_code == 0, loop_call.stderr
     assert [item["pointer"] for item in json.loads(loop_call.stdout)] == [str(loop.ref)]
     assert invalid_steps.exit_code == 2
@@ -3571,8 +3689,13 @@ def test_plugin_inventory_commands_list_entry_points_and_handle_empty_groups(
 
     assert result.exit_code == 0
     output = strip_ansi(result.stdout)
-    assert "NAME" in output and "PACKAGE" in output
-    assert header not in output and "SOURCE" not in output
+    assert output.startswith(header)
+    assert output.splitlines()[1].startswith("─")
+    assert not output.splitlines()[2].startswith(" ")
+    assert output.splitlines()[-2] == ""
+    assert output.splitlines()[-1].startswith("1 ")
+    assert output.splitlines()[0].split() == [header, "PACKAGE"]
+    assert "SOURCE" not in output
     assert plugin_name in output
     assert "external-package" in output
     assert requested == [group]

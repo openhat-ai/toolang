@@ -169,7 +169,7 @@ def test_invalid_utf8_upload_has_a_concise_error_and_preserves_rules(
     assert invoke(root, "rules", conversation).stdout == ""
 
 
-def test_membership_create_and_shared_list(conversations):
+def test_membership_create_and_list(conversations):
     root, _, _ = conversations
     result = invoke(root, "create", "members")
     assert result.exit_code == 0, result.output
@@ -177,7 +177,9 @@ def test_membership_create_and_shared_list(conversations):
     result = invoke(root, "list")
     assert result.exit_code == 0 and "JOINED" in result.output
     talk = CliRunner().invoke(cli.app, ["--root", str(root), "talk"])
-    assert talk.exit_code == 0 and talk.output == result.output
+    assert talk.exit_code == 0
+    assert "Usage:" in talk.output
+    assert "CONVO" not in talk.output
     assert invoke(root, "leave", conversation).exit_code == 0
     assert invoke(root, "join", conversation).exit_code == 0
     result = invoke(root)
