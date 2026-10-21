@@ -120,6 +120,8 @@ Every call adds one runtime user message ordered `workspace`, `workdir`, optiona
 `routes`, optional `context`, then `execution`. Authored roles and multimodal parts
 remain separate. In routes, `hands` limits run, `handoffs` limits exec, and `spawns`
 follows hands. Each attribute is `ALL`, `NONE`, or comma-separated canonical refs.
+Restricted targets named `ALL` or `NONE` use FQNs to distinguish their names
+from the protocol's unrestricted and disabled sentinels.
 All three attributes are present if any scope is restricted; otherwise the tag is
 omitted. Absence in the newest runtime message means ALL, regardless of older tags.
 Scopes do not filter active-path targets: runtime guards still reject run to self

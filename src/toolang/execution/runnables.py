@@ -98,7 +98,9 @@ class AgicRoutes:
             if not references or references == ("*",):
                 return "ALL"
             refs = (
-                runnable_ref(state, route.runnable)
+                route.runnable.qualified
+                if route.runnable.name in {"ALL", "NONE"}
+                else runnable_ref(state, route.runnable)
                 for route in self.resolved
                 if action in route.actions
             )
@@ -169,7 +171,10 @@ def resolve_agic_routes(
                 if any(
                     item.name == ref.name
                     and (ref.kind is None or item.executable.kind == ref.kind)
-                    and (ref.module is None or item.module == ref.module)
+                    and (
+                        ref.module is None
+                        or item.module == normalize_module_name(ref.module)
+                    )
                     for ref in refs
                 )
             )

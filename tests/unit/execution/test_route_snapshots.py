@@ -52,14 +52,21 @@ def _render(state: AgentState, routes: AgicRoutes) -> str:
 @pytest.mark.parametrize(
     "name", ["DeepSearch", "deep-search", "_review", "ALL", "NONE"]
 )
-@pytest.mark.parametrize("qualified", [False, True])
+@pytest.mark.parametrize(
+    "qualification", ["name", "module", "typed-module", "legacy-module"]
+)
 @pytest.mark.parametrize("directive,action", [("hands", "run"), ("handoffs", "exec")])
 @pytest.mark.parametrize("kind", ["agic", "flow"])
 def test_routes_resolve_portable_exported_runnable_names(
-    name, qualified, directive, action, kind
+    name, qualification, directive, action, kind
 ):
-    module = f"{name}"
-    reference = f"{module}::{kind}:{name}" if qualified else name
+    module = name
+    reference = {
+        "name": name,
+        "module": f"{module}::{name}",
+        "typed-module": f"{module}::{kind}:{name}",
+        "legacy-module": f"runnables::{module}::{kind}:{name}",
+    }[qualification]
     other = "handoffs" if directive == "hands" else "hands"
     state = _state(
         f"agic caller:\n  {directive} = {reference}\n  {other} = none\n  Work.\n"
@@ -89,9 +96,19 @@ def test_routes_resolve_portable_exported_runnable_names(
     target = routes.resolved[0]
     assert target.runnable.name == name
     assert target.runnable.module == module
+    expected = f"{module}::{name}" if name in {"ALL", "NONE"} else name
     assert (
         dict(zip(("hands", "handoffs", "spawns"), routes.scopes(state)))[directive]
-        == f"{name}"
+        == expected
+    )
+    assert _document(_render(state, routes))[directive] == expected
+    default_other = replace(
+        caller,
+        directives=tuple(item for item in caller.directives if item.name != other),
+    )
+    assert (
+        _document(_render(state, resolve_agic_routes(state, default_other)))[directive]
+        == expected
     )
     assert target.actions == (("run", "spawn") if action == "run" else (action,))
 
