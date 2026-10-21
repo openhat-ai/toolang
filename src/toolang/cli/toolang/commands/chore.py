@@ -66,7 +66,7 @@ def list_chores(ctx: typer.Context) -> None:
         return
     echo_table(
         (
-            "NAME",
+            "CHORE",
             "TITLE",
             "STATUS",
             "LAST RUN",

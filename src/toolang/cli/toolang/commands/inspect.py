@@ -511,7 +511,14 @@ def _render_execution_table(
         width=minimum_width if minimum_width > console.width else None,
     )
     for header in headers:
-        table.add_column(header, no_wrap=True, overflow="ignore")
+        numeric = header in {"STEPS", "CHILD RUNS", "CHILD STEPS"}
+        table.add_column(
+            header,
+            justify="right" if numeric else "left",
+            no_wrap=True,
+            # Rich skips Text justification with overflow="ignore".
+            overflow="fold" if numeric else "ignore",
+        )
     for row in normalized:
         table.add_row(*row)
     console.print(table, crop=False)
@@ -1069,7 +1076,11 @@ def _render_collection(
             )
             for item in items
         ]
-        echo_table(("THREAD", "TITLE", "RUNS", "STATUS", "UPDATED"), rows)
+        echo_table(
+            ("THREAD", "TITLE", "RUNS", "STATUS", "UPDATED"),
+            rows,
+            justify=("left", "left", "right", "left", "left"),
+        )
         return
     if subject.kind == "runs":
         items = tuple(

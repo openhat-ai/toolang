@@ -105,12 +105,17 @@ and distribution packages. They do not invoke factories or load agent settings.
 from the configured resources exposed by `tools` and `models`.
 
 Shared list and inspection tables start at terminal column zero, with one header
-separator and no outer border rules. Nonempty lists end with one blank line
+separator and no outer border rules. Agent, workspace, chore, and plugin inventory
+lists label the first column with the singular object kind, such as `AGENT`,
+`WORKSPACE`, `CHORE`, or `ADAPTER`. Nonempty lists end with one blank line
 followed by an unindented count of the displayed records; resource lists retain
 their group counts. Empty lists print only `0 <items>`, such as `0 agents` or
 `0 workspaces`.
 Inspection record, value, and tree tables use the same border style; collection
-counts apply only to the thread, run, step, and control lists.
+counts apply only to the thread, run, step, and control lists. Conversation
+directory tables label their identifier column `CONVO`.
+Agent ports and inspection run, step, and child counts are right-aligned; text
+fields retain their existing alignment.
 
 ## Historical inspection
 

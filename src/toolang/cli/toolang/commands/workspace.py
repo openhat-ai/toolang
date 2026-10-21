@@ -98,7 +98,7 @@ def list_workspaces(ctx: typer.Context) -> None:
     )
     if workspaces:
         echo_table(
-            ("NAME", "PATH", "AVAILABLE"),
+            ("WORKSPACE", "PATH", "AVAILABLE"),
             tuple(
                 (name, path, "yes" if Path(path).is_dir() else "no")
                 for name, path in workspaces.items()

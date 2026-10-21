@@ -120,8 +120,8 @@ def test_empty_lists_print_only_their_summary(tmp_path, command, noun):
     "collection,noun,heading",
     [
         ("agents", "agent", "AGENT"),
-        ("workspaces", "workspace", "NAME"),
-        ("chores", "chore", "NAME"),
+        ("workspaces", "workspace", "WORKSPACE"),
+        ("chores", "chore", "CHORE"),
         ("threads", "thread", "THREAD"),
         ("runs", "run", "RUN"),
         ("steps", "step", "STEP"),
@@ -199,6 +199,15 @@ def test_lists_have_flush_left_tables_and_displayed_record_summaries(
     assert lines[-2] == ""
     assert lines[-1] == f"{count} {noun if count == 1 else noun + 's'}"
     assert sum(set(line) == {"─"} for line in lines) == 1
+    numeric_headers = {
+        "agents": ("PORT",),
+        "threads": ("RUNS",),
+        "runs": ("STEPS",),
+        "steps": ("CHILD RUNS", "CHILD STEPS"),
+    }
+    for header in numeric_headers.get(collection, ()):
+        right_edge = lines[0].index(header) + len(header)
+        assert all(row[right_edge - 1] != " " for row in lines[2:-2])
 
 
 def test_workspace_list_excludes_implicit_lab_and_does_not_prepare_state(
@@ -238,7 +247,7 @@ def test_workspace_commands_preserve_config_and_never_delete_data(
     assert added.exit_code == 0, added.stderr
     assert f"Workspace toolang-sdk added: {workspace}" in added.stdout
     assert listed.exit_code == 0, listed.stderr
-    assert "NAME" in listed.stdout
+    assert "WORKSPACE" in listed.stdout
     assert "PATH" in listed.stdout
     assert "AVAILABLE" in listed.stdout
     assert "toolang-sdk" in listed.stdout
@@ -3680,13 +3689,13 @@ def test_plugin_inventory_commands_list_entry_points_and_handle_empty_groups(
 
     assert result.exit_code == 0
     output = strip_ansi(result.stdout)
-    assert output.startswith("NAME")
+    assert output.startswith(header)
     assert output.splitlines()[1].startswith("─")
     assert not output.splitlines()[2].startswith(" ")
     assert output.splitlines()[-2] == ""
     assert output.splitlines()[-1].startswith("1 ")
-    assert "NAME" in output and "PACKAGE" in output
-    assert header not in output and "SOURCE" not in output
+    assert output.splitlines()[0].split() == [header, "PACKAGE"]
+    assert "SOURCE" not in output
     assert plugin_name in output
     assert "external-package" in output
     assert requested == [group]

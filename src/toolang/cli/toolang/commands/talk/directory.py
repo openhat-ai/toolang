@@ -88,7 +88,7 @@ def _print_directory(
         )
 
     headers = (
-        "CONVERSATION",
+        "CONVO",
         "NAME",
         "MEMBERS",
         "UPDATED",
@@ -139,7 +139,7 @@ def _print_directory(
     )
     # Rich may shrink fixed widths when the terminal is too narrow. Keep IDs
     # and the pre-truncated member counts intact with explicit minimum widths.
-    table.add_column("CONVERSATION", min_width=id_width, no_wrap=True)
+    table.add_column("CONVO", min_width=id_width, no_wrap=True)
     table.add_column("NAME", max_width=name_limit, no_wrap=True, overflow="ellipsis")
     table.add_column(
         "MEMBERS",

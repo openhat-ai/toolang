@@ -167,7 +167,11 @@ def list_agents(ctx: typer.Context) -> None:
         )
         for item in items
     ]
-    echo_table(("AGENT", "STATUS", "SANDBOX", "PORT", "WEBUI"), rows)
+    echo_table(
+        ("AGENT", "STATUS", "SANDBOX", "PORT", "WEBUI"),
+        rows,
+        justify=("left", "left", "left", "right", "left"),
+    )
     echo_collection_summary(len(items), "agent")
 
 

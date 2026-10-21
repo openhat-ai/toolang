@@ -1296,7 +1296,7 @@ def test_adapters_lists_installed_metadata_without_loading_setup_or_plugins(
         assert result.exit_code == 0, result.exception
         assert "unloadable_adapter" in result.stdout
         assert "external-package" in result.stdout
-        assert "NAME" in result.stdout and "PACKAGE" in result.stdout
+        assert result.stdout.splitlines()[0].split() == ["ADAPTER", "PACKAGE"]
 
 
 @pytest.mark.parametrize("command", ["models", "providers"])
