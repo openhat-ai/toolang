@@ -93,9 +93,20 @@ def require_compatible(layout: AgentLayout, requested: Mapping[str, object]) -> 
         )
     )
     if different:
+        labels = {
+            "endpoint_host": "endpoint host",
+            "ceiling_overrides": "allowed resources",
+            "default_overrides": "run defaults",
+            "limit_overrides": "run limits",
+            "compact_override": "compaction model",
+            "workspace_additions": "workspace bindings",
+            "model_catalog": "model catalog",
+            "development": "development wheel",
+            "development_digest": "development wheel contents",
+        }
         raise ValueError(
             "startup parameters differ: "
-            + ", ".join(different)
+            + ", ".join(labels.get(key, key) for key in different)
             + "; stop and restart the agent to change these settings"
         )
 

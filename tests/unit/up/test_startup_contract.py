@@ -37,9 +37,9 @@ def test_explicit_settings_match_without_repeating_unrelated_bindings(tmp_path):
     require_compatible(layout, {"workspace_additions": {"repo": "/one"}})
     with pytest.raises(ValueError, match="startup parameters differ: port.*restart"):
         require_compatible(layout, {"port": 8124})
-    with pytest.raises(ValueError, match="workspace_additions"):
+    with pytest.raises(ValueError, match="workspace bindings"):
         require_compatible(layout, {"workspace_additions": {"repo": "/elsewhere"}})
-    with pytest.raises(ValueError, match="limit_overrides"):
+    with pytest.raises(ValueError, match="run limits"):
         require_compatible(layout, {"limit_overrides": {"tokens": 2000}})
 
 
@@ -92,7 +92,7 @@ def test_legacy_aggregate_bindings_still_verify_exact_explicit_settings(tmp_path
     require_compatible(
         layout, {"workspace_additions": {"repo": "/one", "other": "/two"}}
     )
-    with pytest.raises(ValueError, match="workspace_additions.*restart"):
+    with pytest.raises(ValueError, match="workspace bindings.*restart"):
         require_compatible(layout, {"workspace_additions": {"repo": "/one"}})
 
 
@@ -128,7 +128,7 @@ def test_explicit_catalog_matches_effective_dotenv_and_process_inputs(
         resolve_attachment_requirements(sandbox="host", model_catalog=selected),
     )
     other = dotenv_catalog if process_override else process_catalog
-    with pytest.raises(ValueError, match="model_catalog"):
+    with pytest.raises(ValueError, match="model catalog"):
         require_compatible(
             layout,
             resolve_attachment_requirements(sandbox="host", model_catalog=other),

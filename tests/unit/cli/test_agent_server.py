@@ -411,7 +411,7 @@ def test_running_server_retains_or_verifies_explicit_startup_settings(
         wheel.write_bytes(b"changed wheel")
         with pytest.raises(
             agent_server.AgentServerAcquisitionError,
-            match="development_digest.*restart",
+            match="development wheel contents.*restart",
         ):
             with agent_server.acquire_agent_server(
                 layout, sandbox="docker", ui_base_url="https://ui.test", **options
@@ -1338,7 +1338,7 @@ def test_running_server_cannot_rebind_workspace_names(
     else:
         with pytest.raises(
             agent_server.AgentServerAcquisitionError,
-            match="startup parameters differ: workspace_additions",
+            match="startup parameters differ: workspace bindings",
         ):
             with agent_server.acquire_agent_server(
                 layout, sandbox=None, workspace_additions=requested
