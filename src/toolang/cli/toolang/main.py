@@ -65,7 +65,7 @@ _AGENT_PANEL_COMMAND_ORDER = (
     "remove",
     "list",
     "info",
-    "home",
+    "cd",
 )
 _RUNTIME_PANEL_COMMAND_ORDER = ("serve", "start", "stop", "hub")
 _WORK_PANEL_COMMAND_ORDER = ("chat", "talk", "chore", "convo", "workspace")
@@ -159,10 +159,8 @@ class _TargetSetupCommand(OptionalPrefixAgentSetupCommand):
     )
 
 
-class _HomeCommand(OptionalPrefixAgentCommand):
-    argument_help = (
-        "Agent name, .too path, GitHub ref, or URL; omit for the Toolang root"
-    )
+class _CdCommand(OptionalPrefixAgentCommand):
+    argument_help = "Agent name, .too path, GitHub ref, or URL"
 
 
 class _TopCommand(OptionalPrefixAgentCommand):
@@ -400,10 +398,11 @@ _registered_command(
     rich_help_panel=AGENT_COMMAND_PANEL,
 )
 _registered_command(
-    "home",
-    "toolang.cli.toolang.commands.home:home",
-    help="Open a shell in agent home",
-    cls=_HomeCommand,
+    "cd",
+    "toolang.cli.toolang.commands.cd:cd",
+    help="Enter an agent home, or the Toolang root if no agent is specified",
+    short_help="Enter an agent home",
+    cls=_CdCommand,
     rich_help_panel=AGENT_COMMAND_PANEL,
 )
 _registered_group(

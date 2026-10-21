@@ -129,7 +129,7 @@ Below are some common commands. Run `too --help` for usage details, or `too more
 too new AGENT                # Create an agent
 too clone REF AGENT          # Clone an agent
 too AGENT info               # Show agent information
-too AGENT home               # Open a shell in the agent home
+too AGENT cd                 # Enter an agent home
 too AGENT start              # Start an agent in the background
 too AGENT stop               # Stop an agent
 too AGENT chat               # Chat directly with an agent

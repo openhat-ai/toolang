@@ -62,6 +62,11 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   column, color agent names by placement, and dim instance IDs.
   ([#886](https://github.com/openhat-ai/toolang/pull/886))
 
+- **Breaking:** `too [AGENT] home` becomes `too [AGENT] cd` with no alias, so
+  scripts that call `home` must call `cd`; `cd` prints the resolved agent name
+  and destination path before starting the shell.
+  ([#887](https://github.com/openhat-ai/toolang/pull/887))
+
 ### Fixed
 
 - Failed preparation no longer leaves active registrations; runtime references

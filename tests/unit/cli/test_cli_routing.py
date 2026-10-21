@@ -191,7 +191,7 @@ def test_thread_option_registration_keeps_chat_runtime_imports_lazy() -> None:
         ("new", {"none"}, set()),
         ("remove", {"after"}, {"resident"}),
         ("info", {"before", "after"}, {"resident", "roaming", "visiting"}),
-        ("home", {"none", "before"}, {"resident", "visiting", "roaming"}),
+        ("cd", {"none", "before"}, {"resident", "visiting", "roaming"}),
         ("workspace", {"before"}, {"resident", "roaming", "visiting"}),
         ("skill", {"none", "before"}, {"resident", "roaming", "visiting"}),
         ("models", {"none", "before"}, {"resident", "roaming", "visiting"}),
@@ -344,7 +344,7 @@ def test_cli_visible_commands_follow_the_public_panel_order(arguments, capsys) -
             "remove",
             "list",
             "info",
-            "home",
+            "cd",
         ),
         "Cap commands": ("psyche", "skill", "service", "prompt"),
         "Runtime commands": ("serve", "start", "stop", "hub"),
@@ -403,7 +403,7 @@ def test_cli_exposes_plural_list_resources_and_removes_channels() -> None:
     group = typer.main.get_command(cli.app)
     expected_help = {
         "inspect": "Inspect agent runs",
-        "home": "Open a shell in agent home",
+        "cd": "Enter an agent home, or the Toolang root if no agent is specified",
         "caps": "List available caps",
         "models": "List available models",
         "providers": "List available model providers",
@@ -415,7 +415,16 @@ def test_cli_exposes_plural_list_resources_and_removes_channels() -> None:
     }
 
     assert isinstance(group, TyperGroup)
-    removed = {"threads", "runs", "model", "tool", "catalog", "toolset", "sandbox"}
+    removed = {
+        "threads",
+        "runs",
+        "model",
+        "tool",
+        "catalog",
+        "toolset",
+        "sandbox",
+        "home",
+    }
     assert removed.isdisjoint(group.commands)
     assert expected_help.keys() <= group.commands.keys()
     assert {name: group.commands[name].help for name in expected_help} == expected_help

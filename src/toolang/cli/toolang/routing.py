@@ -83,9 +83,7 @@ COMMAND_SPECS: Mapping[str, CommandSpec] = {
             prepare="layout",
             preparation_owner="command",
         ),
-        _command(
-            "home", "none", "before", placements=_ALL_PLACEMENTS, prepare="program"
-        ),
+        _command("cd", "none", "before", placements=_ALL_PLACEMENTS, prepare="program"),
         _command(
             "serve",
             "before",
@@ -571,8 +569,8 @@ def _selected_command_args(
 def _preparation(
     spec: CommandSpec, body: list[str], position: TargetPosition
 ) -> Preparation | None:
-    if spec.name == "home":
-        from .commands.home import should_prepare_target
+    if spec.name == "cd":
+        from .commands.cd import should_prepare_target
 
         arguments = _selected_command_args(body, position, target="")[1:]
         if not should_prepare_target(arguments):
