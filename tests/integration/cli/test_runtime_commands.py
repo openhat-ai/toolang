@@ -976,7 +976,7 @@ def test_remove_deletes_stopped_agent_home_without_authored_source(
 
     assert listed.exit_code == 0, listed.stderr
     assert "alice" in listed.stdout
-    assert "stopped" in listed.stdout
+    assert "not running" in listed.stdout
     assert removed.exit_code == 0, removed.stderr
     assert removed.stdout.strip() == "Agent alice removed"
     assert not layout.home.exists()

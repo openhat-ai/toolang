@@ -210,6 +210,35 @@ def test_lists_have_flush_left_tables_and_displayed_record_summaries(
         assert all(row[right_edge - 1] != " " for row in lines[2:-2])
 
 
+@pytest.mark.parametrize(
+    "status", ["stopped", "preparing", "starting", "running", "failed", "unknown"]
+)
+def test_agent_list_uses_not_running_for_stopped_display_only(
+    tmp_path, monkeypatch, status
+):
+    snapshot = agents.AgentStatus(
+        name="alice",
+        status=status,
+        endpoint=None,
+        api_url=None,
+        webui_url=None,
+        sandbox=None,
+    )
+    monkeypatch.setattr(agents.AgentProcess, "list", lambda *args, **kwargs: [snapshot])
+
+    result = _invoke(tmp_path, "list")
+
+    assert result.exit_code == 0, result.stderr
+    lines = strip_ansi(result.stdout).splitlines()
+    start = lines[0].index("STATUS")
+    end = lines[0].index("SANDBOX")
+    assert lines[2][start:end].strip() == (
+        "not running" if status == "stopped" else status
+    )
+    assert snapshot.status == status
+    assert lines[-2:] == ["", "1 agent"]
+
+
 def test_workspace_list_excludes_implicit_lab_and_does_not_prepare_state(
     tmp_path: Path,
 ) -> None:

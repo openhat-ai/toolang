@@ -113,7 +113,9 @@ their group counts. Empty lists print only `0 <items>`, such as `0 agents` or
 `0 workspaces`.
 Inspection record, value, and tree tables use the same border style; collection
 counts apply only to the thread, run, step, and control lists. Conversation
-directory tables label their identifier column `CONVO`.
+directory tables use the same border and plain count style, label their identifier
+column `CONVO`, and right-align `JOINED`.
+`too list` displays the `stopped` process state as `not running`.
 Agent ports and inspection run, step, and child counts are right-aligned; text
 fields retain their existing alignment.
 

@@ -4,6 +4,7 @@ import asyncio
 from datetime import datetime
 
 import typer
+from rich import box
 from rich.console import Console
 from rich.table import Table
 from rich.text import Text
@@ -38,7 +39,7 @@ def _print_directory(
 ) -> None:
     """Render a snapshot using the caller's console and local clock."""
     if not conversations:
-        console.print("0 conversations")
+        console.print("0 conversations", highlight=False)
         return
 
     times = {
@@ -105,7 +106,8 @@ def _print_directory(
     members_min_width = max(len("MEMBERS"), max(map(len, member_suffixes)) + 1)
     # Protect timestamps and previews, then share the remaining space between
     # names and members. Short cells release their unused space to the other column.
-    padding_width = len(headers) - 1
+    # Each gap includes collapsed cell padding and the box separator's space.
+    padding_width = 2 * (len(headers) - 1)
     preview_width = min(message_width, _PREVIEW_MIN_WIDTH)
     metadata_width = max(
         len("NAME") + members_min_width,
@@ -131,7 +133,8 @@ def _print_directory(
         - joined_width,
     )
     table = Table(
-        box=None,
+        box=box.HORIZONTALS,
+        show_edge=False,
         header_style="",
         show_lines=False,
         pad_edge=False,
@@ -153,7 +156,7 @@ def _print_directory(
         "MESSAGE", max_width=message_limit, no_wrap=True, overflow="ellipsis"
     )
     if human is not None:
-        table.add_column("JOINED", width=joined_width, no_wrap=True)
+        table.add_column("JOINED", width=joined_width, justify="right", no_wrap=True)
     for row, suffix in zip(rows, member_suffixes):
         if suffix and row[2].cell_len > members_limit:
             names = Text(row[2].plain[: -len(suffix)])
@@ -163,7 +166,9 @@ def _print_directory(
     console.print(table)
     console.print()
     count = len(conversations)
-    console.print(f"{count} {'conversation' if count == 1 else 'conversations'}")
+    console.print(
+        f"{count} {'conversation' if count == 1 else 'conversations'}", highlight=False
+    )
 
 
 def directory_command(ctx: typer.Context) -> None:
