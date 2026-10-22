@@ -195,8 +195,8 @@ full-match regular expression when another process variable is required:
 environment_allow_pattern = '^(?:COMPANY_CATALOG_TOKEN|HTTPS?_PROXY)$'
 ```
 
-The configured pattern replaces the default and is compiled as written. Place
-dotenv values are overlaid by home dotenv values without applying the pattern.
+The configured pattern replaces the default and is compiled as written. Agent
+root dotenv values are overlaid by home dotenv values without applying the pattern.
 A host-process value overrides those layers only when its name matches the
 pattern.
 

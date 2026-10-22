@@ -330,7 +330,7 @@ In tmux, foreground commands also publish pane-local string options:
 | Option | Value |
 | --- | --- |
 | `@toolang_kind` | `chat`, `talk`, `top`, `serve`, `run`, or `rerun` |
-| `@toolang_root` | Selected root path |
+| `@toolang_root` | Selected Toolang root path |
 | `@toolang_agent` | Bare agent name; empty for Talk, team Top, and hub serve |
 | `@toolang_thread` | Chat thread ID, once created |
 | `@toolang_run` | Actual executing run ID, once allocated or accepted |
