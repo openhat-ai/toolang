@@ -243,7 +243,7 @@ def test_agents_reconnect_through_hub_without_direct_backend_access(valkey, tmp_
                 # Redis/Valkey is live, but no Hub exists. Neither agent registers
                 # or publishes directly; both still execute and stream over HTTP.
                 runs = {name: await local_run(name) for name in agents}
-                assert await driver._call("DBSIZE") == 0
+                assert await driver._client.dbsize() == 0
                 async with AgentClient(tmp_path, actor="agent:alice") as remote:
                     with pytest.raises(BackendUnavailable):
                         await remote.targets()

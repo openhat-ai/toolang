@@ -596,7 +596,7 @@ def test_teaming_consumers_share_scoped_configuration(tmp_path, monkeypatch, ena
     assert (
         resolved.backend
         == setup.teaming.root.backend
-        == BackendConfig("redis://localhost:6379/0")
+        == BackendConfig("redis://localhost:6379/0", root=str(tmp_path.resolve()))
     )
     assert resolved.human == setup.teaming.root.human
 

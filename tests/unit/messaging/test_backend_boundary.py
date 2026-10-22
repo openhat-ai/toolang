@@ -35,7 +35,9 @@ def test_hub_uses_injected_contracts_for_lifespan_messages_and_events():
         message = Message(str(uuid4()), "human:owner", "Hello")
         backend.contacts.return_value = [(convo, [("1-0", {"data": message.encode()})])]
         client = MessagingClient(
-            BackendConfig("redis://unused"), actor="human:owner", backend=backend
+            BackendConfig("redis://unused", root="/test/toolang"),
+            actor="human:owner",
+            backend=backend,
         )
         app = create_app(client, version="0.4.0-test")
         async with (

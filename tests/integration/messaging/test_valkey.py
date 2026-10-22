@@ -1,6 +1,7 @@
 """Opt-in wire and terminal checks; never touch the user's Valkey or tmux."""
 
 import asyncio
+from dataclasses import replace
 import json
 from pathlib import Path
 import shlex
@@ -19,7 +20,7 @@ from rich.console import Console
 from rich.text import Text
 
 from toolang.teaming.messaging import MessagingClient
-from toolang.teaming.backend.valkey.keys import PRESENCE, TEAM_MEMBERS
+from toolang.teaming.backend.valkey.keys import Keys
 from toolang.teaming.client import HubClient
 from toolang.teaming.config import BackendConfig
 from toolang.teaming.errors import MessagingError, StorageIntegrityError
@@ -30,8 +31,39 @@ from toolang.up.hub import HubProcess
 pytestmark = pytest.mark.live_valkey
 
 
+def test_root_namespace_isolation_on_wire(valkey):
+    async def scenario():
+        other = replace(valkey, root=valkey.root + "-other")
+        async with (
+            MessagingClient(valkey, actor="human:owner") as one,
+            MessagingClient(other, actor="human:owner") as two,
+            MessagingClient(valkey, actor="agent:alice", token="one") as alice_one,
+            MessagingClient(other, actor="agent:alice", token="two") as alice_two,
+            Valkey.from_url(valkey.url, decode_responses=True) as raw,
+        ):
+            await asyncio.gather(
+                alice_one.register(one.actor), alice_two.register(two.actor)
+            )
+            sent_one = await one.send("alice", body="one")
+            sent_two = await two.send("alice", body="two")
+            assert sent_one["conversation"] == sent_two["conversation"]
+            for human, sent, body in ((one, sent_one, "one"), (two, sent_two, "two")):
+                messages = await human.read(sent["conversation"])
+                assert [Message.decode(data["data"]).body for _, data in messages] == [
+                    body
+                ]
+            await raw.set(Keys(valkey.root_code).root, "another root")
+            before = {key: await raw.dump(key) for key in await raw.keys("*")}
+            with pytest.raises(StorageIntegrityError, match="ownership"):
+                await one.create_conversation("must not write")
+            assert {key: await raw.dump(key) for key in await raw.keys("*")} == before
+            assert await two.backend.online("agent:alice")
+
+    asyncio.run(scenario())
+
+
 @pytest.fixture(params=["valkey-server", "redis-server"])
-def valkey(request):
+def valkey(request, tmp_path):
     executable = shutil.which(request.param)
     if executable is None:
         pytest.skip(f"{request.param} is not installed")
@@ -64,7 +96,7 @@ def valkey(request):
                     ).read_text()
                     time.sleep(0.01)
                 assert socket.exists()
-                yield BackendConfig(f"unix://{socket}")
+                yield BackendConfig(f"unix://{socket}", root=str(tmp_path.resolve()))
             finally:
                 process.terminate()
                 process.wait(timeout=5)
@@ -93,7 +125,7 @@ def test_standard_backend_registration_streams_and_expiry(valkey):
                 Message.decode((await bob.history(group))[0][1]["data"]).id
                 == receipt["message"]["id"]
             )
-            await raw.zadd(PRESENCE, {"agent:alice": 1})
+            await raw.zadd(Keys(valkey.root_code).presence, {"agent:alice": 1})
             assert not await alice.backend.online("agent:alice")
             with pytest.raises(MessagingError, match="lease lost"):
                 await alice.send(group, body="stale")
@@ -108,7 +140,9 @@ def test_standard_backend_registration_streams_and_expiry(valkey):
                 await alice.unregister()
                 assert (
                     json.loads(
-                        await raw.execute_command("HGET", TEAM_MEMBERS, "agent:alice")
+                        await raw.execute_command(
+                            "HGET", Keys(valkey.root_code).team_members, "agent:alice"
+                        )
                     )["lease"]["token"]
                     == "new"
                 )
@@ -446,7 +480,6 @@ def test_protocol_validation_prevents_partial_membership_writes(
     valkey, monkeypatch, concurrent
 ):
     from toolang.teaming.backend.valkey import ValkeyBackend, scripts
-    from toolang.teaming.backend.valkey.keys import CONVOS, TEAM_EVENTS, convo_key
 
     async def scenario():
         async with (
@@ -456,12 +489,16 @@ def test_protocol_validation_prevents_partial_membership_writes(
         ):
             await alice.register(human.actor)
             convo = await human.create_conversation("Original")
-            events = await raw.xlen(TEAM_EVENTS)
+            events = await raw.xlen(Keys(valkey.root_code).team_events)
 
             async def corrupt():
-                record = json.loads(await raw.hget(CONVOS, convo.id))
+                record = json.loads(
+                    await raw.hget(Keys(valkey.root_code).convos, convo.id)
+                )
                 record["name"] = " invalid "
-                await raw.hset(CONVOS, convo.id, json.dumps(record))
+                await raw.hset(
+                    Keys(valkey.root_code).convos, convo.id, json.dumps(record)
+                )
 
             if concurrent:
                 assert isinstance(alice.backend, ValkeyBackend)
@@ -480,8 +517,10 @@ def test_protocol_validation_prevents_partial_membership_writes(
                 await corrupt()
             with pytest.raises(StorageIntegrityError):
                 await alice.join_conversation(convo.id)
-            assert not await raw.sismember(convo_key(convo.id, "members"), alice.actor)
-            assert await raw.xlen(TEAM_EVENTS) == events
+            assert not await raw.sismember(
+                Keys(valkey.root_code).convo_key(convo.id, "members"), alice.actor
+            )
+            assert await raw.xlen(Keys(valkey.root_code).team_events) == events
 
     asyncio.run(scenario())
 

@@ -6,7 +6,7 @@ import json
 from fakeredis import FakeServer
 import pytest
 
-from toolang.teaming.backend.valkey.keys import PRESENCE, convo_key
+from tests.unit.messaging.keys import PRESENCE, convo_key
 from toolang.teaming.ids import dm_id
 from toolang.teaming.roster import Roster
 from tests.unit.messaging.test_protocol import client

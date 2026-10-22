@@ -11,7 +11,7 @@ from tests.support.sse import Events
 from tests.unit.messaging.test_protocol import client, snapshot
 from toolang.teaming.client import HubClient
 from toolang.teaming.errors import BackendUnavailable, LeaseLost, StorageIntegrityError
-from toolang.teaming.backend.valkey.keys import TEAM_EVENTS, PRESENCE
+from tests.unit.messaging.keys import TEAM_EVENTS, PRESENCE
 from toolang.teaming.team_events import TeamEvents
 from toolang.teaming.schemas import HubConnection
 

@@ -2,6 +2,16 @@
 
 from ...types import MAX_SAFE_INTEGER
 
+ROOT_GUARD = """
+local root_key=KEYS[#KEYS]
+local expected_root=ARGV[#ARGV]
+KEYS[#KEYS]=nil
+ARGV[#ARGV]=nil
+if redis.call('TYPE',root_key).ok~='string' or redis.call('GET',root_key)~=expected_root then
+  error('integrity: Toolang root ownership mismatch')
+end
+"""
+
 # Used by execution publication, with explicit team/presence keys.
 LEASE_CHECK = (
     f"local max_safe_integer={MAX_SAFE_INTEGER}\n"

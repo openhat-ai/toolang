@@ -9,15 +9,6 @@ from uuid import uuid4
 
 if TYPE_CHECKING:
     from .backend import ValkeyBackend
-from .keys import (
-    SCHEMA,
-    EVENT_META,
-    EVENT_STREAM,
-    EVENT_AGENTS,
-    TEAM_MEMBERS,
-    PRESENCE,
-    generation_key,
-)
 from . import event_scripts
 from .schema import HUB_STORE_SCHEMA
 from ...errors import MessagingError, EventProtocolError, EventRecoveryRequired
@@ -44,7 +35,7 @@ class ValkeyEvents:
     async def _eval(
         self, script: str, keys: list[str], args: list[Any], *, agent: str | None = None
     ) -> Any:
-        keys = [*keys, SCHEMA]
+        keys = [*keys, self.backend.keys.schema]
         script = (
             f"if redis.call('GET',KEYS[{len(keys)}]) ~= '{HUB_STORE_SCHEMA}' then "
             "error('protocol_error: unsupported hub store schema') end\n" + script
@@ -62,6 +53,8 @@ class ValkeyEvents:
 
     async def _command(self, command: str, *args: Any) -> Any:
         try:
+            if command != "XREAD":
+                return await self.backend._read(command, *args)
             return await self.backend._call(command, *args)
         except MessagingError as exc:
             from ...errors import BackendUnavailable
@@ -74,7 +67,11 @@ class ValkeyEvents:
         return _hash(
             await self._eval(
                 event_scripts.INIT,
-                [EVENT_META, EVENT_STREAM, EVENT_AGENTS],
+                [
+                    self.backend.keys.event_meta,
+                    self.backend.keys.event_stream,
+                    self.backend.keys.event_agents,
+                ],
                 [uuid4().hex],
             )
         )
@@ -84,7 +81,12 @@ class ValkeyEvents:
     ) -> tuple[dict[str, str], dict[str, Any], dict[str, str]]:
         meta, agents, participants = await self._eval(
             event_scripts.CAPTURE,
-            [EVENT_META, EVENT_STREAM, EVENT_AGENTS, TEAM_MEMBERS],
+            [
+                self.backend.keys.event_meta,
+                self.backend.keys.event_stream,
+                self.backend.keys.event_agents,
+                self.backend.keys.team_members,
+            ],
             [agent or ""],
         )
         try:
@@ -106,15 +108,17 @@ class ValkeyEvents:
     async def projection(
         self, agent: str, generation: str
     ) -> dict[str, dict[str, Any]]:
-        if await self._command("GET", SCHEMA) != str(HUB_STORE_SCHEMA):
+        if await self._command("GET", self.backend.keys.schema) != str(
+            HUB_STORE_SCHEMA
+        ):
             raise EventProtocolError("unsupported hub store schema")
-        key = generation_key(agent, generation)
+        key = self.backend.keys.generation_key(agent, generation)
         result: dict[str, dict[str, Any]] = {}
         cursor = 0
         size = 0
         while True:
             cursor, page = await self._command("HSCAN", key, cursor, "COUNT", 128)
-            for name, value in page.items():
+            for name, value in _hash(page).items():
                 if name not in result:
                     size += len(name.encode()) + len(value.encode())
                 if size > MAX_BYTES or len(result) > MAX_ENTITIES:
@@ -154,19 +158,20 @@ class ValkeyEvents:
     async def commit(self, op: dict[str, Any]) -> str:
         op = {
             **op,
-            "old_key": generation_key(
+            "old_key": self.backend.keys.generation_key(
                 op["agent"], op.get("old_generation") or op["generation"]
             ),
         }
         raw = encode(op)
         keys = [
-            EVENT_META,
-            EVENT_STREAM,
-            EVENT_AGENTS,
-            TEAM_MEMBERS,
-            generation_key(op["agent"], op["generation"]),
-            op.get("old_key") or generation_key(op["agent"], op["generation"]),
-            PRESENCE,
+            self.backend.keys.event_meta,
+            self.backend.keys.event_stream,
+            self.backend.keys.event_agents,
+            self.backend.keys.team_members,
+            self.backend.keys.generation_key(op["agent"], op["generation"]),
+            op.get("old_key")
+            or self.backend.keys.generation_key(op["agent"], op["generation"]),
+            self.backend.keys.presence,
         ]
         response = await self._eval(
             event_scripts.WRITE,
@@ -188,10 +193,18 @@ class ValkeyEvents:
             from toolang.execution.errors import SnapshotLimitError
 
             raise SnapshotLimitError("Snapshot upload exceeds budget")
-        key = generation_key(op["agent"], op["generation"])
+        key = self.backend.keys.generation_key(op["agent"], op["generation"])
         response = await self._eval(
             event_scripts.STAGE,
-            [EVENT_META, EVENT_STREAM, EVENT_AGENTS, TEAM_MEMBERS, key, key, PRESENCE],
+            [
+                self.backend.keys.event_meta,
+                self.backend.keys.event_stream,
+                self.backend.keys.event_agents,
+                self.backend.keys.team_members,
+                key,
+                key,
+                self.backend.keys.presence,
+            ],
             ["", MAX_STREAM_EVENTS, MAX_STREAM_BYTES, raw],
             agent=op["agent"],
         )
@@ -203,12 +216,12 @@ class ValkeyEvents:
         response = await self._eval(
             event_scripts.ABANDON,
             [
-                EVENT_META,
-                EVENT_STREAM,
-                EVENT_AGENTS,
-                TEAM_MEMBERS,
-                generation_key(agent, generation),
-                PRESENCE,
+                self.backend.keys.event_meta,
+                self.backend.keys.event_stream,
+                self.backend.keys.event_agents,
+                self.backend.keys.team_members,
+                self.backend.keys.generation_key(agent, generation),
+                self.backend.keys.presence,
             ],
             [token, agent, generation],
             agent=agent,
@@ -228,7 +241,11 @@ class ValkeyEvents:
     ) -> tuple[str, list[tuple[str, dict[str, str]]]]:
         response = await self._eval(
             event_scripts.READ,
-            [EVENT_META, EVENT_STREAM, EVENT_AGENTS],
+            [
+                self.backend.keys.event_meta,
+                self.backend.keys.event_stream,
+                self.backend.keys.event_agents,
+            ],
             [
                 cursor.epoch,
                 MAX_STREAM_EVENTS,
@@ -243,5 +260,12 @@ class ValkeyEvents:
 
     async def wait(self, after: str) -> None:
         await self._command(
-            "XREAD", "BLOCK", 1000, "COUNT", 1, "STREAMS", EVENT_STREAM, after
+            "XREAD",
+            "BLOCK",
+            1000,
+            "COUNT",
+            1,
+            "STREAMS",
+            self.backend.keys.event_stream,
+            after,
         )

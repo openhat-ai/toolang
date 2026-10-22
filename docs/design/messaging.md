@@ -28,11 +28,20 @@ source version and `api_version: 0`; `HUB_API_VERSION` also versions publication
 staging, and event wires. The one-shot hub roster describes discovered instances
 and recorded launches, not delivery or live presence.
 
-hub store schema `4` owns messaging and execution-event data. Incompatible or
+hub store schema `5` owns messaging and execution-event data. Incompatible or
 corrupt initialized stores fail closed without resets, mutation, or import.
-All teaming keys use the prerelease `too:teaming:v0` namespace; `v1` is reserved
-for stabilization. Only v0 state is supported; there is no compatibility or
-migration path.
+All Hub keys use `toolang:<root_code>:v0:`, including execution events and Talk
+cursors. `root_code` reuses the seven-character Crockford Base32 root code derived
+from the host-canonical Toolang root. Separate roots can share one backend URL
+without sharing data. Each namespace records its full root identity; collisions
+and missing/corrupt ownership fail without adopting or modifying another dataset.
+Backend connection identity includes both the configured URL and canonical root,
+so Hub API and Talk identity checks distinguish roots on the same backend.
+
+Only v0 state is supported; `v1` is reserved for stabilization. Old unscoped
+`too:teaming:v0:*` data is left untouched, without migration or fallback. Restart
+Hub and reopen Talk after upgrading; existing Hub conversation history is not
+imported. Local execution history is unaffected.
 hub and clients must use compatible versions and backend data. Restart applies
 configuration changes; Talk must be reopened when its endpoint, backend, or
 human identity changes.
@@ -129,7 +138,8 @@ human names keep the terminal foreground and their markers stay bright cyan.
 `color` is required and accepts a standard ANSI color name or `#RRGGBB`.
 
 To customize an existing member, atomically edit its JSON in
-`too:teaming:v0:team:members` using `valkey-cli` against the configured backend:
+`toolang:<root_code>:v0:team:members` using `valkey-cli` against the configured
+backend. Set `root_code` to the selected root's short code (see [agent addresses](agent-addresses.md)):
 
 ```sh
 valkey-cli EVAL '
@@ -138,7 +148,7 @@ if not raw then return redis.error_reply("Unknown team member") end
 local member = cjson.decode(raw)
 member.color = ARGV[2]
 return redis.call("HSET", KEYS[1], ARGV[1], cjson.encode(member))
-' 1 too:teaming:v0:team:members agent:alice magenta
+' 1 "toolang:${root_code}:v0:team:members" agent:alice magenta
 ```
 
 Use a standard ANSI name, including its `bright_` variant, or a quoted

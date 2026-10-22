@@ -25,7 +25,7 @@ from toolang.execution.types import EventCursor
 from toolang.plugin.toolsets.convo import ConvoToolset
 from toolang.teaming.agent_client import AgentClient, AgentEventClient
 from toolang.teaming.api import create_app
-from toolang.teaming.backend.valkey.keys import EVENT_AGENTS, generation_key
+from tests.unit.messaging.keys import EVENT_AGENTS, generation_key
 from toolang.teaming.backend.valkey.schema import HUB_STORE_SCHEMA
 from toolang.teaming.config import BackendConfig
 from toolang.teaming.discovery import hub_connection
@@ -185,7 +185,7 @@ def test_agent_discovery_pins_batch_identity_and_refreshes_connections(tmp_path)
         ):
             await alice.register(CONNECTION.human)
             with alice.session() as identity:
-                human.config = BackendConfig("redis://second")
+                human.config = BackendConfig("redis://second", root="/test/toolang")
                 current = replace(current, identity=human.config.identity)
                 app = create_app(human, version="0.4.0-test")
                 save()
@@ -223,7 +223,9 @@ def test_talk_cursors_are_separate_after_backend_switch(tmp_path, monkeypatch):
             client(FakeServer(server_type="valkey"), CONNECTION.human) for _ in range(2)
         ]
         for index, human in enumerate(humans):
-            human.config = BackendConfig(f"redis://dataset-{index}")
+            human.config = BackendConfig(
+                f"redis://dataset-{index}", root="/test/toolang"
+            )
         apps = [create_app(human, version="0.4.0-test") for human in humans]
         current = 0
 

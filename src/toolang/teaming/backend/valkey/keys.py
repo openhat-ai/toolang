@@ -1,50 +1,94 @@
-"""Teaming storage addresses; execution event keys retain their own namespace."""
+"""Immutable storage addresses for one host-selected Toolang root."""
 
 import base64
+from dataclasses import dataclass
 
 from ...schemas import conversation_id, target
 
-PREFIX = "too:teaming:v0"
-TEAM_MEMBERS = f"{PREFIX}:team:members"
-PRESENCE = f"{PREFIX}:team:presence"
-TEAM_EVENTS = f"{PREFIX}:team:events"
-CONVOS = f"{PREFIX}:convos"
-SCHEMA = f"{PREFIX}:convo:schema"
-GC_ALLOCATOR = f"{PREFIX}:convo:id:gc"
-STATS = f"{PREFIX}:convo:stats"
-SYSTEM = f"{PREFIX}:convo:system"
-ROSTER = f"{PREFIX}:roster"
-BASE_KEYS = [
-    SCHEMA,
-    TEAM_MEMBERS,
-    PRESENCE,
-    CONVOS,
-    STATS,
-    GC_ALLOCATOR,
-    TEAM_EVENTS,
-    SYSTEM,
-    ROSTER,
-]
 
+@dataclass(frozen=True)
+class Keys:
+    root_code: str
 
-def convo_key(conversation: str, suffix: str) -> str:
-    return f"{PREFIX}:convo:{conversation_id(conversation)}:{suffix}"
+    @property
+    def prefix(self) -> str:
+        return f"toolang:{self.root_code}:v0"
 
+    @property
+    def root(self) -> str:
+        return f"{self.prefix}:root"
 
-def name_key(name: str | None) -> str:
-    encoded = base64.urlsafe_b64encode((name or "").encode()).decode().rstrip("=")
-    return f"{PREFIX}:convo:name:{encoded}"
+    @property
+    def team_members(self) -> str:
+        return f"{self.prefix}:team:members"
 
+    @property
+    def presence(self) -> str:
+        return f"{self.prefix}:team:presence"
 
-# Execution publication has its own retention, recovery, and cursor metadata.
-EVENT_META = f"{PREFIX}:events:meta"
-EVENT_STREAM = f"{PREFIX}:events:stream"
-EVENT_AGENTS = f"{PREFIX}:events:agents"
+    @property
+    def team_events(self) -> str:
+        return f"{self.prefix}:team:events"
 
+    @property
+    def convos(self) -> str:
+        return f"{self.prefix}:convos"
 
-def generation_key(agent: str, generation: str) -> str:
-    return f"{PREFIX}:events:agent:{target(agent, kind='agent').name}:{generation}"
+    @property
+    def schema(self) -> str:
+        return f"{self.prefix}:convo:schema"
 
+    @property
+    def gc_allocator(self) -> str:
+        return f"{self.prefix}:convo:id:gc"
 
-def talk_key(agent: str) -> str:
-    return f"{PREFIX}:agent:{target(agent, kind='agent').name}:talk"
+    @property
+    def stats(self) -> str:
+        return f"{self.prefix}:convo:stats"
+
+    @property
+    def system(self) -> str:
+        return f"{self.prefix}:convo:system"
+
+    @property
+    def roster(self) -> str:
+        return f"{self.prefix}:roster"
+
+    @property
+    def event_meta(self) -> str:
+        return f"{self.prefix}:events:meta"
+
+    @property
+    def event_stream(self) -> str:
+        return f"{self.prefix}:events:stream"
+
+    @property
+    def event_agents(self) -> str:
+        return f"{self.prefix}:events:agents"
+
+    @property
+    def base(self) -> list[str]:
+        return [
+            self.schema,
+            self.team_members,
+            self.presence,
+            self.convos,
+            self.stats,
+            self.gc_allocator,
+            self.team_events,
+            self.system,
+            self.roster,
+        ]
+
+    def convo_key(self, conversation: str, suffix: str) -> str:
+        return f"{self.prefix}:convo:{conversation_id(conversation)}:{suffix}"
+
+    def name_key(self, name: str | None) -> str:
+        encoded = base64.urlsafe_b64encode((name or "").encode()).decode().rstrip("=")
+        return f"{self.prefix}:convo:name:{encoded}"
+
+    def generation_key(self, agent: str, generation: str) -> str:
+        return f"{self.prefix}:events:agent:{target(agent, kind='agent').name}:{generation}"
+
+    def talk_key(self, agent: str) -> str:
+        return f"{self.prefix}:agent:{target(agent, kind='agent').name}:talk"

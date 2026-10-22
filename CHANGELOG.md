@@ -243,6 +243,20 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   and rejects `place` as unknown.
   ([#922](https://github.com/openhat-ai/toolang/pull/922))
 
+- Each Toolang root keeps its own Hub namespace for conversations, leases, Talk
+  cursors, events, and Lua keys, so roots sharing a backend no longer collide on
+  agent or DM names.
+  ([#923](https://github.com/openhat-ai/toolang/pull/923))
+
+- **Breaking:** Restart the Hub and reopen Talk after upgrading, because Hub keys
+  move to `toolang:<root_code>:v0:*` at store schema 5 with API v0 unchanged.
+  ([#923](https://github.com/openhat-ai/toolang/pull/923))
+
+- **Breaking:** Previous Hub conversations under `too:teaming:v0:*` are not
+  imported, so recreate the ones you need; the old keys stay untouched and local
+  execution history is unchanged.
+  ([#923](https://github.com/openhat-ai/toolang/pull/923))
+
 ### Fixed
 
 - Failed preparation no longer leaves active registrations; runtime references

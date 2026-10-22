@@ -25,17 +25,7 @@ from ...errors import (
     TeamingError,
     StorageIntegrityError,
 )
-from .keys import (
-    BASE_KEYS,
-    PREFIX,
-    ROSTER,
-    SYSTEM,
-    TEAM_MEMBERS,
-    TEAM_EVENTS,
-    convo_key,
-    name_key,
-    talk_key,
-)
+from .keys import Keys
 from ...ids import dm_id, gc_id
 from ...schemas import (
     HUB_API_VERSION,
@@ -54,7 +44,7 @@ from ...schemas import (
     rules_revision,
 )
 from . import scripts
-from .lua import TEAM_GUARD
+from .lua import ROOT_GUARD, TEAM_GUARD
 from .events import ValkeyEvents
 from ...types import SNAPSHOT_RETRIES, STORAGE_BATCH_SIZE
 
@@ -76,6 +66,8 @@ async def _snapshot_backoff(attempt: int) -> None:
 
 class ValkeyBackend:
     def __init__(self, config: BackendConfig, *, client: Valkey | None = None):
+        self.keys = Keys(config.root_code)
+        self._root = config.root
         self._initialized = False
         self.events = ValkeyEvents(self)
         try:
@@ -107,6 +99,10 @@ class ValkeyBackend:
         caller = asyncio.current_task()
         cancelling = caller.cancelling() if caller is not None else 0
         try:
+            if command.upper() not in {"PING", "EVAL"}:
+                await self._client.execute_command(
+                    "EVAL", ROOT_GUARD, 1, self.keys.root, self._root
+                )
             result = await self._client.execute_command(command, *args)
         except (ConnectionError, TimeoutError) as exc:
             raise BackendUnavailable("Teaming backend is unavailable") from exc
@@ -132,7 +128,19 @@ class ValkeyBackend:
         return result
 
     async def _eval(self, script: str, keys: list[str], args: list[object]) -> Any:
-        return await self._call("EVAL", script, len(keys), *keys, *args)
+        if script != scripts.INITIALIZE:
+            script = ROOT_GUARD + script
+        return await self._call(
+            "EVAL", script, len(keys) + 1, *keys, self.keys.root, *args, self._root
+        )
+
+    async def _read(self, command: str, key: str, *args: object) -> Any:
+        """Read data in the same atomic operation as its root ownership check."""
+        return await self._eval(
+            "return redis.call(ARGV[1],KEYS[1],unpack(ARGV,2))",
+            [key],
+            [command, *args],
+        )
 
     async def _fenced_eval(
         self, agent: str, script: str, keys: list[str], args: list[object]
@@ -144,14 +152,18 @@ class ValkeyBackend:
         """
         target(agent, kind="agent")
         for attempt in range(SNAPSHOT_RETRIES):
-            raw = await self._call("HGET", TEAM_MEMBERS, agent)
+            raw = await self._read("HGET", self.keys.team_members, agent)
             try:
                 if raw is not None:
                     TeamRecord.decode(agent, raw)
             except (ValueError, TypeError, MessagingError) as exc:
                 raise StorageIntegrityError("Invalid team record") from exc
             checked = _json(
-                {"key": keys.index(TEAM_MEMBERS) + 1, "member": agent, "raw": raw}
+                {
+                    "key": keys.index(self.keys.team_members) + 1,
+                    "member": agent,
+                    "raw": raw,
+                }
             )
             try:
                 return await self._eval(TEAM_GUARD + script, keys, [*args, checked])
@@ -163,7 +175,7 @@ class ValkeyBackend:
         epoch = uuid4().hex
         await self._eval(
             scripts.INITIALIZE,
-            BASE_KEYS,
+            self.keys.base,
             [
                 _json(
                     {
@@ -178,7 +190,7 @@ class ValkeyBackend:
                         ).model_dump_json(),
                     }
                 ),
-                PREFIX,
+                self.keys.prefix,
                 int(self._initialized),
             ],
         )
@@ -199,14 +211,14 @@ class ValkeyBackend:
             if key in op
         }
         request.update(
-            prefix=PREFIX,
+            prefix=self.keys.prefix,
             rules=op.get("inspect_rules", False),
             action=op.get("action")
             if op.get("action") in {"team", "roster", "contacts", "register"}
             else "inspect",
         )
         snapshot = json.loads(
-            await self._eval(scripts.SNAPSHOT, BASE_KEYS, [_json(request)])
+            await self._eval(scripts.SNAPSHOT, self.keys.base, [_json(request)])
         )
         snapshot["members"] = dict(snapshot["members"])
         try:
@@ -244,7 +256,9 @@ class ValkeyBackend:
             for key, members in snapshot["members"].items():
                 for member in members:
                     participant(member)
-                ref = key.removeprefix(PREFIX + ":convo:").removesuffix(":members")
+                ref = key.removeprefix(self.keys.prefix + ":convo:").removesuffix(
+                    ":members"
+                )
                 record = records.get(("conversation", ref))
                 if (
                     isinstance(record, ConversationRecord)
@@ -279,7 +293,7 @@ class ValkeyBackend:
             }
             try:
                 return await self._eval(
-                    script, [*BASE_KEYS, *(extra or [])], [_json(checked)]
+                    script, [*self.keys.base, *(extra or [])], [_json(checked)]
                 )
             except _SnapshotChanged:
                 await _snapshot_backoff(attempt)
@@ -305,7 +319,7 @@ class ValkeyBackend:
         if updated is not None:
             RosterRecord.model_validate(updated)
         # Retain the stored bytes for CAS; JSON object ordering has no semantics.
-        raw = await self._call("HGET", ROSTER, agent)
+        raw = await self._read("HGET", self.keys.roster, agent)
         try:
             current = (
                 RosterRecord.model_validate_json(raw).model_dump()
@@ -327,13 +341,13 @@ class ValkeyBackend:
                     updated=_json(updated) if updated is not None else "",
                     conversations=conversations,
                 ),
-                [convo_key(ref, "members") for ref in conversations],
+                [self.keys.convo_key(ref, "members") for ref in conversations],
             )
         )
 
     async def known_participant(self, member: str) -> bool:
         participant(member)
-        return bool(await self._call("HEXISTS", TEAM_MEMBERS, member))
+        return bool(await self._read("HEXISTS", self.keys.team_members, member))
 
     async def team_event_position(self) -> tuple[str, str]:
         epoch, tail = await self._operation(scripts.READ, {"action": "metadata"})
@@ -361,7 +375,7 @@ class ValkeyBackend:
     async def wait_team_events(self, after: str) -> None:
         # Blocking reads are wake-up hints; replay validates each batch atomically.
         await self._call(
-            "XREAD", "COUNT", 1, "BLOCK", 1000, "STREAMS", TEAM_EVENTS, after
+            "XREAD", "COUNT", 1, "BLOCK", 1000, "STREAMS", self.keys.team_events, after
         )
 
     async def participants(self) -> dict[str, dict[str, Any]]:
@@ -392,7 +406,7 @@ class ValkeyBackend:
         )
 
     async def system_conversation(self) -> str:
-        existing = await self._call("HGET", SYSTEM, "all")
+        existing = await self._read("HGET", self.keys.system, "all")
         if existing:
             return conversation_id(existing)
         return await self.create_gc(None, name="all", system=True)
@@ -423,20 +437,22 @@ class ValkeyBackend:
                 root=root,
                 system=system,
             ),
-            [convo_key(system, "members")],
+            [self.keys.convo_key(system, "members")],
         )
 
     async def renew_lease(self, agent: str, token: str) -> bool:
         return bool(
             await self._operation(
-                scripts.PRESENCE, dict(action="renew", agent=agent, token=token)
+                scripts.PRESENCE,
+                dict(action="renew", agent=agent, token=token),
             )
         )
 
     async def release_lease(self, agent: str, token: str) -> bool:
         return bool(
             await self._operation(
-                scripts.PRESENCE, dict(action="release", agent=agent, token=token)
+                scripts.PRESENCE,
+                dict(action="release", agent=agent, token=token),
             )
         )
 
@@ -460,13 +476,14 @@ class ValkeyBackend:
             participant(member)
         return Conversation(**info, participants=members)
 
-    @staticmethod
-    def _conversation_keys(conversation: str, name: str | None = None) -> list[str]:
+    def _conversation_keys(
+        self, conversation: str, name: str | None = None
+    ) -> list[str]:
         return [
-            convo_key(conversation, "members"),
-            convo_key(conversation, "messages"),
-            name_key(name),
-            convo_key(conversation, "rules"),
+            self.keys.convo_key(conversation, "members"),
+            self.keys.convo_key(conversation, "messages"),
+            self.keys.name_key(name),
+            self.keys.convo_key(conversation, "rules"),
         ]
 
     async def conversation_ids(self) -> list[str]:
@@ -484,7 +501,7 @@ class ValkeyBackend:
                     scripts.READ,
                     {"action": "contacts", "actor": actor, "conversations": batch},
                     [
-                        convo_key(ref, suffix)
+                        self.keys.convo_key(ref, suffix)
                         for ref in batch
                         for suffix in ("members", "messages")
                     ],
@@ -502,7 +519,7 @@ class ValkeyBackend:
     async def named(self, name: str) -> list[str]:
         conversation_name(name)
         await self._operation(scripts.READ, {})
-        return sorted(await self._call("SMEMBERS", name_key(name)))
+        return sorted(await self._read("SMEMBERS", self.keys.name_key(name)))
 
     async def create_dm(
         self,
@@ -565,7 +582,11 @@ class ValkeyBackend:
         await self._operation(
             scripts.EDIT,
             dict(action="member", id=conversation, actor=actor, token=token, join=join),
-            [convo_key(conversation, "members"), name_key(None), name_key(None)],
+            [
+                self.keys.convo_key(conversation, "members"),
+                self.keys.name_key(None),
+                self.keys.name_key(None),
+            ],
         )
 
     async def rename(
@@ -593,9 +614,9 @@ class ValkeyBackend:
                 revision=revision,
             ),
             [
-                convo_key(conversation, "members"),
-                name_key(previous.name),
-                name_key(name),
+                self.keys.convo_key(conversation, "members"),
+                self.keys.name_key(previous.name),
+                self.keys.name_key(name),
             ],
         )
 
@@ -704,9 +725,9 @@ class ValkeyBackend:
             scripts.TALK_CURSOR,
             dict(action="read", actor=agent, id=convo_id),
             [
-                convo_key(convo_id, "members"),
-                convo_key(convo_id, "messages"),
-                talk_key(agent),
+                self.keys.convo_key(convo_id, "members"),
+                self.keys.convo_key(convo_id, "messages"),
+                self.keys.talk_key(agent),
             ],
         )
         try:
@@ -726,9 +747,9 @@ class ValkeyBackend:
                 action="advance", actor=agent, id=convo_id, cursor=cursor, token=token
             ),
             [
-                convo_key(convo_id, "members"),
-                convo_key(convo_id, "messages"),
-                talk_key(agent),
+                self.keys.convo_key(convo_id, "members"),
+                self.keys.convo_key(convo_id, "messages"),
+                self.keys.talk_key(agent),
             ],
         )
 

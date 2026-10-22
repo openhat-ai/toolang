@@ -22,7 +22,7 @@ from toolang.execution.records import RunControlPayload
 from toolang.teaming.messaging import MessagingClient
 from toolang.teaming.schemas import Message
 from toolang.teaming.backend.valkey import ValkeyBackend
-from toolang.teaming.backend.valkey.keys import convo_key
+from tests.unit.messaging.keys import convo_key
 from toolang.teaming.config import BackendConfig, TeamingHomeConfig, TeamingRootConfig
 from toolang.plugin.toolsets.convo import ConvoToolset
 from toolang.plugin.toolsets.loading import tools_from_toolsets
@@ -31,7 +31,7 @@ from toolang.plugin.types import LoadedPlugin
 from toolang.state.prepare import prepare_agent_state
 from toolang.driver.talk import MessagingLoop
 
-CONFIG = BackendConfig("redis://test")
+CONFIG = BackendConfig("redis://test", root="/test/toolang")
 REPLY_TO = "ad451d5a-7465-4d2d-b0b6-f06490657d5f"
 
 

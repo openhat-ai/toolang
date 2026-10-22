@@ -10,7 +10,7 @@ import pytest
 
 from tests.unit.messaging.test_protocol import CONFIG, client, snapshot
 from toolang.teaming.api import create_app
-from toolang.teaming.backend.valkey.keys import convo_key
+from tests.unit.messaging.keys import convo_key
 from toolang.teaming.client import HubClient
 from toolang.teaming.errors import (
     ConversationAccessDenied,

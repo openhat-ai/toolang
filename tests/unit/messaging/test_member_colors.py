@@ -12,7 +12,7 @@ from valkey.exceptions import ResponseError
 from tests.unit.messaging.test_protocol import client, CONFIG
 from toolang.teaming.api import create_app
 from toolang.teaming.backend.valkey import scripts
-from toolang.teaming.backend.valkey.keys import PREFIX, TEAM_MEMBERS
+from tests.unit.messaging.keys import PREFIX, TEAM_MEMBERS
 from toolang.teaming.client import HubClient
 from toolang.teaming.roster import Roster
 from toolang.teaming.schemas import HubConnection
@@ -221,7 +221,7 @@ def test_all_teaming_keys_use_v0_namespace():
         async with client(server, "human:owner") as human:
             raw = human.backend._client
             await human.backend.events.initialize()
-            assert PREFIX == "too:teaming:v0"
+            assert PREFIX == f"toolang:{human.config.root_code}:v0"
             keys = await raw.keys("*")
             assert keys and all(key.startswith(PREFIX + ":") for key in keys)
 

@@ -25,7 +25,9 @@ def resolve(root=None, home=None, extra=()):
 @pytest.mark.parametrize("home", [{}, {"teaming": {}}, {"teaming": {"enabled": True}}])
 def test_defaults_enable_agent_teaming(home):
     setup = resolve(home=home)
-    assert setup.root.backend == BackendConfig("redis://localhost:6379/0")
+    assert setup.root.backend == BackendConfig(
+        "redis://localhost:6379/0", root=str(ROOT.parent.resolve())
+    )
     assert setup.root.human == "human:owner"
     assert setup.root.hub_port == 7001
     assert setup.home.enabled
