@@ -6,16 +6,15 @@ from pathlib import Path
 from collections.abc import Mapping
 
 from toolang.base.types.sandbox import SandboxMount
+from toolang.catalog.types import CAP_DIRECTORY_NAMES
 from toolang.common.layout import (
     IMPLICIT_WORKSPACE_NAME,
     ensure_scratch_workspace,
 )
 from toolang.state.source import observe_home_source, observe_root_source
 
-_ROOT_MOUNT_DIR_NAMES = ("psyches", "skills", "services", "prompts")
 
-
-def prepare_root_mounts(
+def prepare_place_mounts(
     local_place: Path,
     hosted_place: Path,
 ) -> tuple[SandboxMount, ...]:
@@ -40,7 +39,7 @@ def prepare_root_mounts(
                 read_only=True,
             )
         )
-    for directory_name in (".state", *_ROOT_MOUNT_DIR_NAMES):
+    for directory_name in (".state", *CAP_DIRECTORY_NAMES):
         local_path = local_place / directory_name
         local_path.mkdir(parents=True, exist_ok=True)
         mounts.append(
@@ -126,7 +125,7 @@ def prepare_source_mounts(
     mounts = {
         mount.hosted_path: mount
         for mount in (
-            *prepare_root_mounts(local_place, hosted_place),
+            *prepare_place_mounts(local_place, hosted_place),
             *prepare_linked_state_source_mounts(local_place, agent_name, hosted_place),
         )
     }

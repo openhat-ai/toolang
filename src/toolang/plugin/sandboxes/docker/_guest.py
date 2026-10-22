@@ -33,7 +33,7 @@ def write_guest_env(
 ) -> None:
     """Write the restricted generated dotenv consumed by the guest core."""
 
-    content = _dotenv_section("Root and agent dotenv values", dotenv_envs)
+    content = _dotenv_section("Place and home dotenv values", dotenv_envs)
     content += "\n"
     content += _dotenv_section("Filtered host process values", process_envs)
     atomic_write_text(path, content)

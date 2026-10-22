@@ -121,7 +121,7 @@ requests a file or `-` for stdout. Quiet mode suppresses preparation/execution
 progress. Non-TTY progress is plain append-only text. [Execution presentation](execution-presentation.md)
 owns rendering and [Scripts](scripts.md) owns temporary grants and path origins.
 
-Each source-only roaming script or Chat launch creates a fresh root/executor.
+Each source-only roaming script or Chat launch creates a fresh place and executor.
 Instance and Thread/Run continuation reuse the selected home. Roaming does
 not support `serve`, `start`, or `stop`. Host scripts expose the shared Agent API
 on the workload's event loop; guest workloads
@@ -308,7 +308,7 @@ talk = "[too] "
 Precedence is `TOOLANG_TITLE_PREFIX_<TYPE>` > agent-home config > root
 config > empty. Omitted keys inherit; explicit empty strings clear. Root-only
 views skip agent-home config. Roaming/scripts use their existing outer-to-inner
-project `toolang.toml` layers. Environment values use root dotenv < home dotenv
+project `toolang.toml` layers. Environment values use `PLACE/.env` < `HOME/.env`
 < process ordering; roaming/scripts use the process environment only.
 
 For a one-off override, set the type's environment variable:

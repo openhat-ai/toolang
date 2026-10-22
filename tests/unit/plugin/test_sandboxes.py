@@ -28,7 +28,7 @@ from toolang.plugin.sandboxes.docker import _guest as docker_guest
 from toolang.plugin.sandboxes.docker import sandbox as docker_sandbox
 from toolang.plugin.sandboxes import host as host_sandbox
 from toolang.plugin.loading import create_sandbox
-from toolang.up.mounts import prepare_root_mounts
+from toolang.up.mounts import prepare_place_mounts
 
 
 _CONTAINER_ID = "176191c1528b8e2861cc16422dee13ade59d4977c2148a9ebf5d36a06f090abb"
@@ -548,7 +548,7 @@ def test_docker_sandbox_prepares_and_launches(
         "OPENAI_API_KEY": "provider-secret",
     }
     guest_env_source = guest_env_mount.local_path.read_text(encoding="utf-8")
-    assert guest_env_source.startswith("# Root and agent dotenv values\n")
+    assert guest_env_source.startswith("# Place and home dotenv values\n")
     assert "\n# Filtered host process values\n" in guest_env_source
     assert guest_env_source.count("OPENAI_API_KEY=") == 2
     assert "UNRELATED_HOST_SECRET" not in guest_env_source
@@ -666,7 +666,7 @@ def test_explicit_catalog_does_not_require_a_valid_default_root_catalog(
     request = replace(
         request,
         envs={MODEL_CATALOG_ENV: str(selected)},
-        mounts=prepare_root_mounts(request.local_place, request.hosted_place),
+        mounts=prepare_place_mounts(request.local_place, request.hosted_place),
     )
 
     plan = create_sandbox("docker", config={}).prepare(None, request)
@@ -690,7 +690,7 @@ def test_docker_sandbox_rewrites_root_model_catalog_and_mounts_it_read_only(
     request = replace(
         request,
         dotenv_envs={**request.dotenv_envs, MODEL_CATALOG_ENV: str(source)},
-        mounts=prepare_root_mounts(request.local_place, request.hosted_place),
+        mounts=prepare_place_mounts(request.local_place, request.hosted_place),
     )
 
     plan = create_sandbox("docker", config={}).prepare(None, request)

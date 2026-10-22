@@ -273,7 +273,7 @@ def allocate_roaming(source: Path, *, toolang_root: Path) -> AgentLayout:
             if layout.place.exists() or layout.place.is_symlink():
                 raise FileExistsError(f"roaming place code collision: {layout.address}")
             verify_registration(layout, toolang_root=toolang_root, require_absent=True)
-            # Exclusive creation cannot replace even an empty preexisting root.
+            # Exclusive creation cannot replace even an empty preexisting place.
             layout.place.mkdir(mode=0o700)
             payload = {
                 "version": RUNTIME_STATUS_FORMAT,

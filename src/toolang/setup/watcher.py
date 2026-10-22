@@ -40,7 +40,7 @@ from .revisions import (
 )
 from .catalog import assemble_catalog, merge_catalog_snapshots
 from .config import (
-    load_root_setup_envs,
+    load_place_setup_envs,
     load_setup_envs,
     project_model_setup_config,
     project_setup_config,
@@ -311,7 +311,7 @@ class SetupWatcher:
             envs=dict(
                 load_setup_envs(self.layout)
                 if self._agent_context
-                else load_root_setup_envs(self.layout)
+                else load_place_setup_envs(self.layout)
             ),
         )
 

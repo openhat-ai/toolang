@@ -10,6 +10,9 @@ and runtime discovery. A place contains an agent environment; a home is always
 `PLACE/agents/NAME`. Root, place, and home are paths. For resident agents,
 `PLACE = ROOT`; visiting and roaming places are grouped by a short root code.
 
+Authored scopes keep the labels `root` and `home`: root-scope inputs come from
+PLACE, and home-scope inputs come from HOME.
+
 Default root:
 
 - `~/.toolang`
@@ -210,10 +213,10 @@ Host and guest merge their owned fields through one short shared-file claim,
 validating the launch ID before atomic replacement. Management ownership lives
 in the record; no lock is held across startup, execution, or shutdown.
 
-Stop, exit, and failure retain every published root, agent home, status, and
+Stop, exit, and failure retain every published place, agent home, status, and
 history. Only process/container/bootstrap resources and matching global references
 are released. Runtime paths never add an execution-instance subdirectory. Earlier
-roots and histories remain untouched and outside the new runtime scope.
+places and histories remain untouched and outside the new runtime scope.
 [Hosting](hosting.md#runtime-recovery-and-logs) owns resource recovery.
 
 Docker mounts the target agent home read-write, necessary inputs/workspaces,
@@ -260,10 +263,10 @@ The interactive editor runs outside the guard.
 
 Python callers of `AuthoredCaps`, `AuthoredChores`, `ConfiguredCaps`, and
 `ConfiguredWorkspaces` must now pass `lock_path=` explicitly. Use
-`layout.root_edit_lock` or `layout.home_edit_lock` according to source ownership;
-for shared roaming `toolang.toml`, use the root path. Parsing remains independent
-of locks through `CapFile.parse`, `ChoreFile.parse`, `ConfiguredCaps.parse`, and
-`ConfiguredWorkspaces.parse`.
+`layout.place_edit_lock` or `layout.home_edit_lock` according to source ownership;
+for shared roaming `toolang.toml`, use `layout.place_edit_lock`. Parsing remains
+independent of locks through `CapFile.parse`, `ChoreFile.parse`,
+`ConfiguredCaps.parse`, and `ConfiguredWorkspaces.parse`.
 
 Other locks remain beside their protected objects:
 
@@ -317,12 +320,12 @@ owns path capture; [Hosting](hosting.md) owns guest mounts.
 
 Durable authored state lives in:
 
-- root `config.toml`
-- root cap directories
-- agent `config.toml`
-- agent program
-- agent cap directories
-- agent `chores/`
+- `PLACE/config.toml`
+- place cap directories
+- `HOME/config.toml`
+- `HOME/agent.too`
+- home cap directories
+- `HOME/chores/`
 
 Durable execution state does not live in authored files. It lives in
 the `chores` table and execution tables in `runs.db`.

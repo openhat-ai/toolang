@@ -184,7 +184,7 @@ def load_runtime_environ(
     *,
     base_environ: Mapping[str, str],
 ) -> dict[str, str]:
-    """Load root and agent dotenv defaults below explicit process values."""
+    """Load place and home dotenv defaults below explicit process values."""
 
     merged = {} if layout.project_inputs else _load_dotenv(layout.place_env)
     if not layout.project_inputs:

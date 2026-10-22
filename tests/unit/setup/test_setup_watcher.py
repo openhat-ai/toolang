@@ -84,7 +84,7 @@ def _watcher(
     counts = {"adapters": 0, "toolsets": 0, "catalog_plugins": 0}
     captured_env = envs if envs is not None else {"TEST_API_KEY": "synthetic"}
     monkeypatch.setattr(
-        watcher_module, "load_root_setup_envs", lambda _layout: dict(captured_env)
+        watcher_module, "load_place_setup_envs", lambda _layout: dict(captured_env)
     )
     monkeypatch.setattr(
         watcher_module, "load_setup_envs", lambda _layout: dict(captured_env)

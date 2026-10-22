@@ -27,9 +27,9 @@ creation times.
 
 State has two persistent layers and one composition:
 
-- the `root` layer contains root config and root capabilities;
-- the `home` layer contains agent config, the agent and runnable modules, home
-  capabilities, module-local capabilities, and Markdown chore terms; and
+- the `root` layer contains configuration and capabilities from PLACE;
+- the `home` layer contains configuration from HOME, agent and runnable modules,
+  home and module-local capabilities, and Markdown chore terms; and
 - the `agent` composition identifies one exact root/home revision pair.
 
 The in-memory composition exposes aggregate indexes. `modules` resolves stable

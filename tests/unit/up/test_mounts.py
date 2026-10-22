@@ -10,16 +10,16 @@ import pytest
 from toolang.base.types.sandbox import SandboxMount
 from toolang.up.mounts import (
     prepare_linked_state_source_mounts,
-    prepare_root_mounts,
+    prepare_place_mounts,
     prepare_workspace_mounts,
 )
 
 
-def test_prepare_root_mounts_owns_toolang_layout(tmp_path: Path) -> None:
+def test_prepare_place_mounts_owns_place_inputs(tmp_path: Path) -> None:
     local_place = tmp_path / "toolang"
     hosted_place = Path("/root/.toolang")
 
-    mounts = prepare_root_mounts(local_place, hosted_place)
+    mounts = prepare_place_mounts(local_place, hosted_place)
 
     assert {(item.local_path, item.hosted_path) for item in mounts} == {
         (local_place / "config.toml", hosted_place / "config.toml"),
@@ -86,7 +86,7 @@ def test_prepare_linked_state_source_mounts_covers_root_and_home_sources(
 
 
 @pytest.mark.parametrize("linked", [False, True])
-def test_root_catalog_is_mounted_read_only(tmp_path: Path, linked: bool) -> None:
+def test_place_catalog_is_mounted_read_only(tmp_path: Path, linked: bool) -> None:
     local_place = tmp_path / "toolang"
     local_place.mkdir()
     catalog = local_place / "catalog.json"
@@ -98,7 +98,7 @@ def test_root_catalog_is_mounted_read_only(tmp_path: Path, linked: bool) -> None
 
     assert SandboxMount(
         source.resolve(), hosted_place / "catalog.json", read_only=True
-    ) in prepare_root_mounts(local_place, hosted_place)
+    ) in prepare_place_mounts(local_place, hosted_place)
 
 
 def test_workspace_mounts_snapshot_only_available_grants(tmp_path: Path) -> None:

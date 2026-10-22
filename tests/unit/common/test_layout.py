@@ -75,7 +75,7 @@ def test_visiting_layout_is_stable_and_root_and_source_specific(
 
 
 @pytest.mark.parametrize("name_length", [1, 64])
-def test_visiting_root_preserves_bounded_agent_names(
+def test_visiting_place_preserves_bounded_agent_names(
     tmp_path: Path, name_length: int
 ) -> None:
     name = "a" * name_length

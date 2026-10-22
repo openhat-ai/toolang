@@ -22,11 +22,12 @@ plugins receive their own resolved factory configuration. Core configuration
 does not dereference a plugin's secret-reference fields. [Plugins](plugins.md)
 owns those contracts and [Models](models.md) owns catalogs and connection routes.
 
-Resident and visiting layouts use root/home configuration. Roaming layouts use
+Resident and visiting layouts read the
+[root/home authored scopes](layout.md#root-place-and-home). Roaming layouts use
 the captured project layers described in [Scripts](scripts.md#directories-and-configuration),
 with relative paths bound to the declaring file. Project execution uses process
 environment rather than resident configuration or project dotenv. For ordinary
-layouts, root dotenv defaults are overlaid by home dotenv and then the process
+layouts, `PLACE/.env` defaults are overlaid by `HOME/.env` and then the process
 environment. Each generation keeps its own copied environment map.
 [Hosting](hosting.md) owns transport into a guest process.
 
