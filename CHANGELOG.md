@@ -173,38 +173,52 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   preparation, API schemas, or interactive UI, reducing measured startup time.
   ([#918](https://github.com/openhat-ai/toolang/pull/918))
 
-- AGENT precedes `cd`, `chat`, `info`, `serve`, `start`, `stop`, and `top`,
-  replacing the earlier mixed positions.
+- **Breaking:** Agent-scoped invocations use `too AGENT COMMAND` without suffix
+  aliases, while `caps`, `models`, `providers`, and `tools` keep optional
+  `AGENT` prefixes; rewrite `too serve AGENT` as `too AGENT serve`.
   ([#919](https://github.com/openhat-ai/toolang/pull/919))
 
-- **Breaking:** Command-suffix positions are removed, so rewrite
-  `too serve AGENT` and `too stop AGENT` as `too AGENT serve` and
-  `too AGENT stop`.
+- **Breaking:** `--instance/-i` is removed; select an existing home with
+  complete `name@h...`, `name@s...`, or `file.too@s...` operands, not IDs
+  alone. Short roaming `name@s...` needs the selected root's active registry,
+  while `file.too@s...` works offline.
   ([#919](https://github.com/openhat-ai/toolang/pull/919))
 
-- `caps`, `models`, `providers`, and `tools` keep optional AGENT prefixes
-  before the command.
+- **Breaking:** Stop old workloads with the previous CLI and retain old roots
+  separately, then use `/tmp/toolang/<area_id>/<hotel_id>/agents/<name>/` and
+  `<source_dir>/.toolang/<area_id>/<site_id>/agents/<name>/`, where `area_id`
+  identifies the canonical Toolang root rather than being its path. Old v/r IDs
+  and layouts have no automatic migration, though existing resident history
+  remains.
+  ([#919](https://github.com/openhat-ai/toolang/pull/919))
+
+- **Breaking:** Discovery moves from `<T>/.runtime/instances/` to
+  `<T>/.runtime/active/` without old-format compatibility; after stopping
+  their owners, remove or archive old registry records separately.
+  ([#919](https://github.com/openhat-ai/toolang/pull/919))
+
+- Explicit instances and unique Thread/Run references keep Chat, rerun, fork,
+  rewind, and `--chat` in one home; only source-only roaming allocates a fresh
+  home, never snapshotting history into another root.
+  ([#919](https://github.com/openhat-ai/toolang/pull/919))
+
+- `start`, `serve`, and `stop` reject roaming targets, while `steer` and
+  `cancel` control Runs in every placement.
   ([#919](https://github.com/openhat-ai/toolang/pull/919))
 
 - Catalog commands keep ordinary operands: `too new NAME`, `too remove NAME`,
-  and `too clone SOURCE [TARGET]`.
+  and `too clone SOURCE [NAME]`.
   ([#919](https://github.com/openhat-ai/toolang/pull/919))
 
-- Agent-scoped help states each accepted form's placement and runtime
-  requirements.
+- Concise help uses `AGENT`, familiar placeholders, sentence case, and
+  uppercase `URL`/`ID`; `--allow`, `--limit`, and `--default` show
+  `<KEY>=<VALUE>` and refer to `too help` topics instead of inline field/model
+  sections.
   ([#919](https://github.com/openhat-ai/toolang/pull/919))
 
-- Command recognition no longer reads installed homes to guess bare words;
-  root completion escapes residents that collide with registered commands.
-  ([#919](https://github.com/openhat-ai/toolang/pull/919))
-
-- Root help shows the optional agent prefix, and completion after a prefix
-  omits commands without agent scope.
-  ([#919](https://github.com/openhat-ai/toolang/pull/919))
-
-- Help uses one `AGENT` placeholder, clearer input names and numeric units
-  (`SOURCE`, `NAME`, `QUERY`, `PORT`, `SECONDS`), and lowercase builtin
-  argument descriptions, with `AGENT` before business operands.
+- `too AGENT info` identifies the Toolang root, agent root, and home, and emits
+  a complete unwrapped shell-quoted copy command retaining `--root` and
+  instance scope; command-colliding resident names use `agent:NAME`.
   ([#919](https://github.com/openhat-ai/toolang/pull/919))
 
 ### Fixed
@@ -336,15 +350,23 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   `too run --` prints static help, and `too new` labels its operand `NAME`.
   ([#916](https://github.com/openhat-ai/toolang/pull/916))
 
-- Invalid catalog names and missing leaf operands report native parameter errors.
+- Native help, validation, and completion fixes cover both CLI aliases, scoped
+  child filtering, business-operand completion, unreadable inventories,
+  invalid operands and other errors before acquisition, and command-colliding
+  root completion.
   ([#919](https://github.com/openhat-ai/toolang/pull/919))
 
-- Shell completion works for both CLI aliases, keeps agent selectors before
-  commands, preserves business completion and tolerates unreadable
-  inventories; unscoped group children reject prefixes.
+- `file.too` lookup chooses the last-created home by default, requires an
+  instance for ambiguous Thread or Run records, and diagnoses incompatible
+  stores with their path and required action without modifying them.
   ([#919](https://github.com/openhat-ai/toolang/pull/919))
 
-- Stop help no longer implies support for stopping roaming scripts.
+- A later launch cannot redirect a selected home, and a failed Chat after
+  `fork/rewind --chat` keeps the committed Thread history edit.
+  ([#919](https://github.com/openhat-ai/toolang/pull/919))
+
+- `workspace list`, `add`, and `remove` reject visiting references and URLs
+  before fetching.
   ([#919](https://github.com/openhat-ai/toolang/pull/919))
 
 ### Security
