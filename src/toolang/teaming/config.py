@@ -8,7 +8,7 @@ from hashlib import sha256
 import json
 from urllib.parse import urlsplit, parse_qs, unquote
 
-from toolang.common.instance_ids import area_id
+from toolang.common.place_codes import root_code
 from .errors import TeamingError
 from .schemas import identifier
 
@@ -50,7 +50,7 @@ class BackendConfig:
 
     @property
     def root_code(self) -> str:
-        return area_id(self.root)
+        return root_code(self.root)
 
     @property
     def identity(self) -> str:

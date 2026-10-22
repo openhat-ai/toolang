@@ -10,6 +10,8 @@ import httpx
 import pytest
 
 from toolang.setup.teaming import load_teaming_root
+from toolang.common.layout import AgentLayout
+from toolang.common.place_codes import root_code, roaming_place_code
 from toolang.teaming.api import create_app
 from toolang.teaming.backend.valkey import ValkeyBackend
 from toolang.teaming.client import HubClient
@@ -47,6 +49,22 @@ def test_setup_canonicalizes_host_root_before_deriving_namespace(tmp_path):
     assert load_teaming_root(alias).backend == direct
     assert direct.root == str(root.resolve())
     assert replace(direct, root=str(tmp_path / "other")).identity != direct.identity
+
+
+def test_backend_namespace_matches_the_root_code_in_nonresident_paths(tmp_path):
+    source = tmp_path / "source" / "agent.too"
+    source.parent.mkdir()
+    config = load_teaming_root(tmp_path).backend
+    visiting = AgentLayout.visiting("owner/repo@main/agent.too", "alice", root=tmp_path)
+    roaming = AgentLayout.roaming(
+        source,
+        root=tmp_path,
+        place_code=roaming_place_code(str(source.resolve()), 1),
+    )
+    assert config.root_code == root_code(str(tmp_path.resolve()))
+    assert config.root_code == visiting.place.parent.name == roaming.place.parent.name
+    backend = ValkeyBackend(config)
+    assert backend.keys.prefix == f"toolang:{config.root_code}:v0"
 
 
 def test_hub_rejects_configuration_bound_to_another_host_root(tmp_path):
@@ -126,7 +144,7 @@ def test_shared_database_isolates_names_messages_leases_cursors_and_events():
 
 
 def test_colliding_root_codes_fail_without_adopting_or_mutating(monkeypatch):
-    monkeypatch.setattr("toolang.teaming.config.area_id", lambda root: "0000000")
+    monkeypatch.setattr("toolang.teaming.config.root_code", lambda root: "0000000")
 
     async def scenario():
         server = FakeServer(server_type="valkey")

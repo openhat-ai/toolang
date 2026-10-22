@@ -1,10 +1,10 @@
 """Storage addresses for the explicit root shared by offline messaging fixtures."""
 
-from toolang.common.instance_ids import area_id
+from toolang.common.place_codes import root_code
 from toolang.teaming.backend.valkey.keys import Keys
 
 ROOT = "/test/toolang"
-KEYS = Keys(area_id(ROOT))
+KEYS = Keys(root_code(ROOT))
 PREFIX = KEYS.prefix
 TEAM_MEMBERS = KEYS.team_members
 PRESENCE = KEYS.presence

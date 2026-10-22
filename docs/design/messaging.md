@@ -31,7 +31,7 @@ and recorded launches, not delivery or live presence.
 hub store schema `5` owns messaging and execution-event data. Incompatible or
 corrupt initialized stores fail closed without resets, mutation, or import.
 All Hub keys use `toolang:<root_code>:v0:`, including execution events and Talk
-cursors. `root_code` reuses the seven-character Crockford Base32 area ID derived
+cursors. `root_code` reuses the seven-character Crockford Base32 root code derived
 from the host-canonical Toolang root. Separate roots can share one backend URL
 without sharing data. Each namespace records its full root identity; collisions
 and missing/corrupt ownership fail without adopting or modifying another dataset.
@@ -139,7 +139,7 @@ human names keep the terminal foreground and their markers stay bright cyan.
 
 To customize an existing member, atomically edit its JSON in
 `toolang:<root_code>:v0:team:members` using `valkey-cli` against the configured
-backend. Set `root_code` to the selected root's area ID (see [agent addresses](agent-addresses.md)):
+backend. Set `root_code` to the selected root's short code (see [agent addresses](agent-addresses.md)):
 
 ```sh
 valkey-cli EVAL '

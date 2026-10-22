@@ -13,8 +13,8 @@ Reuse the root hash from [agent addresses](../design/agent-addresses.md).
 
 Host setup resolves `T = str(root.expanduser().resolve(strict=False))`.
 Resolved backend configuration requires T; core modules never resolve paths or
-read environment defaults. `root_code` reuses `area_id(T)`: 32 hash bits encoded
-as seven lowercase Crockford Base32 characters under the existing `area:v1` domain.
+read environment defaults. Reuse `common.place_codes.root_code(T)`: 32 hash bits
+encoded as seven lowercase Crockford Base32 characters under the `place:v1` domain.
 
 Every key uses `toolang:<root_code>:v0:<suffix>`, preserving existing suffixes.
 Each backend owns its key builder, shared by messaging and execution events.
