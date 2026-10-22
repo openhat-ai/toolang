@@ -330,6 +330,11 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 - Invalid catalog names and missing leaf operands report native parameter errors.
   ([#919](https://github.com/openhat-ai/toolang/pull/919))
 
+- Shell completion works for both CLI aliases, keeps agent selectors before
+  commands, preserves business completion and tolerates unreadable
+  inventories; unscoped group children reject prefixes.
+  ([#919](https://github.com/openhat-ai/toolang/pull/919))
+
 ### Security
 
 - The locked certifi trust store advances to 2026.10.19, resolving trust-store
