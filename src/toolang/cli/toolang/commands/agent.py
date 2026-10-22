@@ -179,7 +179,7 @@ def list_agents(ctx: typer.Context) -> None:
 
 def info_agent(
     ctx: typer.Context,
-    agent: Annotated[str, AgentArgument("home")],
+    agent: Annotated[str, AgentArgument("home", both_orders=True)],
     model_catalog: ModelCatalogOption = None,
 ) -> None:
     agent_name = require_runtime_agent(ctx, agent)

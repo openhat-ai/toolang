@@ -289,9 +289,11 @@ def test_serve_uses_process_sandbox_instead_of_dotenv(
     assert cast(Mapping[str, str], captured["environ"])["TOOLANG_SANDBOX"] == merged
 
 
+@pytest.mark.parametrize("agent_first", [False, True])
 def test_run_resolves_sandbox_inputs_and_runs_in_foreground(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    agent_first: bool,
 ) -> None:
     root = tmp_path / "toolang"
     layout = _create_agent(root)
@@ -357,8 +359,7 @@ def test_run_resolves_sandbox_inputs_and_runs_in_foreground(
         [
             "--root",
             str(root),
-            "alice",
-            "serve",
+            *(["alice", "serve"] if agent_first else ["serve", "alice"]),
             "--catalog",
             str(model_catalog),
             "--sandbox",
@@ -546,9 +547,11 @@ def test_resident_commands_resolve_ports_before_launch(
     assert captured == [expected]
 
 
+@pytest.mark.parametrize("agent_first", [False, True])
 def test_start_launches_in_background_and_reports_endpoint(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    agent_first: bool,
 ) -> None:
     root = tmp_path / "toolang"
     _create_agent(root)
@@ -596,8 +599,7 @@ def test_start_launches_in_background_and_reports_endpoint(
         [
             "--root",
             str(root),
-            "alice",
-            "start",
+            *(["alice", "start"] if agent_first else ["start", "alice"]),
             "--catalog",
             str(model_catalog),
             "--sandbox",
@@ -842,9 +844,11 @@ def test_start_interruption_during_sandbox_launch_exits_130(
     assert strip_ansi(result.stderr).strip() == "Preparing Docker sandbox..."
 
 
+@pytest.mark.parametrize("agent_first", [False, True])
 def test_stop_forwards_force_to_sandbox(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    agent_first: bool,
 ) -> None:
     root = tmp_path / "toolang"
     layout = _create_agent(root)
@@ -864,7 +868,12 @@ def test_stop_forwards_force_to_sandbox(
 
     result = runner.invoke(
         cli.app,
-        ["--root", str(root), "alice", "stop", "--force"],
+        [
+            "--root",
+            str(root),
+            *(["alice", "stop"] if agent_first else ["stop", "alice"]),
+            "--force",
+        ],
     )
 
     assert result.exit_code == 0, result.stderr

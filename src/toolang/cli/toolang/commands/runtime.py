@@ -85,7 +85,10 @@ from ...common.progress import CliProgress, runtime_startup_failure_message
 
 def run(
     ctx: typer.Context,
-    agent: Annotated[str, AgentArgument("execute", placements="resident,visiting")],
+    agent: Annotated[
+        str,
+        AgentArgument("execute", placements="resident,visiting", both_orders=True),
+    ],
     sandbox: Annotated[
         str | None,
         typer.Option(
@@ -260,7 +263,10 @@ def _report_foreground_ready(
 
 def start(
     ctx: typer.Context,
-    agent: Annotated[str, AgentArgument("execute", placements="resident,visiting")],
+    agent: Annotated[
+        str,
+        AgentArgument("execute", placements="resident,visiting", both_orders=True),
+    ],
     sandbox: Annotated[
         str | None,
         typer.Option(
@@ -467,7 +473,10 @@ def _retain_started(
 
 def stop(
     ctx: typer.Context,
-    agent: Annotated[str, AgentArgument("home", placements="resident,visiting")],
+    agent: Annotated[
+        str,
+        AgentArgument("home", placements="resident,visiting", both_orders=True),
+    ],
     force: Annotated[
         bool,
         typer.Option(help="Force-stop when graceful shutdown does not complete"),

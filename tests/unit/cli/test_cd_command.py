@@ -261,8 +261,9 @@ def test_cd_rejects_unsupported_targets_without_launching(
     assert cli.main(arguments) != 0
 
 
+@pytest.mark.parametrize("agent_first", [False, True])
 def test_cd_uses_root_selection_and_inherits_the_process_environment(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, agent_first: bool
 ) -> None:
     environment_root = tmp_path / "environment-root"
     explicit_root = tmp_path / "explicit-root"
@@ -280,9 +281,11 @@ def test_cd_uses_root_selection_and_inherits_the_process_environment(
 
     monkeypatch.setattr(cd_command.subprocess, "run", run)
 
-    assert cli.main(["alice", "cd"]) == 0
-    assert cli.main(["--root", str(explicit_root), "alice", "cd"]) == 0
-    assert cli.main(["--root", str(explicit_root), "agent:alice", "cd"]) == 0
+    args = ["alice", "cd"] if agent_first else ["cd", "alice"]
+    explicit_args = ["agent:alice", "cd"] if agent_first else ["cd", "agent:alice"]
+    assert cli.main(args) == 0
+    assert cli.main(["--root", str(explicit_root), *args]) == 0
+    assert cli.main(["--root", str(explicit_root), *explicit_args]) == 0
 
     assert [args for args, _kwargs in calls] == [
         ["/custom/shell", "-i"],

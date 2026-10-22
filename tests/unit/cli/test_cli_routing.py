@@ -724,9 +724,11 @@ def test_cli_opens_roaming_chat_with_its_exact_layout(
     }
 
 
+@pytest.mark.parametrize("agent_first", [False, True])
 def test_cli_routes_chat_development_artifact_to_the_exact_layout(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    agent_first: bool,
 ) -> None:
     source = tmp_path / "demo.too"
     source.write_text("agic chat:\n  Reply directly.\n", encoding="utf-8")
@@ -755,8 +757,7 @@ def test_cli_routes_chat_development_artifact_to_the_exact_layout(
     assert (
         cli.main(
             [
-                str(source),
-                "chat",
+                *([str(source), "chat"] if agent_first else ["chat", str(source)]),
                 "--sandbox",
                 "docker",
                 "--dev",
@@ -886,12 +887,15 @@ def test_cli_opens_visiting_chat_with_its_exact_layout(
 
 
 @pytest.mark.parametrize(
-    ("command", "module", "callback", "operands"),
+    ("command", "module", "callback", "operands", "agent_first"),
     [
-        ("serve", "runtime", "run", []),
-        ("start", "runtime", "start", []),
-        ("chat", "chat", "chat_command", []),
-        ("rerun", "thread", "rerun_command", ["run_example"]),
+        ("serve", "runtime", "run", [], True),
+        ("serve", "runtime", "run", [], False),
+        ("start", "runtime", "start", [], True),
+        ("start", "runtime", "start", [], False),
+        ("chat", "chat", "chat_command", [], True),
+        ("chat", "chat", "chat_command", [], False),
+        ("rerun", "thread", "rerun_command", ["run_example"], True),
     ],
 )
 @pytest.mark.parametrize(
@@ -916,7 +920,15 @@ def test_cli_opens_visiting_chat_with_its_exact_layout(
     ],
 )
 def test_cli_dev_states_reach_each_lazy_command(
-    command, module, callback, operands, options, expected, tmp_path, monkeypatch
+    command,
+    module,
+    callback,
+    operands,
+    agent_first,
+    options,
+    expected,
+    tmp_path,
+    monkeypatch,
 ):
     owner = import_module(f"toolang.cli.toolang.commands.{module}")
     captured = {}
@@ -931,8 +943,7 @@ def test_cli_dev_states_reach_each_lazy_command(
             [
                 "--root",
                 str(tmp_path),
-                "alice",
-                command,
+                *(["alice", command] if agent_first else [command, "alice"]),
                 *operands,
                 *options,
             ]

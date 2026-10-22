@@ -263,6 +263,9 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 - `too AGENT info` labels one Root as the agent root, beside the home.
   ([#928](https://github.com/openhat-ai/toolang/pull/928))
 
+- `info`, `chat`, `cd`, `start`, `stop`, and `serve` accept AGENT before or
+  after the command, so both `too AGENT COMMAND` and `too COMMAND AGENT` work.
+
 ### Fixed
 
 - Failed preparation no longer leaves active registrations; runtime references
