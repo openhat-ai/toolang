@@ -12,6 +12,9 @@ from rich.cells import cell_len
 from rich.console import Console
 from rich.text import Text
 
+from toolang.base.model_settings import apply_model_override, parse_model_body
+from toolang.base.money import MAX_COST, cost_text
+from toolang.base.types.model import ModelRequest
 from toolang.cli.common.policy import (
     _ALLOW_FIELDS,
     _DEFAULT_FIELDS,
@@ -23,6 +26,7 @@ from toolang.cli.common.policy import (
 )
 from toolang.cli.toolang.main import app
 from toolang.common.typer.ui import PLAIN, UV, run
+from toolang.plugin.models.budget import output_budget
 
 
 TOPICS = ("allow", "limit", "default", "model")
@@ -158,8 +162,11 @@ def test_topics_wrap_and_distinguish_definitions_from_explanations(
         ("model", ("ref", "effort", "max_output")),
     ],
 )
-def test_topic_keys_keep_their_value_definitions_in_indented_blocks(topic, fields):
-    _, output, _, _ = _invoke(["help", topic])
+@pytest.mark.parametrize("width", [44, 80, 120])
+def test_topic_keys_keep_their_value_definitions_in_indented_blocks(
+    topic, fields, width
+):
+    _, output, _, _ = _invoke(["help", topic], width=width)
     definitions = list(re.finditer(r"^( *)([a-z_]+)=(\S+)\n", output.plain, re.M))
     assert tuple(match[2] for match in definitions) == fields
     for index, match in enumerate(definitions):
@@ -177,7 +184,12 @@ def test_topic_keys_keep_their_value_definitions_in_indented_blocks(topic, field
         values = block.split(f"\n{indentation}Possible values:\n", 1)[1]
         rows = values.split("\n\n", 1)[0].splitlines()
         assert all(line.startswith(indentation + "  ") for line in rows)
-        assert tuple(line.split()[0] for line in rows) == tuple(match[3].split("|"))
+        labels = (
+            line.split()[0]
+            for line in rows
+            if len(line) - len(line.lstrip()) == len(indentation) + 2
+        )
+        assert tuple(labels) == tuple(match[3].split("|"))
 
 
 def test_topic_content_preserves_value_rules_and_default_lifetimes():
@@ -208,10 +220,32 @@ def test_topic_content_preserves_value_rules_and_default_lifetimes():
     assert "Non-negative token budget" in outputs["model"]
     assert "auto Clear the reasoning parameter" in outputs["model"]
     assert "Positive output token count" in outputs["model"]
-    assert "auto Clear the output limit" in outputs["model"]
+    assert "auto Use automatic output sizing" in outputs["model"]
     assert "unset selects model-free execution" in outputs["model"]
     assert "--compact-model requires an exact ref" in outputs["model"]
     assert "none is not a model selection value" in outputs["model"]
+
+
+def test_cost_help_includes_the_accounting_range_and_precision():
+    _, output, _, _ = _invoke(["help", "limit"])
+    cost = output.plain.split("\ncost=", 1)[1].split("\ntime=", 1)[0]
+    cost = " ".join(cost.split())
+    assert f"up to {cost_text(MAX_COST)}" in cost
+    assert "rounded to six decimal places" in cost
+    assert resolve_limit_overrides({}, [f"cost={MAX_COST}"]) == {"cost": MAX_COST}
+    assert resolve_limit_overrides({}, ["cost=0.0000005"]) == {"cost": 0.000001}
+    with pytest.raises(ValueError, match="at most"):
+        resolve_limit_overrides({}, ["cost=1000000000"])
+
+
+def test_max_output_auto_help_describes_automatic_sizing():
+    _, output, _, _ = _invoke(["help", "model"])
+    setting = output.plain.split("\n  max_output=", 1)[1].split("\nExamples:", 1)[0]
+    assert "auto Use automatic output sizing" in " ".join(setting.split())
+    model = ModelRequest("test/model", max_output=1024)
+    automatic = apply_model_override(model, model, parse_model_body("max_output=auto"))
+    assert automatic is not None and automatic.max_output is None
+    assert output_budget({"output": 8192}, demand=automatic.max_output) == 8192
 
 
 @pytest.mark.parametrize("topic", TOPICS)

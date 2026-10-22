@@ -111,13 +111,18 @@ def _limit(formatter: HelpFormatter) -> None:
         ("time", "Elapsed time in seconds per run tree"),
     ):
         numeric = "DECIMAL" if name == "cost" else "INTEGER"
+        value_description = (
+            "Non-negative decimal up to 999999999.999999; rounded to six decimal places"
+            if name == "cost"
+            else "Non-negative integer"
+        )
         _setting(
             formatter,
             name,
             f"{numeric}|none",
             description,
             choices=[
-                (numeric, f"Non-negative {numeric.lower()}"),
+                (numeric, value_description),
                 ("none", "Unset the limit"),
             ],
         )
@@ -259,7 +264,7 @@ def _model(formatter: HelpFormatter) -> None:
             "Set the maximum output token count",
             choices=[
                 ("INTEGER", "Positive output token count"),
-                ("auto", "Clear the output limit"),
+                ("auto", "Use automatic output sizing"),
             ],
         )
     _examples(
