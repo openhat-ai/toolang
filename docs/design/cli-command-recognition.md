@@ -18,9 +18,10 @@ too [OPTIONS] COMMAND [ARGUMENTS]
 
 `info`, `chat`, `cd`, `start`, `stop`, and `serve` accept both explicit agent
 positions. Other agent-scoped commands require the prefix, including inspection,
-Run/Thread controls, and resource groups. A command-first agent immediately
-follows the command, before any business operands. Commands with optional agent
-scope retain omission: `too top`, `too models`, or `too skill list` use root scope.
+Run/Thread controls, and resource groups. A command-first agent occupies the
+first positional argument, before business operands; command options may appear
+before or after it. Commands with optional agent scope retain omission: `too top`,
+`too models`, or `too skill list` use root scope.
 Catalog commands such as `too new NAME`, `too clone SOURCE [NAME]`, and
 `too remove NAME` have ordinary Typer operands and no agent-prefix slot.
 `talk` takes a conversation target and has no agent-prefix form.

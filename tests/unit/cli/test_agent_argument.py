@@ -142,12 +142,18 @@ def test_contracts_generate_natural_descriptions(
         ("roaming", "alice", "agent names are not supported"),
     ],
 )
-def test_placement_errors_are_native(placements, selector, message):
-    def invoke(agent: Annotated[str, AgentArgument("source", placements=placements)]):
+@pytest.mark.parametrize("agent_first", [False, True])
+def test_placement_errors_are_native(placements, selector, message, agent_first):
+    def invoke(
+        agent: Annotated[
+            str, AgentArgument("source", placements=placements, both_orders=True)
+        ],
+    ):
         pytest.fail("unsupported selector reached execution")
 
     with pytest.raises(BadParameter, match=message):
-        _app(invoke).main([selector, "call"], standalone_mode=False)
+        args = [selector, "call"] if agent_first else ["call", selector]
+        _app(invoke).main(args, standalone_mode=False)
 
 
 @pytest.mark.parametrize(
@@ -229,7 +235,7 @@ def test_native_conversion_and_callback_run_once(args):
     ]
     assert seen == [("alice", ParameterSource.COMMANDLINE)]
     with pytest.raises(UsageError, match="not a valid int"):
-        command.main(["alice", "call", "wrong"], standalone_mode=False)
+        command.main([*args[:-1], "wrong"], standalone_mode=False)
 
 
 @pytest.mark.parametrize("agent_first", [False, True])
@@ -513,15 +519,29 @@ def test_dual_order_completion_consumes_the_agent_once(
         ("stop", "runtime", "stop"),
     ],
 )
-@pytest.mark.parametrize("agent_first", [False, True])
-@pytest.mark.parametrize("selector", ["alice", "agent:top", "gh:owner/alice"])
+@pytest.mark.parametrize(
+    "selector,kind",
+    [
+        ("alice", "name"),
+        ("agent:top", "name"),
+        ("gh:owner/alice", "remote"),
+        ("gh:owner/repo/alice.too@main", "remote"),
+        ("https://example.test/alice.too", "remote"),
+        ("./alice.too", "path"),
+        ("{root}/source with spaces/alice.too", "path"),
+        ("alice@t0000000001", "visiting_instance"),
+        ("alice@s00000010000000001", "roaming_instance"),
+    ],
+)
 def test_public_dual_orders_bind_the_same_selector(
-    name, module, callback, agent_first, selector, tmp_path, monkeypatch
+    name, module, callback, selector, kind, tmp_path, monkeypatch, capsys
 ):
     from functools import wraps
     from importlib import import_module
 
     owner = import_module(f"toolang.cli.toolang.commands.{module}")
+    monkeypatch.chdir(tmp_path)
+    selector = selector.format(root=tmp_path)
     seen = []
 
     @wraps(getattr(owner, callback))
@@ -530,17 +550,70 @@ def test_public_dual_orders_bind_the_same_selector(
         seen.append(
             (
                 kwargs["agent"],
-                cli_context(ctx).selector,
+                cli_context(ctx),
                 ctx.get_parameter_source("agent"),
             )
         )
 
     monkeypatch.setattr(owner, callback, invoke)
-    args = [selector, name] if agent_first else [name, selector]
+    error = None
+    if kind.endswith("instance") and name == "cd":
+        error = "instances are not supported"
+    elif name in {"start", "stop", "serve"}:
+        if kind == "path":
+            error = "paths are not supported"
+        elif kind == "roaming_instance":
+            error = "roaming instances are not supported"
+    for args in ([selector, name], [name, selector]):
+        assert cli.main(["--root", str(tmp_path), *args]) == (2 if error else 0)
+        if error:
+            assert error in capsys.readouterr().err
+            assert not seen
+    if not error:
+        assert len(seen) == 2 and seen[0] == seen[1]
+        argument, state, parameter_source = seen[0]
+        assert argument == selector.removeprefix("agent:")
+        assert parameter_source is ParameterSource.COMMANDLINE
+        assert state.root == tmp_path
+        assert state.agent == ("top" if selector == "agent:top" else "alice")
+        assert not state.prepared and not state.instance_selected
+        if kind == "path":
+            assert state.source == Path(selector).resolve()
+            assert state.layout is not None and state.layout.placement == "roaming"
+        elif kind == "remote":
+            assert state.layout is not None and state.layout.placement == "visiting"
+        elif kind.endswith("instance"):
+            assert state.address is not None
+            assert state.address.placement == kind.removesuffix("_instance")
+    assert not tuple(tmp_path.iterdir())
+
+
+@pytest.mark.parametrize(
+    "args,expected",
+    [
+        (["info", "chat"], ("info", "chat")),
+        (["chat", "info"], ("chat", "info")),
+        (["agent:chat", "info"], ("info", "chat")),
+        (["agent:info", "chat"], ("chat", "info")),
+    ],
+)
+def test_dual_order_command_names_keep_command_precedence(
+    args, expected, tmp_path, monkeypatch
+):
+    from functools import wraps
+    from toolang.cli.toolang.commands import agent, chat
+
+    seen = []
+    for owner, callback in ((agent, "info_agent"), (chat, "chat_command")):
+
+        @wraps(getattr(owner, callback))
+        def invoke(**kwargs):
+            seen.append((kwargs["ctx"].command.name, kwargs["agent"]))
+
+        monkeypatch.setattr(owner, callback, invoke)
+
     assert cli.main(["--root", str(tmp_path), *args]) == 0
-    assert seen == [
-        (selector.removeprefix("agent:"), selector, ParameterSource.COMMANDLINE)
-    ]
+    assert seen == [expected]
     assert not tuple(tmp_path.iterdir())
 
 
