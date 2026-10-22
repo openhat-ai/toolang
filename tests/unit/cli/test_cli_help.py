@@ -380,7 +380,7 @@ def test_declared_help_omits_final_period():
 @pytest.mark.parametrize(
     ("arguments", "command", "message"),
     [
-        (["help"], "too", "No such command 'help'."),
+        (["missing"], "too", "No such command 'missing'."),
         (["prompt", "missing"], "too prompt", "No such command 'missing'."),
         (
             ["a", "workspace", "missing"],
@@ -519,7 +519,10 @@ def test_additional_commands_keep_theme_and_root_invocation_hint(capsys, monkeyp
     assert positions == sorted(positions)
     assert too_main(["--help"]) == 0
     main_help = strip_ansi(capsys.readouterr().out)
-    assert main_help.rstrip().endswith("Run 'too more' to see additional commands.")
+    assert main_help.rstrip().endswith(
+        "Run 'too more' to see additional commands.\n"
+        "Run 'too help' to see option help topics."
+    )
     assert "Run commands:" not in main_help
     for names in more_panels.values():
         for description in names.values():
@@ -595,7 +598,10 @@ def test_root_help_hint_uses_the_invoked_executable():
         assert (
             stdout.getvalue()
             .rstrip()
-            .endswith(f"Run '{prog_name} more' to see additional commands.")
+            .endswith(
+                f"Run '{prog_name} more' to see additional commands.\n"
+                f"Run '{prog_name} help' to see option help topics."
+            )
         )
 
 

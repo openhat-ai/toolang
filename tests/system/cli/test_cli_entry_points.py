@@ -185,7 +185,8 @@ raise SystemExit(status)
     )
 
     assert completed.returncode == 0, completed.stderr
-    assert "Usage:" in completed.stdout or path == ("more",)
+    reference = len(path) == 2 and path[0] == "help"
+    assert "Usage:" in completed.stdout or path == ("more",) or reference
     assert json.loads(completed.stderr) == []
 
 
@@ -325,7 +326,8 @@ def test_every_cli_command_renders_help(
     result = CliRunner().invoke(app, _help_arguments(app, path), prog_name=name)
 
     assert result.exit_code == 0, result.output
-    if name == "toolang" and path == ("more",):
+    reference = len(path) == 2 and path[0] == "help"
+    if name == "toolang" and (path == ("more",) or reference):
         assert "Usage:" not in result.output
         return
     assert "Usage:" in result.output

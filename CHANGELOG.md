@@ -28,6 +28,11 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   accept `ref=`.
   ([#907](https://github.com/openhat-ai/toolang/pull/907))
 
+- `too help` and its `allow`, `limit`, `default`, and `model` topics show
+  offline syntax, definitions, and copyable examples, linked beside `too more`
+  in the root footer.
+  ([#921](https://github.com/openhat-ai/toolang/pull/921))
+
 ### Changed
 
 - `too talk` help labels its argument `CONVO`, lists conversation-ID open and
