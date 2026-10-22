@@ -11,7 +11,8 @@ from uuid import uuid4
 import psutil
 
 from toolang.common.layout import AgentLayout
-from .identity import identity_bindings, visiting_home_guard
+from .identity import visiting_home_guard
+from .records import InstanceIdentity
 from .instance import (
     control_owner,
     patch_workload,
@@ -19,7 +20,7 @@ from .instance import (
     remove_finished_instance,
     update_instance,
 )
-from .observation import RuntimeRegistration, remove_registration
+from .registration import RuntimeRegistration, remove_registration
 from .types import ExecutionDrivers
 
 
@@ -62,7 +63,7 @@ def begin_workload(
 
     def begin(entry):
         entry["launch_id"] = launch_id
-        entry["control"].update(identity_bindings(layout))
+        entry["control"].update(InstanceIdentity.from_layout(layout).to_data())
         entry["control"].update(
             runtime_instance=layout.instance,
             root=str(root),
@@ -123,7 +124,7 @@ class ForegroundWorkload:
             },
         )
         try:
-            self._registration.__enter__()
+            self._registration.publish()
         except BaseException:
             self.close()
             raise

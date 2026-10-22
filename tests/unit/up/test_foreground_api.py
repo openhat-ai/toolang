@@ -20,7 +20,8 @@ from toolang.up.foreground import foreground_api
 from toolang.up.identity import allocate_roaming
 from toolang.up.instance import read_instance
 from toolang.up.lifecycle import LAUNCH_HEADER, ServerLifecycle
-from toolang.up.observation import RuntimeRegistration, runtime_inventory
+from toolang.up.observation import runtime_inventory
+from toolang.up.registration import RuntimeRegistration
 
 
 @pytest.mark.parametrize("placement", ["resident", "visiting", "roaming"])

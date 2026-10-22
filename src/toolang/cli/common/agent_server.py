@@ -339,7 +339,7 @@ def _prepare_agent_server(
             progress=progress.sink,
         )
     if status is not None and status.status == "running":
-        from toolang.up.identity import verify_identity
+        from toolang.up.records import InstanceIdentity
 
         entry = read_instance(layout.runtime_status, layout.instance) or {}
         if (
@@ -347,7 +347,7 @@ def _prepare_agent_server(
             and entry.get("launch_id") != expected_launch_id
         ):
             raise AgentServerAcquisitionError("selected execution owner was replaced")
-        verify_identity(layout, entry.get("control", {}))
+        InstanceIdentity.from_data(entry.get("control", {})).verify(layout)
         attached = _attached_server(layout, status, requested=sandbox)
         from toolang.up.contract import bound_drivers, require_compatible
 

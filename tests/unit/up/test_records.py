@@ -64,7 +64,8 @@ def test_resident_root_mismatch_preserves_the_existing_runtime(tmp_path, bound_r
 
 @pytest.mark.parametrize("placement", ["resident", "visiting", "roaming"])
 def test_root_alias_publishes_canonical_runtime_bindings(tmp_path, placement):
-    from toolang.up.identity import allocate_roaming, layout_from_control
+    from toolang.up.identity import allocate_roaming
+    from toolang.up.records import InstanceIdentity
 
     root = tmp_path / "selected"
     root.mkdir()
@@ -80,7 +81,7 @@ def test_root_alias_publishes_canonical_runtime_bindings(tmp_path, placement):
     with ForegroundWorkload(layout, toolang_root=alias, drivers=frozenset()) as active:
         entry = read_instance(layout.runtime_status)
         assert entry is not None and active.path.exists()
-        bound = layout_from_control(entry["control"])
+        bound = InstanceIdentity.from_data(entry["control"]).to_layout()
         assert bound.root == root
         assert bound.place == layout.place
         assert entry["control"]["root"] == str(root)

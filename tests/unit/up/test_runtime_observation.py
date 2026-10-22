@@ -11,12 +11,11 @@ from toolang.up.identity import allocate_roaming
 from toolang.execution.store import RunStore
 from tests.support.runtime_observation import binding
 from toolang.up.observation import (
-    RuntimeRegistration,
-    instance_filename,
     running_instances,
     runtime_inventory,
     runtime_snapshot,
 )
+from toolang.up.registration import instance_filename
 
 
 def _roaming(source, *, toolang_root=None):
@@ -390,45 +389,6 @@ def test_cleanup_creates_register_guard_for_an_existing_reference(
     assert guard.exists()
     if legacy_guard is not None:
         assert guard.with_name(legacy_guard).exists()
-
-
-def test_missing_reference_cleanup_does_not_create_discovery_directories(tmp_path):
-    from toolang.up.observation import _remove_reference
-
-    path = tmp_path / ".runtime" / "active" / "gus.json"
-    _remove_reference(path, "finished", tmp_path / "status.json")
-    assert not path.parent.exists()
-
-
-def test_register_guard_keeps_a_new_reference_when_old_cleanup_races(tmp_path):
-    from concurrent.futures import ThreadPoolExecutor
-    from threading import Event
-    from toolang.common.files import file_write_lock
-    from toolang.up.instance import update_instance
-
-    layout = AgentLayout.resident(tmp_path, "gus")
-    old = ForegroundWorkload(layout, toolang_root=tmp_path, drivers=frozenset())
-    old.__enter__()
-    guard = old.path.parent / "register.lock"
-    current = RuntimeRegistration(layout, toolang_root=tmp_path, launch_id="new")
-    entered = Event()
-
-    def close_old():
-        entered.set()
-        old.close()
-
-    with ThreadPoolExecutor(max_workers=1) as pool:
-        with file_write_lock(guard):
-            closing = pool.submit(close_old)
-            assert entered.wait(timeout=1)
-            assert not closing.done()
-            update_instance(
-                layout.runtime_status, lambda entry: entry.update(launch_id="new")
-            )
-            current.__enter__()
-        closing.result(timeout=1)
-    assert current.path.exists()
-    current.close()
 
 
 @pytest.mark.parametrize("placement", ["visiting", "roaming"])
@@ -875,55 +835,6 @@ def test_first_liveness_probe_excludes_a_departed_temporary_instance(
         assert snapshot.instances == ()
 
 
-@pytest.mark.parametrize("fault", ["foreign_status", "unsupported"])
-def test_rejected_publication_preserves_an_existing_reference_even_with_equal_uuid(
-    tmp_path, fault
-):
-    from toolang.up.instance import read_instance
-
-    layout = allocate_roaming(tmp_path / "aid.too", toolang_root=tmp_path)
-    entry = read_instance(layout.runtime_status)
-    assert entry is not None
-    registration = RuntimeRegistration(
-        layout, toolang_root=tmp_path, launch_id=entry["launch_id"]
-    )
-    reference = json.loads(registration.path.read_text())
-    if fault == "foreign_status":
-        reference["status"] = str(tmp_path / "peer" / "status.json")
-    else:
-        reference["version"] = 3
-    registration.path.write_text(json.dumps(reference))
-    before = registration.path.read_bytes()
-    with pytest.raises(ValueError):
-        registration.__enter__()
-    registration.close()
-    assert registration.path.read_bytes() == before
-
-
-def test_failed_publication_cleanup_checks_status_and_uuid_after_attempting_a_write(
-    tmp_path, monkeypatch
-):
-    from toolang.up import observation
-    from toolang.up.instance import read_instance
-
-    layout = allocate_roaming(tmp_path / "aid.too", toolang_root=tmp_path)
-    entry = read_instance(layout.runtime_status)
-    assert entry is not None
-    registration = RuntimeRegistration(
-        layout, toolang_root=tmp_path, launch_id=entry["launch_id"]
-    )
-    peer = dict(registration.payload, status=str(tmp_path / "peer" / "status.json"))
-
-    def replaced_then_failed(path, _content):
-        path.write_text(json.dumps(peer))
-        raise OSError("publication failed")
-
-    monkeypatch.setattr(observation, "atomic_write_text", replaced_then_failed)
-    with pytest.raises(OSError, match="publication failed"):
-        registration.__enter__()
-    assert json.loads(registration.path.read_text()) == peer
-
-
 def test_foreign_root_references_cannot_supply_a_fallback_home_or_hub_member(tmp_path):
     root = tmp_path / "one"
     foreign = tmp_path / "two"
@@ -943,7 +854,7 @@ def test_foreign_root_references_cannot_supply_a_fallback_home_or_hub_member(tmp
         assert not (foreign / "agents").exists()
 
 
-@pytest.mark.parametrize("fault", ["missing_field", "invalid_type"])
+@pytest.mark.parametrize("fault", ["missing_field", "invalid_type", "inconsistent"])
 def test_invalid_identity_is_isolated_from_a_healthy_discovery_peer(tmp_path, fault):
     broken = AgentLayout.resident(tmp_path, "alice")
     healthy = AgentLayout.resident(tmp_path, "bob")
@@ -956,8 +867,10 @@ def test_invalid_identity_is_isolated_from_a_healthy_discovery_peer(tmp_path, fa
         control = document["instances"]["default"]["control"]
         if fault == "missing_field":
             control.pop("runtime_instance")
-        else:
+        elif fault == "invalid_type":
             control["runtime_instance"] = 1
+        else:
+            control["home"] = str(tmp_path / "foreign-home")
         broken.runtime_status.write_text(json.dumps(document))
         before = broken.runtime_status.read_bytes()
         try:

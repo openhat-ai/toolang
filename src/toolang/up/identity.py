@@ -2,7 +2,6 @@
 
 from collections.abc import Iterator
 from contextlib import contextmanager
-from dataclasses import replace
 import json
 import os
 from pathlib import Path
@@ -18,114 +17,11 @@ from toolang.common.place_codes import (
     roaming_place_code,
     roaming_timestamp_ms,
 )
-from toolang.common import layout as paths
 from toolang.common.layout import AgentLayout, derive_agent_name
 from .instance import RUNTIME_STATUS_FORMAT, read_instance, update_instance
+from .records import InstanceIdentity
+from .registration import RuntimeRegistration, registration_lock, verify_registration
 from .private_paths import verify_root_namespace, verify_home_paths, visiting_paths
-
-
-def identity_bindings(layout: AgentLayout) -> dict:
-    return {
-        "place": str(layout.place),
-        "home": str(layout.home),
-        "store": str(layout.run_store),
-        "name": layout.name,
-        "placement": layout.placement,
-        "place_code": layout.place_code,
-        "address": layout.address,
-        "runtime_instance": layout.instance,
-        "source_id": layout.source_id,
-        "source_path": str(layout.source_path)
-        if layout.source_path is not None
-        else None,
-        "source_ref": layout.source_ref,
-        "request_order_ns": layout.request_order_ns,
-        "source_edit_lock": str(layout.place_edit_lock),
-        "root": str(layout.root) if layout.root is not None else None,
-        "project_inputs": bool(layout.project_inputs),
-        "managed_membership": bool(layout.managed_membership),
-    }
-
-
-def _canonical_path(value: object) -> Path:
-    if not isinstance(value, str):
-        raise ValueError("instance identity requires a canonical absolute path")
-    path = Path(value)
-    if not path.is_absolute() or str(path.resolve()) != value:
-        raise ValueError("instance identity requires a canonical absolute path")
-    return path
-
-
-def layout_from_control(control: dict) -> AgentLayout:
-    """Recompute an identity from its full bindings, never trust its short tag."""
-    root = _canonical_path(control.get("root"))
-    name = control.get("name")
-    if not isinstance(name, str):
-        raise ValueError("instance identity requires an agent name")
-    placement = control.get("placement")
-    if placement == "resident":
-        layout = AgentLayout.resident(root, name)
-    elif placement == "visiting":
-        source = control.get("source_ref")
-        if not isinstance(source, str) or not source:
-            raise ValueError("visiting identity has no source URL")
-        layout = AgentLayout.visiting(source, name, root=root)
-        assert layout.place_code is not None
-        if (
-            layout.place
-            != paths.VISITING_BASE / root_code(str(root)) / layout.place_code
-        ):
-            raise ValueError(
-                "visiting instance identity follows an invalid agent root link"
-            )
-    elif placement == "roaming":
-        source_path = _canonical_path(control.get("source_path"))
-        token = control.get("place_code")
-        if not isinstance(token, str):
-            raise ValueError("roaming identity requires a place code")
-        if roaming_place_code(str(source_path), roaming_timestamp_ms(token)) != token:
-            raise ValueError("roaming instance identity does not match its source path")
-        layout = AgentLayout.roaming(source_path, place_code=token, root=root)
-        if (
-            layout.place
-            != source_path.parent / ".toolang" / root_code(str(root)) / token
-        ):
-            raise ValueError(
-                "roaming instance identity follows an invalid agent root link"
-            )
-    else:
-        raise ValueError("invalid instance identity placement")
-    runtime_instance = control.get("runtime_instance")
-    if runtime_instance is not None and not isinstance(runtime_instance, str):
-        raise ValueError("invalid runtime instance in identity bindings")
-    layout = replace(
-        layout,
-        instance=runtime_instance,
-        project_inputs=control.get("project_inputs"),
-        managed_membership=control.get("managed_membership"),
-    )
-    expected = identity_bindings(layout)
-    inconsistent = [
-        key
-        for key, value in expected.items()
-        if (
-            key not in control
-            or type(control[key]) is not type(value)
-            or control[key] != value
-        )
-    ]
-    if inconsistent:
-        raise ValueError(
-            f"inconsistent instance identity bindings: {', '.join(inconsistent)}"
-        )
-    return layout
-
-
-def verify_identity(layout: AgentLayout, control: dict) -> None:
-    """Require all bindings, including fields excluded from layout equality."""
-    actual = identity_bindings(layout_from_control(control))
-    if actual != identity_bindings(layout):
-        raise ValueError("place code collision: conflicting source ownership")
 
 
 def read_home_identity(layout: AgentLayout, *, toolang_root: Path) -> dict | None:
@@ -139,7 +35,7 @@ def read_home_identity(layout: AgentLayout, *, toolang_root: Path) -> dict | Non
     if layout.placement != "resident":
         if entry is None:
             raise FileNotFoundError(f"instance ownership not found: {layout.address}")
-        verify_identity(layout, entry["control"])
+        InstanceIdentity.from_data(entry["control"]).verify(layout)
     return entry
 
 
@@ -148,13 +44,13 @@ def visiting_home_guard(layout: AgentLayout) -> Iterator[None]:
     """Claim a new home or verify full ownership before any cache/history write."""
     if layout.placement != "visiting":
         raise ValueError("visiting home guard requires a visiting layout")
-    expected = identity_bindings(layout)
+    expected = InstanceIdentity.from_layout(layout).to_data()
 
     def verify() -> None:
         entry = read_instance(layout.runtime_status)
         if entry is None:
             raise ValueError("visiting place code collision or unbound home")
-        verify_identity(layout, entry["control"])
+        InstanceIdentity.from_data(entry["control"]).verify(layout)
 
     with visiting_paths(layout) as pinned:
         if not pinned.created:
@@ -187,7 +83,7 @@ def _retained_layout(place: Path, name: str) -> AgentLayout:
         raise ValueError(
             f"invalid retained instance identity: {place}"
         ) from FileNotFoundError(status)
-    layout = layout_from_control(entry["control"])
+    layout = InstanceIdentity.from_data(entry["control"]).to_layout()
     if layout.placement != "roaming" or layout.place != place:
         raise ValueError(f"inconsistent retained instance identity: {place}")
     verify_home_paths(place, layout.name)
@@ -250,8 +146,6 @@ def _select_retained_roaming(
 
 def allocate_roaming(source: Path, *, toolang_root: Path) -> AgentLayout:
     """Allocate once under source/registry guards; collisions fail without retry."""
-    from .observation import RuntimeRegistration, registration_lock, verify_registration
-
     source = source.expanduser().resolve()
     toolang_root = toolang_root.expanduser().resolve()
     if source.suffix != ".too":
@@ -284,7 +178,7 @@ def allocate_roaming(source: Path, *, toolang_root: Path) -> AgentLayout:
                 "instances": {
                     "default": {
                         "launch_id": uuid4().hex,
-                        "control": identity_bindings(layout),
+                        "control": InstanceIdentity.from_layout(layout).to_data(),
                         "workload": {
                             "status": "preparing",
                             "requested_at": time.time(),
@@ -300,7 +194,7 @@ def allocate_roaming(source: Path, *, toolang_root: Path) -> AgentLayout:
                     layout,
                     toolang_root=toolang_root,
                     launch_id=payload["instances"]["default"]["launch_id"],
-                ).__enter__()
+                ).publish()
             except BaseException as exc:
                 from .workload import fail_preparation
 

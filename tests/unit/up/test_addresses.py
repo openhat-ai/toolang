@@ -113,14 +113,14 @@ def test_previous_complete_visiting_marker_is_rejected():
 
 
 def test_previous_binding_fields_are_not_accepted(tmp_path):
-    from toolang.up.identity import identity_bindings, layout_from_control
+    from toolang.up.records import InstanceIdentity
 
     layout = AgentLayout.resident(tmp_path, "aid")
-    control = identity_bindings(layout)
+    control = InstanceIdentity.from_layout(layout).to_data()
     assert control["root"] == control["place"] == str(tmp_path)
     control["toolang_root"] = control.pop("root")
     with pytest.raises(ValueError, match="canonical absolute path"):
-        layout_from_control(control)
+        InstanceIdentity.from_data(control).to_layout()
 
 
 def test_empty_unpublished_candidate_is_skipped_without_overwriting_it(

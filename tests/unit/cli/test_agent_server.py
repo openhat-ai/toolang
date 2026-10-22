@@ -100,12 +100,12 @@ def _set_status(
     if status is not None and status.status == "running":
         from toolang.up.instance import update_instance
         from toolang.up.contract import startup_contract
-        from toolang.up.identity import identity_bindings
+        from toolang.up.records import InstanceIdentity
 
         update_instance(
             layout.runtime_status,
             lambda entry: entry["control"].update(
-                **identity_bindings(layout),
+                **InstanceIdentity.from_layout(layout).to_data(),
                 last_successful={
                     "sandbox": status.sandbox,
                     "endpoint": status.endpoint,
@@ -220,7 +220,7 @@ def test_running_server_reuses_bound_settings_without_resolving_startup(
 def test_copied_runtime_status_cannot_attach_to_another_root(
     tmp_path, monkeypatch, attach_only
 ):
-    from toolang.up.identity import identity_bindings
+    from toolang.up.records import InstanceIdentity
     from toolang.up.instance import read_instance, update_instance
 
     original = AgentLayout.resident(tmp_path / "original", "alice")
@@ -228,7 +228,9 @@ def test_copied_runtime_status_cannot_attach_to_another_root(
     _set_status(monkeypatch, original, status)
     update_instance(
         original.runtime_status,
-        lambda entry: entry["control"].update(identity_bindings(original)),
+        lambda entry: entry["control"].update(
+            InstanceIdentity.from_layout(original).to_data()
+        ),
     )
     copied = AgentLayout.resident(tmp_path / "copied", "alice")
     copied.runtime_status.parent.mkdir(parents=True)
@@ -585,7 +587,7 @@ def test_acquisition_does_not_replace_an_automatic_server_that_is_still_alive(
 def test_managed_attachment_checks_its_profile_instead_of_waiting_for_health(
     tmp_path, monkeypatch
 ):
-    from toolang.up.identity import identity_bindings
+    from toolang.up.records import InstanceIdentity
 
     layout = AgentLayout.resident(tmp_path, "alice")
 
@@ -603,7 +605,7 @@ def test_managed_attachment_checks_its_profile_instead_of_waiting_for_health(
         "read_instance",
         lambda *_args: {
             "launch_id": "launch",
-            "control": identity_bindings(layout),
+            "control": InstanceIdentity.from_layout(layout).to_data(),
             "workload": {"lifetime": "automatic", "api_version": 0},
         },
     )
@@ -1295,7 +1297,7 @@ def test_running_server_cannot_rebind_workspace_names(
     layout = AgentLayout.resident(tmp_path, "alice")
 
     from toolang.up.contract import startup_contract
-    from toolang.up.identity import identity_bindings
+    from toolang.up.records import InstanceIdentity
     from toolang.up.instance import update_instance
 
     spec = agent_server._resolve_launch(
@@ -1311,7 +1313,7 @@ def test_running_server_cannot_rebind_workspace_names(
     update_instance(
         layout.runtime_status,
         lambda entry: entry["control"].update(
-            **identity_bindings(layout),
+            **InstanceIdentity.from_layout(layout).to_data(),
             startup_contract=startup_contract(spec),
             drivers=["chat"],
         ),
@@ -1350,13 +1352,15 @@ def test_running_server_cannot_rebind_workspace_names(
 def test_persistent_acquisition_waits_for_an_existing_startup(
     tmp_path, monkeypatch, capsys, outcome
 ):
-    from toolang.up.identity import identity_bindings
+    from toolang.up.records import InstanceIdentity
     from toolang.up.instance import update_instance
 
     layout = AgentLayout.resident(tmp_path, "alice")
     update_instance(
         layout.runtime_status,
-        lambda entry: entry["control"].update(identity_bindings(layout)),
+        lambda entry: entry["control"].update(
+            InstanceIdentity.from_layout(layout).to_data()
+        ),
     )
     statuses = iter(("starting", outcome))
     observed_wait = []
@@ -1455,7 +1459,7 @@ def test_persistent_acquisition_waits_for_http_after_running_report(
     import os
 
     from toolang.plugin.sandboxes.host import process_ref
-    from toolang.up.identity import identity_bindings
+    from toolang.up.records import InstanceIdentity
     from toolang.up.instance import update_instance
 
     layout = AgentLayout.resident(tmp_path, "alice")
@@ -1464,7 +1468,9 @@ def test_persistent_acquisition_waits_for_http_after_running_report(
     SandboxState("host", ref, launch_id="fixture").save(layout.runtime_status)
     update_instance(
         layout.runtime_status,
-        lambda entry: entry["control"].update(identity_bindings(layout)),
+        lambda entry: entry["control"].update(
+            InstanceIdentity.from_layout(layout).to_data()
+        ),
     )
     agent_server.agents.write_runtime_state(
         layout,

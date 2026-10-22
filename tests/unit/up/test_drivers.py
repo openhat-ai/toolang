@@ -126,7 +126,7 @@ def test_chat_reuse_preserves_running_selection(
         status="running", sandbox="host", endpoint="http://127.0.0.1:7001", port=7001
     )
     from toolang.up.contract import startup_contract
-    from toolang.up.identity import identity_bindings
+    from toolang.up.records import InstanceIdentity
     from toolang.up.instance import update_instance
 
     spec = agent_server._resolve_launch(
@@ -141,7 +141,7 @@ def test_chat_reuse_preserves_running_selection(
     update_instance(
         layout.runtime_status,
         lambda entry: entry["control"].update(
-            **identity_bindings(layout),
+            **InstanceIdentity.from_layout(layout).to_data(),
             startup_contract=startup_contract(spec),
             drivers=running,
         ),

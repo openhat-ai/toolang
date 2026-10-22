@@ -6,10 +6,8 @@ import pytest
 
 from toolang.up.identity import allocate_roaming, select_roaming
 from toolang.up.instance import read_instance, patch_workload
-from toolang.up.observation import (
-    instance_filename,
-    runtime_inventory,
-)
+from toolang.up.observation import runtime_inventory
+from toolang.up.registration import instance_filename
 
 
 def test_parallel_allocations_are_isolated_and_keep_history(tmp_path, monkeypatch):
@@ -121,7 +119,7 @@ def test_retained_selection_rejects_inconsistent_identity_bindings(
 def test_registry_publication_failure_retains_a_failed_selectable_identity(
     tmp_path, monkeypatch
 ):
-    from toolang.up.observation import RuntimeRegistration
+    from toolang.up.registration import RuntimeRegistration
 
     source = tmp_path / "aid.too"
     root = tmp_path / "global"
@@ -129,7 +127,7 @@ def test_registry_publication_failure_retains_a_failed_selectable_identity(
     def fail(_registration):
         raise PermissionError("registry is read-only")
 
-    monkeypatch.setattr(RuntimeRegistration, "__enter__", fail)
+    monkeypatch.setattr(RuntimeRegistration, "publish", fail)
     with pytest.raises(PermissionError, match="registry is read-only"):
         allocate_roaming(source, toolang_root=root)
     retained = select_roaming(source, toolang_root=root)
@@ -348,12 +346,14 @@ def test_missing_identity_fields_raise_a_protocol_error_instead_of_key_error(
     tmp_path, field
 ):
     from toolang.common.layout import AgentLayout
-    from toolang.up.identity import identity_bindings, layout_from_control
+    from toolang.up.records import InstanceIdentity
 
-    control = identity_bindings(AgentLayout.resident(tmp_path, "alice"))
+    control = InstanceIdentity.from_layout(
+        AgentLayout.resident(tmp_path, "alice")
+    ).to_data()
     control.pop(field)
     with pytest.raises(ValueError, match="identity"):
-        layout_from_control(control)
+        InstanceIdentity.from_data(control).to_layout()
 
 
 @pytest.mark.parametrize(
@@ -363,12 +363,14 @@ def test_invalid_runtime_instance_types_raise_a_protocol_error(
     tmp_path, runtime_instance
 ):
     from toolang.common.layout import AgentLayout
-    from toolang.up.identity import identity_bindings, layout_from_control
+    from toolang.up.records import InstanceIdentity
 
-    control = identity_bindings(AgentLayout.resident(tmp_path, "alice"))
+    control = InstanceIdentity.from_layout(
+        AgentLayout.resident(tmp_path, "alice")
+    ).to_data()
     control["runtime_instance"] = runtime_instance
     with pytest.raises(ValueError, match="identity"):
-        layout_from_control(control)
+        InstanceIdentity.from_data(control).to_layout()
 
 
 @pytest.mark.parametrize("component", ["cache", "state", "guard"])

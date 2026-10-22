@@ -1481,7 +1481,8 @@ def test_failed_workload_stays_registered_until_its_resources_are_released(
     tmp_path, monkeypatch
 ):
     from toolang.up.instance import patch_workload
-    from toolang.up.observation import runtime_inventory, instance_filename
+    from toolang.up.observation import runtime_inventory
+    from toolang.up.registration import instance_filename
 
     implementation = FakeSandbox()
     monkeypatch.setattr(

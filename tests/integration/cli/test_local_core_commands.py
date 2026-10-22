@@ -2751,13 +2751,13 @@ def hosted_agent(monkeypatch):
 
     def host(layout):
         from toolang.up.instance import update_instance
-        from toolang.up.identity import identity_bindings
+        from toolang.up.records import InstanceIdentity
         import os
         import psutil
 
         def initialize(entry):
             entry["launch_id"] = "fixture"
-            entry["control"].update(identity_bindings(layout))
+            entry["control"].update(InstanceIdentity.from_layout(layout).to_data())
 
         update_instance(layout.runtime_status, initialize)
         core = AgentCore(layout, lifecycle=ServerLifecycle("fixture", "persistent"))
