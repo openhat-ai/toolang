@@ -164,7 +164,9 @@ def test_thread_option_registration_keeps_chat_runtime_imports_lazy() -> None:
     assert result.returncode == 0, result.stderr
 
 
-@pytest.mark.parametrize("arguments", [[], ["--help"], ["run"], ["run", "--help"]])
+@pytest.mark.parametrize(
+    "arguments", [[], ["--help"], ["run"], ["run", "--help"], ["run", "--"]]
+)
 def test_static_help_keeps_script_runtime_imports_lazy(arguments) -> None:
     result = subprocess.run(
         [

@@ -12,6 +12,7 @@ from typing import Annotated, Any
 import typer
 from rich.text import Text
 from typer._click import Context, HelpFormatter as NativeHelpFormatter
+from typer._click.core import augment_usage_errors
 from typer._click.exceptions import ClickException
 from typer.core import TyperGroup
 
@@ -100,11 +101,15 @@ class _ScriptEntryCommand(CliCommand):
         parent: Context | None = None,
         **extra: Any,
     ) -> Context:
-        if args and (args[0] == "--" or not args[0].startswith("-")):
+        if args and (args[0] == "--" and len(args) > 1 or not args[0].startswith("-")):
             from .commands.script import script_context
 
             try:
-                return script_context(info_name, args, parent=parent, **extra)
+                header = self.context_class(
+                    self, info_name=info_name, parent=parent, **extra
+                )
+                with augment_usage_errors(header):
+                    return script_context(info_name, args, parent=parent, **extra)
             except ClickException:
                 if not extra.get("resilient_parsing"):
                     raise

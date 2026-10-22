@@ -537,7 +537,7 @@ def test_no_entry_shows_help_or_requires_an_explicit_runnable(arguments, monkeyp
 
 
 @pytest.mark.parametrize("executable", ["too", "toolang"])
-@pytest.mark.parametrize("arguments", [[], ["--help"]])
+@pytest.mark.parametrize("arguments", [[], ["--help"], ["--"]])
 def test_static_run_help(executable, arguments, monkeypatch, capsys):
     monkeypatch.setattr("sys.argv", [executable])
     assert cli.main(["run", *arguments]) == 0
@@ -557,6 +557,18 @@ def test_static_run_help(executable, arguments, monkeypatch, capsys):
         f"{executable} aid.too whats_for." in output
     )
     assert "Add --help after FILE or RUNNABLE for details." in output
+
+
+@pytest.mark.parametrize("explicit", [False, True])
+@pytest.mark.parametrize(
+    "arguments", [["--model", "dummy"], ["--", "hello"], ["topic=x"]]
+)
+def test_missing_script_entry_uses_one_concise_diagnostic(explicit, arguments, capsys):
+    path = _source("flow research(_: Text) -> Text:\n  pass\n")
+    assert cli.main([*(["run"] if explicit else []), path, *arguments]) == 2
+    error = capsys.readouterr().err
+    assert error.startswith("Error: No unnamed entry; select a runnable.\n")
+    assert "Usage: too " in error
 
 
 @pytest.mark.parametrize("root_boundary", [[], ["--"]])
@@ -654,9 +666,19 @@ def test_run_reports_invalid_files_without_hosting_advice(
     assert cli.main(["run", target, *arguments]) == 2
     output = " ".join(capsys.readouterr().err.split())
     assert f"{reason}: {target}" in output
+    assert "Invalid value for 'FILE'" in output
+    assert "Usage: too run [OPTIONS] <FILE>" in output
     assert "serve" not in output
     assert "local" not in output.lower()
     assert "ARGUMENTS..." not in output
+
+
+@pytest.mark.parametrize("label", ["--help", "-h"])
+def test_run_option_boundary_keeps_a_following_filename_literal(label, capsys):
+    assert cli.main(["run", "--", label]) == 2
+    error = capsys.readouterr().err
+    assert "Invalid value for 'FILE'" in error
+    assert f"expected a .too file: {label}" in error
 
 
 @pytest.mark.parametrize("explicit", [False, True])

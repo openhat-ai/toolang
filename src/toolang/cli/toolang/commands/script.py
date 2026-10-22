@@ -17,7 +17,7 @@ from rich.text import Text
 import typer
 from typer._click import Context, HelpFormatter
 from typer._click.core import ParameterSource
-from typer._click.exceptions import ClickException, UsageError
+from typer._click.exceptions import BadParameter, ClickException, UsageError
 from typer._click.parser import _ParsingState
 from typer.core import TyperCommand, TyperGroup, TyperOption
 from typer.main import get_command_from_info
@@ -113,13 +113,15 @@ def script_context(
 def _source_command(label: str) -> TyperGroup:
     """Read one selected script, without preparing state or reading input."""
     if ":" in label.split("/", 1)[0]:
-        raise UsageError(f"URLs are not supported: {label}")
+        raise BadParameter(f"URLs are not supported: {label}", param_hint=["FILE"])
     try:
         source = Path(label).expanduser().resolve()
         if source.is_dir():
-            raise UsageError(f"expected a file, got a directory: {label}")
+            raise BadParameter(
+                f"expected a file, got a directory: {label}", param_hint=["FILE"]
+            )
         if source.suffix != ".too":
-            raise UsageError(f"expected a .too file: {label}")
+            raise BadParameter(f"expected a .too file: {label}", param_hint=["FILE"])
         program = Program.from_source(source.read_text(encoding="utf-8"))
     except FileNotFoundError as exc:
         raise ClickException(f"script not found: {label}") from exc
@@ -295,6 +297,12 @@ class _ScriptGroup(OptionalValueGroup, CliGroup):
     optional_values = {"dev": OptionalValue(bare_value=".")}
     parser_class = _ScriptParser
 
+    def _require_entry(self, ctx: Context) -> str:
+        entry = _entry_command_name(self)
+        if entry is None:
+            raise UsageError("No unnamed entry; select a runnable.", ctx)
+        return entry
+
     def list_commands(self, ctx: Context) -> list[str]:
         """Put the entry first; named agics and flows retain their source order."""
         names = super().list_commands(ctx)
@@ -304,12 +312,7 @@ class _ScriptGroup(OptionalValueGroup, CliGroup):
     def parse_args(self, ctx: Context, args: list[str]) -> list[str]:
         rest = super().parse_args(ctx, args)
         if not ctx._protected_args and not ctx.resilient_parsing:
-            entry = _entry_command_name(self)
-            if entry is None:
-                raise UsageError(
-                    "This script has no unnamed entry; select a runnable.", ctx
-                )
-            ctx._protected_args = [entry]
+            ctx._protected_args = [self._require_entry(ctx)]
         return rest
 
     def resolve_command(
@@ -317,11 +320,7 @@ class _ScriptGroup(OptionalValueGroup, CliGroup):
     ) -> tuple[str | None, Any, list[str]]:
         token = args[0]
         if token in {_LINE_INPUT_MARKER, "-"} or "=" in token or token.startswith(":"):
-            entry = _entry_command_name(self)
-            if entry is None:
-                raise UsageError(
-                    "this Script has no unnamed entry; select a runnable", ctx
-                )
+            entry = self._require_entry(ctx)
             if token == _LINE_INPUT_MARKER:
                 args = ["--", *args[1:]]
             args = [entry, *args]

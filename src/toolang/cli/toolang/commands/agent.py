@@ -59,9 +59,9 @@ def new_agent(
     agent: Annotated[
         str,
         typer.Argument(
-            metavar="AGENT",
+            metavar="NAME",
             click_type=TextType(),
-            help="Agent name: [a-z][a-z0-9_]{0,63}",
+            help="New agent name",
         ),
     ],
 ) -> None:

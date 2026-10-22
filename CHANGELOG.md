@@ -285,6 +285,10 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   supported` omit the command name.
   ([#916](https://github.com/openhat-ai/toolang/pull/916))
 
+- Invalid script FILE forms now exit 2 with native FILE diagnostics, bare
+  `too run --` prints static help, and `too new` labels its operand `NAME`.
+  ([#916](https://github.com/openhat-ai/toolang/pull/916))
+
 ### Security
 
 - The locked certifi trust store advances to 2026.10.19, resolving trust-store

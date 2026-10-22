@@ -136,15 +136,16 @@ script input collector rather than duplicating them in agent routing.
 
 | Help or omission | Behavior |
 | --- | --- |
-| `too run --help` | Static script-entry help; no file read |
+| `too run`, `too run --`, `too run --help` | Static script-entry help; no file read |
 | `too work.too --help`, `too run work.too --help` | File help with runnables and common options |
 | Either script form with `research --help` | The selected runnable's dynamic help |
 | Either script form without a runnable | Execute the unnamed entry, or show file help if absent |
 
 Preserve the original entry spelling for usage. File help may read/parse the
 file, but never reads stdin, prepares State, creates execution records, or starts
-a runtime. Missing files, directories, and invalid source retain their own file
-or source diagnostics after script selection.
+a runtime. Invalid FILE forms use native `BadParameter` with static `run` usage.
+Missing files and invalid source retain their file or source diagnostics after
+script selection.
 
 ## Parameter binding and native parsing
 

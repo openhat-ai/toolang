@@ -15,7 +15,7 @@ formatting conventions. Command help describes their options and output modes.
 
 | Input | Interpretation |
 | --- | --- |
-| `too new NAME`, `too clone SOURCE [NAME]`, `too remove AGENT`, `too list` | Agent catalog commands; command first |
+| `too new NAME`, `too clone SOURCE [TARGET]`, `too remove AGENT`, `too list` | Agent catalog commands; command first |
 | `too serve AGENT` | Foreground lifecycle for resident or visiting agents; command first |
 | `too start AGENT`, `too stop AGENT` | Background lifecycle for resident or visiting agents; AGENT may also precede the command |
 | `too info AGENT`, `too AGENT info` | Resident, visiting, or roaming agent information |

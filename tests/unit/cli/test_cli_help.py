@@ -748,7 +748,10 @@ def test_agent_help_matches_target_scope(command, tmp_path, capsys):
         assert "* AGENT" not in output
         return
     if command == "new":
-        expected = "Agent name: [a-z][a-z0-9_]{0,63}"
+        assert "new [OPTIONS] <NAME>" in output
+        assert "* NAME New agent name" in output
+        assert "AGENT" not in output
+        return
     elif command in {"start", "stop", "serve"}:
         expected = "Agent name, ref, URL"
     elif command in {"remove", "_serve", "chore"}:
