@@ -7,14 +7,14 @@
 | `too AGENT stop` | Stop the selected resident/visiting generation, including active work, without fetching its source. |
 
 AGENT accepts an agent name, ref, URL, or visiting instance. Source refs/URLs may
-prepare the stable visiting root; explicit instances reuse their existing home
+prepare the stable visiting agent root; explicit instances reuse their existing home
 without fetching. Roaming does not support `serve`, `start`, or `stop`.
 
 `serve` and `start` resolve concrete startup inputs at the control boundary.
 Host `serve` executes in the foreground command's process; host
 `start` launches a detached child. Docker runs one guest workload and its host
 controller. Detached and guest workloads use hidden `too _serve`, receiving
-explicit agent paths, placement, instance ID, source policy, sandbox, location,
+explicit agent paths, placement, place code, source policy, sandbox, location,
 launch ID, and required store schema; guests do not recompute host identities. The execution core is shared across sandboxes.
 
 Embedded host scripts expose the full Agent API, including activity and Stats,
@@ -31,7 +31,7 @@ PID or instance even during startup and ignores status reports from another
 workload. Missing or unverifiable control state produces a diagnostic instead of
 adopting a process by name. Stop unregistered legacy servers before upgrading.
 References are removed only after resource release, including failed workloads;
-agent roots and history remain available afterward.
+places and history remain available afterward.
 
 Control-side launches report ordered operational work on stderr: preparing the
 sandbox, creating the runtime, and connecting to the Agent API. Host foreground
@@ -45,7 +45,7 @@ result lines are written only after readiness succeeds.
 ## Execution boundaries
 
 Placements share generation initialization, execution services, API assembly,
-and resource-release ordering. Identity/root calculation and source preparation
+and resource-release ordering. Place calculation and source preparation
 are separate boundaries; sandbox transport and foreground ownership are execution
 modes, not additional placement implementations.
 
@@ -179,12 +179,12 @@ root = "/root/.toolang"
 Root and agent plugin tables are merged before the selected sandbox factory is
 created. Status, stop, and interrupted-launch recovery re-read this current
 configuration; `SandboxState` stores only the sandbox selector and runtime
-reference. Each plugin owns its runtime-root configuration and reports whether
+reference. Each plugin owns its agent root configuration and reports whether
 the workload runs on the host or in a guest environment; orchestration does not
 interpret plugin-specific path settings.
 
 The host fixes the workload's runtime environment before sandbox preparation.
-Docker includes every name authored in the root or agent `.env`, then includes
+Docker includes every name authored in `PLACE/.env` or `HOME/.env`, then includes
 host-process names that match its default environment allow pattern.
 That pattern covers Toolang controls, proxy and certificate settings, Python
 bootstrap settings, and common model-provider variables. Override it with a
@@ -195,22 +195,22 @@ full-match regular expression when another process variable is required:
 environment_allow_pattern = '^(?:COMPANY_CATALOG_TOKEN|HTTPS?_PROXY)$'
 ```
 
-The configured pattern replaces the default and is compiled as written. Root
-dotenv values are overlaid by agent dotenv values without applying the pattern.
+The configured pattern replaces the default and is compiled as written. Agent
+root dotenv values are overlaid by home dotenv values without applying the pattern.
 A host-process value overrides those layers only when its name matches the
 pattern.
 
 Docker writes the selected mapping to one mode-`0600` staged dotenv file. Its
-comments separate merged root/agent dotenv values from filtered host-process
+comments separate merged agent root/home dotenv values from filtered host-process
 values, with the process section last to preserve precedence. The file is
-bind-mounted read-only over the guest agent's `.env`; the root `.env` is not
-mounted, and the original agent `.env` remains hidden behind the nested file
+bind-mounted read-only over `HOME/.env`; `PLACE/.env` is not mounted, and the
+original home `.env` remains hidden behind the nested file
 mount. A small bootstrap reads this same generated dotenv into the guest process
 before package installation or plugin loading. Dotenv values are literal on
 both host and guest, so `${NAME}` is not expanded during either load.
 Toolang passes gateway, Toolang-root, sandbox, and workspace control values
 through Docker's environment arguments; `TOOLANG_ROOT` retains the selected
-Toolang root, and `_serve` receives the mapped agent root explicitly. Docker maps
+Toolang root, and `_serve` receives the mapped place explicitly. Docker maps
 `host.docker.internal` through the engine's `host-gateway`. The complete staging
 mount is read-only in the guest. Staged files are removed on release and after a
 failed Docker launch whose workload was removed successfully. If Docker cleanup
@@ -246,7 +246,7 @@ the final 2000 Docker log lines and streamed without buffering them in memory.
 Diagnostic write failures do not prevent container cleanup. Foreground
 interruption, ready-reporting errors, and wait failures stop and release the
 workload; cleanup failures preserve `SandboxState` for a later forced stop.
-`SandboxState` reads the `control` section of agent instance format 4 `status.json`; host and
+`SandboxState` reads the `control` section of runtime status format 5 `status.json`; host and
 guest update that shared file with generation checks and owned-field merges.
 Docker mounts the agent home read-write, including status, database sidecars,
 and logs; required inputs/workspaces and read-only bootstrap materials are added
@@ -305,7 +305,7 @@ Automatic host-facing ports:
 Only active global registrations reserve peer ports. Hold host listener sockets
 through serving; sandbox adapters publish actual endpoints. Automatic bind
 failures retry at most three times, releasing failed resources and renewing
-`launch_id` while retaining the instance ID. Explicit conflicts fail.
+`launch_id` while retaining the place code. Explicit conflicts fail.
 Adapter-assigned endpoints supply the effective port used for attachment.
 
 An agent recorded on `7001` receives a new port on its next default start.

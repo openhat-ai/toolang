@@ -38,7 +38,7 @@ def select_agent_instance(
         return layout
     if layout.placement == "resident" and not layout.home.is_dir():
         raise ClickException(f"Agent {layout.name} not found")
-    if state.source is not None and layout.instance_id is None:
+    if state.source is not None and layout.place_code is None:
         if record:
             matches = []
             for candidate in user_call(

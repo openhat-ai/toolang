@@ -397,7 +397,7 @@ class ExecutionHarness:
                 release="test",
                 machine="test",
                 container=False,
-                root=root,
+                place=root,
                 home=home,
                 working_directory=home,
             ),

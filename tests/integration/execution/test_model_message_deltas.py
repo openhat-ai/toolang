@@ -155,7 +155,7 @@ agic chat(_: Part[]) -> Part[]:
     unavailable = tmp_path / "unavailable"
     unavailable.mkdir()
     for name, path in (
-        ("root", layout.root_state),
+        ("root", layout.place_state),
         ("home", layout.home_state),
         ("agent", layout.agent_state),
         ("agent.too", layout.program),

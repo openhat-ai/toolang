@@ -773,7 +773,7 @@ def test_publication_preserves_recall_without_reading_state_during_replay(
     asyncio.run(scenario())
     for index, path in enumerate(
         (
-            harness.setup.layout.root_state,
+            harness.setup.layout.place_state,
             harness.setup.layout.home_state,
             harness.setup.layout.agent_state,
         )

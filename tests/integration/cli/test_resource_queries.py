@@ -11,7 +11,7 @@ from typer.testing import CliRunner
 from toolang.cli.toolang.main import app as toolang_app
 from toolang.catalog import templates
 from toolang.catalog.cap import AuthoredCaps, CapFile
-from toolang.common.layout import root_edit_lock_path
+from toolang.common.layout import place_edit_lock_path
 
 
 runner = CliRunner()
@@ -29,7 +29,7 @@ def test_cap_lists_keep_single_rows_and_complete_json(
     source = templates.load_template("skill").raw_text.replace(
         "Trigger this skill for requests that need this workflow.", description
     )
-    AuthoredCaps(root, lock_path=root_edit_lock_path(root)).create(
+    AuthoredCaps(root, lock_path=place_edit_lock_path(root)).create(
         CapFile.parse(source, kind="skill", name="review")
     )
     args = ["--root", str(root), *command, "--query", "skill/review"]

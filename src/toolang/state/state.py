@@ -427,7 +427,7 @@ class AgentState:
     module_caps: Mapping[str, tuple[StateCap, ...]]
     chores: tuple[Chore, ...] = ()
     files: tuple[StateFile, ...] = ()
-    toolang_root: Path | None = None
+    place: Path | None = None
     base_caps: tuple[StateCap, ...] | None = None
     revision_dir: Path | None = None
     allow_overrides: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
@@ -456,11 +456,7 @@ class AgentState:
         if len({(item.scope, item.key) for item in files}) != len(files):
             raise ValueError("Agent State file keys must be unique within each scope")
         object.__setattr__(self, "files", files)
-        home = (
-            self.toolang_root / "agents" / self.name
-            if self.toolang_root is not None
-            else Path()
-        )
+        home = self.place / "agents" / self.name if self.place is not None else Path()
         authored_chores = tuple(
             replace(chore, path=home / chore.path)
             if not chore.path.is_absolute()
@@ -641,7 +637,7 @@ def _allowed_state_caps(
 
     return _allowed_caps(
         caps,
-        root=state.toolang_root,
+        place=state.place,
         agent_name=state.name,
         allows=resolve_cap_allows(
             (state.root_config, state.home_config), overrides=state.allow_overrides
@@ -652,7 +648,7 @@ def _allowed_state_caps(
 def _allowed_caps(
     entries: tuple[StateCap, ...],
     *,
-    root: Path | None,
+    place: Path | None,
     agent_name: str,
     allows: Mapping[str, tuple[str, ...] | None],
 ) -> tuple[StateCap, ...]:
@@ -674,7 +670,7 @@ def _allowed_caps(
             selected = tuple(
                 item.record
                 for item in cap_collection(
-                    candidates, root=root, agent_name=agent_name, kind=kind
+                    candidates, place=place, agent_name=agent_name, kind=kind
                 ).query(queries)
             )
         selected_ids.update((cap.kind, cap.name, cap.ref) for cap in selected)
@@ -685,7 +681,7 @@ def _allowed_caps(
 
 def compose_agent_state(
     *,
-    toolang_root: Path | None = None,
+    place: Path | None = None,
     root_revision: str,
     home_revision: str,
     root_config: Mapping[str, object],
@@ -710,7 +706,7 @@ def compose_agent_state(
     effective_base = effective_caps(root_caps, home_caps)
     agent_here = module_caps.get("agent", ())
     return AgentState(
-        toolang_root=toolang_root,
+        place=place,
         revision=agent_state_revision(
             root_revision,
             home_revision,
@@ -962,7 +958,7 @@ _RemoteEntryCache = Mapping[_RemoteEntryCacheKey, _CachedRemoteEntry]
 
 
 def list_entries(
-    toolang_root: Path,
+    place: Path,
     agent_name: str,
     *,
     scope: CapScope | None = None,
@@ -970,7 +966,7 @@ def list_entries(
 ) -> tuple[StateCap, ...]:
     """List effective capabilities projected from authored source."""
 
-    authored = read_authored_source(toolang_root, agent_name)
+    authored = read_authored_source(place, agent_name)
     entries, _ = _collect_scope_entries_with_files(authored, scope=scope, kinds=kinds)
     return entries
 
@@ -1012,15 +1008,15 @@ def entry_definition_file(entry: StateCap) -> str:
     return entry.source.path
 
 
-def entry_source(entry: StateCap, *, agent_name: str, root: Path | None) -> str:
+def entry_source(entry: StateCap, *, agent_name: str, place: Path | None) -> str:
     """Return the human-facing source location for one capability."""
 
     form = entry_form(entry)
     if form in {"referenced", "configured"}:
         return cap_source.source_location(entry.ref, shape=entry.shape)
-    if root is None:
-        raise ValueError("local cap locations require the Toolang root")
-    source_path = root / entry_definition_file(entry)
+    if place is None:
+        raise ValueError("local cap locations require the agent root")
+    source_path = place / entry_definition_file(entry)
     if form == "authored" and entry.kind == "skill" and source_path.name != "SKILL.md":
         source_path /= "SKILL.md"
     source = str(source_path)
@@ -1174,7 +1170,7 @@ def layer_remote_cache(
     for entry in entries:
         if entry.source.origin != "remote":
             continue
-        files = _cache_entry_files(authored.toolang_root, entry)
+        files = _cache_entry_files(authored.place, entry)
         declared_ref = entry.source.declared_ref
         if files is None or declared_ref is None:
             continue
@@ -1212,7 +1208,7 @@ def _remote_entry_cache_key(
 
 
 def _cache_entry_files(
-    toolang_root: Path, entry: StateCap
+    place: Path, entry: StateCap
 ) -> tuple[tuple[str, bytes], ...] | None:
     if entry.materialized is None:
         return None

@@ -264,8 +264,8 @@ mapping loader cannot infer whether an arbitrary string is sensitive.
 Sandbox-specific dotenv materialization is runtime transport and does not
 change or resolve a plugin's configuration mapping.
 
-The Docker sandbox exposes all names explicitly authored in the root or agent
-`.env`. Host-process-only names must match `environment_allow_pattern`, which is
+The Docker sandbox exposes all names explicitly authored in `PLACE/.env` or
+`HOME/.env`. Host-process-only names must match `environment_allow_pattern`, which is
 a configurable full-match regular expression with a built-in allowlist for
 Toolang, bootstrap, proxy, certificate, and common model-provider variables.
 The concrete plugin still resolves any exposed secret-reference name from its

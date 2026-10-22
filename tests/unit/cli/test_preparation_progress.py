@@ -22,7 +22,7 @@ def _agent(root, *, scope="home"):
     layout = AgentLayout.resident(root, "dev")
     layout.home.mkdir(parents=True)
     layout.program.write_text("flow run():\n  pass\n")
-    config = layout.config if scope == "home" else layout.root_config
+    config = layout.config if scope == "home" else layout.place_config
     config.write_text(f'[prompts]\nreview = {{ref="{_REF}"}}\n')
     return layout
 

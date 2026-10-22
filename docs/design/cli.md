@@ -121,7 +121,7 @@ requests a file or `-` for stdout. Quiet mode suppresses preparation/execution
 progress. Non-TTY progress is plain append-only text. [Execution presentation](execution-presentation.md)
 owns rendering and [Scripts](scripts.md) owns temporary grants and path origins.
 
-Each source-only roaming script or Chat launch creates a fresh root/executor.
+Each source-only roaming script or Chat launch creates a fresh agent root and executor.
 Instance and Thread/Run continuation reuse the selected home. Roaming does
 not support `serve`, `start`, or `stop`. Host scripts expose the shared Agent API
 on the workload's event loop; guest workloads
@@ -130,7 +130,7 @@ exits. [Hosting](hosting.md) owns startup compatibility and recovery.
 
 ### Instance selection
 
-Use `name@h...`, `name@s...`, or `file.too@s...` as `AGENT`; require complete IDs.
+Use `name@t...`, `name@s...`, or `file.too@s...` as `AGENT`; require complete IDs.
 Remote schemes retain their own revisions and URL `@` characters. Source-only
 resource commands reject instance operands. There is no `--instance`/`-i` option.
 
@@ -139,7 +139,7 @@ resource commands reject instance operands. There is no `--instance`/`-i` option
   selectors work offline without source contents.
 - For home commands, a bare roaming path selects its last-created retained home.
   Completion time, restart time, and mtime never reorder it. Each Toolang root has
-  its own area.
+  its own root-code directory.
 - `info`/`inspect` do not prepare sources. Known paths/refs locate homes directly;
   short roaming names require active registration. `info` uses live resource
   summaries when available, otherwise saved summaries/State. Source contents may
@@ -308,7 +308,7 @@ talk = "[too] "
 Precedence is `TOOLANG_TITLE_PREFIX_<TYPE>` > agent-home config > root
 config > empty. Omitted keys inherit; explicit empty strings clear. Root-only
 views skip agent-home config. Roaming/scripts use their existing outer-to-inner
-project `toolang.toml` layers. Environment values use root dotenv < home dotenv
+project `toolang.toml` layers. Environment values use `PLACE/.env` < `HOME/.env`
 < process ordering; roaming/scripts use the process environment only.
 
 For a one-off override, set the type's environment variable:
@@ -330,7 +330,7 @@ In tmux, foreground commands also publish pane-local string options:
 | Option | Value |
 | --- | --- |
 | `@toolang_kind` | `chat`, `talk`, `top`, `serve`, `run`, or `rerun` |
-| `@toolang_root` | Agent root for agent commands; Toolang root for commands without an agent |
+| `@toolang_root` | Selected Toolang root path |
 | `@toolang_agent` | Bare agent name; empty for Talk, team Top, and hub serve |
 | `@toolang_thread` | Chat thread ID, once created |
 | `@toolang_run` | Actual executing run ID, once allocated or accepted |

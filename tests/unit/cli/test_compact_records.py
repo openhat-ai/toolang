@@ -152,8 +152,8 @@ def test_compact_records_never_shorten_identity_or_status(monkeypatch, capsys, w
 @pytest.mark.parametrize(
     "location,expected",
     [
-        ("/agent-root/skills/review/SKILL.md", "skills/review/SKILL.md"),
-        ("/agent-root/agents/alice/agent.too:8", "agents/alice/agent.too:8"),
+        ("/place/skills/review/SKILL.md", "skills/review/SKILL.md"),
+        ("/place/agents/alice/agent.too:8", "agents/alice/agent.too:8"),
         ("/shared/skills/review/SKILL.md", "../shared/skills/review/SKILL.md"),
         ("https://example.test/skills/review", "https://example.test/skills/review"),
         ("github://acme/caps/review@main", "github://acme/caps/review@main"),
@@ -176,7 +176,7 @@ def test_compact_locations_are_relative_or_keep_the_source_ref(
         ("cap", "location", "tags"),
         heading="CAP",
         json_=False,
-        root=Path("/agent-root"),
+        root=Path("/place"),
     )
     human = capsys.readouterr().out
     assert expected in human
@@ -187,6 +187,6 @@ def test_compact_locations_are_relative_or_keep_the_source_ref(
         ("cap", "location", "tags"),
         heading="CAP",
         json_=True,
-        root=Path("/agent-root"),
+        root=Path("/place"),
     )
     assert json.loads(capsys.readouterr().out) == [record]

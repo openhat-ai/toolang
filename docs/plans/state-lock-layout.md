@@ -38,7 +38,7 @@ runnables, caps, skill assets, chores, and `config.toml` share the home edit loc
 Catalog and CLI mutations must use the same paths as the State tools, including
 read/modify/write configuration updates and generated roaming-home config writes.
 Roaming `agent.too` continues editing its validated source target under its home
-lock; edits to the source directory's shared `toolang.toml` use the roaming root
+lock; edits to the source directory's shared `toolang.toml` use the roaming place
 edit lock so different scripts sharing that file coordinate. Configuration
 projection that makes no change must not create an edit lock.
 
@@ -110,7 +110,7 @@ Repeated changes fail explicitly rather than returning a stale projection.
   `api/routers/chores.py`, and refresh only after release.
 - [x] Rename State lock paths and internal helpers in `state/{cache,prepare}.py`;
   retain coverage, acquisition order, progress, and watcher semantics.
-- [x] Add the acceptance checks below; update [layout.md](../layout.md) and relevant
+- [x] Add the acceptance checks below; update [layout.md](../design/layout.md) and relevant
   State-lock references, and generate the implementation's canonical changelog
   entry with `too aid.too update_changelog` for maintainer verification.
 - [x] Run the default offline verification and document the coordinated upgrade.

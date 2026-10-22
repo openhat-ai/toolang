@@ -119,7 +119,7 @@ class HomeLayer:
 def state_root(layout: AgentLayout, scope: LayerScope) -> Path:
     """Return the persistent directory for one State layer scope."""
 
-    return layout.root_state if scope == "root" else layout.home_state
+    return layout.place_state if scope == "root" else layout.home_state
 
 
 def layer_current_path(layout: AgentLayout, scope: LayerScope) -> Path:

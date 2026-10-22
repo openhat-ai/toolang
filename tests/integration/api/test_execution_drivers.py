@@ -30,8 +30,8 @@ def test_flat_authoring_and_inline_shadowing_with_chore_driver_disabled(tmp_path
     core = AgentCore(layout, drivers=frozenset())
     asyncio.run(core.state.refresh())
     root_file = AuthoredChores(
-        layout.root,
-        lock_path=layout.root_edit_lock,
+        layout.place,
+        lock_path=layout.place_edit_lock,
         agent_name=layout.name,
     ).create(ChoreFile.parse("Root body.", name="cleanup"))
     home_file = AuthoredChores(
@@ -189,8 +189,8 @@ def test_chore_api_edits_visible_home_file_and_preserves_root(tmp_path):
     harness.store.close()
     core = AgentCore(layout, drivers=frozenset())
     root_file = AuthoredChores(
-        layout.root,
-        lock_path=layout.root_edit_lock,
+        layout.place,
+        lock_path=layout.place_edit_lock,
         agent_name=layout.name,
     ).create(ChoreFile.parse("Root body.", name="cleanup"))
     asyncio.run(core.state.refresh())

@@ -128,7 +128,7 @@ def _authored_config(layout: AgentLayout) -> Path:
 
 def _workspace_edit_lock(layout: AgentLayout) -> Path:
     return (
-        layout.root_edit_lock
+        layout.place_edit_lock
         if layout.placement == "roaming"
         else layout.home_edit_lock
     )

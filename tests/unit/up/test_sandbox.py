@@ -38,8 +38,8 @@ class FakeSandbox:
         self.release_error: Exception | None = None
         self.attach_error: Exception | None = None
 
-    def runtime_root(self, local_root: Path) -> Path:
-        del local_root
+    def runtime_place(self, local_place: Path) -> Path:
+        del local_place
         return Path("/runtime")
 
     def prepare(
@@ -230,7 +230,7 @@ def test_resolve_selection_uses_explicit_home_root_host_precedence(
 
     assert sandbox.resolve_selection(layout) == "host"
 
-    layout.root_config.write_text(
+    layout.place_config.write_text(
         "[sandbox]\ndriver = 'docker'\ntarget = 'root-image'\n",
         encoding="utf-8",
     )
@@ -264,7 +264,7 @@ def test_sandbox_state_round_trips(tmp_path: Path) -> None:
     state.save(path)
 
     assert SandboxState.load(path) == state
-    assert '"version": 4' in path.read_text(encoding="utf-8")
+    assert '"version": 5' in path.read_text(encoding="utf-8")
 
 
 def test_sandbox_state_does_not_adopt_a_version_one_reference(
@@ -534,7 +534,7 @@ def test_launch_delegates_complete_spec_and_stop_releases_state(
     external_program = tmp_path / "external-agent.too"
     external_program.write_text("# Agent alice\n", encoding="utf-8")
     spec.serve.layout.program.symlink_to(external_program)
-    spec.serve.layout.root_config.write_text(
+    spec.serve.layout.place_config.write_text(
         "[plugin.sandbox.fake]\ncurrent = true\n",
         encoding="utf-8",
     )
@@ -546,7 +546,7 @@ def test_launch_delegates_complete_spec_and_stop_releases_state(
     assert isinstance(prepare, tuple)
     assert prepare[:2] == ("prepare", "value:with:colons")
     request = cast(SandboxRequest, prepare[2])
-    assert request.hosted_root == Path("/runtime")
+    assert request.hosted_place == Path("/runtime")
     assert request.hosted_home == Path("/runtime/agents/alice")
     assert (
         SandboxMount(
@@ -602,12 +602,12 @@ def test_guest_roaming_mounts_the_shared_project_edit_guard(monkeypatch, tmp_pat
 
     monkeypatch.setattr(sandbox, "_wait_ready", ready)
     source = tmp_path / "aid.too"
-    from toolang.common.instance_ids import roaming_instance_id
+    from toolang.common.place_codes import roaming_place_code
 
     layout = AgentLayout.roaming(
         source,
-        instance_id=roaming_instance_id(str(source), 1),
-        toolang_root=tmp_path / "global",
+        place_code=roaming_place_code(str(source), 1),
+        root=tmp_path / "global",
     )
     layout.home.mkdir(parents=True)
     spec = _launch_spec(tmp_path / "global")
@@ -1221,7 +1221,7 @@ def test_select_sandbox_keeps_selection_separate_from_plugin_config() -> None:
     assert explicit == "host"
     assert host_config == {"mode": "local"}
 
-    def runtime_root(self, local_root: Path) -> Path:
+    def runtime_place(self, local_place: Path) -> Path:
         return Path("/runtime")
 
 
@@ -1460,7 +1460,7 @@ def test_local_prepare_failure_never_creates_a_workload_and_allows_retry(
     )
     failure = next(e for e in events if e.subject == "state" and e.status == "failed")
     assert failure.label == "Failed to prepare agent state"
-    assert not (spec.serve.layout.root / ".runtime" / "active" / "alice.json").exists()
+    assert not (spec.serve.layout.place / ".runtime" / "active" / "alice.json").exists()
     monkeypatch.setattr(state_prepare, "prepare_agent_state", original)
 
     async def ready(*_args, **_kwargs):

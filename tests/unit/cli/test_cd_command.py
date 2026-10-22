@@ -46,7 +46,7 @@ def _context(root: Path, agent: str | None = "alice") -> Any:
 
 
 @pytest.mark.parametrize(
-    ("placement", "root", "instance_id", "display_path"),
+    ("placement", "root", "place_code", "display_path"),
     [
         (None, "/toolang-user/.toolang", None, "~/.toolang"),
         (
@@ -57,9 +57,9 @@ def _context(root: Path, agent: str | None = "alice") -> Any:
         ),
         (
             "visiting",
-            "/tmp/toolang/0000000/h0123456789",
-            "h0123456789",
-            "/tmp/toolang/0000000/h0123456789/agents/gus",
+            "/tmp/toolang/0000000/t0123456789",
+            "t0123456789",
+            "/tmp/toolang/0000000/t0123456789/agents/gus",
         ),
         (
             "roaming",
@@ -74,13 +74,13 @@ def test_cd_announces_destination_once_before_launching(
     capsys: pytest.CaptureFixture[str],
     placement: AgentPlacement | None,
     root: str,
-    instance_id: str | None,
+    place_code: str | None,
     display_path: str,
 ) -> None:
     monkeypatch.setattr(Path, "home", lambda: Path("/toolang-user"))
     root_path = Path(root)
     layout = (
-        AgentLayout(root_path, "gus", placement, instance_id=instance_id)
+        AgentLayout(root_path, "gus", placement, place_code=place_code)
         if placement
         else None
     )
@@ -88,7 +88,7 @@ def test_cd_announces_destination_once_before_launching(
         typer.main.get_command(cli.app),
         obj=CliContext(
             root=root_path,
-            agent=layout.instance_name if layout else None,
+            agent=layout.address if layout else None,
             layout=layout,
         ),
     )
@@ -439,9 +439,7 @@ def test_cd_prepares_nonresident_home_and_reuses_it(
             if selector_kind == "url"
             else "https://agents.example/alice.too"
         )
-        layout = AgentLayout.visiting(
-            selector, "alice", toolang_root=tmp_path / "unrelated"
-        )
+        layout = AgentLayout.visiting(selector, "alice", root=tmp_path / "unrelated")
 
     def fetch(ref: agent_sources.AgentRef, **_kwargs: Any) -> str:
         fetches.append(ref.render())
@@ -484,7 +482,7 @@ def test_cd_reports_remote_preparation_failure_without_launching(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
     layout = AgentLayout.visiting(
-        "https://agents.example/alice.too", "alice", toolang_root=tmp_path / "toolang"
+        "https://agents.example/alice.too", "alice", root=tmp_path / "toolang"
     )
 
     def fetch(*_args: Any, **_kwargs: Any) -> str:
@@ -582,7 +580,7 @@ def test_cd_does_not_prepare_targets_for_help_or_invalid_invocations(
     output = capsys.readouterr()
     assert message in strip_ansi(output.out + output.err)
     assert fetches == []
-    assert not layout.root.exists()
+    assert not layout.place.exists()
 
 
 def test_cd_reports_roaming_filesystem_errors_without_launching(

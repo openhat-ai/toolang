@@ -13,7 +13,7 @@ from toolang.catalog.agent import LocalAgents
 from toolang.catalog.cap import AuthoredCaps, CapFile
 from toolang.catalog.chore import AuthoredChores, ChoreFile
 from toolang.cli.toolang.main import main as toolang_main
-from toolang.common.layout import home_edit_lock_path, root_edit_lock_path
+from toolang.common.layout import home_edit_lock_path, place_edit_lock_path
 
 
 @pytest.mark.parametrize("kind", ["skill", "chore"])
@@ -31,7 +31,7 @@ def test_editor_failures_return_cli_errors_without_changing_authored_files(
     if kind == "skill":
         arguments = [kind, action, "demo"]
         if action == "edit":
-            AuthoredCaps(root, lock_path=root_edit_lock_path(root)).create(
+            AuthoredCaps(root, lock_path=place_edit_lock_path(root)).create(
                 CapFile.parse(
                     templates.load_template("skill").raw_text,
                     kind="skill",
@@ -96,7 +96,7 @@ def test_new_cap_edits_and_saves_the_default_template(
     monkeypatch.setattr("toolang.cli.caps.commands.edit_markdown", edit)
     assert toolang_main(["--root", str(tmp_path), kind, "new", "demo"]) == 0
     assert seeds == [templates.load_template(kind).raw_text]
-    saved = AuthoredCaps(tmp_path, lock_path=root_edit_lock_path(tmp_path)).get(
+    saved = AuthoredCaps(tmp_path, lock_path=place_edit_lock_path(tmp_path)).get(
         kind, "demo"
     )
     assert saved is not None and saved.path is not None

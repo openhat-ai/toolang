@@ -41,13 +41,13 @@ class SandboxRequest:
 
     ``local_*`` paths belong to the controller host. ``hosted_*`` paths are the
     corresponding paths in the workload environment, which may be the host or a
-    guest selected by the sandbox plugin. Root paths map the agent root; the
+    guest selected by the sandbox plugin. Place paths map the agent environment; the
     selected Toolang root is passed separately as a control environment value.
     """
 
-    local_root: Path
+    local_place: Path
     local_home: Path
-    hosted_root: Path
+    hosted_place: Path
     hosted_home: Path
     agent_name: str
     bind_host: str

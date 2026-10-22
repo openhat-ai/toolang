@@ -85,7 +85,7 @@ from toolang.catalog import CapsManager, ChoresManager
 from toolang.catalog.chores import load_chores
 from toolang.driver.chore.store import ChoreStore
 from toolang.base.protocols.tool import Tool
-from toolang.common.layout import root_edit_lock_path
+from toolang.common.layout import place_edit_lock_path
 
 runner = CliRunner()
 
@@ -381,9 +381,9 @@ def test_roaming_workspace_list_reads_only_source_local_config(
         assert layout.config.read_text() == "existing snapshot"
         assert not layout.program.exists()
     elif project_state == "linked-cache":
-        assert not tuple(layout.root.iterdir())
+        assert not tuple(layout.place.iterdir())
     else:
-        assert not layout.root.exists()
+        assert not layout.place.exists()
 
 
 def test_roaming_workspace_list_rejects_missing_source(tmp_path, capsys):
@@ -391,7 +391,7 @@ def test_roaming_workspace_list_rejects_missing_source(tmp_path, capsys):
 
     assert cli.main([str(source), "workspace", "list"]) == 1
     assert "agent program not found" in capsys.readouterr().err
-    assert not AgentLayout.roaming(source).root.exists()
+    assert not AgentLayout.roaming(source).place.exists()
 
 
 def test_local_agent_clone_copies_workspace_config_unchanged(tmp_path: Path) -> None:
@@ -2878,7 +2878,7 @@ agic reply(_: Part[]) -> Part[]:
             ModelCallResult(message=Message.assistant("reran")),
         ],
     )
-    _create_agent(harness.setup.layout.root)
+    _create_agent(harness.setup.layout.place)
 
     state_reads: list[None] = []
     runtime_selections: list[str | None] = []
@@ -2936,7 +2936,7 @@ agic reply(_: Part[]) -> Part[]:
         assert source.status == "failed"
 
         rerun = _invoke(
-            harness.setup.layout.root,
+            harness.setup.layout.place,
             "alice",
             "rerun",
             source.id,
@@ -2997,7 +2997,7 @@ agic reply(_: Part[]) -> Part[]:
 """,
         responses=[ModelCallResult(message=Message.assistant("source"))],
     )
-    _create_agent(harness.setup.layout.root)
+    _create_agent(harness.setup.layout.place)
     observed_requests: list[RerunRequest] = []
     runtime_selections: list[tuple[str | None, Path | None]] = []
 
@@ -3061,7 +3061,7 @@ agic reply(_: Part[]) -> Part[]:
 
     try:
         rerun = _invoke(
-            harness.setup.layout.root,
+            harness.setup.layout.place,
             "alice",
             "rerun",
             source.id,
@@ -3394,7 +3394,7 @@ def test_cap_summary_counts_filtered_entries_and_kinds(tmp_path: Path) -> None:
     from toolang.catalog.cap import AuthoredCaps, CapFile
 
     for kind, name in (("psyche", "one"), ("psyche", "two"), ("prompt", "three")):
-        AuthoredCaps(tmp_path, lock_path=root_edit_lock_path(tmp_path)).create(
+        AuthoredCaps(tmp_path, lock_path=place_edit_lock_path(tmp_path)).create(
             CapFile.parse("Content.", kind=kind, name=name)
         )
     for query, summary in (
@@ -3435,7 +3435,7 @@ def test_tools_uses_selected_scope_and_effective_allow(
     _create_agent(root)
     _create_agent(root, "default")
     layout = AgentLayout.resident(root, "alice")
-    layout.root_config.write_text(
+    layout.place_config.write_text(
         '[allow]\ntools = ["shell/echo"]\n'
         '[plugin.toolset.shell]\nchoice = "root"\nshared = true\n'
     )
@@ -3571,7 +3571,7 @@ def test_cap_lists_apply_scope_allow_and_display_status(
         (tmp_path, "blocked_cap"),
         (layout.home, "private_cap"),
     ):
-        AuthoredCaps(directory, lock_path=root_edit_lock_path(directory)).create(
+        AuthoredCaps(directory, lock_path=place_edit_lock_path(directory)).create(
             CapFile.parse(
                 templates.load_template(kind).raw_text,
                 kind=kind,
@@ -3714,7 +3714,7 @@ def test_caps_inspection_combines_root_and_selected_agent_resources(
         (AgentLayout.resident(tmp_path, "alice").home, "private_cap"),
         (AgentLayout.resident(tmp_path, "default").home, "other_cap"),
     ):
-        AuthoredCaps(directory, lock_path=root_edit_lock_path(directory)).create(
+        AuthoredCaps(directory, lock_path=place_edit_lock_path(directory)).create(
             CapFile.parse("Be helpful.\n", kind="psyche", name=name)
         )
 
@@ -4304,7 +4304,7 @@ def test_too_caps_all_preserves_scope_and_query(tmp_path: Path, all_: bool) -> N
     _create_agent(tmp_path)
     layout = AgentLayout.resident(tmp_path, "alice")
     for directory in (tmp_path, layout.home):
-        AuthoredCaps(directory, lock_path=root_edit_lock_path(directory)).create(
+        AuthoredCaps(directory, lock_path=place_edit_lock_path(directory)).create(
             CapFile.parse("Be helpful.\n", kind="psyche", name="shared_cap")
         )
     layout.config.write_text("[allow]\npsyches = []\n")
@@ -4511,7 +4511,7 @@ def test_resource_json_human_and_external_tq_select_identical_records(
         '[allow]\ntools = ["shell/echo"]\nskills = ["skill/reviewer"]\n'
     )
     for name in ("reviewer", "blocked"):
-        AuthoredCaps(tmp_path, lock_path=root_edit_lock_path(tmp_path)).create(
+        AuthoredCaps(tmp_path, lock_path=place_edit_lock_path(tmp_path)).create(
             CapFile.parse(
                 "---\ndescription: Review changes.\n---\nReview changes.\n",
                 kind="skill",
@@ -4564,7 +4564,7 @@ def test_tool_setup_matches_full_setup_and_captures_only_tool_inputs(
 
     layout = AgentLayout.resident(tmp_path, "alice")
     layout.home.mkdir(parents=True)
-    layout.root_config.write_text(
+    layout.place_config.write_text(
         '[allow]\ntools = ["shell/*"]\n[plugin.toolset.shell]\nvalue = "root"\n'
     )
     layout.config.write_text(
@@ -4573,7 +4573,7 @@ def test_tool_setup_matches_full_setup_and_captures_only_tool_inputs(
     full = asyncio.run(load_setup(layout, agent_context=agent_context))
     narrow = asyncio.run(load_tool_setup(layout, agent_context=agent_context))
     # Access after mutation: both generations must retain their captured inputs.
-    layout.root_config.write_text('[allow]\ntools = ["none"]\n')
+    layout.place_config.write_text('[allow]\ntools = ["none"]\n')
     layout.config.write_text("")
     assert tuple(narrow.tools(all=True)) == tuple(full.tools(all=True))
     assert tuple(narrow.tools()) == tuple(full.tools())
@@ -4585,7 +4585,7 @@ def test_tool_setup_matches_full_setup_and_captures_only_tool_inputs(
     assert newer.revision != narrow.revision
     assert tuple(newer.tools().user) == ()
     # Invalid model semantics and catalogs are irrelevant to the same tool view.
-    layout.root_config.write_text(
+    layout.place_config.write_text(
         '[allow]\ntools = ["none"]\nmodels = 7\n[model]\nref = []\n'
     )
     bad_catalog = tmp_path / "bad-catalog.json"

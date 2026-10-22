@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from toolang.common.instance_ids import area_id
+from toolang.common.place_codes import root_code
 from toolang.common.layout import AgentLayout
 from toolang.up.addresses import parse_address, resolve_address
 from toolang.up.identity import allocate_roaming, select_roaming, visiting_home_guard
@@ -19,10 +19,12 @@ def test_roaming_path_survives_exit_and_source_removal_but_short_name_does_not(
     source.write_text("flow main():\n  pass\n")
     layout = allocate_roaming(source, toolang_root=root)
     assert (
-        layout.root == tmp_path / ".toolang" / area_id(str(root)) / layout.instance_id
+        layout.place == tmp_path / ".toolang" / root_code(str(root)) / layout.place_code
     )
-    short = parse_address(layout.instance_name)
-    path = parse_address(f"{source}@{layout.instance_id}")
+    assert layout.root == root.resolve()
+    assert layout.home == layout.place / "agents" / "aid"
+    short = parse_address(layout.address)
+    path = parse_address(f"{source}@{layout.place_code}")
     assert short is not None and path is not None
     assert resolve_address(root, short)[0] == layout
     assert resolve_address(root, path)[0] == layout
@@ -34,51 +36,54 @@ def test_roaming_path_survives_exit_and_source_removal_but_short_name_does_not(
     assert not list((root / ".runtime" / "active").glob("*.json"))
 
 
-def test_one_source_has_separate_toolang_areas_and_defaults(tmp_path, monkeypatch):
+def test_one_source_has_separate_root_namespaces_and_defaults(tmp_path, monkeypatch):
     monkeypatch.setattr("toolang.up.identity.time.time_ns", lambda: 100_000_000)
     source = tmp_path / "aid.too"
     first_root, second_root = tmp_path / "first", tmp_path / "second"
     first = allocate_roaming(source, toolang_root=first_root)
     second = allocate_roaming(source, toolang_root=second_root)
-    assert first.instance_id == second.instance_id
-    assert first.root != second.root
-    assert select_roaming(source, toolang_root=first_root).root == first.root
-    assert select_roaming(source, toolang_root=second_root).root == second.root
+    assert first.place_code == second.place_code
+    assert first.place != second.place
+    assert select_roaming(source, toolang_root=first_root).place == first.place
+    assert select_roaming(source, toolang_root=second_root).place == second.place
     for layout, root in ((first, first_root), (second, second_root)):
-        assert json.loads((layout.root.parent / "root.json").read_text()) == {
-            "toolang_root": str(root)
+        assert json.loads((layout.place.parent / "root.json").read_text()) == {
+            "root": str(root)
         }
 
 
-def test_explicit_path_rejects_an_area_hash_collision(tmp_path, monkeypatch):
+def test_explicit_path_rejects_a_root_code_collision(tmp_path, monkeypatch):
     first_root, second_root = tmp_path / "first", tmp_path / "second"
-    shared_area = area_id(str(first_root))
+    shared_root_code = root_code(str(first_root))
     for module in ("common.layout", "up.identity", "up.private_paths"):
-        monkeypatch.setattr(f"toolang.{module}.area_id", lambda _root: shared_area)
+        monkeypatch.setattr(
+            f"toolang.{module}.root_code", lambda _root: shared_root_code
+        )
     source = tmp_path / "aid.too"
     layout = allocate_roaming(source, toolang_root=first_root)
-    selector = parse_address(f"{source}@{layout.instance_id}")
+    selector = parse_address(f"{source}@{layout.place_code}")
     assert selector is not None
     before = layout.runtime_status.read_bytes()
-    with pytest.raises(ValueError, match="area ID collision"):
+    with pytest.raises(ValueError, match="root code collision"):
         resolve_address(second_root, selector)
     assert layout.runtime_status.read_bytes() == before
     assert not second_root.exists()
 
 
 def test_visiting_name_uses_known_path_without_active_registration(
-    tmp_path, isolated_visiting_root
+    tmp_path, isolated_visiting_base
 ):
     root = tmp_path / "root"
-    layout = AgentLayout.visiting("gh:example/lex", "lex", toolang_root=root)
+    layout = AgentLayout.visiting("gh:example/lex", "lex", root=root)
     with visiting_home_guard(layout):
         pass
-    selector = parse_address(layout.instance_name)
+    selector = parse_address(layout.address)
     assert selector is not None
     assert resolve_address(root, selector)[0] == layout
     assert not (root / ".runtime").exists()
     assert (
-        layout.root == isolated_visiting_root / area_id(str(root)) / layout.instance_id
+        layout.place
+        == isolated_visiting_base / root_code(str(root)) / layout.place_code
     )
 
 
@@ -102,21 +107,37 @@ def test_partial_and_previous_ids_are_rejected(text):
         parse_address(text)
 
 
+def test_previous_complete_visiting_marker_is_rejected():
+    with pytest.raises(ValueError, match="place code"):
+        parse_address("lex@h0000000000")
+
+
+def test_previous_binding_fields_are_not_accepted(tmp_path):
+    from toolang.up.identity import identity_bindings, layout_from_control
+
+    layout = AgentLayout.resident(tmp_path, "aid")
+    control = identity_bindings(layout)
+    assert control["root"] == control["place"] == str(tmp_path)
+    control["toolang_root"] = control.pop("root")
+    with pytest.raises(ValueError, match="canonical absolute path"):
+        layout_from_control(control)
+
+
 def test_empty_unpublished_candidate_is_skipped_without_overwriting_it(
     tmp_path, monkeypatch
 ):
-    from toolang.common.instance_ids import roaming_instance_id
+    from toolang.common.place_codes import roaming_place_code
 
     monkeypatch.setattr("toolang.up.identity.time.time_ns", lambda: 100_000_000)
     source = tmp_path / "aid.too"
     root = tmp_path / "root"
     first = allocate_roaming(source, toolang_root=root)
-    occupied = first.root.parent / roaming_instance_id(str(source), 101)
+    occupied = first.place.parent / roaming_place_code(str(source), 101)
     occupied.mkdir(mode=0o700)
     second = allocate_roaming(source, toolang_root=root)
     assert second.request_order_ns == 102_000_000
     assert occupied.is_dir() and not tuple(occupied.iterdir())
-    assert select_roaming(source, toolang_root=root).root == second.root
+    assert select_roaming(source, toolang_root=root).place == second.place
 
 
 def test_retained_selection_rejects_a_linked_store_without_touching_its_target(
@@ -133,14 +154,14 @@ def test_retained_selection_rejects_a_linked_store_without_touching_its_target(
     assert target.read_text() == "unrelated data"
 
 
-def test_missing_area_ownership_is_not_recreated_over_retained_data(tmp_path):
+def test_missing_root_ownership_is_not_recreated_over_retained_data(tmp_path):
     root = tmp_path / "root"
     source = tmp_path / "aid.too"
     layout = allocate_roaming(source, toolang_root=root)
-    ownership = layout.root.parent / "root.json"
+    ownership = layout.place.parent / "root.json"
     ownership.unlink()
     before = layout.runtime_status.read_bytes()
-    with pytest.raises(ValueError, match="unbound area"):
+    with pytest.raises(ValueError, match="unbound root namespace"):
         allocate_roaming(source, toolang_root=root)
     assert not ownership.exists()
     assert layout.runtime_status.read_bytes() == before
@@ -168,7 +189,7 @@ def test_path_selection_revalidates_the_ownership_snapshot_it_pins(
         return selected
 
     monkeypatch.setattr(addresses, "select_roaming", replaced)
-    selector = parse_address(f"{source}@{layout.instance_id}")
+    selector = parse_address(f"{source}@{layout.place_code}")
     assert selector is not None
     with pytest.raises(ValueError, match="identity"):
         resolve_address(root, selector)

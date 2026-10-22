@@ -25,7 +25,7 @@ from toolang.common.files import (
     reap_file_lock,
 )
 
-AGENT_INSTANCE_FORMAT = 4
+RUNTIME_STATUS_FORMAT = 5
 
 
 def read_document(path: Path, *, location: str = "host") -> dict[str, Any] | None:
@@ -44,7 +44,7 @@ def read_document(path: Path, *, location: str = "host") -> dict[str, Any] | Non
         raise ValueError(f"invalid runtime status: {path}")
     if (
         type(payload.get("version")) is not int
-        or payload["version"] != AGENT_INSTANCE_FORMAT
+        or payload["version"] != RUNTIME_STATUS_FORMAT
     ):
         raise ValueError(f"unsupported runtime status version: {path}")
     if not isinstance(payload.get("instances"), dict):
@@ -102,7 +102,7 @@ def runtime_lock(
         "acquired_at": time.time(),
         "control": {
             key: control[key]
-            for key in ("root", "name", "placement", "sandbox", "ref")
+            for key in ("root", "place", "name", "placement", "sandbox", "ref")
             if key in control
         },
         "instance": instance,
@@ -136,7 +136,7 @@ def runtime_lock(
                 previous["launch_id"],
             )
             layout = AgentLayout(
-                Path(saved["root"]),
+                Path(saved["place"]),
                 saved["name"],
                 saved["placement"],
                 instance=previous.get("instance"),
@@ -198,7 +198,7 @@ def update_instance(
     ):
         payload: dict[str, Any] | None = read_document(path, location=location)
         if payload is None:
-            payload = {"version": AGENT_INSTANCE_FORMAT, "instances": {}}
+            payload = {"version": RUNTIME_STATUS_FORMAT, "instances": {}}
         entries = payload["instances"]
         entry = entries.setdefault(
             instance or "default", {"launch_id": "", "control": {}, "workload": {}}

@@ -69,9 +69,7 @@ def chat_layout(tmp_path: Path) -> AgentLayout:
 def _runtime_context(layout: AgentLayout) -> Context:
     return Context(
         TyperCommand("chat"),
-        obj=CliContext(
-            layout.toolang_root or layout.root, agent=layout.name, layout=layout
-        ),
+        obj=CliContext(layout.root or layout.place, agent=layout.name, layout=layout),
     )
 
 
@@ -123,7 +121,7 @@ def test_chat_thread_option_resolves_through_the_lazy_entry_point(
         captured.update(layout=context_layout(ctx), **kwargs)
 
     monkeypatch.setattr(chat, "_chat_interactive", interactive)
-    assert too_main(["--root", str(chat_layout.root), "alice", "chat", *args]) == 0
+    assert too_main(["--root", str(chat_layout.place), "alice", "chat", *args]) == 0
     assert captured["thread_id"] == expected
     assert captured["layout"] == chat_layout
     if "--dev" in args:
@@ -150,7 +148,7 @@ def test_chat_latest_requires_history_without_starting_a_runtime(
     monkeypatch.setattr(
         chat, "_chat_interactive", lambda *_args, **_kwargs: pytest.fail("started Chat")
     )
-    assert too_main(["--root", str(chat_layout.root), "alice", "chat", option]) == 1
+    assert too_main(["--root", str(chat_layout.place), "alice", "chat", option]) == 1
     error = strip_ansi(capsys.readouterr().err)
     if history == "incompatible":
         assert "execution history is incompatible" in error
@@ -181,7 +179,7 @@ def test_chat_thread_option_errors_preserve_existing_options(
     monkeypatch.setattr(
         chat, "_chat_interactive", lambda *_args, **_kwargs: pytest.fail("started Chat")
     )
-    assert too_main(["--root", str(chat_layout.root), "alice", "chat", *args]) == code
+    assert too_main(["--root", str(chat_layout.place), "alice", "chat", *args]) == code
     assert message in capsys.readouterr().err
 
 
@@ -199,11 +197,15 @@ def test_chat_latest_preserves_history_ties_and_includes_other_thread_kinds(
         "_chat_interactive",
         lambda _ctx, **kwargs: selected.append(kwargs["thread_id"]),
     )
-    assert too_main(["--root", str(chat_layout.root), "alice", "chat", "--thread"]) == 0
+    assert (
+        too_main(["--root", str(chat_layout.place), "alice", "chat", "--thread"]) == 0
+    )
     assert selected == [expected]
     with closing(RunStore(chat_layout.run_store)) as store:
         store.create_thread(thread_id="work_latest", created_at="2026-01-04T00:00:00Z")
-    assert too_main(["--root", str(chat_layout.root), "alice", "chat", "--thread"]) == 0
+    assert (
+        too_main(["--root", str(chat_layout.place), "alice", "chat", "--thread"]) == 0
+    )
     assert selected[-1] == "work_latest"
 
 
@@ -218,11 +220,11 @@ def test_chat_latest_uses_selected_history_for_agent_sessions(
         source.write_text("agic chat:\n  Reply directly.\n")
         from toolang.up.identity import allocate_roaming
 
-        layout = allocate_roaming(source, toolang_root=chat_layout.root)
+        layout = allocate_roaming(source, toolang_root=chat_layout.place)
         selector = str(source)
     elif placement == "visiting":
         selector = "gh:owner/alice"
-        layout = agent_sources.visiting_layout(selector, toolang_root=chat_layout.root)
+        layout = agent_sources.visiting_layout(selector, toolang_root=chat_layout.place)
         from toolang.up.identity import visiting_home_guard
 
         with visiting_home_guard(layout):
@@ -261,8 +263,8 @@ def test_chat_latest_uses_selected_history_for_agent_sessions(
     monkeypatch.setattr(chat, "_chat_interactive_prompt_toolkit", open_tui)
     monkeypatch.setattr(chat.sys.stdin, "isatty", lambda: True)
     monkeypatch.setattr(chat.sys.stdout, "isatty", lambda: True)
-    prefix = [] if placement == "roaming" else ["--root", str(chat_layout.root)]
-    monkeypatch.setenv("TOOLANG_ROOT", str(chat_layout.root))
+    prefix = [] if placement == "roaming" else ["--root", str(chat_layout.place)]
+    monkeypatch.setenv("TOOLANG_ROOT", str(chat_layout.place))
     assert too_main([*prefix, selector, "chat", "--thread"]) == 0
     assert captured == {
         "target": "http://localhost:7001",
@@ -1092,7 +1094,7 @@ def test_chat_input_history_uses_canonical_runtime_path_without_legacy_import(
     assert legacy.read_text(encoding="utf-8") == legacy_data
     assert previous.read_text(encoding="utf-8") == previous_data
 
-    selected_layout = AgentLayout.resident(layout.root, "bob")
+    selected_layout = AgentLayout.resident(layout.place, "bob")
     other_agent_history = chat._chat_input_history_store(object())  # type: ignore[arg-type]
     assert other_agent_history is not None
     assert other_agent_history.path == selected_layout.runtime / "chat-input.jsonl"

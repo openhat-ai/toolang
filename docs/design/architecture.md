@@ -87,11 +87,11 @@ with the previous version before changing their names or paths.
 
 ## Agent Placement
 
-Agent placement resolves an agent root from its source and the user-selected
-Toolang root. A resident agent uses that Toolang root. Visiting roots are stable
-per Toolang root and requested Source Ref. Roaming roots live beside the source,
+Agent placement resolves a place from its source and the user-selected
+Toolang root. A resident agent uses that Toolang root. Visiting places are stable
+per Toolang root and requested Source Ref. Roaming places live beside the source,
 grouped by Toolang root and allocated per source-only launch; bound continuation
-reuses its existing root. [agent addresses](agent-addresses.md) owns their identity
+reuses its existing place. [agent addresses](agent-addresses.md) owns their identity
 and lookup rules.
 
 Current placements are:
@@ -99,10 +99,10 @@ Current placements are:
 | Placement | Meaning |
 | --- | --- |
 | `resident` | A local managed agent already living in an agent home |
-| `visiting` | A remote agent materialized into a stable visiting root |
-| `roaming` | A local `.too` source materialized into a source-local `.toolang` root |
+| `visiting` | A remote agent materialized into a stable visiting place |
+| `roaming` | A local `.too` source materialized into a source-local place |
 
-Placement determines which root, home, source, and config files participate in
+Placement determines which place, home, source, and config files participate in
 runtime assembly. The control boundary passes concrete inputs to `_serve`,
 which makes no placement decisions. Placement does not define one run's semantics.
 

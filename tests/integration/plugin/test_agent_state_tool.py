@@ -563,8 +563,8 @@ def test_keys_cannot_escape_or_expand_whitelist(context, key):
 
 def test_list_excludes_other_homes_root_resources_and_unmanaged_files(context):
     for path in (
-        context.layout.root / "psyches/root.md",
-        context.layout.root / "agents/bob/agent.too",
+        context.layout.place / "psyches/root.md",
+        context.layout.place / "agents/bob/agent.too",
         context.home / "drafts/chores/draft.md",
         context.home / "skills/review/scripts/run.py",
     ):
@@ -578,7 +578,7 @@ def test_list_excludes_other_homes_root_resources_and_unmanaged_files(context):
 def test_context_cannot_select_another_home(context):
     from dataclasses import replace
 
-    other = context.layout.root / "agents/bob"
+    other = context.layout.place / "agents/bob"
     other.mkdir()
     result = invoke(replace(context, home=other), "list")
     assert result.output["error"] == "io_error"
@@ -1000,10 +1000,10 @@ def test_sync_publishes_file_changes_and_deletion(context):
 def test_sync_captures_raw_config_shadowed_inputs_and_assets(context):
     from toolang.state.prepare import load_agent_state
 
-    prompt = context.layout.root / "prompts/same.md"
+    prompt = context.layout.place / "prompts/same.md"
     prompt.parent.mkdir()
     prompt.write_text("Root prompt.")
-    context.layout.root_config.write_bytes(
+    context.layout.place_config.write_bytes(
         b'# Root comment\r\n[workspaces]\r\nignored = "."\r\n'
     )
     receipts = [
@@ -1053,8 +1053,8 @@ def test_sync_captures_raw_config_shadowed_inputs_and_assets(context):
     assert {
         "scope": "root",
         "key": "config.toml",
-        "observed_digest": sha256(context.layout.root_config.read_bytes()).hexdigest(),
-        "accepted_digest": sha256(context.layout.root_config.read_bytes()).hexdigest(),
+        "observed_digest": sha256(context.layout.place_config.read_bytes()).hexdigest(),
+        "accepted_digest": sha256(context.layout.place_config.read_bytes()).hexdigest(),
     } in files
     assert {item["key"] for item in files if item["key"].startswith("chores/")} == {
         "chores/one.md",

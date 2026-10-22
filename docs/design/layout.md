@@ -3,12 +3,16 @@
 This document defines the current local filesystem layout.
 
 
-## Toolang Root
+## Root, place, and home
 
-`TOOLANG_ROOT` selects the Toolang root for resident agents, hub data, and
-runtime discovery. Each agent also has an internally resolved agent root for
-its own authored, prepared, and execution data. The two roots coincide for a
-resident agent.
+`TOOLANG_ROOT` selects the root for configuration, resident agents, hub files,
+and runtime discovery. The internal path name PLACE denotes the agent root;
+see [agent addresses](agent-addresses.md#vocabulary) for public wording.
+A home is always `PLACE/agents/NAME`. Root, place, and home are paths. For resident agents,
+`PLACE = ROOT`; visiting and roaming places are grouped by a short root code.
+
+Authored scopes keep the labels `root` and `home`: root-scope inputs come from
+PLACE, and home-scope inputs come from HOME.
 
 Default root:
 
@@ -31,9 +35,9 @@ ${TOOLANG_ROOT}/
   .state/
   .runtime/
     active/
-      gus.json                       # Resident
-      lex@<instance_id>.json         # Visiting
-      aid@<instance_id>.json         # Roaming
+      gus.json                      # Resident
+      lex@<place_code>.json         # Visiting
+      aid@<place_code>.json         # Roaming
       register.lock
   hub/
   human/
@@ -73,21 +77,22 @@ Each resident agent lives under:
 
 - `${TOOLANG_ROOT}/agents/<agent>/`
 
-Visiting agents fetched by Chat, start, or serve use a stable temporary agent
-root derived from the resolved Toolang root and Source Ref:
+Visiting agents fetched by Chat, start, or serve use a stable temporary place
+derived from the selected root and Source Ref:
 
-- `/tmp/toolang/<area_id>/<hotel_id>/`
+- `/tmp/toolang/<root_code>/<place_code>/`
 
-Agent names are bounded to 64 ASCII characters. Visiting IDs use `h` plus a
-10-character source hash; roaming IDs use `s` plus a 7-character path hash and
-10-character timestamp. Each field uses canonical ordered Base32. The area's
-7-character hash identifies the Toolang root, whose full identity is retained in
-`root.json`; it is excluded from instance IDs. See [agent addresses](agent-addresses.md)
+Agent names are bounded to 64 ASCII characters. Visiting place codes use `t` plus a
+10-character source hash; roaming place codes use `s` plus a 7-character path hash and
+10-character timestamp. Each field uses canonical ordered Base32. The
+7-character root code identifies the selected root, whose full path is retained
+in `root.json`; it is excluded from place codes. See [agent addresses](agent-addresses.md)
 for encoding and canonicalization.
 
-Repeated visiting launches reuse their root. Each new source-only roaming launch
-allocates a root; explicit instance and Thread/Run continuation reuse the selected
-home. Different Toolang roots have separate areas even for the same source and ID.
+Repeated visiting launches reuse their place. Each new source-only roaming launch
+allocates a place; explicit instance and Thread/Run continuation reuse the selected
+home. Different roots have separate root-code directories even for the same
+source and place code.
 Previous layouts and registry directories remain untouched and are not searched.
 Temporary directory cleanup can remove its state and remembered settings. The cached
 remote `agent.too` is refetched after one hour. Its source-owned
@@ -96,13 +101,13 @@ State captures the same Program and provenance. Distinct roaming homes have
 independent State and history. Host scripts serve the shared Agent API beside
 their foreground workload on one event loop.
 Visiting idle shutdown stops its server and automatic Docker container, preserving
-this root and its history. Host control/stage files can be cleaned by the next
+this place and its history. Host control/stage files can be cleaned by the next
 management call.
 
 Visiting preparation and management claim full source ownership under the home
 write guard before changing caches or history. An existing unbound home is an
 error. `/tmp/toolang` is either current-user-owned `0700` or an administrator's
-root-owned `01777` parent; new parents and instance roots are private `0700`.
+root-owned `01777` parent; new parents and places are private `0700`.
 Instance records are `0600`. Directory-relative, no-follow access rejects links,
 unsafe owners/modes and path replacement without adopting or repairing them.
 Predictable names can still be pre-created to deny a launch. IDs are public names,
@@ -124,16 +129,16 @@ Key paths:
 ## Agent Placement
 
 `AgentLayout` is the immutable process-owned description of one materialized
-agent. It records the current placement and derives every root, home, setup,
+agent. It records the current placement and derives every place, home, setup,
 state, and runtime path from that identity.
 
-| Placement | Root calculation |
+| Placement | Place calculation |
 | --- | --- |
 | `resident` | The explicit Toolang root |
-| `visiting` | `/tmp/toolang/<area_id>/<hotel_id>/` |
-| `roaming` | `<source-directory>/.toolang/<area_id>/<site_id>/` |
+| `visiting` | `/tmp/toolang/<root_code>/<place_code>/` |
+| `roaming` | `<source-directory>/.toolang/<root_code>/<place_code>/` |
 
-All three placements use the same layout below their calculated root:
+All three placements use the same layout below their calculated place:
 `agents/<agent>/` is the agent home, Agent State uses `.state/`, and durable
 operational data uses `.runtime/`. Runtime setup revisions and derived model
 views stay in memory; Toolang does not create or mount a model-cache `.setup/`
@@ -155,22 +160,23 @@ Discovery references live under `${TOOLANG_ROOT}/.runtime/active/`:
 | Placement | Reference name |
 | --- | --- |
 | Resident | `gus.json` |
-| Visiting | `lex@<instance_id>.json` |
-| Roaming | `aid@<instance_id>.json` |
+| Visiting | `lex@<place_code>.json` |
+| Roaming | `aid@<place_code>.json` |
 
-- Instance encoding and area isolation follow [agent addresses](agent-addresses.md).
-  Nonresident roots contain only the ID; registry filename stems add the agent name.
+- Short codes and root isolation follow [agent addresses](agent-addresses.md).
+  Nonresident place basenames contain only the place code; registry filename stems
+  add the agent name.
 - Under the source cache's `.state/launch.lock`, allocate a timestamp after every
   retained launch of the same source within that Toolang root. Completion and
   restart times do not change creation order.
 - Verify full ownership on retained reads and before registry publication. Hash
   collisions, corrupt ownership, and timestamp overflow cannot overwrite data.
-- `launch_id` is a private startup-generation fence, independent of the home ID.
+- `launch_id` is a private startup-generation fence, independent of the place code.
 - Registrations provide active discovery only. Removing one neither removes
   history nor proves process death. Known-path lookup works without registration.
 
 Each reference contains only its version, absolute authoritative status path,
-and launch ID. Read and write only format 4; rejected or unsupported records
+and launch ID. Read and write only format 5; rejected or unsupported records
 remain untouched. `RuntimeRegistration` publishes into one Toolang root and uses
 one shared `active/register.lock` for publication and conditional removal.
 It does not initialize or stop workloads; removing a reference changes no
@@ -182,18 +188,18 @@ guard, including when only an old guard remains after an upgrade; cleanup of an
 absent reference creates no files. Old guards are retained. For example:
 
 ```json
-{"version": 4, "status": "/project/.toolang/<area_id>/<site_id>/agents/aid/.runtime/status.json", "launch_id": "<fresh-launch-id>"}
+{"version": 5, "status": "/project/.toolang/<root_code>/<place_code>/agents/aid/.runtime/status.json", "launch_id": "<fresh-launch-id>"}
 ```
 
 Each agent runtime stores operational state under:
 
-- `<agent-root>/agents/<agent>/.runtime/`
+- `<place>/agents/<agent>/.runtime/`
 
 Key paths:
 
 | Path           | Purpose                                                      |
 | -------------- | ------------------------------------------------------------ |
-| `status.json` | Version 4 authoritative control/workload data in the `default` entry |
+| `status.json` | Version 5 authoritative control/workload data in the `default` entry |
 | `agent.log`    | Runtime log                                                  |
 | `logs/<agic>/<run_id>.log` | Per-run script logs when `PY_LOG` is set |
 | `runs.db` | Threads, controls, runs, steps, model inputs, chore checkpoints, and ID sequences |
@@ -208,10 +214,10 @@ Host and guest merge their owned fields through one short shared-file claim,
 validating the launch ID before atomic replacement. Management ownership lives
 in the record; no lock is held across startup, execution, or shutdown.
 
-Stop, exit, and failure retain every published root, agent home, status, and
+Stop, exit, and failure retain every published place, agent home, status, and
 history. Only process/container/bootstrap resources and matching global references
 are released. Runtime paths never add an execution-instance subdirectory. Earlier
-roots and histories remain untouched and outside the new runtime scope.
+places and histories remain untouched and outside the new runtime scope.
 [Hosting](hosting.md#runtime-recovery-and-logs) owns resource recovery.
 
 Docker mounts the target agent home read-write, necessary inputs/workspaces,
@@ -258,10 +264,10 @@ The interactive editor runs outside the guard.
 
 Python callers of `AuthoredCaps`, `AuthoredChores`, `ConfiguredCaps`, and
 `ConfiguredWorkspaces` must now pass `lock_path=` explicitly. Use
-`layout.root_edit_lock` or `layout.home_edit_lock` according to source ownership;
-for shared roaming `toolang.toml`, use the root path. Parsing remains independent
-of locks through `CapFile.parse`, `ChoreFile.parse`, `ConfiguredCaps.parse`, and
-`ConfiguredWorkspaces.parse`.
+`layout.place_edit_lock` or `layout.home_edit_lock` according to source ownership;
+for shared roaming `toolang.toml`, use `layout.place_edit_lock`. Parsing remains
+independent of locks through `CapFile.parse`, `ChoreFile.parse`,
+`ConfiguredCaps.parse`, and `ConfiguredWorkspaces.parse`.
 
 Other locks remain beside their protected objects:
 
@@ -273,8 +279,8 @@ Other locks remain beside their protected objects:
 | `.runtime/active/register.lock` | Discovery publication/removal within one Toolang root |
 | `hub/hub.lock` | One hub process per root for its lifetime |
 
-Visiting preparation briefly holds `/tmp/toolang/.<area_id>.lock` to publish
-area ownership, then uses `/tmp/toolang/<area_id>/.<hotel_id>.lock` to claim its
+Visiting preparation briefly holds `/tmp/toolang/.<root_code>.lock` to publish
+root ownership, then uses `/tmp/toolang/<root_code>/.<place_code>.lock` to claim its
 home. Different homes prepare concurrently; repeated claims of one home serialize.
 
 Thread fork/rewind use SQLite transactions, without `runs.db.threads.lock`.
@@ -301,9 +307,9 @@ State directories:
 
 | Value | Directory |
 | --- | --- |
-| Root layer | `<agent-root>/.state/root/` |
-| Home layer | `<agent-root>/agents/<agent>/.state/home/` |
-| Agent composition | `<agent-root>/agents/<agent>/.state/agent/` |
+| Root layer | `<place>/.state/root/` |
+| Home layer | `<place>/agents/<agent>/.state/home/` |
+| Agent composition | `<place>/agents/<agent>/.state/agent/` |
 
 Each directory holds its current pointer, immutable revisions, and appropriate
 build/publication locks. [State](state.md#persistent-layout) owns revision
@@ -315,12 +321,12 @@ owns path capture; [Hosting](hosting.md) owns guest mounts.
 
 Durable authored state lives in:
 
-- root `config.toml`
-- root cap directories
-- agent `config.toml`
-- agent program
-- agent cap directories
-- agent `chores/`
+- `PLACE/config.toml`
+- place cap directories
+- `HOME/config.toml`
+- `HOME/agent.too`
+- home cap directories
+- `HOME/chores/`
 
 Durable execution state does not live in authored files. It lives in
 the `chores` table and execution tables in `runs.db`.

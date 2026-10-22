@@ -42,7 +42,7 @@ class ScopeReader:
                 layout.name,
                 "resident",
                 layout.instance,
-                layout.instance_name,
+                layout.address,
                 "not running",
                 (),
             )

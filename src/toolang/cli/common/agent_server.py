@@ -463,7 +463,7 @@ def _prepare_source(layout: AgentLayout, progress: CliProgress) -> AgentLayout:
     try:
         return prepare_visiting_layout(
             layout,
-            toolang_root=layout.toolang_root or resolve_root(None),
+            toolang_root=layout.root or resolve_root(None),
             progress=progress.sink,
         )
     except (OSError, RuntimeError, ToolangError, TypeError, ValueError) as exc:
@@ -545,8 +545,8 @@ def _resolve_launch(
             layout,
             base_environ=os.environ if base_environ is None else base_environ,
         )
-        toolang_root = layout.toolang_root or (
-            layout.root
+        toolang_root = layout.root or (
+            layout.place
             if layout.placement == "resident"
             else resolve_root(None, environ=environ)
         )

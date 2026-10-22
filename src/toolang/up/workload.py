@@ -25,13 +25,13 @@ from .types import ExecutionDrivers
 
 def owns_preparation(layout: AgentLayout, entry: dict) -> bool:
     """Recognize an unstarted identity published by this exact caller process."""
-    if layout.instance_id is None:
+    if layout.place_code is None:
         return False
     control = entry.get("control", {})
     workload = entry.get("workload", {})
     owner = control_owner()
     return (
-        control.get("instance_id") == layout.instance_id
+        control.get("place_code") == layout.place_code
         and "startup_contract" not in control
         and control.get("ref") is None
         and workload.get("status") == "preparing"
@@ -52,13 +52,20 @@ def begin_workload(
     startup_contract: Mapping[str, str] | None = None,
 ) -> None:
     """Bind one generation to its identity before any execution is admitted."""
+    root = toolang_root.expanduser().resolve()
+    if layout.root != root and (
+        layout.root is not None or layout.place_code is not None
+    ):
+        raise ValueError("instance belongs to a different Toolang root")
+    if layout.placement == "resident" and layout.place != root:
+        raise ValueError("resident agent root does not match its Toolang root")
 
     def begin(entry):
         entry["launch_id"] = launch_id
         entry["control"].update(identity_bindings(layout))
         entry["control"].update(
             runtime_instance=layout.instance,
-            toolang_root=str(toolang_root),
+            root=str(root),
             sandbox=sandbox,
             endpoint=endpoint,
             drivers=sorted(drivers),
@@ -69,8 +76,6 @@ def begin_workload(
             entry["control"]["owner"] = control_owner()
         entry["workload"] = dict(workload)
 
-    if layout.instance_id is not None and layout.toolang_root != toolang_root.resolve():
-        raise ValueError("instance belongs to a different Toolang root")
     guard = (
         visiting_home_guard(layout) if layout.placement == "visiting" else nullcontext()
     )

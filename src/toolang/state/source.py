@@ -190,16 +190,16 @@ def scan_source(
     return build_source_manifest(observation)
 
 
-def scan_root_source(toolang_root: Path) -> SourceManifest:
+def scan_root_source(place: Path) -> SourceManifest:
     """Capture root config and authored cap paths."""
 
-    return root_source_manifest(observe_root_source(toolang_root))
+    return root_source_manifest(observe_root_source(place))
 
 
-def scan_home_source(toolang_root: Path, agent_name: str) -> SourceManifest:
+def scan_home_source(place: Path, agent_name: str) -> SourceManifest:
     """Capture one agent program, config, and authored cap paths."""
 
-    return home_source_manifest(observe_home_source(toolang_root, agent_name))
+    return home_source_manifest(observe_home_source(place, agent_name))
 
 
 def observe_source(
@@ -311,17 +311,15 @@ def build_source_manifest(
     )
 
 
-def observe_root_source(toolang_root: Path) -> SourceObservation:
+def observe_root_source(place: Path) -> SourceObservation:
     """Observe shared config and independently authored capabilities."""
-    _require_source_shape(toolang_root / "config.toml", shape="file")
-    return observe_source(
-        toolang_root, ("config.toml", *CAP_DIRECTORY_NAMES), isolate=True
-    )
+    _require_source_shape(place / "config.toml", shape="file")
+    return observe_source(place, ("config.toml", *CAP_DIRECTORY_NAMES), isolate=True)
 
 
-def observe_home_source(toolang_root: Path, agent_name: str) -> SourceObservation:
+def observe_home_source(place: Path, agent_name: str) -> SourceObservation:
     """Observe home sources without creating optional resource directories."""
-    home = toolang_root / "agents" / agent_name
+    home = place / "agents" / agent_name
     _require_source_shape(home / "config.toml", shape="file")
     return observe_source(home, _home_source_paths(home), isolate=True)
 
@@ -461,7 +459,7 @@ class SourceFile:
 class SourceSnapshot:
     """Fixed authored files read while preparing one scope."""
 
-    toolang_root: Path
+    place: Path
     agent_name: str
     files: tuple[SourceFile, ...]
     issues: tuple[SourceIssue, ...] = ()
@@ -583,24 +581,24 @@ def source_manifest_from_snapshot(
 
 
 def _read_scope_sources(
-    root: Path, agent_name: str, *, include_home: bool
+    place: Path, agent_name: str, *, include_home: bool
 ) -> SourceSnapshot:
     files: list[SourceFile] = []
     issues: list[SourceIssue] = []
-    observations = [(root, "root", observe_root_source(root))]
+    observations = [(place, "root", observe_root_source(place))]
     if include_home:
         observations.append(
             (
-                root / "agents" / agent_name,
+                place / "agents" / agent_name,
                 "agent",
-                observe_home_source(root, agent_name),
+                observe_home_source(place, agent_name),
             )
         )
     for base, layer, observation in observations:
         for issue in observation.issues:
             issues.append(
                 SourceIssue(
-                    (base / issue.path).relative_to(root).as_posix(),
+                    (base / issue.path).relative_to(place).as_posix(),
                     issue.code,
                     issue.message,
                 )
@@ -618,7 +616,7 @@ def _read_scope_sources(
             )
             try:
                 files.extend(
-                    _collect_file(root, entry.source, category=category, layer=layer)
+                    _collect_file(place, entry.source, category=category, layer=layer)
                 )
             except SourceChangedError:
                 raise
@@ -626,39 +624,39 @@ def _read_scope_sources(
                 if category == "config":
                     raise
                 issues.append(
-                    source_issue(entry.source.relative_to(root).as_posix(), exc)
+                    source_issue(entry.source.relative_to(place).as_posix(), exc)
                 )
     return SourceSnapshot(
-        root,
+        place,
         agent_name,
         tuple(sorted(files, key=lambda item: item.relative_path)),
         tuple(sorted(issues, key=lambda item: item.path)),
     )
 
 
-def read_authored_source(toolang_root: Path, agent_name: str) -> SourceSnapshot:
+def read_authored_source(place: Path, agent_name: str) -> SourceSnapshot:
     """Capture current files, isolating resource-local read failures."""
-    return _read_scope_sources(toolang_root, agent_name, include_home=True)
+    return _read_scope_sources(place, agent_name, include_home=True)
 
 
-def read_root_source(toolang_root: Path) -> SourceSnapshot:
-    return _read_scope_sources(toolang_root, "", include_home=False)
+def read_root_source(place: Path) -> SourceSnapshot:
+    return _read_scope_sources(place, "", include_home=False)
 
 
-def is_source_path(toolang_root: Path, agent_name: str, path: Path) -> bool:
+def is_source_path(place: Path, agent_name: str, path: Path) -> bool:
     """Return whether one path contributes to a root or home State layer."""
 
-    return source_path_scope(toolang_root, agent_name, path) is not None
+    return source_path_scope(place, agent_name, path) is not None
 
 
 def source_path_scope(
-    toolang_root: Path,
+    place: Path,
     agent_name: str,
     path: Path,
 ) -> tuple[Literal["root", "home"], str] | None:
     """Return the State scope and logical relative path for one source path."""
 
-    relative_path = _relative_to_root(toolang_root, path)
+    relative_path = _relative_to_root(place, path)
     if relative_path is None:
         return None
     if relative_path == Path("config.toml"):
@@ -691,7 +689,7 @@ def source_path_scope(
 
 
 def _collect_file(
-    toolang_root: Path,
+    place: Path,
     path: Path,
     *,
     category: str,
@@ -702,7 +700,7 @@ def _collect_file(
     _require_source_shape(path, shape="file")
     before = _observe_file(
         path,
-        relative_path=path.relative_to(toolang_root).as_posix(),
+        relative_path=path.relative_to(place).as_posix(),
     )
     content = path.read_bytes()
     raw_content = content
@@ -719,7 +717,7 @@ def _collect_file(
     return [
         SourceFile(
             path=path,
-            relative_path=path.relative_to(toolang_root).as_posix(),
+            relative_path=path.relative_to(place).as_posix(),
             category=category,
             layer=layer,
             content=content,
@@ -731,8 +729,8 @@ def _collect_file(
     ]
 
 
-def _relative_to_root(toolang_root: Path, path: Path) -> Path | None:
+def _relative_to_root(place: Path, path: Path) -> Path | None:
     try:
-        return path.absolute().relative_to(toolang_root.absolute())
+        return path.absolute().relative_to(place.absolute())
     except ValueError:
         return None

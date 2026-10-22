@@ -230,9 +230,9 @@ def info_agent(
     import shlex
 
     selector = (
-        f"{layout.source_path}@{layout.instance_id}"
+        f"{layout.source_path}@{layout.place_code}"
         if layout.placement == "roaming"
-        else layout.instance_name
+        else layout.address
     )
     if layout.placement == "resident" and selector in getattr(
         ctx.find_root().command, "commands", {}
@@ -242,9 +242,9 @@ def info_agent(
     command = shlex.join(["too", "--root", toolang_root, selector, "info"])
     rows = [
         ("Toolang root", toolang_root),
-        ("Agent root", str(layout.root)),
+        ("Agent root", str(layout.place)),
         ("Home", shorten_home_path(layout.home)),
-        ("Agent", layout.instance_name),
+        ("Agent", layout.address),
         *resources,
         ("Status", status_value),
     ]

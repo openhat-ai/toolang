@@ -92,7 +92,7 @@ def test_invalid_edits_exclude_only_their_unit_and_repair_restores_it(layout, ki
 
 
 def test_invalid_home_cap_exposes_current_valid_root_cap(layout):
-    root = layout.root / "psyches" / "review.md"
+    root = layout.place / "psyches" / "review.md"
     home = layout.home / "psyches" / "review.md"
     for path in (root, home):
         path.parent.mkdir()
@@ -109,9 +109,9 @@ def test_chore_directories_are_lazy_and_root_definitions_are_ignored(layout):
     watcher = StateWatcher(layout)
     initial = asyncio.run(watcher.refresh())
     assert initial.chores == ()
-    assert not (layout.root / "chores").exists()
+    assert not (layout.place / "chores").exists()
     assert not (layout.home / "chores").exists()
-    root = layout.root / "chores" / "root.md"
+    root = layout.place / "chores" / "root.md"
     root.parent.mkdir()
     root.write_text("Root chore must be ignored")
     assert asyncio.run(watcher.refresh()).revision == initial.revision

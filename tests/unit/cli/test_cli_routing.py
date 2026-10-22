@@ -132,7 +132,7 @@ def test_nonresident_cap_mutations_remain_rejected(
         else "remote agents are not supported"
     ) in capsys.readouterr().err
     assert source.read_text() == "agic:\n  Reply directly.\n"
-    assert not layout.root.exists()
+    assert not layout.place.exists()
     assert not (tmp_path / "toolang.toml").exists()
 
 
@@ -1001,7 +1001,7 @@ def test_visiting_serve_prepares_with_the_acquired_source_receipt(
 def test_instance_selector_and_top_use_the_same_complete_name(tmp_path, placement):
     from toolang.up.addresses import parse_address
     from toolang.up.identity import allocate_roaming
-    from toolang.cli.common.top_view import instance_name
+    from toolang.cli.common.top_view import agent_address
     from toolang.up.schemas import SourceActivity
 
     layout = (
@@ -1009,20 +1009,20 @@ def test_instance_selector_and_top_use_the_same_complete_name(tmp_path, placemen
         if placement == "visiting"
         else allocate_roaming(tmp_path / "alice.too", toolang_root=tmp_path)
     )
-    assert layout.instance_id is not None
-    assert len(layout.instance_id) == (11 if placement == "visiting" else 18)
-    address = parse_address(layout.instance_name)
-    assert address is not None and address.instance_id == layout.instance_id
+    assert layout.place_code is not None
+    assert len(layout.place_code) == (11 if placement == "visiting" else 18)
+    address = parse_address(layout.address)
+    assert address is not None and address.place_code == layout.place_code
     assert (
-        instance_name(
+        agent_address(
             SourceActivity(
-                identity=layout.instance_name,
-                label=layout.instance_name,
+                identity=layout.address,
+                label=layout.address,
                 placement=layout.placement,
             )
         )
-        == layout.instance_name
+        == layout.address
     )
-    for invalid in (layout.instance_id[1:], layout.instance_id.upper()):
+    for invalid in (layout.place_code[1:], layout.place_code.upper()):
         with pytest.raises(ValueError):
             parse_address(f"{layout.name}@{invalid}")

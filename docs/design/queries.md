@@ -24,7 +24,7 @@ Cap and tool lists follow the [CLI table width policy](cli.md), falling back to
 120 cells when terminal geometry is unavailable. Each resource occupies one row.
 Only descriptions and locations shrink; identities and statuses remain complete.
 Long elastic cells use `…`; locations retain their beginning and end. Local
-locations are relative to the selected agent root; URLs and canonical source
+locations are relative to the selected place; URLs and canonical source
 refs retain their existing form. `STATUS` displays only the existing availability
 tag (`ready` or `not_allowed`), while JSON and queries retain complete locations
 and all `tags`, including origin, scope, and form.

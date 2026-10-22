@@ -373,7 +373,7 @@ def test_catalog_rejects_duplicate_model_identity_as_a_complete_snapshot() -> No
 def test_catalog_source_precedence_and_explicit_failure(tmp_path: Path) -> None:
     layout = AgentLayout.resident(tmp_path / "root", "alice")
     layout.home.mkdir(parents=True)
-    root = layout.root / "catalog.json"
+    root = layout.place / "catalog.json"
     home = layout.home / "catalog.json"
     configured = tmp_path / "models.json"
     explicit = tmp_path / "explicit-models.json"
@@ -408,7 +408,7 @@ def test_catalog_source_ignores_implicit_models_files(
 ) -> None:
     layout = AgentLayout.resident(tmp_path / "root", "alice")
     layout.home.mkdir(parents=True)
-    for path in (layout.home / "models.json", layout.root / "models.json"):
+    for path in (layout.home / "models.json", layout.place / "models.json"):
         _write_catalog(path, _catalog_data())
     packaged = tmp_path / "packaged-catalog.json"
     _write_catalog(packaged, _catalog_data())
@@ -424,7 +424,7 @@ def test_root_catalog_is_selected_despite_unrecognized_models_file(
     layout = AgentLayout.resident(tmp_path / "root", "alice")
     layout.home.mkdir(parents=True)
     legacy = layout.home / "models.json"
-    root = layout.root / "catalog.json"
+    root = layout.place / "catalog.json"
     _write_catalog(legacy, _catalog_data())
     _write_catalog(root, _catalog_data())
 

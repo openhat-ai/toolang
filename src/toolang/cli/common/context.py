@@ -49,7 +49,7 @@ def target_context(root: Path, target: AgentTarget | Path | AgentAddress) -> Cli
         return CliContext(root, agent=target.name, source=target.source, address=target)
 
     if isinstance(target, Path):
-        layout = replace(AgentLayout.roaming(target), toolang_root=root)
+        layout = AgentLayout.roaming(target, root=root)
         return CliContext(
             root, agent=layout.name, layout=layout, source=target, selector=str(target)
         )
@@ -151,7 +151,7 @@ def prepare_agent(ctx: Context, *, progress: ProgressSink | None = None) -> Agen
         else source.resolve_visiting_layout(
             state.selector or "", toolang_root=state.root, progress=progress
         ),
-        toolang_root=state.root,
+        root=state.root,
     )
     state.prepared = True
     return state.layout
@@ -184,9 +184,9 @@ def load_runtime_environ(
     *,
     base_environ: Mapping[str, str],
 ) -> dict[str, str]:
-    """Load root and agent dotenv defaults below explicit process values."""
+    """Load place and home dotenv defaults below explicit process values."""
 
-    merged = {} if layout.project_inputs else _load_dotenv(layout.root_env)
+    merged = {} if layout.project_inputs else _load_dotenv(layout.place_env)
     if not layout.project_inputs:
         merged.update(_load_dotenv(layout.env))
     merged.update(base_environ)

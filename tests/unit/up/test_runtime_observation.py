@@ -73,24 +73,24 @@ def test_reference_names_use_stable_host_source_identity(tmp_path):
     root = tmp_path / "toolang"
     resident = AgentLayout.resident(root, "gus")
     source = "https://example.com/lex.too"
-    visiting = AgentLayout.visiting(source, "lex", toolang_root=root)
+    visiting = AgentLayout.visiting(source, "lex", root=root)
     roaming = _roaming(tmp_path / "aid.too")
 
     assert instance_filename(resident) == "gus.json"
-    assert instance_filename(visiting) == f"lex@{visiting.instance_id}.json"
-    assert visiting.root.name == visiting.instance_id
-    assert visiting.instance_id is not None
-    assert visiting.source_id == visiting.instance_id[1:]
-    assert instance_filename(roaming) == f"aid@{roaming.instance_id}.json"
+    assert instance_filename(visiting) == f"lex@{visiting.place_code}.json"
+    assert visiting.place.name == visiting.place_code
+    assert visiting.place_code is not None
+    assert visiting.source_id == visiting.place_code[1:]
+    assert instance_filename(roaming) == f"aid@{roaming.place_code}.json"
     assert instance_filename(replace(roaming)) == instance_filename(roaming)
     assert instance_filename(
         _roaming(tmp_path / "other" / "aid.too")
     ) != instance_filename(roaming)
     assert instance_filename(
-        AgentLayout.visiting(source, "lex", toolang_root=root / "other")
+        AgentLayout.visiting(source, "lex", root=root / "other")
     ) == instance_filename(visiting)
     assert instance_filename(
-        AgentLayout.visiting("https://other.example/lex.too", "lex", toolang_root=root)
+        AgentLayout.visiting("https://other.example/lex.too", "lex", root=root)
     ) != instance_filename(visiting)
 
 
@@ -103,16 +103,14 @@ def test_source_path_aliases_preserve_reference_identity(tmp_path):
     alias.symlink_to(source)
     original = _roaming(source)
     assert instance_filename(
-        AgentLayout.roaming(
-            alias, instance_id=original.instance_id, toolang_root=original.toolang_root
-        )
+        AgentLayout.roaming(alias, place_code=original.place_code, root=original.root)
     ) == instance_filename(original)
     root_alias = tmp_path / "root-alias"
     root_alias.symlink_to(project, target_is_directory=True)
     url = "https://example.com/lex.too"
     assert instance_filename(
-        AgentLayout.visiting(url, "lex", toolang_root=root_alias)
-    ) == instance_filename(AgentLayout.visiting(url, "lex", toolang_root=project))
+        AgentLayout.visiting(url, "lex", root=root_alias)
+    ) == instance_filename(AgentLayout.visiting(url, "lex", root=project))
 
 
 @pytest.mark.parametrize("placement", ["visiting", "roaming"])
@@ -122,9 +120,7 @@ def test_relaunch_reuses_reference_name_and_preserves_new_registration(
     from toolang.up.instance import read_instance
 
     layout = (
-        AgentLayout.visiting(
-            "https://example.com/lex.too", "lex", toolang_root=tmp_path
-        )
+        AgentLayout.visiting("https://example.com/lex.too", "lex", root=tmp_path)
         if placement == "visiting"
         else _roaming(tmp_path / "aid.too")
     )
@@ -141,9 +137,7 @@ def test_relaunch_reuses_reference_name_and_preserves_new_registration(
 
 
 def test_reference_names_cannot_alias_agent_names_with_markers(tmp_path):
-    visiting = AgentLayout.visiting(
-        "https://example.com/lex.too", "lex", toolang_root=tmp_path
-    )
+    visiting = AgentLayout.visiting("https://example.com/lex.too", "lex", root=tmp_path)
     with pytest.raises(ValueError, match="invalid agent name"):
         AgentLayout.resident(
             tmp_path, instance_filename(visiting).removesuffix(".json")
@@ -179,7 +173,7 @@ def test_discovery_ignores_invalid_status_instances(tmp_path, instances):
         before = layout.runtime_status.read_bytes()
         try:
             layout.runtime_status.write_text(
-                json.dumps({"version": 4, "instances": instances})
+                json.dumps({"version": 5, "instances": instances})
             )
             assert running_instances(tmp_path) == ()
         finally:
@@ -187,7 +181,7 @@ def test_discovery_ignores_invalid_status_instances(tmp_path, instances):
 
 
 @pytest.mark.parametrize("owner", ["reference", "status"])
-@pytest.mark.parametrize("version", [2, 3, 4.0, True])
+@pytest.mark.parametrize("version", [2, 3, 4, 5.0, True])
 def test_discovery_rejects_noncurrent_formats_without_mutation(
     tmp_path, owner, version
 ):
@@ -364,7 +358,7 @@ def test_short_lived_scripts_keep_local_status_and_share_registry_lock(tmp_path)
         with ForegroundWorkload(
             layout, toolang_root=scope, drivers=frozenset()
         ) as registration:
-            assert registration.path.name == f"{layout.instance_name}.json"
+            assert registration.path.name == f"{layout.address}.json"
         entry = read_instance(layout.runtime_status)
         assert entry is not None and entry["workload"]["status"] == "stopped"
     assert tuple(path.name for path in directory.iterdir()) == ("register.lock",)
@@ -447,7 +441,7 @@ def test_placement_free_workload_cleans_the_reference_using_control_bindings(
 
     layout = (
         AgentLayout.visiting(
-            "https://example.com/alice.too", "alice", toolang_root=tmp_path / "toolang"
+            "https://example.com/alice.too", "alice", root=tmp_path / "toolang"
         )
         if placement == "visiting"
         else _roaming(tmp_path / "alice.too", toolang_root=tmp_path / "toolang")
@@ -462,7 +456,7 @@ def test_placement_free_workload_cleans_the_reference_using_control_bindings(
         )
         ref.save(layout.runtime_status)
         runtime_layout = replace(
-            layout, placement="resident", source_id=None, instance_id=None
+            layout, placement="resident", source_id=None, place_code=None
         )
         _clear_state(runtime_layout, expected=ref)
         assert not registration.path.exists()
@@ -515,9 +509,7 @@ def test_runtime_snapshot_lists_residents_and_registered_placements_once(tmp_pat
     resident.home.mkdir(parents=True)
     never_started = AgentLayout.resident(root, "bob")
     never_started.home.mkdir(parents=True)
-    visiting = AgentLayout.visiting(
-        "https://example.com/alice.too", "alice", toolang_root=root
-    )
+    visiting = AgentLayout.visiting("https://example.com/alice.too", "alice", root=root)
     roaming = _roaming(tmp_path / "alice.too", toolang_root=root)
 
     with (
@@ -818,8 +810,8 @@ def test_runtime_snapshot_preserves_distinct_roaming_instance_labels(tmp_path):
         snapshot = runtime_snapshot(tmp_path)
     assert len(snapshot.instances) == 2
     assert {item.identity for item in snapshot.instances} == {
-        one.instance_name,
-        two.instance_name,
+        one.address,
+        two.address,
     }
 
 
@@ -833,7 +825,7 @@ def test_runtime_snapshot_keeps_failed_residents_and_excludes_finished_visitors(
     resident = AgentLayout.resident(root, "alice")
     resident.home.mkdir(parents=True)
     visiting = AgentLayout.visiting(
-        "https://example.com/visitor.too", "visitor", toolang_root=root
+        "https://example.com/visitor.too", "visitor", root=root
     )
     with (
         ForegroundWorkload(
@@ -867,9 +859,7 @@ def test_first_liveness_probe_excludes_a_departed_temporary_instance(
     resident = AgentLayout.resident(tmp_path, "alice")
     resident.home.mkdir(parents=True)
     temporary = (
-        AgentLayout.visiting(
-            "https://example.com/worker.too", "worker", toolang_root=tmp_path
-        )
+        AgentLayout.visiting("https://example.com/worker.too", "worker", root=tmp_path)
         if placement == "visiting"
         else replace(_roaming(tmp_path / "worker.too"), instance="one")
     )

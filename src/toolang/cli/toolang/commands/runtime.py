@@ -537,9 +537,7 @@ def serve(
         str | None,
         typer.Option("--log", metavar="LOG_SPEC", help="Python logging specification"),
     ] = None,
-    agent_root: Annotated[
-        Path | None, typer.Option("--agent-root", hidden=True)
-    ] = None,
+    place: Annotated[Path | None, typer.Option("--place", hidden=True)] = None,
     source_policy: Annotated[
         str, typer.Option("--source-policy", hidden=True)
     ] = "root",
@@ -553,9 +551,7 @@ def serve(
     runtime_instance: Annotated[
         str | None, typer.Option("--runtime-instance", hidden=True)
     ] = None,
-    instance_id: Annotated[
-        str | None, typer.Option("--instance-id", hidden=True)
-    ] = None,
+    place_code: Annotated[str | None, typer.Option("--place-code", hidden=True)] = None,
     placement: Annotated[str, typer.Option("--placement", hidden=True)] = "resident",
     source_path: Annotated[
         Path | None, typer.Option("--source-path", hidden=True)
@@ -601,10 +597,11 @@ def serve(
     if runtime_instance is not None:
         raise ClickException("legacy runtime instances cannot be resumed")
     layout = AgentLayout(
-        agent_root or context_root(ctx),
+        place or context_root(ctx),
         agent,
         cast(AgentPlacement, placement),
-        instance_id=instance_id,
+        root=context_root(ctx),
+        place_code=place_code,
         source_path=source_path,
         source_edit_lock=source_edit_lock,
         project_inputs=source_policy == "project",
@@ -669,7 +666,7 @@ def resolve_startup(
         drivers = user_call(parse_drivers, driver)
     else:
         drivers = default_drivers(target.placement)
-    root, agent = target.root, target.name
+    place, agent = target.place, target.name
     workspaces = resolve_workspaces(
         target, procdir=Path.cwd(), paths=workspace_options or (), workdir=workdir
     )
@@ -680,9 +677,7 @@ def resolve_startup(
         raise ClickException(active_agent_error(existing))
     environ = load_runtime_environ(target, base_environ=os.environ)
     toolang_root = (
-        toolang_root
-        or target.toolang_root
-        or Path(environ.get("TOOLANG_ROOT", str(root)))
+        toolang_root or target.root or Path(environ.get("TOOLANG_ROOT", str(place)))
     )
     return user_call(
         resolve_runtime_launch,

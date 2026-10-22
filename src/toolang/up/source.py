@@ -251,7 +251,7 @@ def roaming_layout(source_path: Path) -> AgentLayout:
 def materialize_roaming_program(
     source_path: Path, *, layout: AgentLayout | None = None
 ) -> AgentLayout:
-    """Materialize one local .too source into its fixed roaming root."""
+    """Materialize one local .too source into its fixed roaming place."""
 
     resolved_source = source_path.expanduser().resolve()
     if not resolved_source.is_file():
@@ -263,7 +263,7 @@ def materialize_roaming_program(
         _link_roaming_program(layout, resolved_source)
         _sync_roaming_project(layout, resolved_source)
     except BaseException as exc:
-        if layout.instance_id is not None:
+        if layout.place_code is not None:
             from .workload import fail_preparation
 
             fail_preparation(layout, exc)
@@ -298,7 +298,7 @@ def _sync_roaming_project(layout: AgentLayout, source: Path) -> None:
     )
 
     home = layout.home
-    root_lock = EditLock(layout.root_edit_lock)
+    root_lock = EditLock(layout.place_edit_lock)
 
     def capture():
         sources = script_sources(source)
@@ -428,12 +428,10 @@ def materialize_visiting_program(
     declared_ref: str | None = None,
     toolang_root: Path,
 ) -> AgentLayout:
-    """Materialize one remote agent into its stable visiting root."""
+    """Materialize one remote agent into its stable visiting place."""
 
     agent_name = derive_agent_name(ref.default_name())
-    layout = AgentLayout.visiting(
-        source or ref.render(), agent_name, toolang_root=toolang_root
-    )
+    layout = AgentLayout.visiting(source or ref.render(), agent_name, root=toolang_root)
     content = source_text.encode("utf-8")
     acquired = AcquiredSource(
         declared_ref or source or ref.render(),
@@ -516,7 +514,7 @@ def prepare_visiting_layout(
     if layout.placement != "visiting" or layout.source_ref is None:
         return layout
     source_ref = source_ref or layout.source_ref
-    if visiting_layout(source_ref, toolang_root=toolang_root).root != layout.root:
+    if visiting_layout(source_ref, toolang_root=toolang_root).place != layout.place:
         raise ValueError("visiting source identity changed")
     return resolve_visiting_layout(
         source_ref, toolang_root=toolang_root, progress=progress
@@ -524,9 +522,7 @@ def prepare_visiting_layout(
 
 
 def _visiting_layout(target: AgentTarget, *, toolang_root: Path) -> AgentLayout:
-    return AgentLayout.visiting(
-        target.text, target.default_name(), toolang_root=toolang_root
-    )
+    return AgentLayout.visiting(target.text, target.default_name(), root=toolang_root)
 
 
 def _resolve_visiting_layout(

@@ -113,10 +113,10 @@ def _mutate(root, family, contended, done):
             context,
         )
     elif family == "projection":
-        source = layout.root.parent / "alice.too"
+        source = layout.place.parent / "alice.too"
         materialize_roaming_program(source)
     else:
-        other = AgentLayout.resident(layout.root, family)
+        other = AgentLayout.resident(layout.place, family)
         with EditLock(other.home_edit_lock).write():
             pass
     done.set()
@@ -133,7 +133,7 @@ def test_home_writers_share_edit_lock_across_processes(tmp_path, family):
     ctx = multiprocessing.get_context("spawn")
     contended, done = ctx.Event(), ctx.Event()
     process = ctx.Process(
-        target=_mutate, args=(str(layout.root), family, contended, done)
+        target=_mutate, args=(str(layout.place), family, contended, done)
     )
     try:
         with EditLock(layout.home_edit_lock).write():
@@ -160,7 +160,7 @@ def test_other_home_and_root_edits_remain_independent(tmp_path):
 
             def edit():
                 with EditLock(bob.home_edit_lock).write():
-                    with EditLock(alice.root_edit_lock).write():
+                    with EditLock(alice.place_edit_lock).write():
                         return True
 
             assert pool.submit(edit).result(timeout=10)
@@ -193,7 +193,7 @@ def test_catalog_reads_and_unchanged_projection_do_not_create_guards(tmp_path):
     )
     assert materialize_roaming_program(source) == layout
     assert not (layout.home / ".state").exists()
-    assert not (layout.root / ".state").exists()
+    assert not (layout.place / ".state").exists()
 
 
 def _add_roaming_workspace(source, name):
@@ -203,7 +203,7 @@ def _add_roaming_workspace(source, name):
     )
 
     layout = AgentLayout.roaming(Path(source))
-    assert _workspace_edit_lock(layout) == layout.root_edit_lock
+    assert _workspace_edit_lock(layout) == layout.place_edit_lock
     ConfiguredWorkspaces(
         _authored_config(layout), lock_path=_workspace_edit_lock(layout)
     ).add(Path(source).parent / name, name=name)
@@ -221,10 +221,10 @@ def test_shared_roaming_config_updates_preserve_both_scripts_workspaces(tmp_path
         tuple(pool.map(_add_roaming_workspace, map(str, sources), ["alice", "bob"]))
     layout = AgentLayout.roaming(sources[0])
     workspaces = ConfiguredWorkspaces(
-        tmp_path / "toolang.toml", lock_path=layout.root_edit_lock
+        tmp_path / "toolang.toml", lock_path=layout.place_edit_lock
     ).list()
     assert set(workspaces) == {"alice", "bob"}
-    assert layout.root_edit_lock.is_file()
+    assert layout.place_edit_lock.is_file()
     assert not (tmp_path / "toolang.toml.lock").exists()
 
 
@@ -235,7 +235,7 @@ def test_delayed_roaming_projection_does_not_overwrite_newer_workspace_config(
     source.write_text("agic:\n  Hello.\n")
     layout = materialize_roaming_program(source)
     grants = ConfiguredWorkspaces(
-        tmp_path / "toolang.toml", lock_path=layout.root_edit_lock
+        tmp_path / "toolang.toml", lock_path=layout.place_edit_lock
     )
     for name in ("first", "second"):
         (tmp_path / name).mkdir()
@@ -416,11 +416,11 @@ def test_watcher_ignores_edit_lock_and_lock_activity_keeps_revision(tmp_path):
                 timeout=10
             )
     assert refreshed.revision == initial.revision
-    assert (layout.root_state / "build.lock").is_file()
+    assert (layout.place_state / "build.lock").is_file()
     assert (layout.home_state / "build.lock").is_file()
     assert (layout.agent_state / "publish.lock").is_file()
-    assert not tuple(layout.root.rglob("prepare.lock"))
-    assert not tuple(layout.root.rglob("check.lock"))
+    assert not tuple(layout.place.rglob("prepare.lock"))
+    assert not tuple(layout.place.rglob("check.lock"))
 
 
 def test_legacy_sidecars_are_untouched_and_root_stores_share_lock(tmp_path):
@@ -442,7 +442,7 @@ def test_legacy_sidecars_are_untouched_and_root_stores_share_lock(tmp_path):
     assert (
         caps.root_authoring.lock_path
         == caps.root_configured.lock_path
-        == layout.root_edit_lock
+        == layout.place_edit_lock
     )
     with caps.root_authoring.write_lock():
         caps.root_configured.create(

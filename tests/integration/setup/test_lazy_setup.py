@@ -13,7 +13,7 @@ def test_setup_loads_catalog_data_in_memory_without_model_cache(tmp_path: Path) 
     async def run() -> None:
         layout = AgentLayout.resident(tmp_path, "alice")
         setup = await load_setup(layout, agent_context=False, validate_defaults=False)
-        cache_path = layout.root / ".setup" / "models"
+        cache_path = layout.place / ".setup" / "models"
         assert not cache_path.exists()
         assert setup.models()
         assert setup.providers()

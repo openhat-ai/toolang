@@ -30,7 +30,7 @@ def test_chore_watcher_current_returns_published_snapshot_without_rescanning(
     )
     assert watcher.current() is published
     assert not (layout.home / "chores").exists()
-    assert not (layout.root / "chores").exists()
+    assert not (layout.place / "chores").exists()
 
 
 def test_inline_chore_shadows_home_and_root_without_changing_identity(

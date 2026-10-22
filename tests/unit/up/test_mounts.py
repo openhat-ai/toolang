@@ -10,29 +10,29 @@ import pytest
 from toolang.base.types.sandbox import SandboxMount
 from toolang.up.mounts import (
     prepare_linked_state_source_mounts,
-    prepare_root_mounts,
+    prepare_place_mounts,
     prepare_workspace_mounts,
 )
 
 
-def test_prepare_root_mounts_owns_toolang_layout(tmp_path: Path) -> None:
-    local_root = tmp_path / "toolang"
-    hosted_root = Path("/root/.toolang")
+def test_prepare_place_mounts_owns_place_inputs(tmp_path: Path) -> None:
+    local_place = tmp_path / "toolang"
+    hosted_place = Path("/root/.toolang")
 
-    mounts = prepare_root_mounts(local_root, hosted_root)
+    mounts = prepare_place_mounts(local_place, hosted_place)
 
     assert {(item.local_path, item.hosted_path) for item in mounts} == {
-        (local_root / "config.toml", hosted_root / "config.toml"),
-        (local_root / ".state", hosted_root / ".state"),
-        (local_root / "psyches", hosted_root / "psyches"),
-        (local_root / "skills", hosted_root / "skills"),
-        (local_root / "services", hosted_root / "services"),
-        (local_root / "prompts", hosted_root / "prompts"),
+        (local_place / "config.toml", hosted_place / "config.toml"),
+        (local_place / ".state", hosted_place / ".state"),
+        (local_place / "psyches", hosted_place / "psyches"),
+        (local_place / "skills", hosted_place / "skills"),
+        (local_place / "services", hosted_place / "services"),
+        (local_place / "prompts", hosted_place / "prompts"),
     }
-    assert (local_root / "config.toml").is_file()
-    assert not (local_root / ".setup").exists()
+    assert (local_place / "config.toml").is_file()
+    assert not (local_place / ".setup").exists()
     assert all(
-        (local_root / name).is_dir()
+        (local_place / name).is_dir()
         for name in (
             ".state",
             "psyches",
@@ -46,17 +46,17 @@ def test_prepare_root_mounts_owns_toolang_layout(tmp_path: Path) -> None:
 def test_prepare_linked_state_source_mounts_covers_root_and_home_sources(
     tmp_path: Path,
 ) -> None:
-    local_root = tmp_path / "toolang"
-    local_home = local_root / "agents" / "alice"
+    local_place = tmp_path / "toolang"
+    local_home = local_place / "agents" / "alice"
     local_home.mkdir(parents=True)
-    hosted_root = Path("/root/.toolang")
-    hosted_home = hosted_root / "agents" / "alice"
+    hosted_place = Path("/root/.toolang")
+    hosted_home = hosted_place / "agents" / "alice"
     external = tmp_path / "external"
     external.mkdir()
     sources = {
         local_home / "agent.too": external / "agent.too",
         local_home / "config.toml": external / "config.toml",
-        local_root / "prompts" / "review.md": external / "review.md",
+        local_place / "prompts" / "review.md": external / "review.md",
         local_home / "runnables" / "research.too": external / "research.too",
         local_home / "skills" / "pdf" / "SKILL.md": external / "SKILL.md",
     }
@@ -66,9 +66,9 @@ def test_prepare_linked_state_source_mounts_covers_root_and_home_sources(
         logical.symlink_to(target)
 
     mounts = prepare_linked_state_source_mounts(
-        local_root,
+        local_place,
         "alice",
-        hosted_root,
+        hosted_place,
     )
 
     assert set(mounts) == {
@@ -77,7 +77,7 @@ def test_prepare_linked_state_source_mounts_covers_root_and_home_sources(
             (
                 hosted_home / logical.relative_to(local_home)
                 if logical.is_relative_to(local_home)
-                else hosted_root / logical.relative_to(local_root)
+                else hosted_place / logical.relative_to(local_place)
             ),
             read_only=True,
         )
@@ -86,19 +86,19 @@ def test_prepare_linked_state_source_mounts_covers_root_and_home_sources(
 
 
 @pytest.mark.parametrize("linked", [False, True])
-def test_root_catalog_is_mounted_read_only(tmp_path: Path, linked: bool) -> None:
-    local_root = tmp_path / "toolang"
-    local_root.mkdir()
-    catalog = local_root / "catalog.json"
+def test_place_catalog_is_mounted_read_only(tmp_path: Path, linked: bool) -> None:
+    local_place = tmp_path / "toolang"
+    local_place.mkdir()
+    catalog = local_place / "catalog.json"
     source = tmp_path / "external.json" if linked else catalog
     source.write_text("{}")
     if linked:
         catalog.symlink_to(source)
-    hosted_root = Path("/root/.toolang")
+    hosted_place = Path("/root/.toolang")
 
     assert SandboxMount(
-        source.resolve(), hosted_root / "catalog.json", read_only=True
-    ) in prepare_root_mounts(local_root, hosted_root)
+        source.resolve(), hosted_place / "catalog.json", read_only=True
+    ) in prepare_place_mounts(local_place, hosted_place)
 
 
 def test_workspace_mounts_snapshot_only_available_grants(tmp_path: Path) -> None:

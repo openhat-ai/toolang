@@ -36,7 +36,7 @@ class ConversationAccess:
 async def load_source(
     layout: AgentLayout, scope: ConversationScope
 ) -> RecallControlPayload:
-    async with AgentClient(layout.root, actor=f"agent:{layout.name}") as client:
+    async with AgentClient(layout.place, actor=f"agent:{layout.name}") as client:
         with client.session():
             if client.config.identity != scope.backend:
                 raise MessagingError("Source conversation backend changed")
@@ -52,7 +52,7 @@ async def load_target(
     layout: AgentLayout, target: str, *, pending: bool = False
 ) -> ConversationAccess:
     destination = convo_target(target, layout.name)
-    async with AgentClient(layout.root, actor=f"agent:{layout.name}") as client:
+    async with AgentClient(layout.place, actor=f"agent:{layout.name}") as client:
         with client.session():
             resolved = await client.resolve(destination)
             if not resolved.exists and not pending:

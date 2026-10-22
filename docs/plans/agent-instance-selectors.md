@@ -9,7 +9,7 @@ implementation scope and verification only.
 
 Make command parameters, help, home paths, active records, and copyable addresses
 agree within one Toolang root. Implement the prefix grammar, leaf contracts,
-`h/s` IDs and area layout, address/record binding, active discovery, and same-home
+`t/s` IDs and place layout, address/record binding, active discovery, and same-home
 continuation. Preserve source-resource inspection and runtime ownership. No old
 syntax/layout compatibility or hub backend format redesign is required.
 
@@ -35,23 +35,23 @@ home, and record bindings; `alice` is initially unused.
 | --- | --- |
 | `too new alice`, then `too alice start` | Create/start the resident home. |
 | `too gh:acme/agents/lex.too@main start` | Start its stable visiting home; the equivalent GitHub URL selects the same home. |
-| `too "lex@$hotel_id" stop`, then `too "lex@$hotel_id" inspect threads` | Stop its runtime; retained history remains readable by path. |
+| `too "lex@$place_code" stop`, then `too "lex@$place_code" inspect threads` | Stop its runtime; retained history remains readable by path. |
 | `too /work/aid.too chat` | Allocate a new roaming home. |
 | `too /work/aid.too inspect threads` | Read the last-created matching home without creating one. |
-| `too "/work/aid.too@$site_id" inspect threads` | Read the exact home offline, even without source contents. |
-| `too "aid@$site_id" cancel "$run_id"` | Cancel the live Run without stopping its script. Short address lookup fails after registration is removed. |
+| `too "/work/aid.too@$place_code" inspect threads` | Read the exact home offline, even without source contents. |
+| `too "aid@$place_code" cancel "$run_id"` | Cancel the live Run without stopping its script. Short address lookup fails after registration is removed. |
 | `too /work/aid.too chat -t "$thread_id"` | Bind the unique owning home, including an older one. |
-| `too "/work/aid.too@$site_id" chat -t` | Continue the latest Thread in that exact home. |
+| `too "/work/aid.too@$place_code" chat -t` | Continue the latest Thread in that exact home. |
 | `too /work/aid.too models` | Inspect source configuration without changing last-created home selection. Decorated addresses are rejected. |
 | `too alice workspace remove data` | Bind `alice`; native Typer treats `data` only as the workspace name. |
 | `too /work/aid.too start` | Reject roaming hosting. `too info alice` also fails: agent scope is prefix-only. |
 | `too agent:top info` | Inspect the resident agent named `top`. |
-| `too --root /srv/toolang-dev "lex@$hotel_id" info` | Resolve exclusively in that Toolang root's area. |
+| `too --root /srv/toolang-dev "lex@$place_code" info` | Resolve exclusively in that root's directory. |
 
 ## Touchpoints and acceptance
 
 Implementation under `src/toolang`: `cli/common/{agent_argument,context,execution,help,lazy}.py`,
-CLI routing/command factories, `common/{layout,instance_ids}.py`,
+CLI routing/command factories, `common/{layout,place_codes}.py`,
 `up/{addresses,identity,source,private_paths,observation,workload,config}.py`,
 Chat/thread continuation, `top` presentation/schemas, and source/workspace inspection.
 Update current CLI/layout/hosting/execution docs with the implemented increment.

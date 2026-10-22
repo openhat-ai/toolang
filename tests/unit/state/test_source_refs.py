@@ -99,7 +99,7 @@ def test_http_caps_are_prepared_and_projected_consistently(tmp_path, monkeypatch
     layout.program.write_text(f"with {kind} {url}\nflow chat():\n  pass\n")
     state = prepare_agent_state(layout)
     (entry,) = state.module_caps["agent"]
-    (view,) = cap_collection((entry,), root=tmp_path, agent_name="gus").items
+    (view,) = cap_collection((entry,), place=tmp_path, agent_name="gus").items
     info = CapInfo.from_cap(entry, agent_name="gus")
     assert calls == [url]
     assert view.data["cap"] == info.cap == f"{kind}/some-name"
@@ -110,6 +110,6 @@ def test_http_caps_are_prepared_and_projected_consistently(tmp_path, monkeypatch
     )
     assert "ref" not in view.data
     assert Path(entry.path).read_bytes() == fetch(url)
-    assert cap_collection((entry,), root=tmp_path, agent_name="gus").query(
+    assert cap_collection((entry,), place=tmp_path, agent_name="gus").query(
         f'{kind}/some-name[source="{info.source}"]'
     )

@@ -162,7 +162,7 @@ def resolve_agent_resources(
         caps,
         ceiling,
         agent_name=setup.layout.name,
-        root=setup.layout.root,
+        place=setup.layout.place,
         label="cap",
     )
     return _agent_resources(models=models, tools=dict(tools), caps=caps)
@@ -207,7 +207,7 @@ def apply_agent_ceiling(
         caps,
         ceiling,
         agent_name=setup.layout.name,
-        root=setup.layout.root,
+        place=setup.layout.place,
         label="cap ceiling",
     )
     return _agent_resources(models=models, tools=tools, caps=caps)
@@ -218,7 +218,7 @@ def _apply_cap_ceiling(
     ceiling: AgentCeiling,
     *,
     agent_name: str,
-    root: Path,
+    place: Path,
     label: str,
 ) -> tuple[StateCap, ...]:
     selected_ids: set[tuple[str, str, str]] = set()
@@ -231,7 +231,7 @@ def _apply_cap_ceiling(
             selected = ()
         else:
             dataset = cap_collection(
-                entries, root=root, agent_name=agent_name, kind=kind
+                entries, place=place, agent_name=agent_name, kind=kind
             )
             dataset.require_each(queries, label=f"{label} {kind}")
             selected = tuple(view.record for view in dataset.query(queries))
@@ -279,7 +279,7 @@ def resolve_runnable_resources(
         selected = cap_collection(
             entries,
             agent_name=setup.layout.name,
-            root=setup.layout.root,
+            place=setup.layout.place,
             kind=kind,
         ).apply(_query_operations(_directives(runnable, directive_name)))
         selected_cap_ids.update(

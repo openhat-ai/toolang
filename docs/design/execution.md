@@ -57,7 +57,7 @@ for captured Report fields.
 ## Bound continuation
 
 - Chat, rerun, and `fork/rewind --chat` keep the selected home. A roaming Thread/Run
-  reference searches only its source's retained roots within the selected Toolang
+  reference searches only its source's retained places within the selected Toolang
   root; ambiguous records require an explicit instance selector.
 - Imported Runs retain original ownership across repeated replay. They remain
   inspectable, but supply no destination live activity, controls, events, usage,

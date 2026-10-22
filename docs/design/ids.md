@@ -2,8 +2,8 @@
 
 Run, Thread, Chore, and conversation suffixes use eight lowercase Base32 characters:
 `0123456789abcdefghjkmnpqrstvwxyz`. External/provider IDs remain opaque.
-[agent addresses](agent-addresses.md#vocabulary-and-identity) defines the separate
-area and instance ID widths and composition.
+[agent addresses](agent-addresses.md#short-codes) defines the separate
+root-code and place-code widths and composition.
 
 Thread IDs require one of `chat_`, `talk_`, `chore_`, `work_`, or `exec_` and a
 nonempty suffix. `ThreadKind` is derived from this prefix on references, records,

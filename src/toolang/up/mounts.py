@@ -6,63 +6,62 @@ from pathlib import Path
 from collections.abc import Mapping
 
 from toolang.base.types.sandbox import SandboxMount
+from toolang.catalog.types import CAP_DIRECTORY_NAMES
 from toolang.common.layout import (
     IMPLICIT_WORKSPACE_NAME,
     ensure_scratch_workspace,
 )
 from toolang.state.source import observe_home_source, observe_root_source
 
-_ROOT_MOUNT_DIR_NAMES = ("psyches", "skills", "services", "prompts")
 
-
-def prepare_root_mounts(
-    local_root: Path,
-    hosted_root: Path,
+def prepare_place_mounts(
+    local_place: Path,
+    hosted_place: Path,
 ) -> tuple[SandboxMount, ...]:
-    """Prepare authored agent-root inputs and their explicit hosted mounts."""
+    """Prepare authored place inputs and their explicit hosted mounts."""
 
-    config_path = local_root / "config.toml"
+    config_path = local_place / "config.toml"
     config_path.parent.mkdir(parents=True, exist_ok=True)
     config_path.touch(exist_ok=True)
 
     mounts = [
         SandboxMount(
             local_path=config_path,
-            hosted_path=hosted_root / "config.toml",
+            hosted_path=hosted_place / "config.toml",
         )
     ]
-    catalog_path = local_root / "catalog.json"
+    catalog_path = local_place / "catalog.json"
     if catalog_path.is_file():
         mounts.append(
             SandboxMount(
                 local_path=catalog_path.resolve(strict=True),
-                hosted_path=hosted_root / "catalog.json",
+                hosted_path=hosted_place / "catalog.json",
                 read_only=True,
             )
         )
-    for directory_name in (".state", *_ROOT_MOUNT_DIR_NAMES):
-        local_path = local_root / directory_name
+    for directory_name in (".state", *CAP_DIRECTORY_NAMES):
+        local_path = local_place / directory_name
         local_path.mkdir(parents=True, exist_ok=True)
         mounts.append(
             SandboxMount(
                 local_path=local_path,
-                hosted_path=hosted_root / directory_name,
+                hosted_path=hosted_place / directory_name,
             )
         )
     return tuple(mounts)
 
 
 def prepare_linked_state_source_mounts(
-    local_root: Path,
+    local_place: Path,
     agent_name: str,
-    hosted_root: Path,
+    hosted_place: Path,
 ) -> tuple[SandboxMount, ...]:
     """Mount every symbolic-linked State source at its logical guest path."""
 
-    hosted_home = hosted_root / "agents" / agent_name
+    hosted_home = hosted_place / "agents" / agent_name
     observations = (
-        (observe_root_source(local_root), hosted_root),
-        (observe_home_source(local_root, agent_name), hosted_home),
+        (observe_root_source(local_place), hosted_place),
+        (observe_home_source(local_place, agent_name), hosted_home),
     )
     return tuple(
         SandboxMount(
@@ -117,7 +116,7 @@ def prepare_workspace_mounts(
 
 
 def prepare_source_mounts(
-    local_root: Path, agent_name: str, hosted_root: Path
+    local_place: Path, agent_name: str, hosted_place: Path
 ) -> tuple[SandboxMount, ...]:
     """Mount authored inputs with host-relative configuration paths already bound."""
     from toolang.common.config_sources import rebase_config_content
@@ -126,14 +125,14 @@ def prepare_source_mounts(
     mounts = {
         mount.hosted_path: mount
         for mount in (
-            *prepare_root_mounts(local_root, hosted_root),
-            *prepare_linked_state_source_mounts(local_root, agent_name, hosted_root),
+            *prepare_place_mounts(local_place, hosted_place),
+            *prepare_linked_state_source_mounts(local_place, agent_name, hosted_place),
         )
     }
-    local_home = local_root / "agents" / agent_name
-    hosted_home = hosted_root / "agents" / agent_name
+    local_home = local_place / "agents" / agent_name
+    hosted_home = hosted_place / "agents" / agent_name
     for scope, local, hosted in (
-        ("root", local_root, hosted_root),
+        ("root", local_place, hosted_place),
         ("home", local_home, hosted_home),
     ):
         config = local / "config.toml"

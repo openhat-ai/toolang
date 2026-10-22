@@ -88,16 +88,16 @@ def pytest_collection_modifyitems(
 
 
 @pytest.fixture(autouse=True)
-def isolated_visiting_root(tmp_path, request):
+def isolated_visiting_base(tmp_path, request):
     """Keep temporary visiting homes isolated, including under parallel workers."""
     from toolang.common import layout
 
     if "integration" in request.node.path.parts:
-        yield layout.VISITING_ROOT
+        yield layout.VISITING_BASE
         return
     with pytest.MonkeyPatch.context() as patch:
         parent = tmp_path / "visiting"
-        patch.setattr(layout, "VISITING_ROOT", parent)
+        patch.setattr(layout, "VISITING_BASE", parent)
         yield parent
 
 

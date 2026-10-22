@@ -108,7 +108,7 @@ def prepare_terminal(
     """Resolve CLI configuration once; publishers receive only concrete values."""
     process = os.environ if environment is None else environment
     if layout is not None:
-        root = layout.root
+        root = layout.root or root or layout.place
         sources = user_call(config_sources, layout)
         environ = load_runtime_environ(layout, base_environ=process)
     else:

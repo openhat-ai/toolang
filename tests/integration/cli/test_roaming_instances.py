@@ -122,7 +122,7 @@ def test_resident_stop_selects_and_fences_the_original_owner(tmp_path, monkeypat
 
     monkeypatch.setattr(AgentProcess, "stop", stop)
     assert main(["aid", "stop"]) == 0
-    assert captured["layout"].root == layout.root
+    assert captured["layout"].place == layout.place
     assert captured["expected_launch_id"] == "selected-owner"
 
 
@@ -138,19 +138,19 @@ def test_roaming_rejects_hosting_commands_without_mutating_instances(
     root = tmp_path / "global"
     monkeypatch.setenv("TOOLANG_ROOT", str(root))
     layout = allocate_roaming(source, toolang_root=root)
-    assert layout.instance_id is not None
+    assert layout.place_code is not None
     before = layout.runtime_status.read_bytes()
     references = {
         path.name: path.read_bytes()
         for path in (root / ".runtime" / "active").glob("*.json")
     }
     args = [
-        f"{source}@{layout.instance_id}" if explicit_instance else str(source),
+        f"{source}@{layout.place_code}" if explicit_instance else str(source),
         command,
     ]
     assert main(args) == 2
     assert layout.runtime_status.read_bytes() == before
-    assert list((source.parent / ".toolang").glob("*/s*")) == [layout.root]
+    assert list((source.parent / ".toolang").glob("*/s*")) == [layout.place]
     assert {
         path.name: path.read_bytes()
         for path in (root / ".runtime" / "active").glob("*.json")
@@ -165,14 +165,14 @@ def test_retained_selection_and_rerun_preserve_the_selected_home(
     monkeypatch.setenv("TOOLANG_ROOT", str(tmp_path / "global"))
     assert main([str(source), "main", "--quiet", "hello"]) == 0
     first = select_roaming(source, toolang_root=tmp_path / "global")
-    assert first.instance_id is not None
+    assert first.place_code is not None
     with_store = RunStore(first.run_store, read_only=True)
     run = with_store.list_runs()[0]
     with_store.close()
     assert main([str(source), "main", "--quiet", "again"]) == 0
     second = select_roaming(source, toolang_root=tmp_path / "global")
-    assert first.root != second.root
-    assert main([f"{source}@{first.instance_id}", "inspect", "runs"]) == 0
+    assert first.place != second.place
+    assert main([f"{source}@{first.place_code}", "inspect", "runs"]) == 0
     assert run.id in capsys.readouterr().out
     from toolang.cli.toolang.commands import thread
 
@@ -184,9 +184,11 @@ def test_retained_selection_and_rerun_preserve_the_selected_home(
                 AssertionError("offline edit started an executor")
             ),
         )
-        assert main([f"{source}@{first.instance_id}", "fork", run.id]) == 0
-    assert main([f"{source}@{first.instance_id}", "rerun", run.id]) == 0
-    assert select_roaming(source, toolang_root=tmp_path / "global").root == second.root
+        assert main([f"{source}@{first.place_code}", "fork", run.id]) == 0
+    assert main([f"{source}@{first.place_code}", "rerun", run.id]) == 0
+    assert (
+        select_roaming(source, toolang_root=tmp_path / "global").place == second.place
+    )
     with closing(RunStore(first.run_store, read_only=True)) as store:
         runs = store.list_runs()
         assert len(runs) == 2
@@ -219,7 +221,7 @@ def test_offline_edit_chat_restarts_in_the_same_home(tmp_path, monkeypatch, comm
     monkeypatch.setattr(sys, "stdin", io.StringIO("/exit\n"))
     assert main([str(source), command, run.id, "--chat"]) == 0
     continued = select_roaming(source, toolang_root=root)
-    assert continued.root == original.root
+    assert continued.place == original.place
     entry = read_instance(continued.runtime_status)
     assert entry is not None
     assert entry["control"]["drivers"] == ["chat"]
@@ -269,7 +271,7 @@ def test_record_selection_binds_an_older_home_without_changing_the_default(
     first = select_roaming(source, toolang_root=root)
     with closing(RunStore(first.run_store, read_only=True)) as store:
         (run,) = store.list_runs()
-    assert main([f"{source}@{first.instance_id}", "rerun", run.id]) == 0
+    assert main([f"{source}@{first.place_code}", "rerun", run.id]) == 0
     with closing(RunStore(first.run_store, read_only=True)) as store:
         run = next(item for item in store.list_runs() if item.id != run.id)
     assert main([str(source), "main", "--quiet", "second"]) == 0
@@ -277,7 +279,7 @@ def test_record_selection_binds_an_older_home_without_changing_the_default(
     assert main([str(source), "rerun", run.id]) == 0
     with closing(RunStore(first.run_store, read_only=True)) as store:
         assert len(store.list_runs()) == 3
-    assert select_roaming(source, toolang_root=root).root == latest.root
+    assert select_roaming(source, toolang_root=root).place == latest.place
 
 
 def test_chat_thread_selection_requires_one_matching_home(
@@ -300,16 +302,16 @@ def test_chat_thread_selection_requires_one_matching_home(
     monkeypatch.setattr(
         chat,
         "chat_command",
-        lambda ctx, **_kwargs: selected.append(context_layout(ctx).root),
+        lambda ctx, **_kwargs: selected.append(context_layout(ctx).place),
     )
     assert main([str(source), "chat", "-t", "chat_first"]) == 0
-    assert selected == [first.root]
+    assert selected == [first.place]
     assert main([str(source), "chat", "-t", "chat_shared"]) == 1
     assert "specify name@ID or file.too@ID" in capsys.readouterr().err
-    assert selected == [first.root]
-    assert main([f"{source}@{first.instance_id}", "chat", "-t", "chat_shared"]) == 0
-    assert selected == [first.root, first.root]
-    assert select_roaming(source, toolang_root=root).root == second.root
+    assert selected == [first.place]
+    assert main([f"{source}@{first.place_code}", "chat", "-t", "chat_shared"]) == 0
+    assert selected == [first.place, first.place]
+    assert select_roaming(source, toolang_root=root).place == second.place
 
 
 def test_info_copy_command_binds_the_offline_home_and_quotes_paths(
@@ -328,11 +330,11 @@ def test_info_copy_command_binds_the_offline_home_and_quotes_paths(
     monkeypatch.setattr(
         agent, "echo_pairs_table", lambda rows, **_kwargs: captured.update(rows)
     )
-    selector = f"{source}@{layout.instance_id}"
+    selector = f"{source}@{layout.place_code}"
     assert main(["--root", str(root), selector, "info"]) == 0
     assert captured["Toolang root"] == str(root)
-    assert captured["Agent root"] == str(layout.root)
-    assert captured["Agent"] == layout.instance_name
+    assert captured["Agent root"] == str(layout.place)
+    assert captured["Agent"] == layout.address
     (command,) = [
         line.removeprefix("Command: ")
         for line in capsys.readouterr().out.splitlines()
@@ -396,10 +398,10 @@ def test_visiting_instance_chat_uses_cached_home_without_fetching(
     )
     monkeypatch.setattr("sys.stdin", StringIO("/exit\n"))
     try:
-        assert main([layout.instance_name, "chat"]) == 0
+        assert main([layout.address, "chat"]) == 0
         after = read_instance(layout.runtime_status)
         assert after is not None and after["launch_id"] != before["launch_id"]
-        assert after["control"]["root"] == str(layout.root)
+        assert after["control"]["place"] == str(layout.place)
     finally:
         entry = read_instance(layout.runtime_status)
         if entry is not None and entry["launch_id"] != before["launch_id"]:

@@ -38,9 +38,9 @@ def test_module_filename_cannot_use_reserved_module_names(
 
     state = prepare_agent_state(layout)
     _assert_excluded(state, match="filename is reserved")
-    assert state.toolang_root is not None
+    assert state.place is not None
     error = StateWatcher(
-        AgentLayout.resident(state.toolang_root, state.name), initial_state=state
+        AgentLayout.resident(state.place, state.name), initial_state=state
     ).diagnostics()
 
     assert error[0].code == "invalid-runnable-filename"

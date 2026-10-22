@@ -140,7 +140,7 @@ def config_sources(
                 for item in cast(list[dict[str, object]], raw)
             )
         return (ConfigSource(layout.config, config),)
-    paths = (layout.root_config, *((layout.config,) if include_agent else ()))
+    paths = (layout.place_config, *((layout.config,) if include_agent else ()))
     return tuple(
         ConfigSource(path, read_config(path, include_workspaces=path == layout.config))
         for path in paths

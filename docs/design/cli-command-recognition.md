@@ -1,6 +1,6 @@
 # CLI command recognition and agent parameters
 
-The grammar, native leaf declarations, instance selectors, area layout, and bound
+The grammar, native leaf declarations, instance selectors, place layout, and bound
 execution are implemented. Expanded `top`/`chore` scope and home-based `cd` remain
 separate follow-up surfaces.
 [CLI](cli.md) describes current behavior;
@@ -128,7 +128,7 @@ selection is part of `AGENT`; no instance flag remains.
 
 In resource commands, `name` refers to configuration even when its resident agent
 is running. Source queries may prepare inputs/caches but never allocate a retained
-roaming root. `info` supplies live resource summaries or retained offline data;
+roaming place. `info` supplies live resource summaries or retained offline data;
 missing offline fields are unavailable, without rebuilding from current sources.
 
 `run FILE` uses `Path to a .too file`. `init`, `fmt`, `parse`, and `highlight`
@@ -153,7 +153,7 @@ exit codes; explicit help succeeds, malformed command parameters fail normally.
 
 Register Typer's shell completion backends when building the root command.
 Completion reads the same contracts. It may enumerate scoped resident/active
-entries or an explicitly supplied source path's retained roots, but never fetches
+entries or an explicitly supplied source path's retained places, but never fetches
 sources, probes runtimes, or searches for offline roaming homes by short name.
 Root command completion stays registry-based; lexical selector suggestions use
 shared metadata. Tail completion excludes the prefix parameter.

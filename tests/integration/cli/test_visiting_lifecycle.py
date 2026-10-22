@@ -231,8 +231,8 @@ def test_visiting_reuse_ignores_caller_startup_defaults_and_unavailable_source(
         monkeypatch.setenv("PWD", "/another/directory")
         monkeypatch.setenv("TERM", "another-terminal")
         monkeypatch.setenv("TOOLANG_LIMIT_TOKENS", "invalid-startup-value")
-        assert layout.toolang_root is not None
-        (layout.toolang_root / "config.toml").write_text(
+        assert layout.root is not None
+        (layout.root / "config.toml").write_text(
             '[teaming]\nenabled = false\n[sandbox]\ndriver = "docker"\n'
         )
         assert command(url, "start").stdout.strip() == (

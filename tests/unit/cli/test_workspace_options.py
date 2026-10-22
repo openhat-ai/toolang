@@ -197,7 +197,7 @@ def test_copied_config_rebases_relative_workspaces_in_cached_state(tmp_path):
     original.config.write_text('[workspaces]\nrepo = ".."\n')
     previous = prepare_agent_state(original)
     relocated = AgentLayout.resident(tmp_path / "relocated", "helper")
-    shutil.copytree(original.root, relocated.root)
+    shutil.copytree(original.place, relocated.place)
     import asyncio
     from toolang.state.watcher import StateWatcher
 
@@ -218,7 +218,7 @@ def test_hosted_startup_transports_captured_grants_without_resolving_again(
     spec = resolve_serve(
         layout=layout, port=7001, workspace_additions=bindings, workdir="repo://src"
     )
-    argv = build_serve_argv(spec, root=Path("/guest"))
+    argv = build_serve_argv(spec, place=Path("/guest"))
     assert json.loads(argv[argv.index("--workspace-bindings") + 1]) == bindings
     assert argv[argv.index("--initial-workdir") + 1] == "repo://src"
     assert argv[argv.index("--placement") + 1] == layout.placement
@@ -226,7 +226,7 @@ def test_hosted_startup_transports_captured_grants_without_resolving_again(
     assert argv[argv.index("--source-policy") + 1] == (
         "project" if layout.project_inputs else "root"
     )
-    assert argv[argv.index("--agent-root") + 1] == "/guest"
+    assert argv[argv.index("--place") + 1] == "/guest"
 
 
 def test_explicit_grants_can_repeat_running_bindings_when_selecting_uri(

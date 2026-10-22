@@ -44,10 +44,10 @@ def test_shared_foreground_api_observes_and_cancels_the_owning_executor(
         source = tmp_path / "alice.too"
         layout = allocate_roaming(source, toolang_root=tmp_path)
         target = [str(source)]
-    if layout.instance_id is not None:
-        target = ["--root", str(tmp_path), layout.instance_name]
+    if layout.place_code is not None:
+        target = ["--root", str(tmp_path), layout.address]
     harness = ExecutionHarness.create(
-        layout.root,
+        layout.place,
         source="agic work():\n  Do work.\n",
         prepare_state=True,
         responses=[
@@ -99,7 +99,7 @@ def test_shared_foreground_api_observes_and_cancels_the_owning_executor(
                         inventory = await asyncio.to_thread(runtime_inventory, tmp_path)
                         assert [
                             item.identity for item in inventory.snapshot.instances
-                        ] == [layout.instance_name]
+                        ] == [layout.address]
                         rejected = await http.post(
                             f"/api/v0/runs/{handle.run_id}/cancel",
                             headers={LAUNCH_HEADER: "old-generation"},

@@ -35,9 +35,9 @@ async def load_tool_setup(
         configs = tuple(source.config for source in sources)
         toolsets = merge_plugin_configs(configs, family="toolset")
         teaming = resolve_teaming_setup(
-            sources, root=layout.root_config, home=layout.config
+            sources, root=layout.place_config, home=layout.config
         )
-        toolsets["convo"] = teaming.toolset_config(root=layout.root)
+        toolsets["convo"] = teaming.toolset_config(root=layout.place)
         allowed = resolve_tool_allow(configs)
         revision = digest(
             {

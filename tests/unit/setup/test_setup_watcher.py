@@ -84,7 +84,7 @@ def _watcher(
     counts = {"adapters": 0, "toolsets": 0, "catalog_plugins": 0}
     captured_env = envs if envs is not None else {"TEST_API_KEY": "synthetic"}
     monkeypatch.setattr(
-        watcher_module, "load_root_setup_envs", lambda _layout: dict(captured_env)
+        watcher_module, "load_place_setup_envs", lambda _layout: dict(captured_env)
     )
     monkeypatch.setattr(
         watcher_module, "load_setup_envs", lambda _layout: dict(captured_env)
@@ -342,7 +342,7 @@ def test_effective_views_filter_allow_and_readiness_but_full_views_do_not(
     )
     path.write_text(json.dumps(data), encoding="utf-8")
     watcher, _counts = _watcher(monkeypatch, tmp_path)
-    watcher.layout.root_config.write_text(
+    watcher.layout.place_config.write_text(
         '[allow]\nmodels = ["test/one"]\n', encoding="utf-8"
     )
     setup = asyncio.run(watcher.refresh())
@@ -433,7 +433,7 @@ def test_model_defaults_are_validated_when_models_are_first_loaded(
     path = tmp_path / "catalog.json"
     _write_catalog(path, ("one",))
     watcher, _counts = _watcher(monkeypatch, tmp_path, validate_defaults=True)
-    watcher.layout.root_config.write_text(
+    watcher.layout.place_config.write_text(
         '[model]\nref = "test/missing"\n', encoding="utf-8"
     )
     setup = asyncio.run(watcher.refresh())
@@ -482,7 +482,7 @@ def test_full_routes_are_resolved_before_effective_adapter_policy(
     }
     path.write_text(json.dumps(raw), encoding="utf-8")
     watcher, _counts = _watcher(monkeypatch, tmp_path)
-    watcher.layout.root_config.write_text(
+    watcher.layout.place_config.write_text(
         '[allow]\nmodels = ["*[_toolang.route.adapter=responses]"]\n', encoding="utf-8"
     )
     setup = asyncio.run(watcher.refresh())
@@ -512,12 +512,12 @@ def test_compact_changes_publish_new_setup_and_preserve_captured_values(
     watcher, _counts = _watcher(monkeypatch, tmp_path)
     first = asyncio.run(watcher.refresh())
     captured = first.compact
-    watcher.layout.root_config.write_text(f"[compact]\n{field} = {value}\n")
+    watcher.layout.place_config.write_text(f"[compact]\n{field} = {value}\n")
     second = asyncio.run(watcher.refresh())
     assert second.revision != first.revision
     assert getattr(second.compact, field) == expected
     assert first.compact == captured
-    watcher.layout.root_config.write_text('[compact.model]\nref = "unset"\n')
+    watcher.layout.place_config.write_text('[compact.model]\nref = "unset"\n')
     assert asyncio.run(watcher.refresh()) is second
     assert watcher.diagnostics
 
