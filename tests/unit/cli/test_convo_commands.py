@@ -179,7 +179,7 @@ def test_membership_create_and_list(conversations):
     talk = CliRunner().invoke(cli.app, ["--root", str(root), "talk"])
     assert talk.exit_code == 0
     assert "Usage:" in talk.output
-    assert "CONVO" not in talk.output
+    assert "talk [OPTIONS] [CONVO] [MESSAGE...]" in talk.output
     assert invoke(root, "leave", conversation).exit_code == 0
     assert invoke(root, "join", conversation).exit_code == 0
     result = invoke(root)
