@@ -85,25 +85,25 @@ def test_cap_query_matches_full_refs_across_four_kinds() -> None:
 
     qualified = query_cap_views(
         entries,
-        root=Path("/toolang"),
+        place=Path("/toolang"),
         agent_name="default",
         queries=("skill/reviewer",),
     )
     plural_collection_prefix = query_cap_views(
         entries,
-        root=Path("/toolang"),
+        place=Path("/toolang"),
         agent_name="default",
         queries=("skills/reviewer",),
     )
     unqualified = query_cap_views(
         entries,
-        root=Path("/toolang"),
+        place=Path("/toolang"),
         agent_name="default",
         queries=("*/reviewer",),
     )
     predicate = query_cap_views(
         entries,
-        root=Path("/toolang"),
+        place=Path("/toolang"),
         agent_name="default",
         queries=("*[tags has root]",),
     )
@@ -131,7 +131,7 @@ def test_combined_caps_without_a_query_preserves_aggregate_order() -> None:
     )
 
     views = query_cap_views(
-        entries, root=Path("/toolang"), agent_name="default", queries=None
+        entries, place=Path("/toolang"), agent_name="default", queries=None
     )
 
     assert [(item.kind, item.name) for item in views] == [
@@ -145,7 +145,7 @@ def test_combined_caps_without_a_query_preserves_aggregate_order() -> None:
 @pytest.mark.parametrize("kind", ["psyche", "skill", "service", "prompt"])
 def test_cap_public_records_have_copyable_refs_and_native_tags(kind: EntryKind) -> None:
     entry = replace(_cap(kind, "reviewer"), meta={"description": "Review changes"})
-    collection = cap_collection((entry,), root=Path("/toolang"), agent_name="default")
+    collection = cap_collection((entry,), place=Path("/toolang"), agent_name="default")
     record = collection.items[0].data
     assert record["cap"] == f"{kind}/reviewer"
     assert record["location"] == f"/toolang/{kind}s/reviewer" + (
@@ -170,7 +170,7 @@ def test_cap_override_retains_identity_and_updates_source():
         source=replace(root.source, path="agents/gus/skills/reviewer"),
     )
     entries = effective_caps((root,), (home,))
-    collection = cap_collection(entries, root=Path("/toolang"), agent_name="gus")
+    collection = cap_collection(entries, place=Path("/toolang"), agent_name="gus")
     (selected,) = collection.query("skill/reviewer")
     assert selected.data["cap"] == "skill/reviewer"
     assert selected.data["source"] == "home://skills/reviewer"

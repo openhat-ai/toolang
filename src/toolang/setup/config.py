@@ -57,7 +57,7 @@ def load_setup_config(layout: AgentLayout) -> dict[str, object]:
     return (
         {}
         if layout.project_inputs
-        else read_config(layout.root_config, include_workspaces=False)
+        else read_config(layout.place_config, include_workspaces=False)
     )
 
 
@@ -78,7 +78,7 @@ def load_setup_envs(layout: AgentLayout) -> dict[str, str]:
 def load_root_setup_envs(layout: AgentLayout) -> dict[str, str]:
     """Load root dotenv defaults below the process environment."""
 
-    envs = _load_dotenv(layout.root_env)
+    envs = _load_dotenv(layout.place_env)
     envs.update(os.environ)
     return envs
 
@@ -88,7 +88,7 @@ def load_setup_dotenvs(layout: AgentLayout) -> dict[str, str]:
 
     if layout.project_inputs:
         return {}
-    envs = _load_dotenv(layout.root_env)
+    envs = _load_dotenv(layout.place_env)
     envs.update(_load_dotenv(layout.env))
     return envs
 

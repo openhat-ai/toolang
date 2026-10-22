@@ -251,7 +251,7 @@ def test_offline_info_does_not_materialize_a_fresh_nonresident_target(
     layout = AgentLayout.roaming(source)
     if placement == "visiting":
         selector = "https://example.com/alice.too"
-        layout = AgentLayout.visiting(selector, "alice", toolang_root=tmp_path)
+        layout = AgentLayout.visiting(selector, "alice", root=tmp_path)
         monkeypatch.setattr(
             agent_sources, "visiting_layout", lambda *args, **kwargs: layout
         )

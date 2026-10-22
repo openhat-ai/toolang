@@ -21,8 +21,8 @@ class Sandbox(Protocol):
     name: str
     location: SandboxLocation
 
-    def runtime_root(self, local_root: Path) -> Path:
-        """Map the local agent root into the workload's filesystem namespace."""
+    def runtime_place(self, local_place: Path) -> Path:
+        """Map the local place into the workload's filesystem namespace."""
 
     def prepare(self, spec: str | None, request: SandboxRequest) -> SandboxPlan:
         """Parse an implementation-owned spec and prepare one launch."""

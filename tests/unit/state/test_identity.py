@@ -161,7 +161,7 @@ def test_raw_config_changes_have_distinct_state_identity_after_rebasing(
     tmp_path, scope
 ):
     layout = _layout(tmp_path)
-    path = layout.root_config if scope == "root" else layout.config
+    path = layout.place_config if scope == "root" else layout.config
     content = b'# Original\r\n[workspaces]\r\nrepo = "."\r\n'
     path.write_bytes(content)
     watcher = StateWatcher(layout)

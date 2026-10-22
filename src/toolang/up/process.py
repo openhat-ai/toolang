@@ -564,7 +564,7 @@ def assigned_runtime_ports(
 
     ports: set[int] = set()
     for entry in running_instances(toolang_root):
-        if entry.get("instance_name", entry.get("name")) == exclude_agent:
+        if entry.get("address", entry.get("name")) == exclude_agent:
             continue
         port = _runtime_state_port(entry)
         if port is not None:

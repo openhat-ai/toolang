@@ -1029,7 +1029,7 @@ def test_dev_selects_a_wheel_from_the_invocation_directory(
         cli.main(
             [
                 "--root",
-                str(layout.root),
+                str(layout.place),
                 "alice",
                 command,
                 "--sandbox",
@@ -1063,7 +1063,7 @@ def test_bare_dev_preserves_host_and_missing_wheel_errors(
         cli.main(
             [
                 "--root",
-                str(layout.root),
+                str(layout.place),
                 "alice",
                 command,
                 "--sandbox",

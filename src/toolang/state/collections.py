@@ -45,7 +45,7 @@ class CapView:
 
 
 def cap_view(
-    entry: StateCap, *, root: Path | None, agent_name: str, allowed: bool = True
+    entry: StateCap, *, place: Path | None, agent_name: str, allowed: bool = True
 ) -> CapView:
     description = entry.meta.get("description")
     return CapView(
@@ -55,7 +55,7 @@ def cap_view(
             "source": entry_ref(entry, agent_name=agent_name),
             "name": entry.name,
             "description": description if isinstance(description, str) else None,
-            "location": entry_source(entry, agent_name=agent_name, root=root),
+            "location": entry_source(entry, agent_name=agent_name, place=place),
             "tags": [
                 "ready" if allowed else "not_allowed",
                 entry_origin(entry),
@@ -104,7 +104,7 @@ class CapCollection:
 def cap_collection(
     entries: Sequence[StateCap],
     *,
-    root: Path | None,
+    place: Path | None,
     agent_name: str,
     kind: EntryKind | None = None,
     allowed: Collection[tuple[EntryKind, str]] | None = None,
@@ -115,7 +115,7 @@ def cap_collection(
             view = cap_view(
                 entry,
                 agent_name=agent_name,
-                root=root,
+                place=place,
                 allowed=allowed is None or (entry.kind, entry.name) in allowed,
             )
             views.setdefault((view.cap, view.source_ref), view)
@@ -125,11 +125,11 @@ def cap_collection(
 def query_cap_views(
     entries: Sequence[StateCap],
     *,
-    root: Path | None,
+    place: Path | None,
     agent_name: str,
     queries: Sequence[str] | None,
     allowed: Collection[tuple[EntryKind, str]] | None = None,
 ) -> tuple[CapView, ...]:
     return cap_collection(
-        entries, root=root, agent_name=agent_name, allowed=allowed
+        entries, place=place, agent_name=agent_name, allowed=allowed
     ).query(queries)

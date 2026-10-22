@@ -383,7 +383,7 @@ _registered_command(
 _registered_command(
     "cd",
     "toolang.cli.toolang.commands.cd:cd",
-    help="Enter an agent home, or the Toolang root if no agent is specified",
+    help="Enter an agent home, or the root if no agent is specified",
     short_help="Enter an agent home",
     rich_help_panel=AGENT_COMMAND_PANEL,
 )

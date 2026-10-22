@@ -1645,7 +1645,7 @@ def test_script_routes_quiet_execution_through_a_remote_runtime(
     @contextmanager
     def agent_server_context(selected: AgentLayout, **kwargs):
         assert selected.source_path == source.resolve()
-        assert selected.instance_id is not None
+        assert selected.place_code is not None
         captured["runtime"] = kwargs
         yield AgentServerRef(
             sandbox="docker:python:3.13-slim",

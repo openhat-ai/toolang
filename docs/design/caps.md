@@ -49,7 +49,7 @@ show `CAP`, `DESCRIPTION`, `LOCATION`, and `STATUS` in one row per cap, followin
 the [CLI table width policy](cli.md) with 120 cells when geometry is unavailable.
 Only descriptions and locations shrink; identities and statuses remain complete.
 Long cells use `…`, with locations retaining their beginning and end. Local
-locations are relative to the selected agent root; URLs and canonical source refs
+locations are relative to the selected place; URLs and canonical source refs
 retain their existing form. `STATUS` is `ready` or `not_allowed`. Complete
 locations and origin, scope, and form tags remain available in JSON and queries;
 there is no `--long`. The full view does not restore shadowed definitions or

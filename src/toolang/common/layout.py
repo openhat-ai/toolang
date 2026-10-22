@@ -8,19 +8,19 @@ import re
 from typing import Literal
 
 from .source import AcquiredSource
-from .instance_ids import (
-    area_id,
-    decode_instance_id,
-    roaming_instance_id,
+from .place_codes import (
+    root_code,
+    decode_place_code,
+    roaming_place_code,
     roaming_timestamp_ms,
-    visiting_instance_id,
+    visiting_place_code,
 )
 
 AgentPlacement = Literal["resident", "visiting", "roaming"]
 
 IMPLICIT_WORKSPACE_NAME = "lab"
 IMPLICIT_WORKSPACE_DIRECTORY = ".lab"
-VISITING_ROOT = Path("/tmp").resolve() / "toolang"
+VISITING_BASE = Path("/tmp").resolve() / "toolang"
 _AGENT_NAME = re.compile(r"[a-z][a-z0-9_]{0,63}\Z")
 
 
@@ -50,17 +50,17 @@ def derive_agent_name(stem: str) -> str:
 
 @dataclass(frozen=True, slots=True)
 class AgentLayout:
-    """Immutable paths for one agent under its resolved agent root."""
+    """Immutable paths for one agent under its resolved place."""
 
-    root: Path
+    place: Path
     name: str
     placement: AgentPlacement
     instance: str | None = None
     project_inputs: bool | None = None
     managed_membership: bool | None = None
-    toolang_root: Path | None = field(default=None, compare=False)
+    root: Path | None = field(default=None, compare=False)
     source_id: str | None = None
-    instance_id: str | None = None
+    place_code: str | None = None
     source_path: Path | None = field(default=None, compare=False)
     source_ref: str | None = field(default=None, compare=False)
     source_edit_lock: Path | None = field(default=None, compare=False)
@@ -70,15 +70,15 @@ class AgentLayout:
     )
 
     def __post_init__(self) -> None:
-        root = self.root.expanduser().resolve()
+        place = self.place.expanduser().resolve()
         name = validate_agent_name(self.name)
         if self.placement not in {"resident", "visiting", "roaming"}:
             raise ValueError(f"invalid agent placement: {self.placement!r}")
-        if self.instance_id is not None:
+        if self.place_code is not None:
             if self.placement == "resident":
-                raise ValueError("instance ID does not match its placement")
-            decode_instance_id(
-                self.instance_id, marker="h" if self.placement == "visiting" else "s"
+                raise ValueError("place code does not match its placement")
+            decode_place_code(
+                self.place_code, marker="t" if self.placement == "visiting" else "s"
             )
         if self.instance is not None and (
             not self.instance or not self.instance.isalnum()
@@ -95,12 +95,10 @@ class AgentLayout:
             raise ValueError(
                 "source identity must be 7 or 10 lowercase base32 characters"
             )
-        object.__setattr__(self, "root", root)
+        object.__setattr__(self, "place", place)
         object.__setattr__(self, "name", name)
-        if self.toolang_root is not None:
-            object.__setattr__(
-                self, "toolang_root", self.toolang_root.expanduser().resolve()
-            )
+        if self.root is not None:
+            object.__setattr__(self, "root", self.root.expanduser().resolve())
         if self.project_inputs is None:
             object.__setattr__(self, "project_inputs", self.placement == "roaming")
         if self.managed_membership is None:
@@ -110,22 +108,22 @@ class AgentLayout:
     def resident(cls, root: Path, name: str) -> AgentLayout:
         """Create a resident-agent layout under an explicit Toolang root."""
 
-        return cls(root=root, name=name, placement="resident", toolang_root=root)
+        return cls(place=root, name=name, placement="resident", root=root)
 
     @classmethod
-    def visiting(cls, source: str, name: str, *, toolang_root: Path) -> AgentLayout:
+    def visiting(cls, source: str, name: str, *, root: Path) -> AgentLayout:
         """Create the stable temporary layout for one remote Source Ref."""
 
         validate_agent_name(name)
-        toolang_root = toolang_root.expanduser().resolve()
-        token = visiting_instance_id(source)
+        root = root.expanduser().resolve()
+        token = visiting_place_code(source)
         return cls(
-            root=VISITING_ROOT / area_id(str(toolang_root)) / token,
+            place=VISITING_BASE / root_code(str(root)) / token,
             name=name,
             placement="visiting",
-            toolang_root=toolang_root,
+            root=root,
             source_id=token[1:],
-            instance_id=token,
+            place_code=token,
             source_ref=source,
         )
 
@@ -134,47 +132,45 @@ class AgentLayout:
         cls,
         source: Path,
         *,
-        instance_id: str | None = None,
-        toolang_root: Path | None = None,
+        place_code: str | None = None,
+        root: Path | None = None,
     ) -> AgentLayout:
         """Create the source-local layout for one roaming program."""
 
         source = source.expanduser().resolve()
-        root = source.parent / ".toolang"
-        if instance_id is not None:
-            if toolang_root is None:
-                raise ValueError("a retained roaming root requires its Toolang root")
-            root = (
-                root / area_id(str(toolang_root.expanduser().resolve())) / instance_id
-            )
+        place = source.parent / ".toolang"
+        if place_code is not None:
+            if root is None:
+                raise ValueError("a retained roaming place requires its root")
+            place = place / root_code(str(root.expanduser().resolve())) / place_code
         return cls(
-            root=root,
+            place=place,
             name=derive_agent_name(source.stem),
             placement="roaming",
-            source_id=roaming_instance_id(str(source), 0)[1:8],
-            instance_id=instance_id,
+            source_id=roaming_place_code(str(source), 0)[1:8],
+            place_code=place_code,
             source_path=source,
-            toolang_root=toolang_root,
-            request_order_ns=roaming_timestamp_ms(instance_id) * 1_000_000
-            if instance_id is not None
+            root=root,
+            request_order_ns=roaming_timestamp_ms(place_code) * 1_000_000
+            if place_code is not None
             else None,
         )
 
     @property
-    def instance_name(self) -> str:
-        return f"{self.name}@{self.instance_id}" if self.instance_id else self.name
+    def address(self) -> str:
+        return f"{self.name}@{self.place_code}" if self.place_code else self.name
 
     @property
     def home(self) -> Path:
-        return self.root / "agents" / self.name
+        return self.place / "agents" / self.name
 
     @property
-    def root_config(self) -> Path:
-        return self.root / "config.toml"
+    def place_config(self) -> Path:
+        return self.place / "config.toml"
 
     @property
-    def root_env(self) -> Path:
-        return self.root / ".env"
+    def place_env(self) -> Path:
+        return self.place / ".env"
 
     @property
     def program(self) -> Path:
@@ -189,8 +185,8 @@ class AgentLayout:
         return self.home / ".env"
 
     @property
-    def root_state(self) -> Path:
-        return self.root / ".state" / "root"
+    def place_state(self) -> Path:
+        return self.place / ".state" / "root"
 
     @property
     def home_state(self) -> Path:
@@ -201,13 +197,13 @@ class AgentLayout:
         return self.home / ".state" / "agent"
 
     @property
-    def root_edit_lock(self) -> Path:
+    def place_edit_lock(self) -> Path:
         if self.source_edit_lock is not None:
             return self.source_edit_lock
-        return root_edit_lock_path(
+        return place_edit_lock_path(
             (self.source_path.parent / ".toolang").resolve()
             if self.source_path is not None
-            else self.root
+            else self.place
         )
 
     @property
@@ -215,8 +211,8 @@ class AgentLayout:
         return home_edit_lock_path(self.home)
 
     @property
-    def root_runtime(self) -> Path:
-        return self.root / ".runtime"
+    def place_runtime(self) -> Path:
+        return self.place / ".runtime"
 
     @property
     def runtime(self) -> Path:
@@ -267,15 +263,15 @@ class AgentLayout:
 
     @property
     def sandbox_home(self) -> Path:
-        return self.root / ".sandbox" / self.name
+        return self.place / ".sandbox" / self.name
 
     @property
     def sandbox_stage(self) -> Path:
-        return self.root / ".sandbox" / self.name / "launches"
+        return self.place / ".sandbox" / self.name / "launches"
 
 
-def root_edit_lock_path(root: Path) -> Path:
-    return root / ".state" / "root" / "edit.lock"
+def place_edit_lock_path(place: Path) -> Path:
+    return place / ".state" / "root" / "edit.lock"
 
 
 def home_edit_lock_path(home: Path) -> Path:

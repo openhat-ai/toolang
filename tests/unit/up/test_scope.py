@@ -147,7 +147,7 @@ def test_scope_observation_keeps_registered_stopped_instances_without_mutation(
         AgentLayout.resident(tmp_path, "alice")
         if placement == "resident"
         else AgentLayout.visiting(
-            "https://example.com/alice.too", "alice", toolang_root=tmp_path
+            "https://example.com/alice.too", "alice", root=tmp_path
         )
         if placement == "visiting"
         else allocate_roaming(tmp_path / "alice.too", toolang_root=tmp_path)

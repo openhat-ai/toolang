@@ -60,7 +60,7 @@ change these values. THREAD appears between AGENT and RUN and shows the full
 owning root's thread ID on every row, or `-` when unavailable. RUN always shows
 the full owning physical root ID. Terminal Runs show
 only their state. AGENT shows the resident name or complete `name@ID` selector,
-using `h` for visiting or `s` for roaming. Copy that value before the command,
+using `t` for visiting or `s` for roaming. Copy that value before the command,
 for example `too "$agent_instance" inspect runs`, under the same Toolang root.
 A resident name that matches a command requires the `agent:NAME` form.
 A roaming short name requires active registration; use `file.too@ID` after exit.

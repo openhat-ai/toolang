@@ -343,13 +343,13 @@ async def _launch_locked(
 
         name, raw_spec = _split_sandbox(spec.sandbox)
         implementation = create_sandbox(name, config=spec.config)
-        hosted_root = implementation.runtime_root(spec.serve.layout.root)
+        hosted_place = implementation.runtime_place(spec.serve.layout.place)
         if implementation.location not in {"host", "guest"}:
             raise ValueError(
                 f"sandbox {name} returned invalid location: {implementation.location}"
             )
         on_host = implementation.location == "host"
-        hosted_home = hosted_root / "agents" / spec.serve.layout.name
+        hosted_home = hosted_place / "agents" / spec.serve.layout.name
         workspace_mounts: tuple[SandboxMount, ...] = ()
         workspace_mapping: dict[str, tuple[str, str]] = {}
         state = await asyncio.to_thread(prepare_launch_state, spec, progress=progress)
@@ -373,15 +373,15 @@ async def _launch_locked(
         edit_lock_mounts: tuple[SandboxMount, ...] = ()
         guest_edit_lock = None
         if not on_host and spec.serve.layout.source_path is not None:
-            local_guard = spec.serve.layout.root_edit_lock
+            local_guard = spec.serve.layout.place_edit_lock
             local_guard.parent.mkdir(parents=True, exist_ok=True)
             local_guard.touch(exist_ok=True)
-            guest_edit_lock = hosted_root / ".state" / "root" / "edit.lock"
+            guest_edit_lock = hosted_place / ".state" / "root" / "edit.lock"
             edit_lock_mounts = (SandboxMount(local_guard, guest_edit_lock),)
         request = SandboxRequest(
-            local_root=spec.serve.layout.root,
+            local_place=spec.serve.layout.place,
             local_home=spec.serve.layout.home,
-            hosted_root=hosted_root,
+            hosted_place=hosted_place,
             hosted_home=hosted_home,
             agent_name=spec.serve.layout.name,
             bind_host=spec.serve.host,
@@ -392,7 +392,7 @@ async def _launch_locked(
                 "too",
                 *build_serve_argv(
                     spec.serve,
-                    root=hosted_root,
+                    place=hosted_place,
                     sandbox=spec.sandbox,
                     location=implementation.location,
                     host=spec.serve.host if on_host else "0.0.0.0",
@@ -406,7 +406,11 @@ async def _launch_locked(
                 **spec.environ,
                 **catalog_env,
                 "TOOLANG_HOST_LAUNCH": launch_id,
-                "TOOLANG_ROOT": str(spec.serve.toolang_root or spec.serve.layout.root),
+                "TOOLANG_ROOT": str(
+                    spec.serve.toolang_root
+                    or spec.serve.layout.root
+                    or spec.serve.layout.place
+                ),
                 "TOOLANG_SANDBOX": spec.sandbox,
                 "TOOLANG_WORKSPACE_MOUNTS": json.dumps(workspace_mapping),
                 "TOOLANG_WORKSPACE_LOCATION": "host" if on_host else "guest",
@@ -419,9 +423,9 @@ async def _launch_locked(
                     *workspace_mounts,
                     *catalog_mounts,
                     *prepare_source_mounts(
-                        spec.serve.layout.root,
+                        spec.serve.layout.place,
                         spec.serve.layout.name,
-                        hosted_root,
+                        hosted_place,
                     ),
                     *edit_lock_mounts,
                 )
@@ -1135,7 +1139,7 @@ async def remove_agent(layout: AgentLayout) -> None:
                     raise ValueError(
                         "agent has an active or unreleased execution instance"
                     )
-                LocalAgents(layout.root / "agents").remove(layout.name)
+                LocalAgents(layout.place / "agents").remove(layout.name)
 
 
 async def release_stopped(layout: AgentLayout) -> None:
@@ -1151,7 +1155,7 @@ async def _release_stopped_locked(layout: AgentLayout) -> None:
     allocated = read_instance(layout.runtime_status)
     if (
         not placement_policy(layout.placement).reuse_executor
-        and layout.instance_id is not None
+        and layout.place_code is not None
         and allocated is not None
         and "startup_contract" not in allocated["control"]
         and allocated["control"].get("ref") is None
@@ -1326,7 +1330,7 @@ def _begin_launch(spec: LaunchSpec) -> None:
     begin_workload(
         layout,
         launch_id=spec.serve.launch_id,
-        toolang_root=spec.serve.toolang_root or layout.toolang_root or layout.root,
+        toolang_root=spec.serve.toolang_root or layout.root or layout.place,
         sandbox=spec.sandbox,
         endpoint=spec.serve.endpoint,
         drivers=spec.serve.drivers,
@@ -1335,7 +1339,7 @@ def _begin_launch(spec: LaunchSpec) -> None:
     )
     RuntimeRegistration(
         layout,
-        toolang_root=spec.serve.toolang_root or layout.toolang_root or layout.root,
+        toolang_root=spec.serve.toolang_root or layout.root or layout.place,
         launch_id=spec.serve.launch_id,
     ).__enter__()
 

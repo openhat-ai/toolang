@@ -205,9 +205,9 @@ def test_automatic_port_selection_ignores_invalid_legacy_peers(
     "peer_status",
     [
         '{"version": 2, "instances": {}}',
-        '{"version": 4, "instances": {}}',
+        '{"version": 5, "instances": {}}',
         '{"status": "running", "pid": 123}',
-        '{"version": 4, "instances": {"default": {}}}',
+        '{"version": 5, "instances": {"default": {}}}',
         "{broken",
     ],
 )
@@ -355,7 +355,7 @@ def test_serve_argv_contains_only_server_inputs(tmp_path: Path) -> None:
 
     argv = build_serve_argv(
         spec,
-        root=Path("/root/.toolang"),
+        place=Path("/root/.toolang"),
         host="0.0.0.0",
     )
 
@@ -365,7 +365,7 @@ def test_serve_argv_contains_only_server_inputs(tmp_path: Path) -> None:
         "skills": None,
     }
     assert argv[:4] == ("--root", str(tmp_path), "_serve", "alice")
-    assert _option_values(argv, "--agent-root") == ["/root/.toolang"]
+    assert _option_values(argv, "--place") == ["/root/.toolang"]
     assert _option_values(argv, "--host") == ["0.0.0.0"]
     assert _option_values(argv, "--sandbox") == ["host"]
     assert _option_values(argv, "--location") == ["host"]
@@ -398,6 +398,36 @@ def test_serve_argv_contains_only_server_inputs(tmp_path: Path) -> None:
         spec.limit_overrides
     )
     assert argv[-2:] == ("--log", "toolang.up=debug")
+
+
+@pytest.mark.parametrize("placement", ["resident", "visiting", "roaming"])
+def test_serve_argv_keeps_the_selected_root_separate_from_guest_place(
+    tmp_path, placement
+):
+    from toolang.common.place_codes import roaming_place_code
+
+    root = tmp_path / "selected"
+    source = tmp_path / "aid.too"
+    layout = (
+        AgentLayout.resident(root, "aid")
+        if placement == "resident"
+        else AgentLayout.visiting("gh:example/aid", "aid", root=root)
+        if placement == "visiting"
+        else AgentLayout.roaming(
+            source,
+            root=root,
+            place_code=roaming_place_code(str(source), 100),
+        )
+    )
+    spec = server.ServeSpec(
+        layout=layout, host="127.0.0.1", endpoint_host="localhost", port=8123
+    )
+    argv = build_serve_argv(spec, place=Path("/guest/place"))
+    assert _option_values(argv, "--root") == [str(root)]
+    assert _option_values(argv, "--place") == ["/guest/place"]
+    assert _option_values(argv, "--place-code") == (
+        [layout.place_code] if layout.place_code is not None else []
+    )
 
 
 def _option_values(argv: tuple[str, ...], name: str) -> list[str]:

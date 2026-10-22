@@ -757,7 +757,7 @@ def _run(
                 workload = runtime_scope.enter_context(
                     ForegroundWorkload(
                         layout,
-                        toolang_root=layout.toolang_root or resolve_root(None),
+                        toolang_root=layout.root or resolve_root(None),
                         drivers=frozenset(),
                     )
                 )

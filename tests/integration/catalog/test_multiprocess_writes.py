@@ -19,12 +19,12 @@ from toolang.catalog.chore_authoring import (
     allocate_authored_chore_name,
     new_chore_file,
 )
-from toolang.common.layout import home_edit_lock_path, root_edit_lock_path
+from toolang.common.layout import home_edit_lock_path, place_edit_lock_path
 
 
 def _wire_prompt(config_path: str, index: int) -> None:
     ConfiguredCaps(
-        Path(config_path), lock_path=root_edit_lock_path((Path(config_path)).parent)
+        Path(config_path), lock_path=place_edit_lock_path((Path(config_path)).parent)
     ).create(
         CapRef(
             kind="prompt",
@@ -36,7 +36,7 @@ def _wire_prompt(config_path: str, index: int) -> None:
 
 def _create_same_prompt(directory: str, body: str) -> str:
     catalog = AuthoredCaps(
-        Path(directory), lock_path=root_edit_lock_path(Path(directory))
+        Path(directory), lock_path=place_edit_lock_path(Path(directory))
     )
     try:
         catalog.create(CapFile.parse(body, kind="prompt", name="root"))
@@ -112,7 +112,7 @@ def test_configured_caps_preserves_all_concurrent_writes(tmp_path: Path) -> None
     assert (
         len(
             ConfiguredCaps(
-                config_path, lock_path=root_edit_lock_path(config_path.parent)
+                config_path, lock_path=place_edit_lock_path(config_path.parent)
             ).list()
         )
         == 12
@@ -152,7 +152,7 @@ def test_authored_jobs_serializes_global_id_uniqueness(tmp_path: Path) -> None:
 def test_collection_write_lock_is_reentrant_for_external_transactions(
     tmp_path: Path,
 ) -> None:
-    catalog = AuthoredCaps(tmp_path, lock_path=root_edit_lock_path(tmp_path))
+    catalog = AuthoredCaps(tmp_path, lock_path=place_edit_lock_path(tmp_path))
 
     with catalog.write_lock():
         created = catalog.create(

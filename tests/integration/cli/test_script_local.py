@@ -87,7 +87,7 @@ def test_local_script_saves_only_to_an_explicit_destination(
     class _SetupWatcher:
         def __init__(self, actual_layout, **kwargs) -> None:
             assert actual_layout.source_path == source.resolve()
-            assert actual_layout.instance_id is not None
+            assert actual_layout.place_code is not None
             assert kwargs["sandbox"] == "host"
 
         def current(self):
@@ -106,7 +106,7 @@ def test_local_script_saves_only_to_an_explicit_destination(
     class _StateWatcher:
         def __init__(self, actual_layout, *, initial_state, **_kwargs) -> None:
             assert actual_layout.source_path == source.resolve()
-            assert actual_layout.instance_id is not None
+            assert actual_layout.place_code is not None
             assert initial_state is harness.state
 
         def load(self, revision):
@@ -133,7 +133,7 @@ def test_local_script_saves_only_to_an_explicit_destination(
 
     def prepare_state(actual_layout, **kwargs):
         assert actual_layout.source_path == source.resolve()
-        assert actual_layout.instance_id is not None
+        assert actual_layout.place_code is not None
         assert (kwargs["progress"] is None) is quiet
         return harness.state
 
@@ -163,11 +163,11 @@ def test_local_script_saves_only_to_an_explicit_destination(
     runtime = read_document(layout.runtime_status)
     assert runtime is not None
     assert all(
-        record["control"]["toolang_root"] == str(toolang_root)
+        record["control"]["root"] == str(toolang_root)
         for record in runtime["instances"].values()
     )
     assert not tuple((toolang_root / ".runtime" / "active").glob("*.json"))
-    assert not (layout.root / ".runtime" / "active").exists()
+    assert not (layout.place / ".runtime" / "active").exists()
     if save_mode == "missing-parent":
         assert "result destination parent does not exist" in output.err
         assert "▪︎ run_" in output.err
@@ -257,7 +257,7 @@ def test_template_helpers_bind_arguments(
     class _SetupWatcher:
         def __init__(self, actual_layout, **_kwargs) -> None:
             assert actual_layout.source_path == source.resolve()
-            assert actual_layout.instance_id is not None
+            assert actual_layout.place_code is not None
 
         def current(self):
             return setup
@@ -327,7 +327,7 @@ def test_local_script_renders_composite_flow_progress(
     class _SetupWatcher:
         def __init__(self, actual_layout, **_kwargs) -> None:
             assert actual_layout.source_path == source.resolve()
-            assert actual_layout.instance_id is not None
+            assert actual_layout.place_code is not None
 
         def current(self):
             return setup

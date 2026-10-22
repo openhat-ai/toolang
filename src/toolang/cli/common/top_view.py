@@ -108,7 +108,7 @@ def spend(value: float | None) -> str:
     return "-" if value is None else f"${value:.4f}"
 
 
-def instance_name(source: SourceActivity) -> str:
+def agent_address(source: SourceActivity) -> str:
     return source.label.partition("#")[0]
 
 
@@ -624,7 +624,7 @@ class TopView:
             # Reserve the footer even when wrapped metrics exceed the screen.
             lines = lines[: max(0, height - 1 - int(show_heading))]
         agent_width = max(
-            [5, *(cell_len(instance_name(row.source)) for row in self.rows)]
+            [5, *(cell_len(agent_address(row.source)) for row in self.rows)]
         )
         thread_width = max([6, *(cell_len(row.thread or "-") for row in self.rows)])
         run_width = max([3, *(cell_len(row.root) for row in self.rows)])
@@ -740,7 +740,7 @@ class TopView:
             )
             usage = node.usage
             values = [
-                instance_name(row.source),
+                agent_address(row.source),
                 row.thread or "-",
                 row.root,
                 *calls,

@@ -145,7 +145,7 @@ def resolve_serve(
     layout = restore_program_acquisition(layout)
     return ServeSpec(
         layout=layout,
-        toolang_root=toolang_root or layout.toolang_root or layout.root,
+        toolang_root=toolang_root or layout.root or layout.place,
         launch_id=launch_id,
         lifetime=lifetime,
         automatic_port=port is None,
@@ -173,7 +173,7 @@ def resolve_serve(
 def build_serve_argv(
     spec: ServeSpec,
     *,
-    root: Path | None = None,
+    place: Path | None = None,
     host: str | None = None,
     sandbox: str = "host",
     location: str = "host",
@@ -183,11 +183,11 @@ def build_serve_argv(
 
     command = [
         "--root",
-        str(spec.toolang_root or spec.layout.root),
+        str(spec.toolang_root or spec.layout.root or spec.layout.place),
         "_serve",
         spec.layout.name,
-        "--agent-root",
-        str(root or spec.layout.root),
+        "--place",
+        str(place or spec.layout.place),
         "--sandbox",
         sandbox,
         "--location",
@@ -207,15 +207,15 @@ def build_serve_argv(
     ]
     command.extend(["--lifetime", spec.lifetime])
     command.extend(["--placement", spec.layout.placement, "--store-schema", "63"])
-    if spec.layout.instance_id is not None:
-        command.extend(["--instance-id", spec.layout.instance_id])
+    if spec.layout.place_code is not None:
+        command.extend(["--place-code", spec.layout.place_code])
     if spec.layout.source_path is not None:
         command.extend(
             [
                 "--source-path",
                 str(spec.layout.source_path),
                 "--source-edit-lock",
-                str(source_edit_lock or spec.layout.root_edit_lock),
+                str(source_edit_lock or spec.layout.place_edit_lock),
             ]
         )
     if spec.launch_id is not None:
@@ -465,7 +465,7 @@ def _serve_once(
                 messaging_setup = current_setup().teaming
                 if messaging_setup is not None and messaging_setup.home.enabled:
                     hub_client = AgentClient(
-                        spec.layout.root,
+                        spec.layout.place,
                         actor=f"agent:{spec.layout.name}",
                         managed=bool(spec.layout.managed_membership),
                     )
@@ -559,9 +559,9 @@ def _serve_once(
             ),
             shutdown_signal=shutdown_signal,
             on_starting=lambda: logger.info(
-                "Agent starting root=%s",
-                spec.layout.root,
-                extra={"color_message": "Agent starting root=\x1b[1m%s\x1b[0m"},
+                "Agent starting place=%s",
+                spec.layout.place,
+                extra={"color_message": "Agent starting place=\x1b[1m%s\x1b[0m"},
             ),
             on_running=lambda: (
                 lifecycle.ready(),
@@ -831,8 +831,8 @@ def resolve_runtime_port(
         return _pick_temporary_runtime_port(host)
     preferred = agents.preferred_runtime_port(layout)
     assigned = agents.assigned_runtime_ports(
-        layout.toolang_root or layout.root,
-        exclude_agent=layout.instance_name,
+        layout.root or layout.place,
+        exclude_agent=layout.address,
     )
     # Reassign pre-upgrade agent records on the default Hub port.
     if (

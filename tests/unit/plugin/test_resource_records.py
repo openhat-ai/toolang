@@ -255,7 +255,7 @@ def test_empty_resource_collections_still_use_tq_validation(expression):
     consumers = (
         lambda: filter_models((), (expression,)),
         lambda: ToolCollection().query(expression),
-        lambda: cap_collection((), root=Path("/toolang"), agent_name="test").query(
+        lambda: cap_collection((), place=Path("/toolang"), agent_name="test").query(
             expression.replace("ref=", "cap=")
         ),
         lambda: resolve_setup_allow(({"allow": {"models": [expression]}},)),
@@ -270,7 +270,7 @@ def test_empty_resource_collections_still_use_tq_validation(expression):
 def test_cap_sources_and_tool_parameters_use_native_json_membership():
     caps = cap_collection(
         (cap(), cap(scope="home", origin="remote"), cap()),
-        root=Path("/toolang"),
+        place=Path("/toolang"),
         agent_name="test",
         allowed=(),
     )
@@ -322,7 +322,7 @@ def test_policy_tags_are_evaluated_once_without_status_restrictions():
 
 def test_inline_cap_has_here_scope_and_form_without_kind_tags():
     record = (
-        cap_collection((cap(scope="here"),), root=Path("/toolang"), agent_name="test")
+        cap_collection((cap(scope="here"),), place=Path("/toolang"), agent_name="test")
         .items[0]
         .data
     )
@@ -409,7 +409,7 @@ def test_cap_location_addresses_content_and_tags_preserve_form_and_allow(form, a
     )
     collection = cap_collection(
         (entry,),
-        root=Path("/toolang"),
+        place=Path("/toolang"),
         agent_name="test",
         allowed=None if allowed else (),
     )

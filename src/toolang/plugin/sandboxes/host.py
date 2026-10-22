@@ -57,10 +57,10 @@ class HostSandbox:
         default_factory=dict, init=False, repr=False
     )
 
-    def runtime_root(self, local_root: Path) -> Path:
-        """Use the local agent root without path translation."""
+    def runtime_place(self, local_place: Path) -> Path:
+        """Use the local place without path translation."""
 
-        return local_root
+        return local_place
 
     def prepare(self, spec: str | None, request: SandboxRequest) -> SandboxPlan:
         if spec is not None:

@@ -44,7 +44,7 @@ request to turn every unknown observation into a warning.
 
 | Actual failure | Correct treatment |
 | --- | --- |
-| Agent root/registry cannot be enumerated due to permissions or I/O failure | Current membership is unknown; never display a successful empty roster. A compact agents unavailable notice may be justified. |
+| Place/registry cannot be enumerated due to permissions or I/O failure | Current membership is unknown; never display a successful empty roster. A compact agents unavailable notice may be justified. |
 | An existing agent's liveness cannot be determined, including corrupt/incompatible runtime state or failed container inspection | Keep known total/placement counts and independent readable metrics. Its running contribution is unknown, not zero. A notice affects agent liveness only. |
 | A published, expected live endpoint fails to provide a snapshot | Distinguish a failed request from the normal absence of an endpoint. Keep agent liveness and durable facts independent; active coverage is unknown and cached rows freeze. |
 | An existing runs.db is unreadable, corrupt, incompatible with the queries, or its records cannot be decoded | Affected durable totals are unknown. Do not replace previous activity/spend with zero or poison other independently readable metrics. |

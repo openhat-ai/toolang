@@ -17,13 +17,13 @@ def test_allocated_home_is_not_replaced_by_a_later_launch(tmp_path):
     root = tmp_path / "root"
     selected = allocate_roaming(source, toolang_root=root)
     later = allocate_roaming(source, toolang_root=root)
-    assert selected.root != later.root
+    assert selected.place != later.place
     context = Context(
         TyperCommand("chat"),
         obj=CliContext(root, source=source, layout=selected, prepared=True),
     )
-    assert select_agent_instance(context).root == selected.root
-    assert context_layout(context).root == selected.root
+    assert select_agent_instance(context).place == selected.place
+    assert context_layout(context).place == selected.place
 
 
 def test_chat_uses_its_explicit_thread_instead_of_parser_state(tmp_path, monkeypatch):
@@ -42,7 +42,7 @@ def test_chat_uses_its_explicit_thread_instead_of_parser_state(tmp_path, monkeyp
     monkeypatch.setattr(
         chat_runtime,
         "chat_command",
-        lambda ctx, **_kwargs: selected.append(context_layout(ctx).root),
+        lambda ctx, **_kwargs: selected.append(context_layout(ctx).place),
     )
     chat.chat_command(context, agent=str(source), thread="chat_first")
-    assert selected == [first.root]
+    assert selected == [first.place]

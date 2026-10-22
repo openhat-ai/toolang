@@ -6,7 +6,7 @@ from toolang.common.layout import AgentLayout
 from toolang.stats.schemas import CompletedRoots, CompletionCounts, RecentUsage
 from toolang.stats.types import Metrics, timestamp
 from toolang.up.observation import RuntimeSource
-from toolang.up.instance import AGENT_INSTANCE_FORMAT
+from toolang.up.instance import RUNTIME_STATUS_FORMAT
 from toolang.up.types import RuntimeInstance
 
 NOW = 1792326877
@@ -38,7 +38,7 @@ def binding(tmp_path, *, registered=False):
         registration.write_text(
             json.dumps(
                 {
-                    "version": AGENT_INSTANCE_FORMAT,
+                    "version": RUNTIME_STATUS_FORMAT,
                     "status": str(
                         AgentLayout.resident(tmp_path, "alice").runtime_status
                     ),

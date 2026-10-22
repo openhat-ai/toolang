@@ -135,7 +135,7 @@ def test_agent_environment_captures_safe_sandbox_context(tmp_path: Path) -> None
     environment = AgentEnvironment.capture(layout, sandbox="docker:python:3.13-slim")
     assert environment.sandbox == "docker:python:3.13-slim"
     assert environment.container is True
-    assert environment.root == layout.root
+    assert environment.place == layout.place
     assert environment.home == layout.home
     assert environment.system
     assert environment.machine

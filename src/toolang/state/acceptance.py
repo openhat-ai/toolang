@@ -83,7 +83,7 @@ def accept_sources(
     def reject(name: str, error: Exception, code: str = "invalid-source") -> None:
         excluded.add(name)
         message = str(error) or type(error).__name__
-        message = message.replace(str(authored.toolang_root) + "/", "")
+        message = message.replace(str(authored.place) + "/", "")
         match = re.search(r"\bline (\d+)\b", message)
         line = (
             int(match.group(1))

@@ -40,7 +40,7 @@ class AgentEnvironment:
     release: str
     machine: str
     container: bool
-    root: Path
+    place: Path
     home: Path
     working_directory: Path
     workspace_mounts: Mapping[str, tuple[Path, Path]] = field(default_factory=dict)
@@ -93,7 +93,7 @@ class AgentEnvironment:
             release=platform.release(),
             machine=platform.machine(),
             container=sandbox.partition(":")[0] == "docker",
-            root=layout.root,
+            place=layout.place,
             home=layout.home,
             working_directory=Path.cwd().resolve(),
             workspace_mounts=mounts,

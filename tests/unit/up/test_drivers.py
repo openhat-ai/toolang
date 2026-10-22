@@ -49,7 +49,7 @@ def test_driver_selection_roundtrips_host_guest_and_preserves_management(
 ):
     layout = AgentLayout.resident(tmp_path, "alice")
     spec = resolve_serve(layout=layout, port=8123, drivers=drivers)
-    argv = build_serve_argv(spec, root=tmp_path / "guest")
+    argv = build_serve_argv(spec, place=tmp_path / "guest")
     assert parse_drivers(argv[argv.index("--enable") + 1]) == drivers
     core = AgentCore(layout, drivers=drivers)
     app = create_app(

@@ -33,11 +33,12 @@ def test_resident_layout_derives_agent_paths(tmp_path: Path) -> None:
     layout = AgentLayout.resident(tmp_path / "toolang", "alice")
 
     assert layout.placement == "resident"
-    assert layout.home == layout.root / "agents" / "alice"
-    assert layout.root_state == layout.root / ".state" / "root"
+    assert layout.root == layout.place == (tmp_path / "toolang").resolve()
+    assert layout.home == layout.place / "agents" / "alice"
+    assert layout.place_state == layout.place / ".state" / "root"
     assert layout.home_state == layout.home / ".state" / "home"
     assert layout.agent_state == layout.home / ".state" / "agent"
-    assert layout.sandbox_home == layout.root / ".sandbox" / "alice"
+    assert layout.sandbox_home == layout.place / ".sandbox" / "alice"
     assert layout.runtime_status == layout.home / ".runtime" / "status.json"
     assert layout.previous_sandbox_state == layout.sandbox_home / "state.json"
     assert layout.legacy_sandbox_state == layout.runtime / "sandbox.json"
@@ -48,30 +49,29 @@ def test_resident_layout_derives_agent_paths(tmp_path: Path) -> None:
 
 
 def test_visiting_layout_is_stable_and_root_and_source_specific(
-    tmp_path: Path, isolated_visiting_root: Path
+    tmp_path: Path, isolated_visiting_base: Path
 ) -> None:
     root = tmp_path / "toolang"
-    first = AgentLayout.visiting(
-        "gh:octo/agents/researcher", "researcher", toolang_root=root
-    )
+    first = AgentLayout.visiting("gh:octo/agents/researcher", "researcher", root=root)
     repeated = AgentLayout.visiting(
-        "gh:octo/agents/researcher", "researcher", toolang_root=root
+        "gh:octo/agents/researcher", "researcher", root=root
     )
-    other = AgentLayout.visiting(
-        "gh:other/agents/researcher", "researcher", toolang_root=root
-    )
+    other = AgentLayout.visiting("gh:other/agents/researcher", "researcher", root=root)
     other_root = AgentLayout.visiting(
-        "gh:octo/agents/researcher", "researcher", toolang_root=tmp_path / "other"
+        "gh:octo/agents/researcher", "researcher", root=tmp_path / "other"
     )
 
     assert first == repeated
     assert first.placement == "visiting"
-    assert first.root.parent.parent == isolated_visiting_root
+    assert first.root == root.resolve()
+    assert first.home == first.place / "agents" / first.name
+    assert first.place.parent.parent == isolated_visiting_base
     assert first.source_id is not None and len(first.source_id) == 10
-    assert first.root.name == f"h{first.source_id}"
-    assert first.root != other.root
+    assert first.place.name == f"t{first.source_id}"
+    assert first.place != other.place
+    assert first.place != other_root.place
     assert first.root != other_root.root
-    assert first.instance_id == other_root.instance_id
+    assert first.place_code == other_root.place_code
 
 
 @pytest.mark.parametrize("name_length", [1, 64])
@@ -80,13 +80,13 @@ def test_visiting_root_preserves_bounded_agent_names(
 ) -> None:
     name = "a" * name_length
     layout = AgentLayout.visiting(
-        f"https://example.com/{name}.too", name, toolang_root=tmp_path
+        f"https://example.com/{name}.too", name, root=tmp_path
     )
 
-    (tmp_path / layout.root.name).mkdir()
+    (tmp_path / layout.place.name).mkdir()
 
     assert layout.name == name
-    assert layout.root.name == f"h{layout.source_id}"
+    assert layout.place.name == f"t{layout.source_id}"
     assert layout.home.name == name
     assert layout.source_id is not None and len(layout.source_id) == 10
 
@@ -96,9 +96,9 @@ def test_roaming_layout_is_local_to_source(tmp_path: Path) -> None:
     layout = AgentLayout.roaming(source)
 
     assert layout.placement == "roaming"
-    assert layout.root == tmp_path.resolve() / ".toolang"
+    assert layout.place == tmp_path.resolve() / ".toolang"
     assert layout.name == "demo"
-    assert layout.program == layout.root / "agents" / "demo" / "agent.too"
+    assert layout.program == layout.place / "agents" / "demo" / "agent.too"
 
 
 def test_layout_is_immutable(tmp_path: Path) -> None:

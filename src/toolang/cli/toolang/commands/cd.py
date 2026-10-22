@@ -29,7 +29,7 @@ def cd(
     layout = prepare_agent(ctx) if agent else None
     directory = layout.home if layout else context_root(ctx)
     executable = os.environ.get("SHELL", "/bin/sh")
-    destination = f"{layout.name}'s home" if layout else "the Toolang root"
+    destination = f"{layout.name}'s home" if layout else "the root"
     try:
         display_path = shorten_home_path(directory)
     except (OSError, RuntimeError):

@@ -24,9 +24,11 @@ class CapsManager:
         self.home_configured = ConfiguredCaps(
             layout.config, lock_path=layout.home_edit_lock
         )
-        self.root_authoring = AuthoredCaps(layout.root, lock_path=layout.root_edit_lock)
+        self.root_authoring = AuthoredCaps(
+            layout.place, lock_path=layout.place_edit_lock
+        )
         self.root_configured = ConfiguredCaps(
-            layout.root_config, lock_path=layout.root_edit_lock
+            layout.place_config, lock_path=layout.place_edit_lock
         )
 
 

@@ -5,7 +5,7 @@ from toolang.catalog import source as cap_source
 import pytest
 
 from toolang.common.layout import AgentLayout
-from toolang.common.layout import root_edit_lock_path
+from toolang.common.layout import place_edit_lock_path
 
 
 @pytest.mark.parametrize("scope", ["root", "home"])
@@ -18,7 +18,7 @@ def test_authoring_does_not_resolve_unrelated_caps(
     layout = AgentLayout.resident(tmp_path, "alice")
     layout.home.mkdir(parents=True)
     layout.program.write_text("invalid Toolang!!!")
-    base = layout.home if scope == "home" else layout.root
+    base = layout.home if scope == "home" else layout.place
     (base / "prompts").mkdir()
     source = base / "prompts" / "note.md"
     source.write_text("Original body.\n")
@@ -53,7 +53,7 @@ def test_remove_unresolvable_configured_cap(tmp_path, monkeypatch, capsys, scope
     layout = AgentLayout.resident(tmp_path, "alice")
     layout.home.mkdir(parents=True)
     layout.program.write_text(templates.load_template("agent").raw_text)
-    config = layout.root_config if scope == "root" else layout.config
+    config = layout.place_config if scope == "root" else layout.config
     config.write_text('[prompts]\nrewrite = { ref = "gh:acme/rewrite" }\n')
 
     def unavailable(*args, **kwargs):
@@ -66,7 +66,7 @@ def test_remove_unresolvable_configured_cap(tmp_path, monkeypatch, capsys, scope
     assert result == 0, output.err
     assert "Prompt rewrite removed: gh:acme/rewrite" in output.out
     assert (
-        ConfiguredCaps(config, lock_path=root_edit_lock_path(config.parent)).get(
+        ConfiguredCaps(config, lock_path=place_edit_lock_path(config.parent)).get(
             "prompt", "rewrite"
         )
         is None
@@ -83,7 +83,7 @@ def test_delete_authored_cap_resolves_same_scope_conflict(
     layout = AgentLayout.resident(tmp_path, "alice")
     layout.home.mkdir(parents=True)
     layout.program.write_text(templates.load_template("agent").raw_text)
-    base = layout.root if scope == "root" else layout.home
+    base = layout.place if scope == "root" else layout.home
     (base / "prompts").mkdir()
     source = base / "prompts" / "rewrite.md"
     source.write_text("Local body.\n")
@@ -124,13 +124,13 @@ def test_root_add_does_not_resolve_unrelated_configured_caps(
     output = capsys.readouterr()
 
     assert result == 0, output.err
-    added = ConfiguredCaps(config, lock_path=root_edit_lock_path(config.parent)).get(
+    added = ConfiguredCaps(config, lock_path=place_edit_lock_path(config.parent)).get(
         "prompt", "rewrite"
     )
     assert added is not None
     assert f"Prompt rewrite added: {added.ref}" in output.out
     assert (
-        ConfiguredCaps(config, lock_path=root_edit_lock_path(config.parent)).get(
+        ConfiguredCaps(config, lock_path=place_edit_lock_path(config.parent)).get(
             "prompt", "stale"
         )
         is not None

@@ -14,7 +14,7 @@ execution progress. Root chores are ignored; the home directory is created
 only on its first explicit file write. Installed providers, tools, environments,
 and other [Setup](setup.md) data remain separate from Agent State.
 
-State preparation reads authored source but never edits it. The Toolang root
+State preparation reads authored source but never edits it. The place
 and agent home must already exist. A missing `agent.too` produces the empty
 default `agent` module term with an empty Program without creating the source
 file.
@@ -56,7 +56,7 @@ referenced capabilities have `here` scope and belong to one module.
 ## Persistent Layout
 
 ```text
-${TOOLANG_ROOT}/.state/root/
+${PLACE}/.state/root/
   current
   edit.lock
   build.lock
@@ -68,7 +68,7 @@ ${TOOLANG_ROOT}/.state/root/
       skills/<name>/SKILL.md
     materialized/<acquisition-key>/<original-relative-path>
 
-${TOOLANG_ROOT}/agents/<agent>/.state/home/
+${PLACE}/agents/<agent>/.state/home/
   current
   edit.lock
   build.lock
@@ -83,7 +83,7 @@ ${TOOLANG_ROOT}/agents/<agent>/.state/home/
       skills/<name>/SKILL.md
     materialized/<acquisition-key>/<original-relative-path>
 
-${TOOLANG_ROOT}/agents/<agent>/.state/agent/
+${PLACE}/agents/<agent>/.state/agent/
   current
   publish.lock
   revs/<state-revision>/

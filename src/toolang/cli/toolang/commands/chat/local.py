@@ -234,7 +234,7 @@ class LocalChatSession:
             matched = (
                 query_cap_views(
                     entries,
-                    root=self.layout.root,
+                    place=self.layout.place,
                     agent_name=self.layout.name,
                     queries=queries,
                 )
@@ -250,7 +250,7 @@ class LocalChatSession:
         elif kind in {"psyche", "skill", "service", "prompt"}:
             dataset = cap_collection(
                 entries,
-                root=self.layout.root,
+                place=self.layout.place,
                 agent_name=self.layout.name,
                 kind=cast(EntryKind, kind),
             )

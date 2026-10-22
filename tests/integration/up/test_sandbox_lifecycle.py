@@ -28,7 +28,7 @@ def test_host_sandbox_runs_without_backend_with_default_teaming(tmp_path: Path) 
         "flow example(_: Text):\n  let result = Done\n", encoding="utf-8"
     )
     # An absent, isolated socket keeps this test independent of local services.
-    layout.root_config.write_text(
+    layout.place_config.write_text(
         f'[teaming.backend]\nurl = "unix://{root / "missing.sock"}"\n'
     )
     port = _available_port()
@@ -135,7 +135,7 @@ def test_concurrent_cli_acquisition_shares_a_persistent_host(tmp_path: Path) -> 
     port = _available_port()
     env = {
         **os.environ,
-        "TOOLANG_ROOT": str(layout.root),
+        "TOOLANG_ROOT": str(layout.place),
         "TOOLANG_AGENT_PORT": str(port),
     }
     release = tmp_path / "release"
@@ -167,7 +167,7 @@ with acquire_agent_server(layout, sandbox="host", show_progress=False) as server
                         sys.executable,
                         "-c",
                         code,
-                        str(layout.root),
+                        str(layout.place),
                         str(marker),
                         str(release),
                         str(index),
@@ -212,7 +212,7 @@ with acquire_agent_server(layout, sandbox="host", show_progress=False) as server
                     "-m",
                     "toolang.cli.toolang",
                     "--root",
-                    str(layout.root),
+                    str(layout.place),
                     "alice",
                     "stop",
                     "--force",
@@ -319,9 +319,9 @@ def test_foreground_serve_is_one_process_and_kill_preserves_restart_settings(
     layout.program.write_text("# Agent alice\n")
     layout.config.write_text("[teaming]\nenabled = false\n")
     # An unsupported legacy peer must not block automatic port reuse on restart.
-    (layout.root / "agents" / "old.name").mkdir()
+    (layout.place / "agents" / "old.name").mkdir()
     port = _available_port()
-    base = (sys.executable, "-m", "toolang.cli.toolang", "--root", str(layout.root))
+    base = (sys.executable, "-m", "toolang.cli.toolang", "--root", str(layout.place))
     with (tmp_path / "serve.log").open("w+") as log:
         workload = subprocess.Popen(
             (*base, "alice", "serve", "--port", str(port)), stdout=log, stderr=log
@@ -343,7 +343,7 @@ def test_foreground_serve_is_one_process_and_kill_preserves_restart_settings(
             assert entry["workload"]["pid"] == workload.pid
             assert not psutil.Process(workload.pid).children()
             assert not layout.previous_sandbox_state.exists()
-            reference = next((layout.root / ".runtime" / "active").glob("*.json"))
+            reference = next((layout.place / ".runtime" / "active").glob("*.json"))
             assert set(json.loads(reference.read_text())) == {
                 "version",
                 "status",

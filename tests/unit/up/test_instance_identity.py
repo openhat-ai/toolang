@@ -21,27 +21,27 @@ def test_parallel_allocations_are_isolated_and_keep_history(tmp_path, monkeypatc
         layouts = list(
             pool.map(lambda _: allocate_roaming(source, toolang_root=root), range(12))
         )
-    assert len({layout.root for layout in layouts}) == 12
+    assert len({layout.place for layout in layouts}) == 12
     assert sorted(layout.request_order_ns for layout in layouts) == list(
         (value * 1_000_000 for value in range(100, 112))
     )
-    latest = max(layouts, key=lambda layout: layout.instance_id)
-    assert select_roaming(source, toolang_root=root).root == latest.root
+    latest = max(layouts, key=lambda layout: layout.place_code)
+    assert select_roaming(source, toolang_root=root).place == latest.place
     for layout in layouts:
-        assert layout.root.name == layout.instance_id
+        assert layout.place.name == layout.place_code
         assert layout.run_store == layout.home / ".runtime" / "runs.db"
         assert (
-            layout.root_edit_lock
+            layout.place_edit_lock
             == tmp_path / ".toolang" / ".state" / "root" / "edit.lock"
         )
-        assert instance_filename(layout) == layout.instance_name + ".json"
+        assert instance_filename(layout) == layout.address + ".json"
         entry = read_instance(layout.runtime_status)
         assert entry is not None
         assert entry["control"]["source_path"] == str(source.resolve())
     source.unlink()
     assert (
-        select_roaming(source, latest.instance_id, toolang_root=root).root
-        == latest.root
+        select_roaming(source, latest.place_code, toolang_root=root).place
+        == latest.place
     )
 
 
@@ -56,13 +56,13 @@ def test_registry_removal_and_failed_latest_do_not_change_selection(tmp_path):
     ) as registration:
         registration.path.unlink()
         assert (
-            select_roaming(source, first.instance_id, toolang_root=root).root
-            == first.root
+            select_roaming(source, first.place_code, toolang_root=root).place
+            == first.place
         )
     entry = read_instance(second.runtime_status)
     assert entry is not None
     patch_workload(second.runtime_status, entry["launch_id"], {"status": "failed"})
-    assert select_roaming(source, toolang_root=root).root == second.root
+    assert select_roaming(source, toolang_root=root).place == second.place
     assert first.runtime_status.exists()
     assert not runtime_inventory(root).snapshot.instances
 
@@ -70,7 +70,7 @@ def test_registry_removal_and_failed_latest_do_not_change_selection(tmp_path):
 def test_select_rejects_unknown_or_corrupt_identity(tmp_path):
     source = tmp_path / "aid.too"
     layout = allocate_roaming(source, toolang_root=tmp_path / "global")
-    with pytest.raises(ValueError, match="instance ID requires"):
+    with pytest.raises(ValueError, match="place code requires"):
         select_roaming(source, "abc", toolang_root=tmp_path / "global")
     with pytest.raises(ValueError, match="invalid retained"):
         select_roaming(source, "s" + "0" * 17, toolang_root=tmp_path / "global")
@@ -91,12 +91,12 @@ def test_instance_identity_uses_canonical_path_even_with_the_same_clock_and_nonc
         tmp_path / "two" / "aid.too", toolang_root=tmp_path / "global"
     )
     assert first.request_order_ns == second.request_order_ns
-    assert first.instance_id != second.instance_id
+    assert first.place_code != second.place_code
     alias = tmp_path / "alias.too"
     alias.symlink_to(first.source_path)
     assert (
-        select_roaming(alias, first.instance_id, toolang_root=tmp_path / "global").root
-        == first.root
+        select_roaming(alias, first.place_code, toolang_root=tmp_path / "global").place
+        == first.place
     )
 
 
@@ -115,7 +115,7 @@ def test_retained_selection_rejects_inconsistent_identity_bindings(
         layout.runtime_status, lambda entry: entry["control"].update({field: value})
     )
     with pytest.raises(ValueError, match="identity"):
-        select_roaming(source, layout.instance_id, toolang_root=tmp_path / "global")
+        select_roaming(source, layout.place_code, toolang_root=tmp_path / "global")
 
 
 def test_registry_publication_failure_retains_a_failed_selectable_identity(
@@ -144,7 +144,7 @@ def test_registry_publication_failure_retains_a_failed_selectable_identity(
 def test_clock_rollback_and_other_sources_do_not_reorder_one_source(
     tmp_path, monkeypatch
 ):
-    from toolang.common.instance_ids import roaming_timestamp_ms
+    from toolang.common.place_codes import roaming_timestamp_ms
 
     now = [500_000_000]
     monkeypatch.setattr("toolang.up.identity.time.time_ns", lambda: now[0])
@@ -155,23 +155,23 @@ def test_clock_rollback_and_other_sources_do_not_reorder_one_source(
     other = allocate_roaming(tmp_path / "other.too", toolang_root=root)
     now[0] = 100_000_000
     second = allocate_roaming(source, toolang_root=root)
-    assert first.instance_id is not None and second.instance_id is not None
-    assert other.instance_id is not None
-    assert roaming_timestamp_ms(first.instance_id) == 500
-    assert roaming_timestamp_ms(second.instance_id) == 501
-    assert roaming_timestamp_ms(other.instance_id) == 900
+    assert first.place_code is not None and second.place_code is not None
+    assert other.place_code is not None
+    assert roaming_timestamp_ms(first.place_code) == 500
+    assert roaming_timestamp_ms(second.place_code) == 501
+    assert roaming_timestamp_ms(other.place_code) == 900
     assert second.request_order_ns == 501_000_000
     first.runtime_status.touch()
-    assert select_roaming(source, toolang_root=root).root == second.root
+    assert select_roaming(source, toolang_root=root).place == second.place
 
 
 @pytest.mark.parametrize("scope", ["local", "registry"])
 def test_roaming_full_id_collision_fails_once_and_preserves_owner(
     tmp_path, monkeypatch, scope
 ):
-    from toolang.common import instance_ids
+    from toolang.common import place_codes
 
-    monkeypatch.setattr(instance_ids, "_tag", lambda *_: 123)
+    monkeypatch.setattr(place_codes, "_tag", lambda *_: 123)
     monkeypatch.setattr("toolang.up.identity.time.time_ns", lambda: 100_000_000)
     root = tmp_path / "global"
     first_source = tmp_path / "one" / "a-id.too"
@@ -185,7 +185,7 @@ def test_roaming_full_id_collision_fails_once_and_preserves_owner(
         allocate_roaming(second_source, toolang_root=root)
     assert (first.runtime_status.read_bytes(), reference.read_bytes()) == before
     candidates = list((second_source.parent / ".toolang").glob("*/s*"))
-    assert candidates == ([first.root] if scope == "local" else [])
+    assert candidates == ([first.place] if scope == "local" else [])
     assert list(reference.parent.glob("*.json")) == [reference]
 
 
@@ -223,7 +223,7 @@ def test_allocation_rejects_untrusted_retained_ownership_without_rewriting_it(
         if retained.runtime_status.exists()
         else None
     ) == before
-    assert list((source.parent / ".toolang").glob("*/s*")) == [retained.root]
+    assert list((source.parent / ".toolang").glob("*/s*")) == [retained.place]
 
 
 def test_timestamp_overflow_does_not_wrap_or_publish(tmp_path, monkeypatch):
@@ -237,15 +237,15 @@ def test_timestamp_overflow_does_not_wrap_or_publish(tmp_path, monkeypatch):
     with pytest.raises(ValueError, match="48-bit"):
         allocate_roaming(source, toolang_root=root)
     assert retained.runtime_status.read_bytes() == before
-    assert list((source.parent / ".toolang").glob("*/s*")) == [retained.root]
+    assert list((source.parent / ".toolang").glob("*/s*")) == [retained.place]
 
 
 def test_parallel_source_allocators_fence_a_global_full_id_collision(
     tmp_path, monkeypatch
 ):
-    from toolang.common import instance_ids
+    from toolang.common import place_codes
 
-    monkeypatch.setattr(instance_ids, "_tag", lambda *_: 123)
+    monkeypatch.setattr(place_codes, "_tag", lambda *_: 123)
     monkeypatch.setattr("toolang.up.identity.time.time_ns", lambda: 100_000_000)
     root = tmp_path / "global"
 
@@ -278,17 +278,17 @@ def test_previous_layout_is_ignored_without_reading_or_modifying_it(tmp_path):
     before = status.read_bytes()
     root = tmp_path / "global"
     current = allocate_roaming(source, toolang_root=root)
-    assert select_roaming(source, toolang_root=root).root == current.root
-    assert current.root != old_root
+    assert select_roaming(source, toolang_root=root).place == current.place
+    assert current.place != old_root
     assert status.read_bytes() == before
 
 
 def test_a_shared_path_tag_does_not_mix_retained_source_order_or_selection(
     tmp_path, monkeypatch
 ):
-    from toolang.common import instance_ids
+    from toolang.common import place_codes
 
-    monkeypatch.setattr(instance_ids, "_tag", lambda *_: 123)
+    monkeypatch.setattr(place_codes, "_tag", lambda *_: 123)
     now = [500_000_000]
     monkeypatch.setattr("toolang.up.identity.time.time_ns", lambda: now[0])
     root = tmp_path / "global"
@@ -301,9 +301,9 @@ def test_a_shared_path_tag_does_not_mix_retained_source_order_or_selection(
     assert first.request_order_ns == 500_000_000
     assert second.request_order_ns == 501_000_000
     assert other.request_order_ns == 900_000_000
-    assert select_roaming(source, toolang_root=root).root == second.root
+    assert select_roaming(source, toolang_root=root).place == second.place
     assert other.source_path is not None
-    assert select_roaming(other.source_path, toolang_root=root).root == other.root
+    assert select_roaming(other.source_path, toolang_root=root).place == other.place
 
 
 def test_new_roaming_allocation_rejects_a_dangling_reference_to_its_candidate(
@@ -311,7 +311,7 @@ def test_new_roaming_allocation_rejects_a_dangling_reference_to_its_candidate(
 ):
     from dataclasses import replace
     import json
-    from toolang.common.instance_ids import roaming_instance_id
+    from toolang.common.place_codes import roaming_place_code
     from toolang.common.layout import AgentLayout
 
     source = tmp_path / "aid.too"
@@ -319,16 +319,16 @@ def test_new_roaming_allocation_rejects_a_dangling_reference_to_its_candidate(
     monkeypatch.setattr("toolang.up.identity.time.time_ns", lambda: 100_000_000)
     candidate = replace(
         AgentLayout.roaming(
-            source, instance_id=roaming_instance_id(str(source), 100), toolang_root=root
+            source, place_code=roaming_place_code(str(source), 100), root=root
         ),
-        toolang_root=root,
+        root=root,
     )
     reference = root / ".runtime" / "active" / instance_filename(candidate)
     reference.parent.mkdir(parents=True)
     reference.write_text(
         json.dumps(
             {
-                "version": 4,
+                "version": 5,
                 "status": str(candidate.runtime_status),
                 "launch_id": UUID(int=1).hex,
             }
@@ -338,7 +338,7 @@ def test_new_roaming_allocation_rejects_a_dangling_reference_to_its_candidate(
     with pytest.raises(ValueError, match="collision"):
         allocate_roaming(source, toolang_root=root)
     assert reference.read_bytes() == before
-    assert not candidate.root.exists()
+    assert not candidate.place.exists()
 
 
 @pytest.mark.parametrize(
@@ -446,13 +446,13 @@ def test_retained_selection_waits_for_initial_status_publication(
     ):
         allocations = []
 
-        def start_allocation_then_select(source, instance_id, toolang_root):
+        def start_allocation_then_select(source, place_code, toolang_root):
             if not allocations:
                 allocations.append(
                     allocator.submit(allocate_roaming, source, toolang_root=root)
                 )
                 assert preparing.wait(5)
-            return original_select(source, instance_id, toolang_root)
+            return original_select(source, place_code, toolang_root)
 
         monkeypatch.setattr(
             identity, "_select_retained_roaming", start_allocation_then_select
@@ -471,7 +471,7 @@ def test_retained_selection_waits_for_initial_status_publication(
             finish_publication.set()
         published = allocations[0].result(timeout=5)
         selected = selection.result(timeout=5)
-    assert selected.root == published.root
+    assert selected.place == published.place
 
 
 def test_retained_selection_does_not_recreate_a_missing_source_guard(tmp_path):
@@ -480,6 +480,8 @@ def test_retained_selection_does_not_recreate_a_missing_source_guard(tmp_path):
     guard = tmp_path / ".toolang" / ".state" / "launch.lock"
     guard.unlink()
     before = layout.runtime_status.read_bytes()
-    assert select_roaming(source, toolang_root=tmp_path / "global").root == layout.root
+    assert (
+        select_roaming(source, toolang_root=tmp_path / "global").place == layout.place
+    )
     assert not guard.exists()
     assert layout.runtime_status.read_bytes() == before

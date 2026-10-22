@@ -158,7 +158,7 @@ def test_visiting_layout_derivation_does_not_resolve_or_fetch(
     ) == AgentLayout.visiting(
         selector,
         "researcher",
-        toolang_root=tmp_path,
+        root=tmp_path,
     )
 
 
@@ -190,7 +190,7 @@ def test_resolve_visiting_layout_materializes_and_reuses_program(
     assert (
         first
         == second
-        == AgentLayout.visiting(source, "researcher", toolang_root=tmp_path / "other")
+        == AgentLayout.visiting(source, "researcher", root=tmp_path / "other")
     )
     assert first.program.read_text(encoding="utf-8") == "# Agent researcher\n"
     assert fetches == [source]
@@ -203,7 +203,7 @@ def test_visiting_cache_survives_interrupted_write(
     from toolang.up.identity import visiting_home_guard
 
     layout = AgentLayout.visiting(
-        "https://example.com/researcher.too", "researcher", toolang_root=tmp_path
+        "https://example.com/researcher.too", "researcher", root=tmp_path
     )
     with visiting_home_guard(layout):
         pass
@@ -229,7 +229,7 @@ from pathlib import Path
 from toolang.common import layout as paths
 from toolang.up import source as agent_sources
 
-paths.VISITING_ROOT = Path(sys.argv[1]) / "visiting"
+paths.VISITING_BASE = Path(sys.argv[1]) / "visiting"
 signal.signal(signal.SIGXFSZ, signal.SIG_IGN)
 resource.setrlimit(resource.RLIMIT_FSIZE, (128, 128))
 try:
@@ -594,7 +594,7 @@ def test_visiting_identity_and_acquisition_keep_full_urls_while_progress_hides_c
     assert layout.program_acquisition.declared_ref == url
     output = json.dumps([asdict(event) for event in events])
     assert "secret-" not in output
-    assert "secret-" not in layout.instance_name
+    assert "secret-" not in layout.address
     assert "https://example.com/alice.too" in output
 
 

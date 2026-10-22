@@ -275,9 +275,9 @@ class StateWatcher:
         """Run the sole candidate check and publication path."""
 
         try:
-            root_observation = observe_root_source(self.layout.root)
+            root_observation = observe_root_source(self.layout.place)
             home_observation = observe_home_source(
-                self.layout.root,
+                self.layout.place,
                 self.layout.name,
             )
         except Exception as exc:
@@ -398,15 +398,15 @@ class StateWatcher:
             if self._state is None:
                 await self._request_check(requested=True)
             logger.debug(
-                "watch.started root=%s agent=%s interval_ms=%s debounce_ms=%s",
-                self.layout.root,
+                "watch.started place=%s agent=%s interval_ms=%s debounce_ms=%s",
+                self.layout.place,
                 self.layout.name,
                 int(interval_ms),
                 int(debounce_ms),
             )
             timeout_ms = max(int(interval_ms), 50)
             async for changes in awatch(
-                self.layout.root,
+                self.layout.place,
                 debounce=max(int(debounce_ms), 50),
                 step=timeout_ms,
                 rust_timeout=timeout_ms,
@@ -419,7 +419,7 @@ class StateWatcher:
                     if kind in _RELEVANT_CHANGES
                     and (
                         source_path_scope(
-                            self.layout.root,
+                            self.layout.place,
                             self.layout.name,
                             Path(path),
                         )
@@ -433,7 +433,7 @@ class StateWatcher:
                 invalidated_home: set[str] = set()
                 for path in paths:
                     source = source_path_scope(
-                        self.layout.root,
+                        self.layout.place,
                         self.layout.name,
                         path,
                     )

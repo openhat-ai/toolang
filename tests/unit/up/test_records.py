@@ -37,6 +37,56 @@ def begin(layout, identity="first"):
     )
 
 
+@pytest.mark.parametrize("bound_root", ["original", "other"])
+def test_resident_root_mismatch_preserves_the_existing_runtime(tmp_path, bound_root):
+    from toolang.up.workload import begin_workload
+
+    original = AgentLayout.resident(tmp_path / "original", "alice")
+    other_root = tmp_path / "other"
+    layout = (
+        original if bound_root == "original" else replace(original, root=other_root)
+    )
+    begin(original)
+    before = original.runtime_status.read_bytes()
+    with pytest.raises(ValueError, match="root"):
+        begin_workload(
+            layout,
+            launch_id="replacement",
+            toolang_root=other_root,
+            sandbox="host",
+            endpoint="",
+            drivers=frozenset(),
+            workload={"status": "starting"},
+        )
+    assert original.runtime_status.read_bytes() == before
+    assert not other_root.exists()
+
+
+@pytest.mark.parametrize("placement", ["resident", "visiting", "roaming"])
+def test_root_alias_publishes_canonical_runtime_bindings(tmp_path, placement):
+    from toolang.up.identity import allocate_roaming, layout_from_control
+
+    root = tmp_path / "selected"
+    root.mkdir()
+    alias = tmp_path / "alias"
+    alias.symlink_to(root, target_is_directory=True)
+    layout = (
+        AgentLayout.resident(root, "alice")
+        if placement == "resident"
+        else AgentLayout.visiting("gh:example/alice", "alice", root=root)
+        if placement == "visiting"
+        else allocate_roaming(tmp_path / "alice.too", toolang_root=root)
+    )
+    with ForegroundWorkload(layout, toolang_root=alias, drivers=frozenset()) as active:
+        entry = read_instance(layout.runtime_status)
+        assert entry is not None and active.path.exists()
+        bound = layout_from_control(entry["control"])
+        assert bound.root == root
+        assert bound.place == layout.place
+        assert entry["control"]["root"] == str(root)
+    assert not active.path.exists()
+
+
 def test_shared_file_merges_concurrent_sections_and_isolated_instances(tmp_path):
     layout = AgentLayout.resident(tmp_path, "alice")
     other = replace(layout, instance="script")
@@ -401,7 +451,7 @@ def test_foreign_guest_claim_requires_a_definite_dead_probe(
         "launch_id": "guest",
         "acquired_at": time.time() - 2,
         "control": {
-            "root": str(layout.root),
+            "place": str(layout.place),
             "name": layout.name,
             "placement": layout.placement,
             "sandbox": "docker:image",
@@ -539,3 +589,12 @@ def test_owned_bootstrap_is_not_mistaken_for_unreferenced_staging(tmp_path):
     asyncio.run(sandbox.release_stopped(base))
     assert stage.exists() and registration.path.exists()
     assert read_instance(base.runtime_status, "uncreated") is None
+
+
+def test_previous_runtime_status_format_is_rejected_without_rewriting(tmp_path):
+    path = tmp_path / "status.json"
+    path.write_text(json.dumps({"version": 4, "instances": {}}))
+    before = path.read_bytes()
+    with pytest.raises(ValueError, match="unsupported runtime status version"):
+        update_instance(path, lambda entry: entry.update(launch_id="new"))
+    assert path.read_bytes() == before

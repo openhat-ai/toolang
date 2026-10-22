@@ -135,7 +135,7 @@ def _hosted_model_catalog_mounts(
     """Rewrite selected catalog paths and mount host-external sources read-only."""
 
     mounts: dict[tuple[Path, Path], SandboxMount] = {}
-    local_root = request.local_root.resolve()
+    local_place = request.local_place.resolve()
     local_home = request.local_home.resolve()
     if MODEL_CATALOG_ENV in process_envs:
         dotenv_envs.pop(MODEL_CATALOG_ENV, None)
@@ -164,14 +164,14 @@ def _hosted_model_catalog_mounts(
             section[MODEL_CATALOG_ENV] = str(request.hosted_home / relative)
             continue
         try:
-            relative = local_path.relative_to(local_root)
+            relative = local_path.relative_to(local_place)
         except ValueError:
             digest = sha256(str(local_path).encode("utf-8")).hexdigest()[:12]
             hosted_path = (
-                request.hosted_root / ".inputs" / "models" / f"catalog-{digest}.json"
+                request.hosted_place / ".inputs" / "models" / f"catalog-{digest}.json"
             )
         else:
-            hosted_path = request.hosted_root / relative
+            hosted_path = request.hosted_place / relative
         section[MODEL_CATALOG_ENV] = str(hosted_path)
         mount = SandboxMount(local_path, hosted_path, read_only=True)
         if mount not in request.mounts:
@@ -187,7 +187,7 @@ class DockerSandbox:
     name: str = "docker"
     location: SandboxLocation = "guest"
     _default_image: str | None = field(init=False, repr=False, default=None)
-    _runtime_root: Path = field(init=False, repr=False)
+    _runtime_place: Path = field(init=False, repr=False)
     _environment_allow_pattern: re.Pattern[str] = field(init=False, repr=False)
     _log_followers: dict[str, asyncio.subprocess.Process] = field(
         init=False,
@@ -201,6 +201,9 @@ class DockerSandbox:
     )
 
     def __post_init__(self) -> None:
+        unknown = self.config.keys() - {"image", "place", "environment_allow_pattern"}
+        if unknown:
+            raise ValueError(f"unknown docker settings: {', '.join(sorted(unknown))}")
         raw_image = self.config.get("image")
         if raw_image is None:
             self._default_image = None
@@ -208,15 +211,15 @@ class DockerSandbox:
             self._default_image = raw_image.strip()
         else:
             raise TypeError("docker image must be a non-empty string")
-        raw_root = self.config.get("root")
-        if raw_root is None:
-            self._runtime_root = Path("/root/.toolang")
-        elif isinstance(raw_root, str) and raw_root.strip():
-            self._runtime_root = Path(raw_root.strip())
+        raw_place = self.config.get("place")
+        if raw_place is None:
+            self._runtime_place = Path("/root/.toolang")
+        elif isinstance(raw_place, str) and raw_place.strip():
+            self._runtime_place = Path(raw_place.strip())
         else:
-            raise TypeError("docker root must be a non-empty string")
-        if not self._runtime_root.is_absolute():
-            raise ValueError("docker root must be an absolute guest path")
+            raise TypeError("docker place must be a non-empty string")
+        if not self._runtime_place.is_absolute():
+            raise ValueError("docker place must be an absolute guest path")
         raw_pattern = self.config.get(
             "environment_allow_pattern",
             DEFAULT_ENVIRONMENT_ALLOW_PATTERN,
@@ -230,17 +233,21 @@ class DockerSandbox:
                 f"invalid docker environment_allow_pattern: {exc}"
             ) from exc
 
-    def runtime_root(self, local_root: Path) -> Path:
-        """Return the mapped agent root configured for the Docker guest."""
+    def runtime_place(self, local_place: Path) -> Path:
+        """Return the mapped place configured for the Docker guest."""
 
-        del local_root
-        return self._runtime_root
+        del local_place
+        return self._runtime_place
 
     def intent_reference(self, request: SandboxRequest) -> SandboxRef:
         """Persist a unique recovery locator before staging or container creation."""
         identity = request.envs["TOOLANG_HOST_LAUNCH"]
         stage = (
-            request.local_root / ".sandbox" / request.agent_name / "launches" / identity
+            request.local_place
+            / ".sandbox"
+            / request.agent_name
+            / "launches"
+            / identity
         )
         name = f"toolang-{_container_label(request.agent_name)}-{identity}"
         return SandboxRef(
@@ -265,7 +272,7 @@ class DockerSandbox:
 
     def prepare(self, spec: str | None, request: SandboxRequest) -> SandboxPlan:
         stage_dir = (
-            request.local_root
+            request.local_place
             / ".sandbox"
             / request.agent_name
             / "launches"
@@ -374,7 +381,7 @@ class DockerSandbox:
             envs={
                 "TOOLANG_HOST_GATEWAY": DEFAULT_HOST_GATEWAY,
                 "TOOLANG_ROOT": request.envs.get(
-                    "TOOLANG_ROOT", str(request.local_root)
+                    "TOOLANG_ROOT", str(request.local_place)
                 ),
                 "TOOLANG_SANDBOX": f"{self.name}:{image}",
                 "TOOLANG_WORKSPACE_MOUNTS": request.envs.get(

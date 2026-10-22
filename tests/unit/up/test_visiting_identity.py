@@ -19,21 +19,21 @@ from toolang.up.source import HttpRef, materialize_visiting_program, visiting_la
 
 
 def _layout(root, url="https://example.com/alice.too"):
-    return AgentLayout.visiting(url, "alice", toolang_root=root)
+    return AgentLayout.visiting(url, "alice", root=root)
 
 
 def test_deriving_a_visiting_layout_does_not_claim_or_create_a_home(
-    tmp_path, isolated_visiting_root
+    tmp_path, isolated_visiting_base
 ):
     layout = visiting_layout("github:owner/alice", toolang_root=tmp_path)
     alias = visiting_layout("gh:owner/alice", toolang_root=tmp_path)
     assert layout == alias
-    assert not layout.root.exists()
-    assert not isolated_visiting_root.exists()
+    assert not layout.place.exists()
+    assert not isolated_visiting_base.exists()
 
 
 def test_parallel_claims_share_one_fully_bound_private_home(
-    tmp_path, isolated_visiting_root
+    tmp_path, isolated_visiting_base
 ):
     layout = _layout(tmp_path)
 
@@ -46,7 +46,7 @@ def test_parallel_claims_share_one_fully_bound_private_home(
 
     with ThreadPoolExecutor(max_workers=4) as pool:
         assert len(set(pool.map(claim, range(12)))) == 1
-    for path in (isolated_visiting_root, layout.root, layout.home, layout.runtime):
+    for path in (isolated_visiting_base, layout.place, layout.home, layout.runtime):
         assert stat.S_IMODE(path.stat().st_mode) == 0o700
     assert stat.S_IMODE(layout.runtime_status.stat().st_mode) == 0o600
 
@@ -89,7 +89,7 @@ def test_full_visiting_id_collision_fails_before_cached_program_or_history_chang
     tmp_path, monkeypatch
 ):
     monkeypatch.setattr(
-        "toolang.common.layout.visiting_instance_id", lambda *_: "h" + "0" * 10
+        "toolang.common.layout.visiting_place_code", lambda *_: "t" + "0" * 10
     )
     first = materialize_visiting_program(
         HttpRef("https://one.example/alice.too"), "original", toolang_root=tmp_path
@@ -115,20 +115,20 @@ def test_full_visiting_id_collision_fails_before_cached_program_or_history_chang
 
 @pytest.mark.parametrize("mode", [0o755, 0o777, 0o1777])
 def test_untrusted_parent_modes_fail_without_adoption(
-    tmp_path, isolated_visiting_root, mode
+    tmp_path, isolated_visiting_base, mode
 ):
     if mode == 0o1777 and os.geteuid() == 0:
         pytest.skip("root owns the accepted shared-parent mode")
-    isolated_visiting_root.mkdir()
-    isolated_visiting_root.chmod(mode)
-    before = isolated_visiting_root.stat()
+    isolated_visiting_base.mkdir()
+    isolated_visiting_base.chmod(mode)
+    before = isolated_visiting_base.stat()
     with pytest.raises(ValueError, match="unsafe visiting directory"):
         with visiting_home_guard(_layout(tmp_path)):
             pytest.fail("untrusted parent was adopted")
-    assert stat.S_IMODE(isolated_visiting_root.stat().st_mode) == stat.S_IMODE(
+    assert stat.S_IMODE(isolated_visiting_base.stat().st_mode) == stat.S_IMODE(
         before.st_mode
     )
-    assert not list(isolated_visiting_root.iterdir())
+    assert not list(isolated_visiting_base.iterdir())
 
 
 @pytest.mark.parametrize(
@@ -153,7 +153,7 @@ def test_parent_ownership_contract(owner, mode, accepted, monkeypatch):
 
 @pytest.mark.parametrize("component", ["parent", "root", "agents", "status", "program"])
 def test_visiting_paths_reject_symlinks_without_touching_the_target(
-    tmp_path, isolated_visiting_root, component
+    tmp_path, isolated_visiting_base, component
 ):
     layout = _layout(tmp_path)
     peer = tmp_path / "peer"
@@ -161,15 +161,15 @@ def test_visiting_paths_reject_symlinks_without_touching_the_target(
     marker = peer / "keep"
     marker.write_text("peer data")
     if component == "parent":
-        isolated_visiting_root.symlink_to(peer, target_is_directory=True)
+        isolated_visiting_base.symlink_to(peer, target_is_directory=True)
     elif component == "root":
-        layout.root.parent.mkdir(mode=0o700, parents=True)
-        layout.root.symlink_to(peer, target_is_directory=True)
+        layout.place.parent.mkdir(mode=0o700, parents=True)
+        layout.place.symlink_to(peer, target_is_directory=True)
     else:
         with visiting_home_guard(layout):
             pass
         target = {
-            "agents": layout.root / "agents",
+            "agents": layout.place / "agents",
             "status": layout.runtime_status,
             "program": layout.program,
         }[component]
@@ -196,8 +196,8 @@ def test_recheck_rejects_a_root_replaced_while_waiting_for_the_home_guard(
     @contextmanager
     def replaced(lock):
         with original(lock):
-            layout.root.rename(layout.root.with_name("retained"))
-            layout.root.symlink_to(peer, target_is_directory=True)
+            layout.place.rename(layout.place.with_name("retained"))
+            layout.place.symlink_to(peer, target_is_directory=True)
             yield
 
     monkeypatch.setattr(EditLock, "write", replaced)
@@ -213,24 +213,24 @@ def test_management_claims_source_ownership_before_creating_lifecycle_metadata(
     from toolang.up.instance import management_operation
 
     layout = _layout(tmp_path)
-    assert not layout.root.exists()
+    assert not layout.place.exists()
     with management_operation(layout, stage="start"):
         entry = read_instance(layout.runtime_status)
         assert entry is not None
         assert entry["control"]["source_ref"] == layout.source_ref
-        assert entry["control"]["instance_id"] == layout.instance_id
+        assert entry["control"]["place_code"] == layout.place_code
         assert entry["control"]["operation"]["stage"] == "start"
-    assert stat.S_IMODE(layout.root.stat().st_mode) == 0o700
+    assert stat.S_IMODE(layout.place.stat().st_mode) == 0o700
 
 
 def test_admin_shared_parent_still_creates_private_user_owned_instances(
-    tmp_path, isolated_visiting_root, monkeypatch
+    tmp_path, isolated_visiting_base, monkeypatch
 ):
     from toolang.up import private_paths
 
-    isolated_visiting_root.mkdir()
-    isolated_visiting_root.chmod(0o1777)
-    parent_inode = isolated_visiting_root.stat().st_ino
+    isolated_visiting_base.mkdir()
+    isolated_visiting_base.chmod(0o1777)
+    parent_inode = isolated_visiting_base.stat().st_ino
     original_fstat = os.fstat
     original_lstat = Path.lstat
 
@@ -254,6 +254,6 @@ def test_admin_shared_parent_still_creates_private_user_owned_instances(
     layout = _layout(tmp_path)
     with visiting_home_guard(layout):
         pass
-    assert stat.S_IMODE(layout.root.stat().st_mode) == 0o700
-    assert layout.root.stat().st_uid == os.geteuid()
-    assert stat.S_IMODE(isolated_visiting_root.stat().st_mode) == 0o1777
+    assert stat.S_IMODE(layout.place.stat().st_mode) == 0o700
+    assert layout.place.stat().st_uid == os.geteuid()
+    assert stat.S_IMODE(isolated_visiting_base.stat().st_mode) == 0o1777

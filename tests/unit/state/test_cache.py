@@ -39,7 +39,7 @@ def _write_root(layout: AgentLayout) -> str:
     return write_layer(
         layout=layout,
         scope="root",
-        source=scan_source(layout.root, ()),
+        source=scan_source(layout.place, ()),
         config={},
         caps=(),
         modules={},
@@ -350,7 +350,7 @@ def test_republishing_current_revision_does_not_rewrite_pointer(
     layout = _layout(tmp_path)
     revision = _write_root(layout)
     publish_layer_current(layout, "root", revision)
-    current = layout.root_state / "current"
+    current = layout.place_state / "current"
     inode = current.stat().st_ino
 
     publish_layer_current(layout, "root", revision)

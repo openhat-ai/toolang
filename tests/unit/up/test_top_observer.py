@@ -201,9 +201,7 @@ def test_departure_removes_history_and_fresh_top_has_the_same_scope(
     resident = AgentLayout.resident(tmp_path, "alice")
     resident.home.mkdir(parents=True)
     layout = (
-        AgentLayout.visiting(
-            "https://example.com/worker.too", "worker", toolang_root=tmp_path
-        )
+        AgentLayout.visiting("https://example.com/worker.too", "worker", root=tmp_path)
         if placement == "visiting"
         else allocate_roaming(tmp_path / "worker.too", toolang_root=tmp_path)
     )
@@ -1520,11 +1518,11 @@ def test_stopped_resident_keeps_durable_usage_and_runs_when_top_reopens(
     ) as observer:
         with ForegroundWorkload(layout, toolang_root=tmp_path, drivers=frozenset()):
             first = observer.once()
-            state = observer.sources[layout.instance_name]
+            state = observer.sources[layout.address]
         observer.discovery_job = Future()
         observer.discovery_job.set_result(observer.scope_reader.read())
         stopped = observer.tick()
-        assert observer.sources[layout.instance_name] is state
+        assert observer.sources[layout.address] is state
         assert stopped.summary.running == 0 and stopped.summary.total == 1
         assert stopped.summary.usage == first.summary.usage
         with closing(
@@ -1538,4 +1536,4 @@ def test_stopped_resident_keeps_durable_usage_and_runs_when_top_reopens(
         assert reopened.summary.usage.input_tokens == 100
         assert reopened.sources[0].completed is not None
         assert reopened.sources[0].completed.roots[0].id == "run_done"
-        assert state.reader is observer.sources[layout.instance_name].reader
+        assert state.reader is observer.sources[layout.address].reader

@@ -347,7 +347,7 @@ class PromptInputs:
                 "release": environment.release,
                 "machine": environment.machine,
                 "container": environment.container,
-                "root": str(environment.root),
+                "place": str(environment.place),
                 "home": str(environment.home),
                 "working_directory": str(environment.working_directory),
             }

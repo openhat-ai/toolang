@@ -3,27 +3,27 @@
 from dataclasses import dataclass
 from pathlib import Path
 
-from toolang.common.instance_ids import area_id, decode_instance_id
+from toolang.common.place_codes import root_code, decode_place_code
 from toolang.common import layout as paths
 from toolang.common.layout import AgentLayout, derive_agent_name, validate_agent_name
 from .identity import layout_from_control, read_home_identity, select_roaming
 from .instance import read_instance
-from .private_paths import verify_area, verify_home_paths
+from .private_paths import verify_root_namespace, verify_home_paths
 
 
 @dataclass(frozen=True, slots=True)
 class AgentAddress:
     name: str
-    instance_id: str
+    place_code: str
     source: Path | None = None
 
     def __post_init__(self) -> None:
         validate_agent_name(self.name)
-        decode_instance_id(self.instance_id)
+        decode_place_code(self.place_code)
         if self.source is not None and (
             not self.source.is_absolute()
             or self.source.suffix != ".too"
-            or not self.instance_id.startswith("s")
+            or not self.place_code.startswith("s")
         ):
             raise ValueError(
                 "a source-path instance requires an absolute .too path and an s ID"
@@ -31,7 +31,7 @@ class AgentAddress:
 
     @property
     def placement(self) -> str:
-        return "visiting" if self.instance_id.startswith("h") else "roaming"
+        return "visiting" if self.place_code.startswith("t") else "roaming"
 
 
 def parse_address(text: str) -> AgentAddress | None:
@@ -44,7 +44,7 @@ def parse_address(text: str) -> AgentAddress | None:
     if "@" not in text or text.endswith(".too"):
         return None
     label, _, token = text.rpartition("@")
-    decode_instance_id(token)
+    decode_place_code(token)
     source = None
     if not explicit_name and (label.endswith(".too") or "/" in label):
         source = Path(label).expanduser().resolve()
@@ -59,24 +59,24 @@ def parse_address(text: str) -> AgentAddress | None:
 def resolve_address(root: Path, address: AgentAddress) -> tuple[AgentLayout, str]:
     root = root.expanduser().resolve()
     if address.source is not None:
-        layout = select_roaming(address.source, address.instance_id, toolang_root=root)
-    elif address.instance_id.startswith("s"):
+        layout = select_roaming(address.source, address.place_code, toolang_root=root)
+    elif address.place_code.startswith("s"):
         from .observation import active_layout
 
-        layout, launch_id = active_layout(root, f"{address.name}@{address.instance_id}")
+        layout, launch_id = active_layout(root, f"{address.name}@{address.place_code}")
         return layout, launch_id
     else:
-        area = paths.VISITING_ROOT / area_id(str(root))
-        verify_area(area, root)
-        home = area / address.instance_id / "agents" / address.name
-        verify_home_paths(area / address.instance_id, address.name)
+        namespace = paths.VISITING_BASE / root_code(str(root))
+        verify_root_namespace(namespace, root)
+        home = namespace / address.place_code / "agents" / address.name
+        verify_home_paths(namespace / address.place_code, address.name)
         entry = read_instance(home / ".runtime" / "status.json")
         if entry is None:
             raise FileNotFoundError(
-                f"instance not found: {address.name}@{address.instance_id}"
+                f"instance not found: {address.name}@{address.place_code}"
             )
         layout = layout_from_control(entry["control"])
-        if layout.home != home or layout.toolang_root != root:
+        if layout.home != home or layout.root != root:
             raise ValueError("instance does not match the selected agent")
         return layout, entry["launch_id"]
     entry = read_home_identity(layout, toolang_root=root)

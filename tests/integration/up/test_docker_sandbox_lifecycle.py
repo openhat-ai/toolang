@@ -201,7 +201,7 @@ def test_docker_foreground_nonresident_uses_selected_root_and_cleans_reference(
         selector = f"http://127.0.0.1:{source_server.server_port}/remote.too"
         layout = visiting_layout(selector, toolang_root=root)
     layout.home.mkdir(parents=True, exist_ok=True)
-    _write_local_model_env(layout.root_env, local_model_port)
+    _write_local_model_env(layout.place_env, local_model_port)
     port = _available_port()
     env = {**os.environ, "TOOLANG_ROOT": str(root)}
     base = (sys.executable, "-m", "toolang.cli.toolang")
@@ -240,11 +240,11 @@ def test_docker_foreground_nonresident_uses_selected_root_and_cleans_reference(
                 pytest.fail("nonresident guest did not become ready")
             entry = read_instance(layout.runtime_status)
             assert entry is not None and entry["control"]["placement"] == placement
-            assert entry["control"]["toolang_root"] == str(root)
+            assert entry["control"]["root"] == str(root)
             assert entry["control"]["source_id"] == layout.source_id
             references = tuple((root / ".runtime" / "active").glob("*.json"))
             assert len(references) == 1
-            assert references[0].name == f"{layout.instance_name}.json"
+            assert references[0].name == f"{layout.address}.json"
             assert json.loads(references[0].read_text())["status"] == str(
                 layout.runtime_status
             )
@@ -261,7 +261,7 @@ def test_docker_foreground_nonresident_uses_selected_root_and_cleans_reference(
             assert worker.wait(timeout=30) == 130
             assert SandboxState.load(layout.runtime_status) is None
             assert not tuple((root / ".runtime" / "active").glob("*.json"))
-            assert not (layout.root_runtime / "instances").exists()
+            assert not (layout.place_runtime / "instances").exists()
             assert not layout.previous_sandbox_state.exists()
             assert layout.runtime_status.exists() and layout.run_store.exists()
         finally:
@@ -292,9 +292,9 @@ def test_docker_restart_reuses_settings_after_queries_reconcile_killed_guest(
     layout.home.mkdir(parents=True)
     layout.program.write_text("flow complete:\n  let result = Done\n")
     layout.config.write_text("[teaming]\nenabled = false\n")
-    _write_local_model_env(layout.root_env, local_model_port)
-    env = {**os.environ, "TOOLANG_ROOT": str(layout.root)}
-    base = (sys.executable, "-m", "toolang.cli.toolang", "--root", str(layout.root))
+    _write_local_model_env(layout.place_env, local_model_port)
+    env = {**os.environ, "TOOLANG_ROOT": str(layout.place)}
+    base = (sys.executable, "-m", "toolang.cli.toolang", "--root", str(layout.place))
     selected_port = _available_port()
     containers: set[str] = set()
 
@@ -374,7 +374,7 @@ def test_docker_restart_reuses_settings_after_queries_reconcile_killed_guest(
         assert entry is not None and entry["workload"]["status"] == "stopped"
         assert entry["control"]["last_successful"] == settings
         assert not entry["control"].get("ref")
-        assert not tuple((layout.root_runtime / "instances").glob("*.json"))
+        assert not tuple((layout.place_runtime / "instances").glob("*.json"))
         assert layout.run_store.exists()
     finally:
         subprocess.run(
@@ -519,7 +519,7 @@ def running_docker_agent(
     layout = AgentLayout.resident(root, "alice")
     layout.home.mkdir(parents=True)
     layout.program.write_text(_AGENT_SOURCE, encoding="utf-8")
-    _write_local_model_env(layout.root_env, local_model_port)
+    _write_local_model_env(layout.place_env, local_model_port)
     skill = layout.home / "skills" / "reviewer"
     skill.mkdir(parents=True)
     (skill / "SKILL.md").write_text(
@@ -698,7 +698,7 @@ def test_docker_script_runs_with_a_temporary_agent_server(
     source = tmp_path / "echo.too"
     source.write_text(_ECHO_PROGRAM, encoding="utf-8")
     layout = AgentLayout.roaming(source)
-    _write_local_model_env(layout.root_env, local_model_port)
+    _write_local_model_env(layout.place_env, local_model_port)
 
     result = subprocess.run(
         (
@@ -745,7 +745,7 @@ def test_docker_agent_run_interrupt_stops_and_removes_container(
     layout.home.mkdir(parents=True)
     layout.program.write_text("# Agent bob\n", encoding="utf-8")
     unavailable_provider_port = _available_port()
-    layout.root_env.write_text(
+    layout.place_env.write_text(
         f"OLLAMA_HOST=http://127.0.0.1:{unavailable_provider_port}\n"
         f"LLAMA_CPP_HOST=http://localhost:{unavailable_provider_port}\n",
         encoding="utf-8",
@@ -989,14 +989,14 @@ def _run_agent_command(
     environ = dict(os.environ)
     environ.pop("OLLAMA_HOST", None)
     environ.pop("LLAMA_CPP_HOST", None)
-    environ["TOOLANG_ROOT"] = str(agent.layout.root)
+    environ["TOOLANG_ROOT"] = str(agent.layout.place)
     return subprocess.run(
         (
             sys.executable,
             "-m",
             "toolang.cli.toolang",
             "--root",
-            str(agent.layout.root),
+            str(agent.layout.place),
             agent.layout.name,
             *arguments,
         ),
@@ -1279,7 +1279,7 @@ with runtime_lock(status, location='guest', launch_id=entry['launch_id']):
                 "-m",
                 "toolang.cli.toolang",
                 "--root",
-                str(agent.layout.root),
+                str(agent.layout.place),
                 "list",
             ),
             capture_output=True,

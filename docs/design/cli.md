@@ -130,7 +130,7 @@ exits. [Hosting](hosting.md) owns startup compatibility and recovery.
 
 ### Instance selection
 
-Use `name@h...`, `name@s...`, or `file.too@s...` as `AGENT`; require complete IDs.
+Use `name@t...`, `name@s...`, or `file.too@s...` as `AGENT`; require complete IDs.
 Remote schemes retain their own revisions and URL `@` characters. Source-only
 resource commands reject instance operands. There is no `--instance`/`-i` option.
 
@@ -139,7 +139,7 @@ resource commands reject instance operands. There is no `--instance`/`-i` option
   selectors work offline without source contents.
 - For home commands, a bare roaming path selects its last-created retained home.
   Completion time, restart time, and mtime never reorder it. Each Toolang root has
-  its own area.
+  its own root-code directory.
 - `info`/`inspect` do not prepare sources. Known paths/refs locate homes directly;
   short roaming names require active registration. `info` uses live resource
   summaries when available, otherwise saved summaries/State. Source contents may
@@ -212,7 +212,7 @@ Cap and tool lists keep each resource on one line and follow this width policy,
 with a 120-cell fallback when geometry is unavailable. Only descriptions
 and locations shrink; identities and statuses remain complete. Long cells use `…`; source
 locations preserve their beginning and end. Local cap locations are relative to
-the selected agent root; URLs and canonical refs keep their existing form.
+the selected place; URLs and canonical refs keep their existing form.
 `STATUS` shows only `ready` or `not_allowed`; all tags remain in JSON and queries. The tool identity heading is `TOOL`,
 while JSON and query records retain `ref`. These lists have no `--long`; complete
 field values remain available through `--json`.
@@ -330,7 +330,7 @@ In tmux, foreground commands also publish pane-local string options:
 | Option | Value |
 | --- | --- |
 | `@toolang_kind` | `chat`, `talk`, `top`, `serve`, `run`, or `rerun` |
-| `@toolang_root` | Agent root for agent commands; Toolang root for commands without an agent |
+| `@toolang_root` | Selected root path |
 | `@toolang_agent` | Bare agent name; empty for Talk, team Top, and hub serve |
 | `@toolang_thread` | Chat thread ID, once created |
 | `@toolang_run` | Actual executing run ID, once allocated or accepted |

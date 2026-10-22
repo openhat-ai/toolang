@@ -25,7 +25,7 @@ from toolang.plugin.toolsets.loading import load_tools
     ],
 )
 def test_only_the_selected_toolset_receives_special_dependencies(tmp_path, name, extra):
-    layout = AgentLayout(root=tmp_path, name="alice", placement="resident")
+    layout = AgentLayout(place=tmp_path, name="alice", placement="resident")
     runtime = cast(ToolRuntime, object())
     history = cast(ToolHistory, object())
     services = (ToolService("api", {}, {"TOKEN": "private"}),)

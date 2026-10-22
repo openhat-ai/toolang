@@ -73,7 +73,7 @@ def test_config_read_errors_are_cli_errors_with_the_source_path(tmp_path, agent)
     from typer._click.exceptions import ClickException
 
     layout = AgentLayout.resident(tmp_path, "alice")
-    path = layout.config if agent else layout.root_config
+    path = layout.config if agent else layout.place_config
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("[terminal.title.prefix\n")
     with pytest.raises(ClickException) as error:
@@ -163,11 +163,11 @@ def test_resident_and_root_only_sources(tmp_path, terminal_io, placement):
     terminal_io = terminal_io()
     layout = AgentLayout(tmp_path, "alice", placement)
     layout.home.mkdir(parents=True)
-    layout.root_config.write_text(
+    layout.place_config.write_text(
         '[terminal.title.prefix]\nchat="root "\ntop="root "\n'
     )
     layout.config.write_text('[terminal.title.prefix]\nchat="home "\n')
-    layout.root_env.write_text('TOOLANG_TITLE_PREFIX_CHAT="root-env "\n')
+    layout.place_env.write_text('TOOLANG_TITLE_PREFIX_CHAT="root-env "\n')
     layout.env.write_text('TOOLANG_TITLE_PREFIX_CHAT="home-env "\n')
     for kwargs, expected in [
         ({"layout": layout}, "home-env alice"),
@@ -191,6 +191,26 @@ def test_resident_and_root_only_sources(tmp_path, terminal_io, placement):
         ):
             pass
         assert terminal_io.getvalue() == f"\x1b]0;{expected}\x07\x1b]0;\x07"
+
+
+def test_visiting_pane_marks_publish_the_selected_root(
+    tmp_path, terminal_io, monkeypatch
+):
+    terminal_io()
+    root = tmp_path / "selected"
+    layout = AgentLayout.visiting("gh:example/alice", "alice", root=root)
+    published = {}
+    marks_type = sessions.PaneMarks
+
+    def marks(*, environment, fields):
+        published.update(fields)
+        return marks_type(environment={}, fields=fields)
+
+    monkeypatch.setattr(sessions, "PaneMarks", marks)
+    with prepare_terminal("chat", layout=layout, environment={}):
+        pass
+    assert layout.place != root
+    assert published["root"] == str(root)
 
 
 @pytest.mark.parametrize("prefix", [None, "env ", ""])
@@ -217,9 +237,9 @@ def test_roaming_uses_captured_project_layers_and_no_dotenv(
             source=tmp_path / "file.too",
         )
     )
-    layout.root_config.write_text('[terminal.title.prefix]\nrun="wrong"\n')
+    layout.place_config.write_text('[terminal.title.prefix]\nrun="wrong"\n')
     layout.env.write_text("TOOLANG_TITLE_PREFIX_RUN=wrong\n")
-    layout.root_env.write_text("TOOLANG_TITLE_PREFIX_RUN=wrong\n")
+    layout.place_env.write_text("TOOLANG_TITLE_PREFIX_RUN=wrong\n")
     environment = {} if prefix is None else {"TOOLANG_TITLE_PREFIX_RUN": prefix}
     with prepare_terminal(
         "run", layout=layout, environment=environment, label="run file.too"

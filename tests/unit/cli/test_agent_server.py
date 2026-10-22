@@ -143,7 +143,7 @@ def _set_status(
 
 def test_visiting_reuse_checks_explicit_settings_without_fetch(tmp_path, monkeypatch):
     layout = AgentLayout.visiting(
-        "https://example.test/strict.too", "strict", toolang_root=tmp_path
+        "https://example.test/strict.too", "strict", root=tmp_path
     )
     _set_status(
         monkeypatch,
@@ -184,7 +184,7 @@ def test_running_server_reuses_bound_settings_without_resolving_startup(
         AgentLayout.resident(tmp_path, "alice")
         if placement == "resident"
         else AgentLayout.visiting(
-            "https://example.test/alice.too", "alice", toolang_root=tmp_path
+            "https://example.test/alice.too", "alice", root=tmp_path
         )
     )
     _set_status(
@@ -196,7 +196,7 @@ def test_running_server_reuses_bound_settings_without_resolving_startup(
     monkeypatch.setenv("PWD", "/different/directory")
     monkeypatch.setenv("TERM", "different-terminal")
     monkeypatch.setenv("TOOLANG_LIMIT_TOKENS", "invalid-startup-value")
-    layout.root_config.write_text('[sandbox]\ndriver = "docker"\n')
+    layout.place_config.write_text('[sandbox]\ndriver = "docker"\n')
     monkeypatch.setattr(
         agent_server,
         "_resolve_launch",
@@ -264,7 +264,7 @@ def test_only_stable_placements_reuse_an_executor(
         layout = AgentLayout.resident(tmp_path, "alice")
     elif placement == "visiting":
         layout = AgentLayout.visiting(
-            "https://example.test/alice.too", "alice", toolang_root=tmp_path
+            "https://example.test/alice.too", "alice", root=tmp_path
         )
     else:
         source = tmp_path / "alice.too"
@@ -324,14 +324,14 @@ def test_roaming_requires_its_callers_unstarted_identity(tmp_path, monkeypatch, 
     )
 
     async def launch(*_args, **_kwargs):
-        pytest.fail("a retained roaming root was restarted")
+        pytest.fail("a retained roaming place was restarted")
 
     monkeypatch.setattr(agent_server.sandbox_runtime, "launch", launch)
     with pytest.raises(agent_server.AgentServerAcquisitionError, match="fresh"):
         with agent_server.acquire_agent_server(
             layout, sandbox=None, ui_base_url="https://ui.test", show_progress=False
         ):
-            pytest.fail("a retained roaming root was acquired")
+            pytest.fail("a retained roaming place was acquired")
 
 
 @pytest.mark.parametrize(
@@ -1238,14 +1238,14 @@ def test_inactive_launch_uses_fresh_environment_and_file_logging(
             "TOOLANG_DEFAULT_MODEL": "test/chat effort=high",
             "TOOLANG_LIMIT_TOKENS": "12000",
             "TOOLANG_COMPACT_MODEL": "test/compact effort=low",
-            "TOOLANG_ROOT": str(layout.root),
+            "TOOLANG_ROOT": str(layout.place),
             "TOOLANG_MODEL_CATALOG": str(catalog),
         },
         "agent_log_path": layout.runtime_log,
     }
     assert captured["launch"] == {
         "lifetime": "persistent",
-        "toolang_root": layout.root,
+        "toolang_root": layout.place,
         "drivers": None,
         "workspace_additions": None,
         "layout": layout,

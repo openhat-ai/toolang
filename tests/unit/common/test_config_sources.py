@@ -39,7 +39,7 @@ def test_shared_workspaces_are_ignored_before_path_resolution(tmp_path, placemen
         layout = AgentLayout(tmp_path, "helper", placement)
         layout.home.mkdir(parents=True)
         layout.program.write_text("flow run():\n  pass\n")
-        layout.root_config.write_text(shared)
+        layout.place_config.write_text(shared)
         layout.config.write_text('[workspaces]\nrepo = "."\n')
         expected = str(layout.home)
 
@@ -47,7 +47,7 @@ def test_shared_workspaces_are_ignored_before_path_resolution(tmp_path, placemen
     assert "workspaces" not in sources[0].config
     assert prepare_agent_state(layout).workspaces == {"repo": expected}
     # Guest snapshots must obey the same ownership rule as host loading.
-    mounts = prepare_source_mounts(layout.root, layout.name, tmp_path / "guest")
+    mounts = prepare_source_mounts(layout.place, layout.name, tmp_path / "guest")
     root_mount = next(
         m
         for m in mounts
@@ -83,7 +83,7 @@ def test_bounded_layers_keep_path_origins_and_local_permissions(tmp_path, monkey
     defaults = resolve_run_defaults([item.config for item in sources])
     assert defaults.model is not None and defaults.model.ref == "openai/gpt-4o"
     assert prepare_agent_state(layout).workspaces == {"repo": str(project)}
-    assert layout.root == source_dir / ".toolang"
+    assert layout.place == source_dir / ".toolang"
 
 
 def test_nearest_companion_beats_outer_catalog_path(tmp_path):
@@ -171,7 +171,7 @@ def test_real_script_and_discovered_config_symlinks_keep_distinct_origins(tmp_pa
     alias = tmp_path / "alias.too"
     alias.symlink_to(source)
     layout = materialize_roaming_program(alias)
-    assert layout.root == source_dir / ".toolang"
+    assert layout.place == source_dir / ".toolang"
     assert prepare_agent_state(layout).workspaces == {"repo": str(tmp_path)}
 
 

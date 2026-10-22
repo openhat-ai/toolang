@@ -177,9 +177,9 @@ def _request(
     home = root / "agents" / "alice"
     home.mkdir(parents=True, exist_ok=True)
     return SandboxRequest(
-        local_root=root,
+        local_place=root,
         local_home=home,
-        hosted_root=Path("/root/.toolang"),
+        hosted_place=Path("/root/.toolang"),
         hosted_home=Path("/root/.toolang/agents/alice"),
         agent_name="alice",
         bind_host="127.0.0.1",
@@ -650,7 +650,7 @@ def test_docker_sandbox_mounts_external_model_catalog_at_guest_path(
 
     assert source_mount.read_only is True
     assert source_mount.hosted_path.is_relative_to(
-        request.hosted_root / ".inputs" / "models"
+        request.hosted_place / ".inputs" / "models"
     )
     assert guest_envs[MODEL_CATALOG_ENV] == str(source_mount.hosted_path)
     assert str(external) not in guest_env_mount.local_path.read_text(encoding="utf-8")
@@ -666,14 +666,14 @@ def test_explicit_catalog_does_not_require_a_valid_default_root_catalog(
     request = replace(
         request,
         envs={MODEL_CATALOG_ENV: str(selected)},
-        mounts=prepare_root_mounts(request.local_root, request.hosted_root),
+        mounts=prepare_root_mounts(request.local_place, request.hosted_place),
     )
 
     plan = create_sandbox("docker", config={}).prepare(None, request)
 
     assert (
         SandboxMount(
-            selected.resolve(), request.hosted_root / "selected.json", read_only=True
+            selected.resolve(), request.hosted_place / "selected.json", read_only=True
         )
         in plan.mounts
     )
@@ -690,11 +690,11 @@ def test_docker_sandbox_rewrites_root_model_catalog_and_mounts_it_read_only(
     request = replace(
         request,
         dotenv_envs={**request.dotenv_envs, MODEL_CATALOG_ENV: str(source)},
-        mounts=prepare_root_mounts(request.local_root, request.hosted_root),
+        mounts=prepare_root_mounts(request.local_place, request.hosted_place),
     )
 
     plan = create_sandbox("docker", config={}).prepare(None, request)
-    expected = request.hosted_root / filename
+    expected = request.hosted_place / filename
     source_mount = next(
         mount for mount in plan.mounts if mount.local_path == source.resolve()
     )
@@ -1170,10 +1170,16 @@ def test_docker_sandbox_uses_configured_default_image(tmp_path: Path) -> None:
     assert plan.sandbox == "docker:python:3.14"
 
 
-def test_docker_sandbox_owns_its_guest_root_configuration(tmp_path: Path) -> None:
-    sandbox = create_sandbox("docker", config={"root": "/workspace/toolang"})
+def test_docker_sandbox_owns_its_guest_place_configuration(tmp_path: Path) -> None:
+    sandbox = create_sandbox("docker", config={"place": "/workspace/toolang"})
 
-    assert sandbox.runtime_root(tmp_path) == Path("/workspace/toolang")
+    assert sandbox.runtime_place(tmp_path) == Path("/workspace/toolang")
+
+
+@pytest.mark.parametrize("name", ["root", "unknown"])
+def test_docker_sandbox_rejects_unknown_path_settings(name):
+    with pytest.raises(ValueError, match="unknown docker settings"):
+        create_sandbox("docker", config={name: "/workspace/toolang"})
 
 
 def test_docker_sandbox_uses_a_configured_environment_allow_pattern(

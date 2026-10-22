@@ -135,9 +135,9 @@ def test_state_rejects_headers_rejected_by_the_language(tmp_path, header):
         Program.from_source(source)
     state = prepare_agent_state(layout)
     _assert_excluded(state)
-    assert state.toolang_root is not None
+    assert state.place is not None
     state_error = StateWatcher(
-        AgentLayout.resident(state.toolang_root, state.name), initial_state=state
+        AgentLayout.resident(state.place, state.name), initial_state=state
     ).diagnostics()
     assert str(language_error.value) in "; ".join(item.message for item in state_error)
 
@@ -438,7 +438,7 @@ def test_prepare_reuses_portable_state_after_root_and_home_remount(
         changed = path.stat().st_mtime_ns + 2_000_000_000
         os.utime(path, ns=(changed, changed))
     guest_layout = _layout(guest_root)
-    root_current = guest_layout.root_state / "current"
+    root_current = guest_layout.place_state / "current"
     home_current = guest_layout.home_state / "current"
     agent_current = guest_layout.agent_state / "current"
     pointer_inodes = tuple(
@@ -755,7 +755,9 @@ def test_inline_skill_materialization_preserves_source_and_snapshots(
 def test_inline_skill_precedence_is_module_local(tmp_path: Path, scope: str) -> None:
     layout = _layout(tmp_path)
     (layout.home / "runnables").mkdir(parents=True)
-    skill = (layout.root if scope == "root" else layout.home) / "skills/review/SKILL.md"
+    skill = (
+        layout.place if scope == "root" else layout.home
+    ) / "skills/review/SKILL.md"
     skill.parent.mkdir(parents=True)
     skill.write_text("---\ndescription: Shared review\n---\nShared guidance.\n")
     for filename, body in (
@@ -1330,9 +1332,9 @@ def test_prepare_rejects_runnable_module_at_the_correct_layer(
 
     state = prepare_agent_state(_layout(toolang_root))
     _assert_excluded(state)
-    assert state.toolang_root is not None
+    assert state.place is not None
     raised = StateWatcher(
-        AgentLayout.resident(state.toolang_root, state.name), initial_state=state
+        AgentLayout.resident(state.place, state.name), initial_state=state
     ).diagnostics()
 
     diagnostic = raised[0]
@@ -1361,9 +1363,9 @@ def test_prepare_rejects_public_runnable_collisions(
 
     state = prepare_agent_state(_layout(toolang_root))
     _assert_excluded(state)
-    assert state.toolang_root is not None
+    assert state.place is not None
     raised = StateWatcher(
-        AgentLayout.resident(state.toolang_root, state.name), initial_state=state
+        AgentLayout.resident(state.place, state.name), initial_state=state
     ).diagnostics()
 
     assert raised[0].layer == "state-composition"
@@ -1468,7 +1470,7 @@ def test_visiting_agent_parses_once_before_parallel_dependencies(tmp_path, monke
     from threading import Barrier, Lock
     from toolang.state import source as source_owner
 
-    layout = AgentLayout(root=tmp_path, name="visitor", placement="visiting")
+    layout = AgentLayout(place=tmp_path, name="visitor", placement="visiting")
     layout.home.mkdir(parents=True)
     text = "with prompt github://acme/caps/one.md@main\nwith prompt github://acme/caps/two.md@main\n"
     layout.program.write_text(text)
@@ -1524,7 +1526,7 @@ def test_visiting_agent_parses_once_before_parallel_dependencies(tmp_path, monke
 
 
 def test_invalid_remote_agent_blocks_all_dependency_preparation(tmp_path, monkeypatch):
-    layout = AgentLayout(root=tmp_path, name="visitor", placement="visiting")
+    layout = AgentLayout(place=tmp_path, name="visitor", placement="visiting")
     layout.home.mkdir(parents=True)
     layout.program.write_text("flow broken(:\n")
     monkeypatch.setattr(
@@ -1539,7 +1541,7 @@ def test_invalid_remote_agent_blocks_all_dependency_preparation(tmp_path, monkey
 
 
 def test_remote_parse_reuse_requires_matching_source_bytes(tmp_path, monkeypatch):
-    layout = AgentLayout(root=tmp_path, name="visitor", placement="visiting")
+    layout = AgentLayout(place=tmp_path, name="visitor", placement="visiting")
     layout.home.mkdir(parents=True)
     original = Program.from_source
     calls = []
@@ -1564,7 +1566,7 @@ def test_cached_agent_ast_revalidates_removed_external_runnable(tmp_path):
     helper.write_text("flow():\n  pass\n")
     resident.program.write_text("flow():\n  run helper\n")
     prepare_agent_state(resident)
-    visiting = AgentLayout(root=tmp_path, name="visitor", placement="visiting")
+    visiting = AgentLayout(place=tmp_path, name="visitor", placement="visiting")
     prepare_agent_state(visiting)
     helper.unlink()
     changed = prepare_agent_state(visiting)

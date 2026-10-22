@@ -451,9 +451,7 @@ def test_nonresident_history_requires_full_ownership_before_any_data_read(
     from toolang.up import activity
 
     layout = (
-        AgentLayout.visiting(
-            "https://example.com/alice.too", "alice", toolang_root=tmp_path
-        )
+        AgentLayout.visiting("https://example.com/alice.too", "alice", root=tmp_path)
         if placement == "visiting"
         else allocate_roaming(tmp_path / "alice.too", toolang_root=tmp_path)
     )

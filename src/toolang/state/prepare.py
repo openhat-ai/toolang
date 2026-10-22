@@ -113,7 +113,7 @@ def prepare_agent_state(
 ) -> AgentState:
     """Prepare and compose the immutable runtime state for one agent."""
 
-    _require_root(layout)
+    _require_place(layout)
     _require_agent_home(layout)
     ensure_scratch_workspace(layout.home)
     overrides = normalize_cap_overrides(allow_overrides)
@@ -141,7 +141,7 @@ def prepare_agent_state(
             else compose_layer_state(
                 root,
                 home,
-                toolang_root=layout.root,
+                place=layout.place,
                 name=layout.name,
                 allow_overrides=overrides,
                 workspace_additions=workspace_additions,
@@ -157,7 +157,7 @@ def compose_layer_state(
     root: RootLayer,
     home: HomeLayer,
     *,
-    toolang_root: Path | None = None,
+    place: Path | None = None,
     revision_dir: Path | None = None,
     name: str,
     allow_overrides: Mapping[str, tuple[str, ...]] | None = None,
@@ -167,7 +167,7 @@ def compose_layer_state(
     """Compose runtime State from one exact root/home layer pair."""
 
     return compose_agent_state(
-        toolang_root=toolang_root,
+        place=place,
         name=name,
         allow_overrides=allow_overrides,
         workspace_additions=workspace_additions,
@@ -220,7 +220,7 @@ def load_agent_state(
         root,
         home,
         revision_dir=agent_revision_dir(layout, effective),
-        toolang_root=layout.root,
+        place=layout.place,
         name=name,
         created_at=created_at,
         allow_overrides=overrides,
@@ -263,7 +263,7 @@ def prepare_root_home(
 ) -> tuple[RootLayer, HomeLayer]:
     """Prepare and load the shared root and one agent home."""
 
-    _require_root(layout)
+    _require_place(layout)
     _require_agent_home(layout)
     if layout.placement == "visiting":
         parse_visiting_agent(layout, ref=str(layout.program), progress=progress)
@@ -288,8 +288,8 @@ def prepare_root(
 ) -> RootLayer:
     """Build or reuse the root State layer shared by every agent."""
 
-    _require_root(layout)
-    source = scan_root_source(layout.root)
+    _require_place(layout)
+    source = scan_root_source(layout.place)
     current = _matching_root(
         layout,
         source=source,
@@ -298,7 +298,7 @@ def prepare_root(
     if current is not None:
         return current
     with layer_build_lock(layout, "root", progress=progress):
-        source = scan_root_source(layout.root)
+        source = scan_root_source(layout.place)
         current = _matching_root(
             layout,
             source=source,
@@ -328,7 +328,7 @@ def inspect_root_caps(
     entries = tuple(cap for cap in root.caps if cap.kind in kinds)
     allowed = _allowed_caps(
         entries,
-        root=layout.root,
+        place=layout.place,
         agent_name="",
         allows=resolve_cap_allows((root.config,)),
     )
@@ -344,7 +344,7 @@ def inspect_agent_caps(
     """Resolve current agent capabilities without preparing executable State."""
     _require_agent_home(layout)
     root = prepare_root(layout, progress=progress)
-    authored = read_authored_source(layout.root, layout.name)
+    authored = read_authored_source(layout.place, layout.name)
     accepted = accept_sources(authored, scope="home", include_programs=False)
     for record in accepted.records:
         if not record.accepted:
@@ -394,7 +394,7 @@ def inspect_agent_caps(
     )
     allowed = _allowed_caps(
         entries,
-        root=layout.root,
+        place=layout.place,
         agent_name=layout.name,
         allows=resolve_cap_allows((root.config, home_config)),
     )
@@ -410,7 +410,7 @@ def prepare_home(
     """Build or reuse one agent-home State layer."""
 
     _require_agent_home(layout)
-    source = scan_home_source(layout.root, layout.name)
+    source = scan_home_source(layout.place, layout.name)
     current = _matching_home(
         layout,
         source=source,
@@ -419,7 +419,7 @@ def prepare_home(
     if current is not None:
         return current
     with layer_build_lock(layout, "home", progress=progress):
-        source = scan_home_source(layout.root, layout.name)
+        source = scan_home_source(layout.place, layout.name)
         current = _matching_home(
             layout,
             source=source,
@@ -602,9 +602,9 @@ def _build_layer_revision(
         observation = _observe_scope_source(layout, scope=scope)
         try:
             authored = (
-                read_root_source(layout.root)
+                read_root_source(layout.place)
                 if scope == "root"
-                else read_authored_source(layout.root, layout.name)
+                else read_authored_source(layout.place, layout.name)
             )
         except SourceChangedError:
             continue
@@ -740,13 +740,13 @@ def _observe_scope_source(
     scope: LayerScope,
 ) -> SourceObservation:
     if scope == "root":
-        return observe_root_source(layout.root)
-    return observe_home_source(layout.root, layout.name)
+        return observe_root_source(layout.place)
+    return observe_home_source(layout.place, layout.name)
 
 
-def _require_root(layout: AgentLayout) -> None:
-    if not layout.root.is_dir():
-        raise FileNotFoundError(f"Toolang root not found: {layout.root}")
+def _require_place(layout: AgentLayout) -> None:
+    if not layout.place.is_dir():
+        raise FileNotFoundError(f"place not found: {layout.place}")
 
 
 def _require_agent_home(layout: AgentLayout) -> None:

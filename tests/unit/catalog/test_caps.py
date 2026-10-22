@@ -11,7 +11,7 @@ from toolang.catalog.cap import AuthoredCaps, CapFile
 from toolang.catalog.config import CapRef, ConfiguredCaps
 from toolang.catalog.errors import CatalogConflictError, CatalogNotFoundError
 from toolang.catalog.types import CapKind
-from toolang.common.layout import root_edit_lock_path
+from toolang.common.layout import place_edit_lock_path
 
 
 def _cap(kind, name: str, content: str) -> CapFile:
@@ -130,7 +130,7 @@ def test_authored_caps_loads_cap_files_without_auxiliary_skill_files(
         "Rewrite this text.\n", encoding="utf-8"
     )
 
-    caps = AuthoredCaps(tmp_path, lock_path=root_edit_lock_path(tmp_path)).list()
+    caps = AuthoredCaps(tmp_path, lock_path=place_edit_lock_path(tmp_path)).list()
 
     assert [(cap.kind, cap.name) for cap in caps] == [
         ("prompt", "rewrite"),
@@ -140,7 +140,7 @@ def test_authored_caps_loads_cap_files_without_auxiliary_skill_files(
 
 
 def test_authored_caps_crud_returns_cap_files(tmp_path: Path) -> None:
-    caps = AuthoredCaps(tmp_path, lock_path=root_edit_lock_path(tmp_path))
+    caps = AuthoredCaps(tmp_path, lock_path=place_edit_lock_path(tmp_path))
     created = caps.create(_cap("prompt", "rewrite", "Rewrite this text.\n"))
     updated = caps.update(_cap("prompt", "rewrite", "Rewrite carefully.\n"))
     removed = caps.remove("prompt", "rewrite")
@@ -155,7 +155,7 @@ def test_authored_caps_crud_returns_cap_files(tmp_path: Path) -> None:
 def test_authored_caps_reports_conflicting_and_missing_mutations(
     tmp_path: Path,
 ) -> None:
-    caps = AuthoredCaps(tmp_path, lock_path=root_edit_lock_path(tmp_path))
+    caps = AuthoredCaps(tmp_path, lock_path=place_edit_lock_path(tmp_path))
     cap = _cap("prompt", "rewrite", "Rewrite this text.\n")
 
     caps.create(cap)
@@ -168,7 +168,7 @@ def test_authored_caps_reports_conflicting_and_missing_mutations(
 
 
 def test_authored_caps_removes_complete_skill_directory(tmp_path: Path) -> None:
-    caps = AuthoredCaps(tmp_path, lock_path=root_edit_lock_path(tmp_path))
+    caps = AuthoredCaps(tmp_path, lock_path=place_edit_lock_path(tmp_path))
     skill = caps.create(
         _cap(
             "skill",
@@ -191,7 +191,7 @@ def test_authored_caps_skill_removal_commits_before_cleanup(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    caps = AuthoredCaps(tmp_path, lock_path=root_edit_lock_path(tmp_path))
+    caps = AuthoredCaps(tmp_path, lock_path=place_edit_lock_path(tmp_path))
     skill = caps.create(
         _cap(
             "skill",
@@ -229,7 +229,7 @@ def test_authored_caps_rejects_service_env_map(tmp_path: Path) -> None:
     with pytest.raises(
         ValueError, match="service env must list environment variable names"
     ):
-        AuthoredCaps(tmp_path, lock_path=root_edit_lock_path(tmp_path)).create(
+        AuthoredCaps(tmp_path, lock_path=place_edit_lock_path(tmp_path)).create(
             _cap("service", "linear", content)
         )
 
@@ -239,7 +239,7 @@ def test_configured_caps_crud_preserves_other_config_and_returns_removed_ref(
 ) -> None:
     path = tmp_path / "config.toml"
     path.write_text('[web]\nhost = "127.0.0.1"\n', encoding="utf-8")
-    caps = ConfiguredCaps(path, lock_path=root_edit_lock_path(path.parent))
+    caps = ConfiguredCaps(path, lock_path=place_edit_lock_path(path.parent))
     original = CapRef(
         kind="skill",
         name="reviewer",
@@ -260,7 +260,7 @@ def test_configured_caps_reports_conflicting_and_missing_mutations(
 ) -> None:
     caps = ConfiguredCaps(
         tmp_path / "config.toml",
-        lock_path=root_edit_lock_path((tmp_path / "config.toml").parent),
+        lock_path=place_edit_lock_path((tmp_path / "config.toml").parent),
     )
     cap = CapRef(kind="prompt", name="review", ref="https://example/review")
 
@@ -291,7 +291,7 @@ def test_configured_caps_rejects_invalid_config_entries(
     path.write_text(content, encoding="utf-8")
 
     with pytest.raises(ValueError, match=message):
-        ConfiguredCaps(path, lock_path=root_edit_lock_path(path.parent)).list()
+        ConfiguredCaps(path, lock_path=place_edit_lock_path(path.parent)).list()
 
 
 def test_configured_caps_preserves_unrelated_config_comments(tmp_path: Path) -> None:
@@ -303,7 +303,7 @@ def test_configured_caps_preserves_unrelated_config_comments(tmp_path: Path) -> 
         'host = "127.0.0.1" # Web comment\n'
     )
     path.write_text(original, encoding="utf-8")
-    caps = ConfiguredCaps(path, lock_path=root_edit_lock_path(path.parent))
+    caps = ConfiguredCaps(path, lock_path=place_edit_lock_path(path.parent))
 
     caps.create(CapRef(kind="prompt", name="review", ref="https://example/review"))
     created_text = path.read_text(encoding="utf-8")
@@ -326,7 +326,7 @@ def test_configured_caps_update_preserves_entry_comment_and_spacing(
         encoding="utf-8",
     )
 
-    ConfiguredCaps(path, lock_path=root_edit_lock_path(path.parent)).update(
+    ConfiguredCaps(path, lock_path=place_edit_lock_path(path.parent)).update(
         CapRef(kind="skill", name="reviewer", ref="https://example/reviewer")
     )
 
@@ -337,9 +337,9 @@ def test_configured_caps_update_preserves_entry_comment_and_spacing(
 
 
 def test_authored_caps_use_root_edit_lock(tmp_path: Path) -> None:
-    caps = AuthoredCaps(tmp_path, lock_path=root_edit_lock_path(tmp_path))
+    caps = AuthoredCaps(tmp_path, lock_path=place_edit_lock_path(tmp_path))
 
-    assert caps.lock_path == root_edit_lock_path(tmp_path)
+    assert caps.lock_path == place_edit_lock_path(tmp_path)
     with caps.write_lock():
         assert caps.lock_path.is_file()
     assert not (tmp_path / ".authored-caps.lock").exists()
