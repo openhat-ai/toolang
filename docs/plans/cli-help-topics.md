@@ -2,7 +2,7 @@
 
 Move shared option-reference details into explicit CLI help topics. Success means
 ordinary `--help` keeps visible options concise, while `too help TOPIC`
-provides the corresponding fields, rules, and examples without runtime setup.
+provides the corresponding keys, rules, and examples without runtime setup.
 
 Status: proposed; human confirmation is required before implementation.
 
@@ -28,8 +28,8 @@ pages, navigation/error cases, and representative affected command help.
 
   | Topic | Summary | Referenced options |
   | --- | --- | --- |
-  | `allow` | Resource fields and selection rules | `--allow` |
-  | `limit` | Run limit fields and units | `--limit` |
+  | `allow` | Resource selection keys and query rules | `--allow` |
+  | `limit` | Run limit keys and units | `--limit` |
   | `default` | CLI defaults and their setting lifetime | `--default` |
   | `model` | Model selection and parameters | `--model`, `--compact-model` |
 
@@ -54,16 +54,17 @@ pages, navigation/error cases, and representative affected command help.
   explicit topic commands; use the documented `too` alias in these shared strings:
 
   ```text
-  --allow <FIELD>=<VALUE>    Select allowed resources; see 'too help allow'
-  --limit <FIELD>=<VALUE>    Set run limits; see 'too help limit'
-  --default <FIELD>=<VALUE>  Set session defaults; see 'too help default'
+  --allow <KEY>=<VALUE>     Select allowed resources; see 'too help allow'
+  --limit <KEY>=<VALUE>     Set run limits; see 'too help limit'
+  --default <KEY>=<VALUE>   Set session defaults; see 'too help default'
   --compact-model <MODEL>   Set the compaction model; see 'too help model'
   ```
 
-  Use `<FIELD>=<VALUE>` consistently for assignment options: FIELD names a
-  supported key and VALUE follows that field's grammar. The `allow` topic
-  explains resource fields and query values; these meanings do not need separate
-  RESOURCE/QUERY metavars. Keep placeholders uppercase and literal keys lowercase.
+  Use `<KEY>=<VALUE>` consistently for generic assignment options: KEY names a
+  supported setting and VALUE follows that key's grammar. Label their topic
+  definition lists `Keys`. The `allow` topic explains resource-selection keys
+  and query values; these meanings do not need separate RESOURCE/QUERY metavars.
+  Keep placeholders uppercase and literal keys lowercase.
   This changes only display; `--allow tools=none` and other accepted inputs stay
   unchanged. Semantic operands such as `<MODEL>` and `[TOPIC]` keep their names.
   The `--default` row above is for Chat; runtime commands say `Set runtime
@@ -75,14 +76,14 @@ pages, navigation/error cases, and representative affected command help.
   values, caller-owned sections, Examples, flow outlines, and epilogs.
 
 - [ ] Relocate reference content into the matching topic. Each page contains
-  option syntax, field/parameter rows, applicable value and repetition rules,
+  option syntax, key/parameter rows, applicable value and repetition rules,
   and one or two short examples. Preserve these details:
 
   | Topic | Required content |
   | --- | --- |
   | `allow` | `models`, `tools`, `psyches`, `skills`, `services`, `prompts`; TQ queries, `all`, and `none`; union of repeated resource queries; sentinel mixing restrictions; existing policy restrictions still apply. |
-  | `limit` | `agic_model_calls`, `agic_tool_calls`, `tokens`, `cost`, `time`; per-agic versus run-tree accounting; USD and seconds; non-negative integers, decimal cost, `none`, and duplicate-field rejection. |
-  | `default` | `model` and Chat-only `runnable`; setting lifetime and supported commands as below; `runnable=none` returns to automatic Chat entry resolution; each field once; quoting; a cross-reference to `too help model` for model value syntax. |
+  | `limit` | `agic_model_calls`, `agic_tool_calls`, `tokens`, `cost`, `time`; per-agic versus run-tree accounting; USD and seconds; non-negative integers, decimal cost, `none`, and duplicate-key rejection. |
+  | `default` | `model` and Chat-only `runnable`; setting lifetime and supported commands as below; `runnable=none` returns to automatic Chat entry resolution; each key once; quoting; a cross-reference to `too help model` for model value syntax. |
   | `model` | `[ref=]MODEL`; `effort` as a level, non-negative token budget, or `auto`; `max_output` as a positive integer or `auto`; parameter-only overrides; `default`/`unset` with caller-specific restrictions; quoting; exact-model requirement of `--compact-model` for a new runtime. |
 
   Verify content against `cli/common/policy.py`, `base/model_settings.py`,
@@ -97,7 +98,7 @@ pages, navigation/error cases, and representative affected command help.
   containing multiple runs. The `default` topic documents CLI overrides and
   presents this applicability table, rather than implying a config namespace:
 
-  | Context | Option and fields | Lifetime |
+  | Context | Option and keys | Lifetime |
   | --- | --- | --- |
   | Runtime startup: `serve`, `start`, internal `_serve` | `--default model=BODY` | Runtime instance; existing-server compatibility checks still apply. |
   | Chat | `--default model=BODY`, `--default runnable=REF` | Current Chat session; does not reconfigure the runtime or other sessions. |
@@ -117,7 +118,7 @@ pages, navigation/error cases, and representative affected command help.
   Give only topic leaves a CLI-owned `format_help` override for reference output;
   native subcommand parsing, eager help callbacks, and error usage stay intact.
   Reuse one style hierarchy: all section headings use `cli.heading`, topic and
-  example commands use `cli.command.name`, and field/parameter labels use
+  example commands use `cli.command.name`, and key/parameter labels use
   `cli.argument.name`. Definitions are bold cyan in UV and bold in PLAIN;
   explanations and important rules use normal foreground, not dim text.
   Pass authored `Text` spans from CLI writers; add no per-section colors,
@@ -162,9 +163,9 @@ pages, navigation/error cases, and representative affected command help.
   - Chat, serve/start/internal runtime, rerun, Script file, and runnable help
     retain their options and relevant topic pointers, with no old appendices
     or dangling heading references. Assignment options consistently show
-    `<FIELD>=<VALUE>`; Chat/runtime default descriptions name the correct
+    `<KEY>=<VALUE>`; Chat/runtime default descriptions name the correct
     lifetime. Unrelated custom sections stay intact.
-  - Topic field rows match parser vocabulary; rules and examples cover repeated
+  - Topic keys match parser field vocabulary; rules and examples cover repeated
     queries, sentinels, duplicates, units, Chat-only defaults, model quoting,
     and compaction restrictions without changing parser behavior.
     Check the default topic's applicability table and preserve existing coverage
@@ -176,7 +177,7 @@ pages, navigation/error cases, and representative affected command help.
   - The reserved-name cases select the intended command, agent, or runnable.
   - At 44/80/120 columns in PLAIN/UV themes and monochrome/color output, text
     remains complete, wraps within width, and uses shared heading styles.
-    Field labels and explanations have distinct emphasis; prose stays readable.
+    Key labels and explanations have distinct emphasis; prose stays readable.
     Wrapped example commands retain valid shell argument boundaries. Assert
     content/layout/style properties rather than full-output snapshots.
 

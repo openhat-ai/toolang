@@ -10,7 +10,7 @@ exact spacing follows terminal width. The examples assume an installed
 ## Output and style contract
 
 - All headings share `cli.heading`; Topics is a directory of topic commands.
-- Topic names and example commands use `cli.command.name`; named fields and
+- Topic names and example commands use `cli.command.name`; assignment keys and
   parameters use `cli.argument.name`. Both are bold cyan in UV and bold in PLAIN.
 - Syntax uses existing option/usage styles. Explanations and rules use normal
   foreground text; only optional metadata is dimmed. No per-section palette.
@@ -23,6 +23,8 @@ exact spacing follows terminal width. The examples assume an installed
 - Successful topic output is reference content only: declarations describe
   the target options. Omit helper-command Usage, Options, and self-help rows.
   Native invocation errors may still show the helper command usage.
+- Generic assignments use `<KEY>=<VALUE>` and a `Keys:` section. Literal key
+  names stay lowercase; model-specific operands and parameter names remain.
 - `toolang` supports the same forms; usage/footer spellings follow the invoked
   executable. Shared option pointers and examples use the `too` alias.
 - Success uses stdout and exit 0. Invalid topics/options/operands use stderr
@@ -67,11 +69,11 @@ Use 'too COMMAND --help' for command-specific options.
 stdout; exit 0.
 
 ```text
---allow <FIELD>=<VALUE>
+--allow <KEY>=<VALUE>
 
 Select allowed resources.
 
-Fields:
+Keys:
   models    Model queries
   tools     Tool queries
   psyches   Psyche queries
@@ -81,7 +83,7 @@ Fields:
 
 Rules:
   VALUE accepts a TQ query, all, or none.
-  Repeat a field to combine queries by union.
+  Repeat a key to combine queries by union.
   Do not combine queries with all or none.
   Quote values containing spaces.
   Existing policy restrictions still apply.
@@ -99,11 +101,11 @@ Examples:
 stdout; exit 0.
 
 ```text
---limit <FIELD>=<VALUE>
+--limit <KEY>=<VALUE>
 
 Set run limits.
 
-Fields:
+Keys:
   agic_model_calls  Maximum model calls per agic
   agic_tool_calls   Maximum tool calls per agic
   tokens            Total input and output tokens per run tree
@@ -113,7 +115,7 @@ Fields:
 Rules:
   VALUE is a non-negative integer; cost also accepts a decimal.
   Use none to unset a limit.
-  Each field may appear once.
+  Each key may appear once.
 
 Examples:
   Limit tokens and cost
@@ -129,11 +131,11 @@ Examples:
 stdout; exit 0.
 
 ```text
---default <FIELD>=<VALUE>
+--default <KEY>=<VALUE>
 
 Set runtime or Chat session defaults.
 
-Fields:
+Keys:
   model     Default model and parameters
   runnable  Chat session entry ref; Chat only
 
@@ -143,7 +145,7 @@ Applies to:
   Script, rerun  Use --model for one run
 
 Rules:
-  Each field may appear once. Quote values containing spaces.
+  Each key may appear once. Quote values containing spaces.
   runnable=none returns to automatic Chat entry selection.
   Chat defaults do not reconfigure the runtime or other sessions.
 
@@ -287,10 +289,10 @@ Options:
                                     [bare: latest thread]
       --catalog <PATH>              Use this model catalog
       --sandbox <SANDBOX>           Execute the session in this sandbox
-      --allow <FIELD>=<VALUE>       Select allowed resources; see 'too help
+      --allow <KEY>=<VALUE>         Select allowed resources; see 'too help
                                     allow'
-      --limit <FIELD>=<VALUE>       Set run limits; see 'too help limit'
-      --default <FIELD>=<VALUE>     Set session defaults; see 'too help default'
+      --limit <KEY>=<VALUE>         Set run limits; see 'too help limit'
+      --default <KEY>=<VALUE>       Set session defaults; see 'too help default'
       --compact-model <MODEL>       Set the compaction model; see 'too help
                                     model'
       --enable <DRIVERS>            Enable only these drivers, replacing
@@ -316,10 +318,10 @@ Arguments:
 Options:
       --sandbox <SANDBOX>           Run in this sandbox; defaults to config,
                                     last successful selection, or host
-      --allow <FIELD>=<VALUE>       Select allowed resources; see 'too help
+      --allow <KEY>=<VALUE>         Select allowed resources; see 'too help
                                     allow'
-      --limit <FIELD>=<VALUE>       Set run limits; see 'too help limit'
-      --default <FIELD>=<VALUE>     Set runtime defaults; see 'too help default'
+      --limit <KEY>=<VALUE>         Set run limits; see 'too help limit'
+      --default <KEY>=<VALUE>       Set runtime defaults; see 'too help default'
       --compact-model <MODEL>       Set the compaction model; see 'too help
                                     model'
       --enable <DRIVERS>            Enable only these drivers, replacing
@@ -347,20 +349,20 @@ Arguments:
   * AGENT  Agent name, ref, URL
 
 Options:
-      --sandbox <SANDBOX>        Run in this sandbox; defaults to config, last
-                                 successful selection, or host
-      --allow <FIELD>=<VALUE>    Select allowed resources; see 'too help allow'
-      --limit <FIELD>=<VALUE>    Set run limits; see 'too help limit'
-      --default <FIELD>=<VALUE>  Set runtime defaults; see 'too help default'
-      --compact-model <MODEL>    Set the compaction model; see 'too help model'
-      --enable <DRIVERS>         Enable only these drivers, replacing defaults:
-                                 chat,talk,chore or none
-      --catalog <PATH>           Use this model catalog
-      --host <HOST>              Bind the agent API to this host  [default:
-                                 127.0.0.1]
-      --port <PORT>              Bind the agent API to this port
-      --dev [PATH]               Use a local Toolang wheel  [bare: .]
-  -h, --help                     Show this message and exit
+      --sandbox <SANDBOX>      Run in this sandbox; defaults to config, last
+                               successful selection, or host
+      --allow <KEY>=<VALUE>    Select allowed resources; see 'too help allow'
+      --limit <KEY>=<VALUE>    Set run limits; see 'too help limit'
+      --default <KEY>=<VALUE>  Set runtime defaults; see 'too help default'
+      --compact-model <MODEL>  Set the compaction model; see 'too help model'
+      --enable <DRIVERS>       Enable only these drivers, replacing defaults:
+                               chat,talk,chore or none
+      --catalog <PATH>         Use this model catalog
+      --host <HOST>            Bind the agent API to this host  [default:
+                               127.0.0.1]
+      --port <PORT>            Bind the agent API to this port
+      --dev [PATH]             Use a local Toolang wheel  [bare: .]
+  -h, --help                   Show this message and exit
 ```
 
 ## `too _serve gus --help`
@@ -376,18 +378,18 @@ Arguments:
   * AGENT  Agent name
 
 Options:
-      --allow <FIELD>=<VALUE>    Select allowed resources; see 'too help allow'
-      --limit <FIELD>=<VALUE>    Set run limits; see 'too help limit'
-      --default <FIELD>=<VALUE>  Set runtime defaults; see 'too help default'
-      --compact-model <MODEL>    Set the compaction model; see 'too help model'
-      --enable <DRIVERS>         Enable only these drivers, replacing defaults:
-                                 chat,talk,chore or none
-      --catalog <PATH>           Use this model catalog
-      --host <HOST>              API bind host  [default: 127.0.0.1]
-      --endpoint-host <HOST>     Externally visible endpoint host
-      --port <PORT>              API bind port  [default: 7002]
-      --log <LOG_SPEC>           Python logging specification
-  -h, --help                     Show this message and exit
+      --allow <KEY>=<VALUE>    Select allowed resources; see 'too help allow'
+      --limit <KEY>=<VALUE>    Set run limits; see 'too help limit'
+      --default <KEY>=<VALUE>  Set runtime defaults; see 'too help default'
+      --compact-model <MODEL>  Set the compaction model; see 'too help model'
+      --enable <DRIVERS>       Enable only these drivers, replacing defaults:
+                               chat,talk,chore or none
+      --catalog <PATH>         Use this model catalog
+      --host <HOST>            API bind host  [default: 127.0.0.1]
+      --endpoint-host <HOST>   Externally visible endpoint host
+      --port <PORT>            API bind port  [default: 7002]
+      --log <LOG_SPEC>         Python logging specification
+  -h, --help                   Show this message and exit
 ```
 
 ## `too gus rerun --help`
@@ -404,15 +406,15 @@ Arguments:
   * RUN    Run ID or thread ID; a thread selects its latest visible root run
 
 Options:
-      --catalog <PATH>         Use this model catalog
-      --sandbox <SANDBOX>      Execute the new run in this sandbox
-      --allow <FIELD>=<VALUE>  Select allowed resources; see 'too help allow'
-      --limit <FIELD>=<VALUE>  Set run limits; see 'too help limit'
-      --model <MODEL>          Override the model; see 'too help model'
-  -i, --instance <INSTANCE>    Select a retained v… or r… instance; default:
-                               latest startup
-      --dev [PATH]             Use a local Toolang wheel  [bare: .]
-  -h, --help                   Show this message and exit
+      --catalog <PATH>       Use this model catalog
+      --sandbox <SANDBOX>    Execute the new run in this sandbox
+      --allow <KEY>=<VALUE>  Select allowed resources; see 'too help allow'
+      --limit <KEY>=<VALUE>  Set run limits; see 'too help limit'
+      --model <MODEL>        Override the model; see 'too help model'
+  -i, --instance <INSTANCE>  Select a retained v… or r… instance; default:
+                             latest startup
+      --dev [PATH]           Use a local Toolang wheel  [bare: .]
+  -h, --help                 Show this message and exit
 ```
 
 ## `too demo.too --help`
@@ -434,9 +436,9 @@ Options:
   -w, --workspace [NAME=]<DIR>      Add a temporary workspace (repeatable)
   -d, --workdir [NAME=]<DIR>|<URI>  Set workdir; a path also adds a workspace
       --sandbox <SANDBOX>           Select the execution sandbox
-      --allow <FIELD>=<VALUE>       Select allowed resources; see 'too help
+      --allow <KEY>=<VALUE>         Select allowed resources; see 'too help
                                     allow'
-      --limit <FIELD>=<VALUE>       Set run limits; see 'too help limit'
+      --limit <KEY>=<VALUE>         Set run limits; see 'too help limit'
       --dev [PATH]                  Use a local Toolang wheel  [bare: .]
   -h, --help                        Show this message and exit
 ```
@@ -460,9 +462,9 @@ Options:
   -w, --workspace [NAME=]<DIR>      Add a temporary workspace (repeatable)
   -d, --workdir [NAME=]<DIR>|<URI>  Set workdir; a path also adds a workspace
       --sandbox <SANDBOX>           Select the execution sandbox
-      --allow <FIELD>=<VALUE>       Select allowed resources; see 'too help
+      --allow <KEY>=<VALUE>         Select allowed resources; see 'too help
                                     allow'
-      --limit <FIELD>=<VALUE>       Set run limits; see 'too help limit'
+      --limit <KEY>=<VALUE>         Set run limits; see 'too help limit'
       --dev [PATH]                  Use a local Toolang wheel  [bare: .]
   -h, --help                        Show this message and exit
 ```
@@ -536,7 +538,7 @@ Use 'too COMMAND --help' for command-specific options.
 - Removed the helper-command description/Usage/Options wrapper from successful
   topic pages. Single-option pages begin with the option declaration; the
   model page begins with its topic title and the relevant option forms.
-- Corrected undefined table-label styling: fields/parameters and descriptions
+- Corrected undefined table-label styling: keys/parameters and descriptions
   now have separate semantic styles, reusing the existing CLI palette.
 - Corrected long example commands wrapping inside two-column tables: topic
   examples now use full-width, explicitly continued shell commands.
@@ -545,7 +547,7 @@ Use 'too COMMAND --help' for command-specific options.
 - Kept default command help concise and complete; verbose references are
   requested explicitly. The model topic is longest because its accepted
   grammar and reset values need caller-specific restrictions.
-- Existing formatting owns 44/80/120-column wrapping. Field identifiers may
+- Existing formatting owns 44/80/120-column wrapping. Key identifiers may
   wrap at narrow widths; continuation descriptions remain in their column.
 - No blocking design issue remains in these transcripts. Product behavior,
   offline side effects, import boundaries, and actual console compatibility
