@@ -674,8 +674,8 @@ def test_hosted_lifespan_starts_and_stops_messaging(
         "_restore_termination_signal_defaults",
     ):
         monkeypatch.setattr(server, name, MagicMock())
-    monkeypatch.setattr(server.agents, "write_runtime_state", MagicMock())
-    monkeypatch.setattr(server.agents, "stop_runtime_state", MagicMock())
+    monkeypatch.setattr(server.workloads, "write_runtime_state", MagicMock())
+    monkeypatch.setattr(server.workloads, "stop_runtime_state", MagicMock())
     monkeypatch.setattr(server, "MessagingLoop", message_loop)
     monkeypatch.setattr(server, "TeamingLoop", Lifecycle)
     monkeypatch.setattr("toolang.up.application.create_app", create_app)

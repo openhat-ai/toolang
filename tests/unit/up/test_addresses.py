@@ -7,7 +7,8 @@ import pytest
 from toolang.common.place_codes import root_code
 from toolang.common.layout import AgentLayout
 from toolang.up.addresses import parse_address, resolve_address
-from toolang.up.identity import allocate_roaming, select_roaming, visiting_home_guard
+from toolang.up.allocation import allocate_roaming, select_roaming
+from toolang.up.identity import visiting_home_guard
 from toolang.up.workload import fail_preparation
 
 
@@ -37,7 +38,7 @@ def test_roaming_path_survives_exit_and_source_removal_but_short_name_does_not(
 
 
 def test_one_source_has_separate_root_namespaces_and_defaults(tmp_path, monkeypatch):
-    monkeypatch.setattr("toolang.up.identity.time.time_ns", lambda: 100_000_000)
+    monkeypatch.setattr("toolang.up.allocation.time.time_ns", lambda: 100_000_000)
     source = tmp_path / "aid.too"
     first_root, second_root = tmp_path / "first", tmp_path / "second"
     first = allocate_roaming(source, toolang_root=first_root)
@@ -55,7 +56,7 @@ def test_one_source_has_separate_root_namespaces_and_defaults(tmp_path, monkeypa
 def test_explicit_path_rejects_a_root_code_collision(tmp_path, monkeypatch):
     first_root, second_root = tmp_path / "first", tmp_path / "second"
     shared_root_code = root_code(str(first_root))
-    for module in ("common.layout", "up.identity", "up.private_paths"):
+    for module in ("common.layout", "up.allocation", "up.identity", "up.private_paths"):
         monkeypatch.setattr(
             f"toolang.{module}.root_code", lambda _root: shared_root_code
         )
@@ -128,7 +129,7 @@ def test_empty_unpublished_candidate_is_skipped_without_overwriting_it(
 ):
     from toolang.common.place_codes import roaming_place_code
 
-    monkeypatch.setattr("toolang.up.identity.time.time_ns", lambda: 100_000_000)
+    monkeypatch.setattr("toolang.up.allocation.time.time_ns", lambda: 100_000_000)
     source = tmp_path / "aid.too"
     root = tmp_path / "root"
     first = allocate_roaming(source, toolang_root=root)

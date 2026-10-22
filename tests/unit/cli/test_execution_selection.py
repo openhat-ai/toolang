@@ -9,7 +9,7 @@ from toolang.cli.common.context import CliContext, context_layout, target_contex
 from toolang.cli.common.execution import select_agent_instance
 from toolang.cli.toolang.commands import chat
 from toolang.execution.store import RunStore
-from toolang.up.identity import allocate_roaming
+from toolang.up.allocation import allocate_roaming
 
 
 def test_allocated_home_is_not_replaced_by_a_later_launch(tmp_path):

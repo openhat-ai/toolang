@@ -1011,7 +1011,7 @@ def test_visiting_serve_prepares_with_the_acquired_source_receipt(
 @pytest.mark.parametrize("placement", ["visiting", "roaming"])
 def test_instance_selector_and_top_use_the_same_complete_name(tmp_path, placement):
     from toolang.up.addresses import parse_address
-    from toolang.up.identity import allocate_roaming
+    from toolang.up.allocation import allocate_roaming
     from toolang.cli.common.top_view import agent_address
     from toolang.up.schemas import SourceActivity
 

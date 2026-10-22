@@ -104,7 +104,7 @@ def _prepare_roaming_chat(ctx: typer.Context, thread: str | None) -> bool:
     if state.source is None or state.prepared or state.instance_selected:
         return False
     from toolang.common.typer.options import BARE_VALUE
-    from toolang.up.identity import allocate_roaming
+    from toolang.up.allocation import allocate_roaming
     from toolang.up.source import materialize_roaming_program
 
     if thread is not None:

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from toolang.up import workload as workloads
+
 import asyncio
 from dataclasses import replace
 from pathlib import Path
@@ -21,7 +23,7 @@ from toolang.execution.events import RunBegin, RunEnd
 from toolang.execution.types import RunOverride
 from toolang.lang.input import CallInput
 from toolang.state.prepare import prepare_agent_state
-from toolang.up import AgentCore, process as agents
+from toolang.up import AgentCore
 from tests.support.execution_harness import ExecutionHarness
 
 
@@ -85,7 +87,7 @@ agic chat(_: Part[]) -> Part[]:
         (runnables / "chat.too").write_text(source)
         state = prepare_agent_state(harness.setup.layout)
     core.state = _Snapshot(state)
-    agents.write_runtime_state(
+    workloads.write_runtime_state(
         core.layout,
         endpoint="http://runtime.test:7001",
         started_at="2026-08-26T00:00:00Z",
@@ -182,7 +184,7 @@ def test_remote_chat_default_runnable_tracks_the_latest_state(tmp_path: Path) ->
     core = AgentCore(original.setup.layout)
     core.setup = _Snapshot(configured_setup)
     core.state = state_snapshot
-    agents.write_runtime_state(
+    workloads.write_runtime_state(
         core.layout,
         endpoint="http://runtime.test:7001",
         started_at="2026-08-26T00:00:00Z",
@@ -284,7 +286,7 @@ agic xyz(_: Text) -> Text:
         core = AgentCore(harness.setup.layout)
         core.setup = _Snapshot(harness.setup)
         core.state = _Snapshot(harness.state)
-        agents.write_runtime_state(
+        workloads.write_runtime_state(
             core.layout,
             endpoint="http://runtime.test:7001",
             started_at="2026-10-02T00:00:00Z",

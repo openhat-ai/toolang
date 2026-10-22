@@ -444,7 +444,7 @@ def test_nonresident_history_requires_full_ownership_before_any_data_read(
 ):
     import json
     from toolang.common.layout import AgentLayout
-    from toolang.up.identity import allocate_roaming
+    from toolang.up.allocation import allocate_roaming
     from toolang.up.observation import runtime_inventory
     from toolang.up.workload import ForegroundWorkload
     from toolang.up.activity import ActivityReader

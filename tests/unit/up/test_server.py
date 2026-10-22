@@ -593,10 +593,10 @@ def test_server_owns_statistics_and_joins_worker_before_closing_source(
         "toolang.up.instance.patch_workload", lambda *args, **kwargs: True
     )
     monkeypatch.setattr(
-        server.agents, "write_runtime_state", lambda *args, **kwargs: None
+        server.workloads, "write_runtime_state", lambda *args, **kwargs: None
     )
     monkeypatch.setattr(
-        server.agents, "stop_runtime_state", lambda *args, **kwargs: None
+        server.workloads, "stop_runtime_state", lambda *args, **kwargs: None
     )
 
     def run(app, **kwargs):

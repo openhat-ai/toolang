@@ -8,7 +8,6 @@ import json
 from pathlib import Path
 import time
 from urllib.parse import urlsplit
-from collections.abc import Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING
 
@@ -18,7 +17,6 @@ from toolang.up.instance import (
     SandboxState,
     read_instance,
     update_instance,
-    patch_workload,
     process_alive,
     recover_control_write_lock,
 )
@@ -442,107 +440,6 @@ class AgentProcess:
                 lambda layout: cls(layout).status(ui_base_url=ui_base_url), layouts
             )
             return tuple(status for status in statuses if status is not None)
-
-
-def write_runtime_state(
-    layout: AgentLayout,
-    *,
-    endpoint: str,
-    started_at: str,
-    pid: int | None,
-    sandbox: str = "host",
-    process_created: object = None,
-    sandbox_description: str | None = None,
-    sandbox_instance: str | None = None,
-    models: Sequence[str] | None = None,
-    drivers: Sequence[str] | None = None,
-    workspace_additions: Mapping[str, str] | None = None,
-    status: str = "running",
-    message: str | None = None,
-    launch_id: str | None = None,
-    location: str = "host",
-    lifetime: str | None = None,
-    api_version: int | None = None,
-    resource_counts: Mapping[str, object] | None = None,
-) -> Path:
-    """Persist one minimal runtime state file for a running agent."""
-
-    path = layout.runtime_status
-    payload: dict[str, object] = {
-        "agent": layout.name,
-        "status": status,
-        "endpoint": endpoint,
-        "started_at": started_at,
-        "updated_at": started_at,
-        "pid": pid,
-        "process_created": process_created,
-        "sandbox": sandbox,
-        "models": list(models or ()),
-        "drivers": list(drivers if drivers is not None else ("chat", "talk", "chore")),
-        "workspace_additions": dict(workspace_additions or {}),
-        "message": message,
-    }
-    if resource_counts is not None:
-        payload["resource_counts"] = dict(resource_counts)
-    if lifetime is not None:
-        payload["lifetime"] = lifetime
-        payload["api_version"] = api_version
-    if sandbox_instance is not None:
-        payload["sandbox_instance"] = sandbox_instance
-    if sandbox_description is not None:
-        payload["sandbox_description"] = sandbox_description
-    entry = read_instance(path, layout.instance, location=location)
-    identity = launch_id or (entry or {}).get("launch_id")
-    if not identity:
-        from uuid import uuid4
-
-        identity = uuid4().hex
-        update_instance(
-            path,
-            lambda entry: entry.update(launch_id=identity),
-            instance=layout.instance,
-            location=location,
-        )
-    patch_workload(path, identity, payload, instance=layout.instance, location=location)
-    return path
-
-
-def stop_runtime_state(
-    layout: AgentLayout,
-    *,
-    expected_pid: int | None = None,
-    expected_started_at: str | None = None,
-    launch_id: str | None = None,
-    location: str = "host",
-) -> bool:
-    """Mark one runtime state as stopped while keeping the last endpoint."""
-
-    path = layout.runtime_status
-    changed = False
-
-    def finish(entry):
-        nonlocal changed
-        state = entry["workload"]
-        if expected_pid is not None and state.get("pid") != expected_pid:
-            return
-        if (
-            expected_started_at is not None
-            and state.get("started_at") != expected_started_at
-        ):
-            return
-        if state.get("status") not in {"running", "starting", "preparing"}:
-            return
-        state.update(
-            status="stopped",
-            pid=None,
-            updated_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        )
-        changed = True
-
-    update_instance(
-        path, finish, instance=layout.instance, launch_id=launch_id, location=location
-    )
-    return changed
 
 
 def preferred_runtime_port(layout: AgentLayout) -> int | None:

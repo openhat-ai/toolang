@@ -247,7 +247,7 @@ def test_rerun_thread_selector_is_resolved_inside_the_snapshot(tmp_path):
 
 def test_incomplete_replay_seed_cannot_execute(tmp_path):
     from toolang.up.core import AgentCore
-    from toolang.up.identity import allocate_roaming
+    from toolang.up.allocation import allocate_roaming
     from toolang.up.instance import update_instance
 
     layout = allocate_roaming(tmp_path / "aid.too", toolang_root=tmp_path / "global")

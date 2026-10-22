@@ -1,3 +1,4 @@
+from toolang.up.registry import RuntimeRegistration, instance_filename
 from toolang.up.workload import ForegroundWorkload
 from dataclasses import replace
 import asyncio
@@ -7,12 +8,10 @@ import os
 import pytest
 
 from toolang.common.layout import AgentLayout
-from toolang.up.identity import allocate_roaming
+from toolang.up.allocation import allocate_roaming
 from toolang.execution.store import RunStore
 from tests.support.runtime_observation import binding
 from toolang.up.observation import (
-    RuntimeRegistration,
-    instance_filename,
     running_instances,
     runtime_inventory,
     runtime_snapshot,
@@ -284,7 +283,7 @@ def test_guest_discovery_uses_host_sandbox_ownership_not_guest_pid(
     from toolang.base.types.sandbox import SandboxRef
     from toolang.up import sandbox
     from toolang.up.instance import SandboxState
-    from toolang.up.process import write_runtime_state
+    from toolang.up.workload import write_runtime_state
 
     layout = AgentLayout.resident(tmp_path, "guest")
     layout.home.mkdir(parents=True)
@@ -368,7 +367,7 @@ def test_short_lived_scripts_keep_local_status_and_share_registry_lock(tmp_path)
 def test_cleanup_creates_register_guard_for_an_existing_reference(
     tmp_path, legacy_guard
 ):
-    from toolang.up.process import stop_runtime_state
+    from toolang.up.workload import stop_runtime_state
 
     layout = AgentLayout.resident(tmp_path, "gus")
     registration = ForegroundWorkload(
@@ -393,7 +392,7 @@ def test_cleanup_creates_register_guard_for_an_existing_reference(
 
 
 def test_missing_reference_cleanup_does_not_create_discovery_directories(tmp_path):
-    from toolang.up.observation import _remove_reference
+    from toolang.up.registry import _remove_reference
 
     path = tmp_path / ".runtime" / "active" / "gus.json"
     _remove_reference(path, "finished", tmp_path / "status.json")
@@ -465,7 +464,7 @@ def test_placement_free_workload_cleans_the_reference_using_control_bindings(
 def test_discovery_reads_a_shared_agent_document_once_per_refresh(
     tmp_path, monkeypatch
 ):
-    from toolang.up import observation, instance as records
+    from toolang.up import observation, instance as instances
     from contextlib import ExitStack
 
     with ExitStack() as scope:
@@ -477,7 +476,7 @@ def test_discovery_reads_a_shared_agent_document_once_per_refresh(
                     drivers=frozenset(),
                 )
             )
-        read = records.read_document
+        read = instances.read_document
         reads = 0
 
         def count_read(path, **kwargs):
@@ -485,7 +484,7 @@ def test_discovery_reads_a_shared_agent_document_once_per_refresh(
             reads += 1
             return read(path, **kwargs)
 
-        monkeypatch.setattr(records, "read_document", count_read)
+        monkeypatch.setattr(instances, "read_document", count_read)
         monkeypatch.setattr(observation, "read_document", count_read)
         assert len(running_instances(tmp_path)) == 10
         assert reads == 10
@@ -903,7 +902,7 @@ def test_rejected_publication_preserves_an_existing_reference_even_with_equal_uu
 def test_failed_publication_cleanup_checks_status_and_uuid_after_attempting_a_write(
     tmp_path, monkeypatch
 ):
-    from toolang.up import observation
+    from toolang.up import registry
     from toolang.up.instance import read_instance
 
     layout = allocate_roaming(tmp_path / "aid.too", toolang_root=tmp_path)
@@ -918,7 +917,7 @@ def test_failed_publication_cleanup_checks_status_and_uuid_after_attempting_a_wr
         path.write_text(json.dumps(peer))
         raise OSError("publication failed")
 
-    monkeypatch.setattr(observation, "atomic_write_text", replaced_then_failed)
+    monkeypatch.setattr(registry, "atomic_write_text", replaced_then_failed)
     with pytest.raises(OSError, match="publication failed"):
         registration.__enter__()
     assert json.loads(registration.path.read_text()) == peer

@@ -22,10 +22,10 @@ from toolang.up.instance import (
     update_instance,
     patch_workload,
     SandboxState,
-    management_operation,
     runtime_lock,
 )
-from toolang.up.process import AgentProcess, stop_runtime_state, preferred_runtime_port
+from toolang.up.process import AgentProcess, preferred_runtime_port
+from toolang.up.workload import management_operation, stop_runtime_state
 from toolang.up.sandbox import resolve_selection, _clear_state
 
 
@@ -64,7 +64,8 @@ def test_resident_root_mismatch_preserves_the_existing_runtime(tmp_path, bound_r
 
 @pytest.mark.parametrize("placement", ["resident", "visiting", "roaming"])
 def test_root_alias_publishes_canonical_runtime_bindings(tmp_path, placement):
-    from toolang.up.identity import allocate_roaming, layout_from_control
+    from toolang.up.allocation import allocate_roaming
+    from toolang.up.identity import layout_from_control
 
     root = tmp_path / "selected"
     root.mkdir()
@@ -107,7 +108,7 @@ def test_shared_file_merges_concurrent_sections_and_isolated_instances(tmp_path)
     assert entry is not None
     assert entry["workload"]["pid"] == 123
     assert entry["control"]["endpoint"].endswith(":8123")
-    assert required_record(other)["launch_id"] == "script-launch"
+    assert required_instance(other)["launch_id"] == "script-launch"
     assert other.runtime_status == layout.runtime_status
 
 
@@ -127,20 +128,20 @@ def test_old_workload_and_cleanup_cannot_change_a_new_launch(tmp_path):
 def test_resource_binding_cannot_adopt_a_launch_created_after_its_snapshot(
     tmp_path, monkeypatch
 ):
-    from toolang.up import instance as records
+    from toolang.up import instance as instances
 
     layout = AgentLayout.resident(tmp_path, "alice")
     old = SandboxState("host", SandboxRef("123", "http://localhost:8123"), "first")
-    update = records.update_instance
+    update = instances.update_instance
 
     def raced_update(*args, **kwargs):
         begin(layout, "second")
         return update(*args, **kwargs)
 
-    monkeypatch.setattr(records, "update_instance", raced_update)
+    monkeypatch.setattr(instances, "update_instance", raced_update)
     with pytest.raises(ValueError, match="launch ownership changed"):
         old.save(layout.runtime_status)
-    entry = required_record(layout)
+    entry = required_instance(layout)
     assert entry["launch_id"] == "second"
     assert "ref" not in entry["control"]
 
@@ -169,7 +170,7 @@ def test_stop_retains_successful_settings_and_error_history(tmp_path):
     layout.config.write_text('[sandbox]\ndriver = "host"\n')
     assert resolve_selection(layout) == "host"
     assert resolve_selection(layout, explicit="docker:other") == "docker:other"
-    assert required_record(layout)["workload"]["message"] == "diagnostic"
+    assert required_instance(layout)["workload"]["message"] == "diagnostic"
     assert not file_lock_path(layout.runtime_status).exists()
 
 
@@ -197,7 +198,7 @@ def test_queries_reconcile_dead_identity_once_and_keep_recovery_refs(tmp_path):
     assert status is not None and status.status == "stopped"
     assert layout.runtime_status.read_bytes() == before
     assert owner.reference == state
-    assert required_record(layout)["workload"].get("observed_dead_at")
+    assert required_instance(layout)["workload"].get("observed_dead_at")
 
 
 def test_query_skips_contended_or_changed_snapshot(tmp_path):
@@ -211,7 +212,7 @@ def test_query_skips_contended_or_changed_snapshot(tmp_path):
             assert not pool.submit(owner.reconcile, observed).result(timeout=1)
     patch_workload(layout.runtime_status, "first", {"updated_at": "changed"})
     assert not owner.reconcile(observed)
-    assert required_record(layout)["workload"]["status"] == "running"
+    assert required_instance(layout)["workload"]["status"] == "running"
 
 
 def test_management_operation_does_not_hold_status_lock(tmp_path):
@@ -224,10 +225,10 @@ def test_management_operation_does_not_hold_status_lock(tmp_path):
                 lambda entry: entry["workload"].update(pid=123),
             ).result(timeout=1)
         assert (
-            required_record(layout)["control"]["operation"]["created"]
+            required_instance(layout)["control"]["operation"]["created"]
             == psutil.Process().create_time()
         )
-    assert "operation" not in required_record(layout)["control"]
+    assert "operation" not in required_instance(layout)["control"]
 
 
 @pytest.mark.parametrize("status", ["stopped", "running", "starting", "preparing"])
@@ -243,7 +244,7 @@ def test_unversioned_instance_is_rejected_without_mutation(tmp_path, status):
     assert not file_lock_path(layout.runtime_status).exists()
 
 
-def required_record(layout):
+def required_instance(layout):
     entry = read_instance(layout.runtime_status, layout.instance)
     assert entry is not None
     return entry
@@ -360,7 +361,7 @@ def test_stop_recovers_a_host_created_before_its_reference_was_bound(tmp_path):
         )
         assert asyncio.run(stop(layout, force=True))
         worker.wait(timeout=5)
-        entry = required_record(layout)
+        entry = required_instance(layout)
         assert entry["workload"]["status"] == "stopped"
         assert "ref" not in entry["control"]
     finally:
@@ -379,7 +380,8 @@ def test_killed_control_owner_can_be_recovered_without_losing_settings(tmp_path)
 import sys, time
 from pathlib import Path
 from toolang.common.layout import AgentLayout
-from toolang.up.instance import management_operation, update_instance
+from toolang.up.workload import management_operation
+from toolang.up.instance import update_instance
 layout = AgentLayout.resident(Path(sys.argv[1]), 'alice')
 with management_operation(layout, stage='start'):
     update_instance(layout.runtime_status, lambda entry: entry['control'].update(last_successful={'endpoint': 'http://localhost:8123', 'sandbox': 'host'}))
@@ -397,7 +399,7 @@ with management_operation(layout, stage='start'):
         with management_operation(layout, stage="stop"):
             assert preferred_runtime_port(layout) == 8123
         assert time.monotonic() - started < 2
-        assert "operation" not in required_record(layout)["control"]
+        assert "operation" not in required_instance(layout)["control"]
     finally:
         if owner.poll() is None:
             owner.kill()
@@ -430,7 +432,7 @@ with runtime_lock(Path(sys.argv[1])):
         writer.kill()
         writer.wait(timeout=5)
         assert patch_workload(layout.runtime_status, "first", {"message": "recovered"})
-        assert required_record(layout)["workload"]["message"] == "recovered"
+        assert required_instance(layout)["workload"]["message"] == "recovered"
         assert not file_lock_path(layout.runtime_status).exists()
     finally:
         if writer.poll() is None:
@@ -443,7 +445,7 @@ with runtime_lock(Path(sys.argv[1])):
 def test_foreign_guest_claim_requires_a_definite_dead_probe(
     tmp_path, monkeypatch, alive, worker_available, recwarn
 ):
-    from toolang.up import instance as records, sandbox
+    from toolang.up import instance as instances, sandbox
 
     layout = AgentLayout.resident(tmp_path, "alice")
     previous = {
@@ -475,7 +477,7 @@ def test_foreign_guest_claim_requires_a_definite_dead_probe(
 
     if not worker_available:
         monkeypatch.setattr(ThreadPoolExecutor, "submit", reject_worker)
-    monkeypatch.setattr(records, "file_write_lock", claim)
+    monkeypatch.setattr(instances, "file_write_lock", claim)
     monkeypatch.setattr(sandbox, "load_state_sandbox", lambda *args: Backend())
     with runtime_lock(layout.runtime_status):
         pass
@@ -497,10 +499,10 @@ def test_temporary_cleanup_retains_recovery_refs_and_new_generations(tmp_path):
         instance=layout.instance,
     )
     assert not remove_finished_instance(layout, "first")
-    assert required_record(layout)["control"]["ref"]
+    assert required_instance(layout)["control"]["ref"]
     begin(layout, "second")
     assert not remove_finished_instance(layout, "first")
-    assert required_record(layout)["launch_id"] == "second"
+    assert required_instance(layout)["launch_id"] == "second"
 
 
 @pytest.mark.parametrize("live_owner", [False, True])

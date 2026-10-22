@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from toolang.up import workload as workloads
+
 import asyncio
 from pathlib import Path
 from typing import Any
@@ -18,7 +20,7 @@ from toolang.cli.toolang.commands import script
 from toolang.execution.records import RunControlPayload
 from toolang.execution.types import RunOverride
 from toolang.lang.input import CallInput
-from toolang.up import AgentCore, process as agents
+from toolang.up import AgentCore
 from tests.support.execution_harness import ExecutionHarness
 
 
@@ -61,7 +63,7 @@ def test_remote_script_uses_an_exec_thread_and_native_progress(
     core = AgentCore(harness.setup.layout)
     core.setup = _Snapshot(harness.setup)
     core.state = _Snapshot(harness.state)
-    agents.write_runtime_state(
+    workloads.write_runtime_state(
         core.layout,
         endpoint="http://runtime.test:7001",
         started_at="2026-08-26T00:00:00Z",
@@ -157,7 +159,7 @@ def test_remote_script_captures_client_files_before_server_resolution(
     core = AgentCore(harness.setup.layout)
     core.setup = _Snapshot(harness.setup)
     core.state = _Snapshot(harness.state)
-    agents.write_runtime_state(
+    workloads.write_runtime_state(
         core.layout,
         endpoint="http://runtime.test:7001",
         started_at="2026-09-30T00:00:00Z",

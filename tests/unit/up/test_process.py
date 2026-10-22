@@ -12,7 +12,7 @@ import pytest
 
 from toolang.base.types.sandbox import SandboxRef
 from toolang.common.layout import AgentLayout
-from toolang.up import process
+from toolang.up import process, workload
 from toolang.up.instance import SandboxState
 
 
@@ -33,7 +33,7 @@ def test_status_uses_saved_identity_not_live_pid_in_report(
     SandboxState(sandbox="host", ref=ref, launch_id="fixture").save(
         layout.runtime_status
     )
-    process.write_runtime_state(
+    workload.write_runtime_state(
         layout,
         endpoint="http://stale.example:9999",
         started_at="old",
@@ -70,7 +70,7 @@ def test_status_keeps_one_snapshot_when_a_restart_changes_the_file(
         "host", process_ref(os.getpid(), "http://localhost:8123"), "first"
     )
     state.save(layout.runtime_status)
-    process.write_runtime_state(
+    workload.write_runtime_state(
         layout,
         endpoint=state.ref.endpoint,
         started_at="now",
@@ -136,7 +136,7 @@ def test_status_keeps_unknown_without_leaking_when_worker_rejects_probe(
 def test_status_does_not_adopt_unregistered_process(tmp_path: Path) -> None:
     layout = AgentLayout.resident(tmp_path, "alice")
     layout.home.mkdir(parents=True)
-    process.write_runtime_state(
+    workload.write_runtime_state(
         layout, endpoint="http://localhost:8123", started_at="old", pid=os.getpid()
     )
     status = process.AgentProcess(layout).status(ui_base_url="")
@@ -235,7 +235,7 @@ def test_container_reports_match_launch_identity_not_guest_pid_or_hostname(
         SandboxRef("a" * 64, "http://localhost:1", runtime_kind="container"),
         launch_id="fixture",
     ).save(layout.runtime_status)
-    process.write_runtime_state(
+    workload.write_runtime_state(
         layout,
         endpoint="http://guest:1",
         started_at="now",
@@ -255,13 +255,13 @@ def test_runtime_registration_waits_for_conditional_stop(tmp_path, monkeypatch):
     from toolang.common.files import file_write_lock
 
     layout = AgentLayout.resident(tmp_path, "alice")
-    process.write_runtime_state(layout, endpoint="http://old", started_at="old", pid=1)
+    workload.write_runtime_state(layout, endpoint="http://old", started_at="old", pid=1)
     read = Event()
     finish_stop = Event()
     waiting = Event()
-    from toolang.up import instance as records
+    from toolang.up import instance as instances
 
-    load = records.read_document
+    load = instances.read_document
     scope = local()
 
     def pause_read(path, **kwargs):
@@ -282,11 +282,11 @@ def test_runtime_registration_waits_for_conditional_stop(tmp_path, monkeypatch):
             finally:
                 scope.locked = False
 
-    monkeypatch.setattr(records, "read_document", pause_read)
-    monkeypatch.setattr(records, "file_write_lock", observed_lock)
+    monkeypatch.setattr(instances, "read_document", pause_read)
+    monkeypatch.setattr(instances, "file_write_lock", observed_lock)
     with ThreadPoolExecutor(max_workers=2) as pool:
         stopping = pool.submit(
-            process.stop_runtime_state,
+            workload.stop_runtime_state,
             layout,
             expected_pid=1,
             expected_started_at="old",
@@ -294,7 +294,7 @@ def test_runtime_registration_waits_for_conditional_stop(tmp_path, monkeypatch):
         try:
             assert read.wait(timeout=5)
             registering = pool.submit(
-                process.write_runtime_state,
+                workload.write_runtime_state,
                 layout,
                 endpoint="http://new",
                 started_at="new",
@@ -307,4 +307,4 @@ def test_runtime_registration_waits_for_conditional_stop(tmp_path, monkeypatch):
         registering.result(timeout=5)
     state = process._load_runtime_state(layout.runtime_status)
     assert state is not None and state["pid"] == 2 and state["status"] == "running"
-    assert not process.stop_runtime_state(layout, expected_pid=1)
+    assert not workload.stop_runtime_state(layout, expected_pid=1)

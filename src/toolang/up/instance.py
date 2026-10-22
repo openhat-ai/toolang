@@ -5,10 +5,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from contextlib import contextmanager
-from contextvars import ContextVar
 import os
 import time
-from collections.abc import Iterator
 import psutil
 from toolang.common.layout import AgentLayout
 import json
@@ -320,12 +318,6 @@ class SandboxState:
         )
 
 
-# Durable ownership replaces locks held across process creation/readiness/shutdown.
-_OPERATIONS: ContextVar[tuple[tuple[Path, str | None], ...]] = ContextVar(
-    "runtime_operations", default=()
-)
-
-
 def process_alive(pid: object, created: object) -> bool | None:
     """Return None when identity cannot be verified; never infer death then."""
     if not isinstance(pid, int) or not isinstance(created, (int, float)):
@@ -345,66 +337,6 @@ def process_alive(pid: object, created: object) -> bool | None:
 def control_owner() -> dict[str, int | float]:
     """Host identity for a control operation or a temporary caller's lifetime."""
     return {"pid": os.getpid(), "created": psutil.Process().create_time()}
-
-
-@contextmanager
-def management_operation(
-    layout: AgentLayout, *, stage: str, on_wait: Callable[[], None] | None = None
-) -> Iterator[None]:
-    key = (layout.runtime_status, layout.instance)
-    held = _OPERATIONS.get()
-    if key in held:
-        yield
-        return
-    if layout.placement == "visiting":
-        from .identity import visiting_home_guard
-
-        with visiting_home_guard(layout):
-            pass
-    owner = {
-        "token": uuid4().hex,
-        **control_owner(),
-        "stage": stage,
-    }
-    claimed = False
-    while not claimed:
-
-        def claim(entry):
-            nonlocal claimed
-            previous = entry["control"].get("operation")
-            if previous is not None:
-                alive = process_alive(previous.get("pid"), previous.get("created"))
-                if alive is None:
-                    raise ValueError("cannot verify the runtime control owner")
-                if alive:
-                    return
-            entry["control"]["operation"] = owner
-            claimed = True
-
-        update_instance(
-            layout.runtime_status, claim, instance=layout.instance, on_wait=on_wait
-        )
-        if not claimed:
-            if on_wait is not None:
-                on_wait()
-            time.sleep(0.05)
-    token = _OPERATIONS.set((*held, key))
-    try:
-        yield
-    finally:
-        _OPERATIONS.reset(token)
-        completed_launch: str | None = None
-
-        def release(entry):
-            nonlocal completed_launch
-            if entry["control"].get("operation") == owner:
-                completed_launch = entry["launch_id"]
-                entry["control"].pop("operation", None)
-
-        if layout.runtime_status.exists():
-            update_instance(layout.runtime_status, release, instance=layout.instance)
-            if completed_launch is not None:
-                remove_finished_instance(layout, completed_launch)
 
 
 def recover_control_write_lock(path: Path) -> None:

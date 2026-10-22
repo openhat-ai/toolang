@@ -40,6 +40,7 @@ from toolang.setup.config import load_setup_config
 from toolang.state import watcher as state_watcher
 from toolang.state.state import AgentState
 from toolang.up import process as agents
+from toolang.up import workload as workloads
 from toolang.up.config import (
     default_drivers,
     format_drivers,
@@ -434,7 +435,7 @@ def _serve_once(
             statistics = application_statistics(app)
             try:
                 statistics.start()
-                agents.write_runtime_state(
+                workloads.write_runtime_state(
                     spec.layout,
                     endpoint=spec.endpoint,
                     started_at=started_at,
@@ -590,22 +591,15 @@ def _serve_once(
             asyncio.run(close_core())
         finally:
             if failure is not None:
-                patch_workload(
-                    spec.layout.runtime_status,
+                workloads.fail_workload(
+                    spec.layout,
                     launch_id,
-                    {
-                        "status": "failed",
-                        "pid": None,
-                        "message": failure,
-                        "updated_at": time.strftime(
-                            "%Y-%m-%dT%H:%M:%SZ", time.gmtime()
-                        ),
-                    },
-                    instance=spec.layout.instance,
+                    failure,
+                    updated_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                     location=location,
                 )
             else:
-                agents.stop_runtime_state(
+                workloads.stop_runtime_state(
                     spec.layout,
                     expected_pid=os.getpid(),
                     launch_id=launch_id,

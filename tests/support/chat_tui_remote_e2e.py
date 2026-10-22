@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from toolang.up import workload as workloads
+
 import asyncio
 from pathlib import Path
 import sys
@@ -16,7 +18,7 @@ from toolang.catalog import CapsManager, ChoresManager
 from toolang.cli.toolang.commands.chat.remote import RemoteChatSession
 from toolang.cli.toolang.commands.chat.tui import ChatTuiApp
 from toolang.cli.common.terminal_session import prepare_terminal
-from toolang.up import AgentCore, process as agents
+from toolang.up import AgentCore
 from .execution_harness import ExecutionHarness
 
 
@@ -48,7 +50,7 @@ agic chat(_: Part[]) -> Part[]:
     core = AgentCore(harness.setup.layout)
     core.setup = _Snapshot(harness.setup)
     core.state = _Snapshot(harness.state)
-    agents.write_runtime_state(
+    workloads.write_runtime_state(
         core.layout,
         endpoint="http://runtime.test:7001",
         started_at="2026-08-26T00:00:00Z",

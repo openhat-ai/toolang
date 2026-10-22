@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from toolang.up import workload as workloads
+
 from toolang.catalog import source as cap_source
 
 from toolang.up import source as agent_sources
@@ -2634,7 +2636,7 @@ def test_roaming_source_reads_inspect_collections_and_records(
     monkeypatch.setenv("TOOLANG_ROOT", str(tmp_path))
     source = tmp_path / "demo.too"
     source.write_text("agic demo:\n  Reply directly.\n", encoding="utf-8")
-    from toolang.up.identity import allocate_roaming
+    from toolang.up.allocation import allocate_roaming
 
     layout = allocate_roaming(source, toolang_root=tmp_path)
     agent_sources.materialize_roaming_program(source, layout=layout)
@@ -2762,7 +2764,7 @@ def hosted_agent(monkeypatch):
         update_instance(layout.runtime_status, initialize)
         core = AgentCore(layout, lifecycle=ServerLifecycle("fixture", "persistent"))
         cores.append(core)
-        agents.write_runtime_state(
+        workloads.write_runtime_state(
             layout,
             endpoint="http://runtime.test:7001",
             sandbox="host",
@@ -4132,7 +4134,7 @@ def test_roaming_agent_info_uses_the_source_layout(
         templates.load_template("agent").raw_text,
         encoding="utf-8",
     )
-    from toolang.up.identity import allocate_roaming
+    from toolang.up.allocation import allocate_roaming
     from toolang.up.instance import patch_workload, read_instance
 
     selected = allocate_roaming(source, toolang_root=tmp_path)
@@ -4440,7 +4442,7 @@ def test_running_roaming_inspection_preserves_runtime_workspaces(
             sandbox="docker",
         ),
     )
-    from toolang.up.identity import allocate_roaming
+    from toolang.up.allocation import allocate_roaming
 
     allocate_roaming(source, toolang_root=tmp_path)
     requests = []

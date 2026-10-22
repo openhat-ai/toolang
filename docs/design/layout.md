@@ -176,7 +176,7 @@ Discovery references live under `${TOOLANG_ROOT}/.runtime/active/`:
   history nor proves process death. Known-path lookup works without registration.
 
 Each reference contains only its version, absolute authoritative status path,
-and launch ID. Read and write only format 5; rejected or unsupported records
+and launch ID. Read and write only format 5; rejected or unsupported documents
 remain untouched. `RuntimeRegistration` publishes into one Toolang root and uses
 one shared `active/register.lock` for publication and conditional removal.
 It does not initialize or stop workloads; removing a reference changes no
@@ -190,6 +190,14 @@ absent reference creates no files. Old guards are retained. For example:
 ```json
 {"version": 5, "status": "/project/.toolang/<root_code>/<place_code>/agents/aid/.runtime/status.json", "launch_id": "<fresh-launch-id>"}
 ```
+
+`up.identity` owns immutable `InstanceIdentity` bindings and strict parsing,
+validation, and serialization. Mutable control/workload fields remain outside
+that value. `up.allocation` owns roaming allocation and retained selection;
+`up.registry` owns `RuntimeReference`, publication, and conditional removal.
+Allocation and observation consume those boundaries without depending on each
+other. `RuntimeRegistration.publish()` supports explicit publication, while its
+context manager removes the matching reference on exit.
 
 Each agent runtime stores operational state under:
 
@@ -212,7 +220,9 @@ references, resolved startup bindings, and last successful settings; `workload`
 contains namespace-local PID/creation time, readiness, timestamps, and errors.
 Host and guest merge their owned fields through one short shared-file claim,
 validating the launch ID before atomic replacement. Management ownership lives
-in the record; no lock is held across startup, execution, or shutdown.
+in the status document; no lock is held across startup, execution, or shutdown.
+`up.instance` owns file reads and atomic updates; `up.workload` owns preparation,
+running/stopped/failed transitions, and management-operation ownership.
 
 Stop, exit, and failure retain every published place, agent home, status, and
 history. Only process/container/bootstrap resources and matching global references

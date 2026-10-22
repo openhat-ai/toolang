@@ -709,7 +709,7 @@ def _run(
     accepted: list[str] = []
     runnable_ref = f"{runnable_kind}:{runnable}"
     try:
-        from toolang.up.identity import allocate_roaming
+        from toolang.up.allocation import allocate_roaming
 
         layout = allocate_roaming(source_path, toolang_root=resolve_root(None))
         agent_sources.materialize_roaming_program(source_path, layout=layout)

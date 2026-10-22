@@ -1095,7 +1095,7 @@ def test_info_shows_starting_identity_without_stale_report(
 ) -> None:
     from toolang.plugin.sandboxes.host import process_ref
     from toolang.up.instance import SandboxState
-    from toolang.up.process import write_runtime_state
+    from toolang.up.workload import write_runtime_state
 
     root = tmp_path / "toolang"
     layout = _create_agent(root)
