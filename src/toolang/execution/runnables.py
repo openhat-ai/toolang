@@ -136,7 +136,12 @@ def resolve_public_runnable(
     )
     if parsed.module is not None and parsed.module != module:
         raise ToolangError(f"Runnable not found: {name}")
-    return ResolvedRunnable(name=parsed.name, module=module, executable=executable)
+    effective_name = (
+        unnamed_ref_name(executable, role="entry")
+        if parsed.name == "_"
+        else parsed.name
+    )
+    return ResolvedRunnable(name=effective_name, module=module, executable=executable)
 
 
 def resolve_agic_routes(

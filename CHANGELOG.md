@@ -257,6 +257,9 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   execution history is unchanged.
   ([#923](https://github.com/openhat-ai/toolang/pull/923))
 
+- Talk sends progress, dispatches independent work, then reports the worker's
+  accepted admission without awaiting completion.
+
 ### Fixed
 
 - Failed preparation no longer leaves active registrations; runtime references
@@ -412,6 +415,13 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 - Resident launches reject a `root`/`place` mismatch before changing runtime
   status, instead of recording the mismatched binding.
   ([#922](https://github.com/openhat-ai/toolang/pull/922))
+
+- Default-entry worker requests using `_` no longer fail with
+  `runnable is not authorized by hands: _`, as the unnamed entry alias is
+  canonicalized before authorization.
+
+- Inherited default prompts whose runtime module is absent from published Agent
+  State no longer fail with `Program not found: _`.
 
 ### Security
 
