@@ -17,7 +17,6 @@ from typer._click.exceptions import ClickException
 
 from toolang.cli.common.parameters import TextType
 
-from toolang.catalog.chore import AuthoredChores
 from toolang.catalog.agent import LocalAgents
 from toolang.common.layout import AgentLayout, validate_agent_name
 from toolang.common.progress import ProgressSink
@@ -34,7 +33,6 @@ from ...common.client import RuntimeClient
 from ...common.errors import RuntimeClientError
 from ...common.context import (
     ModelCatalogOption,
-    cli_context,
     context_root,
     require_runtime_agent,
     resolve_model_catalog_option,
@@ -209,10 +207,7 @@ def info_agent(
     else:
         resources = _local_resources(
             layout,
-            toolang_root=context_root(ctx),
             model_catalog=resolve_model_catalog_option(model_catalog),
-            source=cli_context(ctx).source,
-            selector=agent if layout.placement == "visiting" else None,
         )
         if status is None:
             status = user_call(process.status, ui_base_url=ui_base_url())
@@ -230,7 +225,6 @@ def info_agent(
     rows = [
         ("Root", str(layout.place)),
         ("Home", shorten_home_path(layout.home)),
-        ("Agent", layout.address),
         *resources,
         ("Status", status_value),
     ]
@@ -273,11 +267,43 @@ def _caps_summary(state: AgentState) -> str:
 def _local_resources(
     layout: AgentLayout,
     *,
-    toolang_root: Path,
     model_catalog: Path | None,
-    source: Path | None = None,
-    selector: str | None = None,
 ) -> list[tuple[str, str]]:
+    """Summarize current local configuration without starting an executor."""
+    from toolang.setup import SetupWatcher
+    from toolang.state.prepare import prepare_agent_state
+
+    if not layout.program.is_file():
+        return _saved_resources(layout)
+    progress = make_cli_progress(preparation=True)
+    try:
+        with progress:
+            state = cast(
+                AgentState,
+                user_call(prepare_agent_state, layout, progress=progress.sink),
+            )
+            progress.complete_preparation()
+            watcher = (
+                SetupWatcher(layout, model_catalog=model_catalog)
+                if model_catalog is not None
+                else SetupWatcher(layout)
+            )
+            setup = asyncio.run(watcher.refresh(progress=progress.sink))
+            return [
+                ("Tools", _tools_summary(setup, progress=progress.sink)),
+                ("Models", _models_summary(setup, progress=progress.sink)),
+                ("Caps", _caps_summary(state)),
+                ("Chores", _count(len(state.chores), "chore")),
+                ("Workspaces", ", ".join(setup.workspace_grants(state.workspaces))),
+            ]
+    except Exception as exc:
+        if progress.failure_stage is not None:
+            raise ClickException(progress.failure_message(exc)) from exc
+        raise
+
+
+def _saved_resources(layout: AgentLayout) -> list[tuple[str, str]]:
+    """Retain best-effort inspection of homes whose local source is unavailable."""
     from toolang.up.instance import read_instance
     from toolang.state.prepare import load_agent_state
 
@@ -374,15 +400,6 @@ def _cap_counts_summary(counts: Mapping[str, int]) -> str:
         _count(counts[kind + "s"], kind)
         for kind in ("psyche", "skill", "service", "prompt")
     )
-
-
-def _chores_summary(layout: AgentLayout) -> str:
-    catalog = AuthoredChores(
-        layout.home,
-        lock_path=layout.home_edit_lock,
-        agent_name=layout.name,
-    )
-    return _count(len(catalog.list()), "chore")
 
 
 def _models_summary(setup: AgentSetup, *, progress: ProgressSink | None = None) -> str:

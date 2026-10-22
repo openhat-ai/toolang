@@ -3931,6 +3931,10 @@ def test_agent_info_builds_state_and_setup_without_server(
     assert "Caps" in result.stdout
     assert "Models" in result.stdout
     assert "Tools" in result.stdout
+    assert "0 models, 0 providers" in result.stdout
+    assert "0 tools, 0 toolsets" in result.stdout
+    assert "Workspaces: lab" in result.stdout
+    assert "Agent:" not in result.stdout
     assert "not running" in result.stdout
 
 
@@ -4046,7 +4050,6 @@ def test_agent_info_fields_follow_the_compact_layout(
     expected = [
         "Root",
         "Home",
-        "Agent",
         "Tools",
         "Models",
         "Caps",

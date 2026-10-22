@@ -101,19 +101,37 @@ def test_cap_edit_publishes_with_ref_progress(tmp_path, monkeypatch, capsys):
     assert layout.agent_state.exists()
 
 
-def test_offline_info_never_prepares_or_fetches(tmp_path, monkeypatch, capsys):
+def test_offline_info_prepares_current_caps_with_ref_progress(
+    tmp_path, monkeypatch, capsys
+):
     from toolang.cli.toolang.main import main
+    from tests.support.setup import materialized_setup
+    from toolang.setup import SetupWatcher, ToolCollection
 
-    _agent(tmp_path)
-    monkeypatch.setattr(
-        cap_source,
-        "_fetch_github_file",
-        lambda _: pytest.fail("history query fetched a capability"),
-    )
+    layout = _agent(tmp_path)
+
+    def fetch(_ref):
+        assert f"{_REF} fetching" in capsys.readouterr().err
+        return b"Review carefully.\n"
+
+    async def setup(self, *, progress=None):
+        return materialized_setup(
+            layout=self.layout,
+            providers={},
+            adapters={},
+            models=(),
+            tools=ToolCollection(),
+            envs={},
+        )
+
+    monkeypatch.setattr(cap_source, "_fetch_github_file", fetch)
+    monkeypatch.setattr(SetupWatcher, "refresh", setup)
     assert main(["--root", str(tmp_path), "dev", "info"]) == 0
     output = capsys.readouterr()
     assert "not running" in output.out
-    assert "Prepared" not in output.err
+    assert "1 prompt" in output.out
+    assert output.err.count("Prepared 1 cap in ") == 1
+    assert layout.agent_state.exists()
 
 
 @pytest.mark.parametrize("command", [["caps"], ["prompt", "list"]])

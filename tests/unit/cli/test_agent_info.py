@@ -35,12 +35,14 @@ def test_info_shows_one_root_without_a_command_footer(
     monkeypatch.setattr(
         output, "_INFO_CONSOLE", Console(width=width, color_system=None)
     )
+    monkeypatch.setattr(agent, "_local_resources", lambda *_args, **_kwargs: [])
 
     assert main(["--root", str(root), f"agent:{name}", "info"]) == 0
     output = capsys.readouterr().out
     assert "Root:" in output
     assert "Toolang root:" not in output
     assert "Agent root:" not in output
+    assert "Agent:" not in output
     assert "Command:" not in output
 
 
@@ -93,6 +95,76 @@ def test_model_summary_counts_effective_setup_resources(
     tmp_path: Path, refs: tuple[str, ...], expected: str
 ) -> None:
     assert agent._models_summary(_setup(tmp_path, refs)) == expected
+
+
+@pytest.mark.parametrize("placement", ["resident", "roaming", "visiting"])
+@pytest.mark.parametrize("saved_counts", [False, True])
+def test_offline_info_reads_current_sources_instead_of_runtime_counts(
+    tmp_path, monkeypatch, placement, saved_counts
+):
+    from dataclasses import replace
+    from toolang.up.instance import update_instance
+
+    layout = AgentLayout.resident(tmp_path, "alice")
+    if placement == "roaming":
+        source = tmp_path / "alice.too"
+        source.write_text("psyche careful:\n  Be careful.\n")
+        layout = allocate_roaming(source, toolang_root=tmp_path)
+        agent_sources.materialize_roaming_program(source, layout=layout)
+    elif placement == "visiting":
+        layout = AgentLayout.visiting("gh:acme/alice", "alice", root=tmp_path)
+    layout.home.mkdir(parents=True, exist_ok=True)
+    layout.program.write_text("psyche careful:\n  Be careful.\n")
+    layout.config.write_text(f'[workspaces]\nproject = "{tmp_path}"\n')
+    if saved_counts:
+        update_instance(
+            layout.runtime_status,
+            lambda entry: entry["workload"].update(
+                resource_counts={
+                    "models": 99,
+                    "providers": 99,
+                    "tools": 99,
+                    "toolsets": 99,
+                    "caps": {
+                        kind: 99
+                        for kind in ("psyches", "skills", "services", "prompts")
+                    },
+                    "chores": 99,
+                    "workspaces": ["obsolete"],
+                }
+            ),
+        )
+    catalog = tmp_path / "selected.json"
+    observed_catalogs = []
+
+    class SetupWatcher:
+        def __init__(self, selected, *, model_catalog=None):
+            assert selected == layout
+            observed_catalogs.append(model_catalog)
+
+        async def refresh(self, *, progress=None):
+            return replace(_setup(tmp_path, ("test/current",)), layout=layout)
+
+    monkeypatch.setattr("toolang.setup.SetupWatcher", SetupWatcher)
+
+    def resources():
+        return dict(agent._local_resources(layout, model_catalog=catalog))
+
+    assert resources() == {
+        "Tools": "0 tools, 0 toolsets",
+        "Models": "1 model, 1 provider",
+        "Caps": "1 psyche, 0 skills, 0 services, 0 prompts",
+        "Chores": "0 chores",
+        "Workspaces": "lab, project",
+    }
+    layout.program.write_text(
+        "psyche careful:\n  Be careful.\npsyche concise:\n  Be concise.\n"
+    )
+    layout.config.write_text(f'[workspaces]\nupdated = "{tmp_path}"\n')
+    current = resources()
+    assert current["Caps"] == "2 psyches, 0 skills, 0 services, 0 prompts"
+    assert current["Workspaces"] == "lab, updated"
+    assert observed_catalogs == [catalog, catalog]
 
 
 @pytest.mark.parametrize("sandbox", ["host", "docker:python:3.13-slim"])

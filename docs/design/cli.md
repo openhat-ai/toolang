@@ -148,10 +148,11 @@ resource commands reject instance operands. There is no `--instance`/`-i` option
 - For home commands, a bare roaming path selects its last-created retained home.
   Completion time, restart time, and mtime never reorder it. Each Toolang root has
   its own root-code directory.
-- `info`/`inspect` do not prepare sources. Known paths/refs locate homes directly;
-  short roaming names require active registration. `info` uses live resource
-  summaries when available, otherwise saved summaries/State. Source contents may
-  be unavailable.
+- Known paths/refs locate homes directly; short roaming names require active
+  registration. `inspect` does not prepare sources. `info` uses live resource
+  summaries while running and reads current local configuration while stopped,
+  preparing State and Setup without starting an executor or fetching an agent
+  program. Retained homes without a local program use saved summaries/State.
 - A command pins its root/identity/generation once; controls attach only to that
   live owner. Offline fork/rewind edit history under verified stopped ownership.
 - Instance and Thread/Run selection bind the home for Chat, rerun, fork, rewind,

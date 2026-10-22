@@ -334,7 +334,7 @@ def test_info_shows_the_offline_agent_root_without_a_command_footer(
     assert captured["Root"] == str(layout.place)
     assert "Toolang root" not in captured
     assert "Agent root" not in captured
-    assert captured["Agent"] == layout.address
+    assert "Agent" not in captured
     assert capsys.readouterr().out == ""
 
 
