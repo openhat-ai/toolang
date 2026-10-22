@@ -4,9 +4,12 @@ from __future__ import annotations
 
 from tests.support.observations import run_begin, run_end
 
+import asyncio
 from collections.abc import AsyncIterator
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 import json
+import threading
 
 import httpx
 import pytest
@@ -943,6 +946,77 @@ def test_remote_chat_repeated_concrete_runs_do_not_list_models() -> None:
     assert requests.count("/api/v0/agics") == 0
     assert requests.count("/api/v0/flows") == 0
     assert requests.count("/api/v0/chat/runs/authored/stream") == 2
+
+
+def test_remote_chat_close_settles_completed_run_before_closing_transport(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    detail_started = threading.Event()
+    detail_settled = asyncio.Event()
+    transport_closed = asyncio.Event()
+    settled_before_close: list[bool] = []
+    requests: list[tuple[str, str]] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requests.append((request.method, request.url.path))
+        if request.url.path == "/healthz":
+            return httpx.Response(200, json={"ok": True})
+        if request.url.path == "/api/v0/workspaces":
+            return httpx.Response(200, json=_workspaces())
+        if request.url.path == "/api/v0/profile":
+            return httpx.Response(200, json=_profile())
+        if request.url.path == "/api/v0/runs/defaults":
+            return httpx.Response(200, json=_run_defaults())
+        if request.url.path == "/api/v0/chat/runs/authored/stream":
+            return _stream(_begin(), _end())
+        if request.url.path == "/api/v0/runs/run_remote":
+            detail_started.set()
+            try:
+                await transport_closed.wait()
+                raise httpx.ReadError("transport closed during detail", request=request)
+            finally:
+                detail_settled.set()
+        raise AssertionError(f"unexpected request: {request.method} {request.url}")
+
+    class ClosingTransport(httpx.MockTransport):
+        async def aclose(self) -> None:
+            settled_before_close.append(detail_settled.is_set())
+            transport_closed.set()
+            if detail_started.is_set():
+                await asyncio.wait_for(detail_settled.wait(), timeout=1)
+
+    session = remote.RemoteChatSession(
+        "http://runtime.test:7001",
+        expected_sandbox="host",
+        transport=ClosingTransport(handler),
+    )
+    events: list[RunObservation] = []
+    states: list[object] = []
+    errors: list[str] = []
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        try:
+            request = session.build_request(
+                "chat_remote",
+                RunOverride(),
+                CallInput({"_": "hello"}),
+                session.initial_setting(),
+            )
+            pending = pool.submit(
+                session.run, request, events.append, errors.append, states.append
+            )
+            assert detail_started.wait(timeout=5)
+            session.close()
+            pending.result(timeout=5)
+        finally:
+            session.close()
+
+    assert settled_before_close == [True]
+    assert [type(item) for item in events] == [RunBegin, RunEnd]
+    assert states == [RunAccepted("run_remote")]
+    assert errors == []
+    assert not any(path.endswith("/cancel") for _method, path in requests)
+    assert "remote run wait failed" not in caplog.text
+    assert "remote chat run disconnected" not in caplog.text
 
 
 def test_remote_chat_falls_back_to_detail_without_resubmitting(
