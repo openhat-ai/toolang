@@ -80,14 +80,14 @@ def test_source_contract_cannot_require_a_runtime():
             "agent name, path, ref or url",
             "AGENT",
         ),
-        ("home", "resident,visiting,roaming", False, None, "agent address", "ADDRESS"),
+        ("home", "resident,visiting,roaming", False, None, "agent address", "AGENT"),
         (
             "home",
             "resident,visiting",
             False,
             None,
             "resident or visiting agent address",
-            "ADDRESS",
+            "AGENT",
         ),
         (
             "home",
@@ -95,7 +95,7 @@ def test_source_contract_cannot_require_a_runtime():
             True,
             None,
             "running agent address",
-            "ADDRESS",
+            "AGENT",
         ),
         (
             "home",
@@ -103,7 +103,7 @@ def test_source_contract_cannot_require_a_runtime():
             True,
             "chore",
             "running resident agent address with the chore driver",
-            "ADDRESS",
+            "AGENT",
         ),
         (
             "execute",
@@ -143,7 +143,7 @@ def test_placement_errors_are_native(placements, selector, message):
 
 
 @pytest.mark.parametrize(
-    "role,metavar", [("source", "AGENT"), ("home", "ADDRESS"), ("execute", "AGENT")]
+    "role,metavar", [("source", "AGENT"), ("home", "AGENT"), ("execute", "AGENT")]
 )
 def test_agent_operand_is_prefix_only(role, metavar):
     seen = []
@@ -271,7 +271,7 @@ def test_group_carries_prefix_to_leaf_contract_without_stealing_name(tmp_path):
     parent = Context(command, info_name="too")
     group_ctx = Context(owner, info_name="group", parent=parent)
     leaf_ctx = Context(owner.commands["history"], info_name="history", parent=group_ctx)
-    assert "too <ADDRESS> group history" in leaf_ctx.get_usage()
+    assert "too <AGENT> group history" in leaf_ctx.get_usage()
     assert not tuple(tmp_path.iterdir())
 
 

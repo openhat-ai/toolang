@@ -397,19 +397,19 @@ def test_cli_exposes_plural_list_resources_and_removes_channels() -> None:
         ),
         (
             ["inspect"],
-            "Usage: toolang <ADDRESS> inspect [OPTIONS] <SUBJECT>...",
+            "Usage: toolang <AGENT> inspect [OPTIONS] <SUBJECT>...",
             "SUBJECT",
             "SUBJECT...",
         ),
         (
             ["rewind"],
-            "Usage: toolang <ADDRESS> rewind [OPTIONS] <RUN>",
+            "Usage: toolang <AGENT> rewind [OPTIONS] <RUN>",
             "RUN",
             "{RUN}",
         ),
         (
             ["fork"],
-            "Usage: toolang <ADDRESS> fork [OPTIONS] <RUN>",
+            "Usage: toolang <AGENT> fork [OPTIONS] <RUN>",
             "RUN",
             "{RUN}",
         ),

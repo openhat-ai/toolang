@@ -433,7 +433,7 @@ def test_unknown_option_is_not_hidden_by_a_missing_agent(
     output = capsys.readouterr()
     assert not output.out
     assert strip_ansi(output.err).startswith(
-        f"Error: No such option: --unknown\n\nUsage: too <{'AGENT' if command == 'chat' else 'ADDRESS'}> {command} [OPTIONS]"
+        f"Error: No such option: --unknown\n\nUsage: too <AGENT> {command} [OPTIONS]"
     )
 
 
@@ -742,20 +742,20 @@ def test_lifecycle_and_bootstrap_use_their_native_operand_forms(
         ("_serve", "NAME", "agent name"),
         ("start", "AGENT", "resident or visiting agent by name, ref or url"),
         ("serve", "AGENT", "resident or visiting agent by name, ref or url"),
-        ("stop", "ADDRESS", "resident or visiting agent address"),
-        ("info", "ADDRESS", "agent address"),
+        ("stop", "AGENT", "resident or visiting agent address"),
+        ("info", "AGENT", "agent address"),
         ("chat", "AGENT", "agent name, path, ref or url"),
-        ("inspect", "ADDRESS", "agent address"),
-        ("steer", "ADDRESS", "running agent address"),
-        ("cancel", "ADDRESS", "running agent address"),
-        ("rerun", "ADDRESS", "agent address"),
-        ("fork", "ADDRESS", "agent address"),
-        ("rewind", "ADDRESS", "agent address"),
+        ("inspect", "AGENT", "agent address"),
+        ("steer", "AGENT", "running agent address"),
+        ("cancel", "AGENT", "running agent address"),
+        ("rerun", "AGENT", "agent address"),
+        ("fork", "AGENT", "agent address"),
+        ("rewind", "AGENT", "agent address"),
         ("workspace list", "AGENT", "agent name, path, ref or url"),
-        ("chore list", "ADDRESS", "resident agent address"),
+        ("chore list", "AGENT", "resident agent address"),
         (
             "chore run",
-            "ADDRESS",
+            "AGENT",
             "running resident agent address with the chore driver",
         ),
     ],

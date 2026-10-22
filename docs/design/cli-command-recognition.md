@@ -44,16 +44,17 @@ Extend the existing `AgentContract`, `AgentArgument`, `AgentParameter`, and
 
 | Property | Meaning |
 | --- | --- |
-| Role | `source`, `home`, or `execute`; determines lookup and metavar. |
+| Role | `source`, `home`, or `execute`; determines lookup. |
 | Forms | Accepted `name`, `path`, `ref`, `url`, and explicit `address` forms. |
 | Placements | Accepted resident, visiting, and roaming targets. |
 | Requiredness | Whether omitted selection uses root scope; represented by the native parameter default/required value. |
 | Runtime requirement | Whether the action requires a live owner and a particular driver. |
 
-Source/execute parameters use `AGENT`; home parameters use `ADDRESS`. Generate
-parameter types, concise descriptions, completion eligibility, and lazy routing
-metadata from the same declaration. Command callbacks declare the native agent
-argument through `AgentArgument`; declaration checks reject inconsistent roles,
+All agent-prefix parameters use `AGENT`; descriptions explain accepted forms,
+address semantics, and runtime requirements. Generate parameter types, concise
+descriptions, completion eligibility, and lazy routing metadata from the same
+declaration. Command callbacks declare their native argument through
+`AgentArgument`; declaration checks reject inconsistent roles,
 forms, defaults, and multiple agent parameters. Ordinary catalog operands may
 reuse lexical name/source types without accepting a prefix.
 
@@ -81,13 +82,13 @@ remain safe across invocations.
 
 Lazy command metadata references the same contract used to construct the native
 command. Root help and recognition do not load unrelated implementations or parse
-local scripts. Prefix usage renders before the top-level command/group using the
-selected leaf's role, for example:
+local scripts. Prefix usage renders `AGENT` before the top-level command/group;
+the selected leaf determines whether it is required, for example:
 
 ```text
-too ADDRESS info [OPTIONS]
+too AGENT info [OPTIONS]
 too AGENT workspace add [OPTIONS] PATH
-too ADDRESS chore run [OPTIONS] CHORE
+too AGENT chore run [OPTIONS] CHORE
 ```
 
 ## Command contracts and descriptions

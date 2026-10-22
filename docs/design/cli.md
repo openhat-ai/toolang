@@ -40,7 +40,8 @@ Each executable leaf declares one native `AgentArgument`: `source` for authored
 configuration, `home` for retained state or control, and `execute` for execution.
 The declaration generates its type, metavar, concise description, and completion.
 Groups only carry the raw prefix; their selected leaf validates it and owns the
-argument row. Home parameters display `ADDRESS`; other roles display `AGENT`.
+argument row. Every role displays `AGENT`; its description explains accepted
+forms, address semantics, and runtime requirements.
 Native Typer owns defaults, requiredness, conversion, callbacks, and eager help.
 Agent leaves disable automatic empty-tail help so a prefix can satisfy the
 argument without synthetic argv tokens. Selection stays in invocation Context;

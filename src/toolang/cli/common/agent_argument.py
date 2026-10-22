@@ -70,10 +70,6 @@ class AgentContract:
         return tuple(forms)
 
     @property
-    def metavar(self) -> str:
-        return "ADDRESS" if self.role == "home" else "AGENT"
-
-    @property
     def description(self) -> str:
         ordered = [
             placement
@@ -218,7 +214,7 @@ def AgentArgument(
         required_driver=required_driver,
     )
     return typer.Argument(
-        metavar=kwargs.pop("metavar", contract.metavar),
+        metavar=kwargs.pop("metavar", "AGENT"),
         click_type=_AgentType(contract),
         show_default=False,
         help=kwargs.pop("help", contract.description),
