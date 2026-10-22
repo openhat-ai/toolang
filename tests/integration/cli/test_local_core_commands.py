@@ -3936,8 +3936,6 @@ def test_agent_info_builds_state_and_setup_without_server(
 def test_agent_info_fields_follow_the_compact_layout(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, status: str
 ) -> None:
-    import shlex
-
     from toolang.base.types.model import Model, ModelToolang, Provider
     from toolang.plugin.models import query
 
@@ -4042,8 +4040,7 @@ def test_agent_info_fields_follow_the_compact_layout(
 
     assert result.exit_code == 0, result.stderr
     expected = [
-        "Toolang root",
-        "Agent root",
+        "Root",
         "Home",
         "Agent",
         "Tools",
@@ -4058,14 +4055,9 @@ def test_agent_info_fields_follow_the_compact_layout(
     if status != "stopped":
         expected += ["Sandbox", "PID", "API", "WebUI"]
     assert [key for key, _value in captured] == expected
-    assert shlex.split(result.stdout.removeprefix("Command: ").strip()) == [
-        "too",
-        "--root",
-        str(root),
-        "alice",
-        "info",
-    ]
+    assert result.stdout == ""
     rows = dict(captured)
+    assert rows["Root"] == str(root)
     assert rows["Models"] == "2 models, 1 provider"
     workspace_names = ["lab"]
     if status == "running":

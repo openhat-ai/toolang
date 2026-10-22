@@ -1,7 +1,6 @@
 """Agent info summarizes resources from the unified setup accessors."""
 
 from pathlib import Path
-import shlex
 
 import pytest
 from toolang.up import source as agent_sources
@@ -23,7 +22,7 @@ from toolang.setup import AgentSetup
 
 @pytest.mark.parametrize("name", ["alice", "info", "top", "run", "more"])
 @pytest.mark.parametrize("width", [44, 80])
-def test_info_copy_command_selects_resident_names_that_collide_with_commands(
+def test_info_shows_one_root_without_a_command_footer(
     tmp_path, monkeypatch, capsys, name, width
 ):
     from rich.console import Console
@@ -38,13 +37,11 @@ def test_info_copy_command_selects_resident_names_that_collide_with_commands(
     )
 
     assert main(["--root", str(root), f"agent:{name}", "info"]) == 0
-    lines = capsys.readouterr().out.splitlines()
-    (command,) = [
-        line.partition("Command: ")[2] for line in lines if "Command: " in line
-    ]
-    args = shlex.split(command)
-    assert args[0] == "too"
-    assert main(args[1:]) == 0
+    output = capsys.readouterr().out
+    assert "Root:" in output
+    assert "Toolang root:" not in output
+    assert "Agent root:" not in output
+    assert "Command:" not in output
 
 
 def _setup(tmp_path: Path, refs: tuple[str, ...]) -> AgentSetup:
@@ -190,8 +187,10 @@ def test_running_info_uses_runtime_resources_without_loading_local_sources(
     assert "guest" in output.out
     assert "Drivers: chat,talk,chore" in output.out
     normalized = " ".join(output.out.split())
-    assert f"Toolang root: {tmp_path.resolve()}" in normalized
-    assert f"Agent root: {layout.place}" in normalized
+    assert f"Root: {layout.place}" in normalized
+    assert "Toolang root:" not in output.out
+    assert "Agent root:" not in output.out
+    assert "Command:" not in output.out
     assert "Place:" not in output.out
     assert set(calls) == set(payloads)
     assert not layout.agent_state.exists()

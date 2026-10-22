@@ -227,22 +227,8 @@ def info_agent(
     message = runtime_value(status.message)
     if status.status not in {"running", "stopped"} and message != "-":
         status_value = f"{status_value}: {message}"
-    import shlex
-
-    selector = (
-        f"{layout.source_path}@{layout.place_code}"
-        if layout.placement == "roaming"
-        else layout.address
-    )
-    if layout.placement == "resident" and selector in getattr(
-        ctx.find_root().command, "commands", {}
-    ):
-        selector = f"agent:{selector}"
-    toolang_root = str(context_root(ctx).expanduser().resolve())
-    command = shlex.join(["too", "--root", toolang_root, selector, "info"])
     rows = [
-        ("Toolang root", toolang_root),
-        ("Agent root", str(layout.place)),
+        ("Root", str(layout.place)),
         ("Home", shorten_home_path(layout.home)),
         ("Agent", layout.address),
         *resources,
@@ -260,7 +246,6 @@ def info_agent(
         if status.webui_url:
             rows.append(("WebUI", status.webui_url))
     echo_pairs_table(rows, avatar=agent_avatar(), title=agent_name.upper())
-    typer.echo(f"Command: {command}")
 
 
 def _drivers_summary(value: object) -> str:

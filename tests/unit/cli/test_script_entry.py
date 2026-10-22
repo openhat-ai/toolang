@@ -3,12 +3,10 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from io import StringIO
 from pathlib import Path
-import shlex
 
 import pytest
 from rich.cells import cell_len
 import typer
-from typer.core import TyperCommand
 from typer._click.utils import strip_ansi
 from typer._click.exceptions import ClickException
 
@@ -227,16 +225,9 @@ def test_init_creates_script_and_portable_config(
     assert program.flows == ()
     output = capsys.readouterr().out
     lines = output.splitlines()
-    assert lines[:2] == [
+    assert lines == [
         "Created aid.too and toolang.toml.",
         "Add .toolang/ to .gitignore.",
-    ]
-    assert len(lines) == 3
-    assert lines[2].startswith("Try: ")
-    assert shlex.split(lines[2].removeprefix("Try: ")) == [
-        executable,
-        str(Path(directory) / "aid.too"),
-        "--help",
     ]
 
 
@@ -379,7 +370,7 @@ def test_init_reports_a_postcheck_collision(filename, tmp_path, monkeypatch, cap
 def test_concurrent_init_has_one_winner(tmp_path):
     def create():
         try:
-            init_script(typer.Context(TyperCommand("too"), info_name="too"), tmp_path)
+            init_script(tmp_path)
             return True
         except ClickException:
             return False
