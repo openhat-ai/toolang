@@ -92,6 +92,10 @@ when invoking the command.
 pointing to `too help allow`, `too help limit`, and `too help default`. Model
 options point to `too help model`. Keep field tables and model parameter details
 out of command help; the standalone topics above provide those references.
+Within a topic, give each key its own assignment-syntax block with an indented
+description. Describe a single value form in prose; place alternatives and their
+meanings in a nested `Possible values` section. Keep units, numeric constraints,
+and special-value behavior with the key they describe.
 
 ## Script selection and output
 

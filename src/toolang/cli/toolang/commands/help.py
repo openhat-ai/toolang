@@ -40,6 +40,29 @@ def _option(formatter: HelpFormatter, name: str, description: str) -> None:
     formatter.write_text(description + ".")
 
 
+def _setting(
+    formatter: HelpFormatter,
+    name: str,
+    metavar: str,
+    description: str,
+    *notes: str,
+    choices: Sequence[tuple[str, str]] = (),
+) -> None:
+    formatter.write_paragraph()
+    formatter.write_text(
+        Text.assemble(
+            (name, "cli.argument.name"), ("=" + metavar, "cli.option.metavar")
+        )
+    )
+    with formatter.indentation():
+        formatter.write_text(description + ".")
+        for note in notes:
+            formatter.write_paragraph()
+            formatter.write_text(note)
+        if choices:
+            _definitions(formatter, "Possible values", choices)
+
+
 def _examples(formatter: HelpFormatter, rows: Sequence[tuple[str, str]]) -> None:
     with formatter.section("Examples"):
         for index, (description, command) in enumerate(rows):
@@ -52,31 +75,22 @@ def _examples(formatter: HelpFormatter, rows: Sequence[tuple[str, str]]) -> None
 
 def _allow(formatter: HelpFormatter) -> None:
     _option(formatter, "--allow", "Select allowed resources")
-    _definitions(
-        formatter,
-        "Keys",
-        [
-            ("models", "Model queries"),
-            ("tools", "Tool queries"),
-            ("psyches", "Psyche queries"),
-            ("skills", "Skill queries"),
-            ("services", "Service queries"),
-            ("prompts", "Prompt queries"),
-        ],
-        "Repeat a key to combine TQ queries by union.",
-    )
-    _definitions(
-        formatter,
-        "Values",
-        [
-            ("QUERY", "Match resources with a TQ query"),
-            ("all", "Select all resources"),
-            ("none", "Select no resources"),
-        ],
-        "With all or none, that key may appear only once.",
-        "Quote values containing spaces.",
-        "Existing policy restrictions still apply.",
-    )
+    formatter.write_text("Repeat a key to combine TQ queries by union.")
+    formatter.write_text("With all or none, that key may appear only once.")
+    formatter.write_text("Quote values containing spaces.")
+    formatter.write_text("Existing policy restrictions still apply.")
+    for name in ("models", "tools", "psyches", "skills", "services", "prompts"):
+        _setting(
+            formatter,
+            name,
+            "QUERY|all|none",
+            f"Select allowed {name}",
+            choices=[
+                ("QUERY", f"Match {name} with a TQ query"),
+                ("all", f"Select all {name}"),
+                ("none", f"Select no {name}"),
+            ],
+        )
     _examples(
         formatter,
         [
@@ -88,27 +102,25 @@ def _allow(formatter: HelpFormatter) -> None:
 
 def _limit(formatter: HelpFormatter) -> None:
     _option(formatter, "--limit", "Set run limits")
-    _definitions(
-        formatter,
-        "Keys",
-        [
-            ("agic_model_calls", "Maximum model calls per agic"),
-            ("agic_tool_calls", "Maximum tool calls per agic"),
-            ("tokens", "Total input and output tokens per run tree"),
-            ("cost", "Total cost in USD per run tree"),
-            ("time", "Elapsed time in seconds per run tree"),
-        ],
-        "Each key may appear once.",
-    )
-    _definitions(
-        formatter,
-        "Values",
-        [
-            ("INTEGER", "Non-negative integer"),
-            ("DECIMAL", "Non-negative decimal; cost only"),
-            ("none", "Unset the limit"),
-        ],
-    )
+    formatter.write_text("Each key may appear once.")
+    for name, description in (
+        ("agic_model_calls", "Maximum model calls per agic"),
+        ("agic_tool_calls", "Maximum tool calls per agic"),
+        ("tokens", "Total input and output tokens per run tree"),
+        ("cost", "Total cost in USD per run tree"),
+        ("time", "Elapsed time in seconds per run tree"),
+    ):
+        numeric = "DECIMAL" if name == "cost" else "INTEGER"
+        _setting(
+            formatter,
+            name,
+            f"{numeric}|none",
+            description,
+            choices=[
+                (numeric, f"Non-negative {numeric.lower()}"),
+                ("none", "Unset the limit"),
+            ],
+        )
     _examples(
         formatter,
         [
@@ -123,17 +135,22 @@ def _limit(formatter: HelpFormatter) -> None:
 
 def _default(formatter: HelpFormatter) -> None:
     _option(formatter, "--default", "Set runtime or Chat session defaults")
-    _definitions(
+    formatter.write_text("Each key may appear once. Quote values containing spaces.")
+    _setting(
         formatter,
-        "Keys",
-        [
-            ("model", "Model value; see 'too help model'"),
-            (
-                "runnable",
-                "Entry ref, or none for automatic entry selection; Chat only",
-            ),
+        "model",
+        "MODEL",
+        "Set the runtime or Chat session model; see 'too help model'",
+    )
+    _setting(
+        formatter,
+        "runnable",
+        "REF|none",
+        "Select the entry ref; Chat only",
+        choices=[
+            ("REF", "Entry ref"),
+            ("none", "Use automatic entry selection"),
         ],
-        "Each key may appear once. Quote values containing spaces.",
     )
     _definitions(
         formatter,
@@ -210,26 +227,41 @@ def _model(formatter: HelpFormatter) -> None:
             "and parameter-only values.",
         ):
             formatter.write_text(note)
-    _definitions(
-        formatter,
-        "Parameters",
-        [
-            ("effort", "Reasoning level, non-negative token budget, or auto"),
-            ("max_output", "Positive output token count, or auto"),
-        ],
-        "auto clears that parameter.",
-        "Supported reasoning levels depend on the selected model.",
-    )
-    _definitions(
-        formatter,
-        "Selection values",
-        [
-            ("default", "Use the inherited model or session baseline"),
-            ("unset", "Clear selection; startup entry fallback still applies"),
-        ],
-        "In Chat and per-run overrides, unset selects model-free execution.",
-        "none is not a model selection value.",
-    )
+    with formatter.section("Parameters"):
+        _setting(
+            formatter,
+            "ref",
+            "MODEL|default|unset",
+            "Select the model identity",
+            "In Chat and per-run overrides, unset selects model-free execution.",
+            "none is not a model selection value.",
+            choices=[
+                ("MODEL", "Exact model ref"),
+                ("default", "Use the inherited model or session baseline"),
+                ("unset", "Clear selection; startup entry fallback still applies"),
+            ],
+        )
+        _setting(
+            formatter,
+            "effort",
+            "LEVEL|INTEGER|auto",
+            "Set model reasoning",
+            choices=[
+                ("LEVEL", "Reasoning level supported by the selected model"),
+                ("INTEGER", "Non-negative token budget"),
+                ("auto", "Clear the reasoning parameter"),
+            ],
+        )
+        _setting(
+            formatter,
+            "max_output",
+            "INTEGER|auto",
+            "Set the maximum output token count",
+            choices=[
+                ("INTEGER", "Positive output token count"),
+                ("auto", "Clear the output limit"),
+            ],
+        )
     _examples(
         formatter,
         [

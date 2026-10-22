@@ -2,6 +2,7 @@
 
 from io import StringIO
 from pathlib import Path
+import re
 import shlex
 import subprocess
 import sys
@@ -116,17 +117,21 @@ def test_topics_wrap_and_distinguish_definitions_from_explanations(
     assert status == 0 and not error
     assert all(cell_len(line) <= width for line in output.plain.splitlines())
     assert "Rules:" not in output.plain
-    if topic in {"allow", "limit"}:
-        assert output.plain.index("Keys:") < output.plain.index("Values:")
+    assert "Keys:" not in output.plain and "Values:" not in output.plain
     if color_system is None:
         return
-    label, explanation, heading = {
-        "allow": ("QUERY", "Match resources", "Values:"),
-        "limit": ("INTEGER", "Non-negative", "Values:"),
-        "default": ("runnable", "Entry ref", "Keys:"),
-        "model": ("effort", "Reasoning level", "Parameters:"),
+    key, label, explanation = {
+        "allow": ("models", "QUERY", "Match models"),
+        "limit": ("agic_model_calls", "INTEGER", "Non-negative"),
+        "default": ("runnable", "REF", "Entry ref"),
+        "model": ("effort", "LEVEL", "Reasoning level"),
     }[topic]
-    section_start = output.plain.index(heading)
+    assignment = re.search(rf"^ *({key})=", output.plain, re.M)
+    assert assignment is not None
+    key_start = assignment.start(1)
+    key_style = output.get_style_at_offset(console, key_start)
+    metavar_style = output.get_style_at_offset(console, key_start + len(key) + 1)
+    section_start = output.plain.index("Possible values:", key_start)
     label_style = output.get_style_at_offset(
         console, output.plain.index(label, section_start)
     )
@@ -134,6 +139,8 @@ def test_topics_wrap_and_distinguish_definitions_from_explanations(
         console, output.plain.index(explanation, section_start)
     )
     heading_style = output.get_style_at_offset(console, section_start)
+    assert key_style.bold and not metavar_style.bold
+    assert bool(metavar_style.dim) is (theme is PLAIN)
     assert label_style.bold and not prose_style.bold and not prose_style.dim
     assert heading_style.bold
     assert (label_style.color is not None) is (theme is UV)
@@ -144,12 +151,33 @@ def test_topics_wrap_and_distinguish_definitions_from_explanations(
 
 @pytest.mark.parametrize(
     ("topic", "fields"),
-    [("allow", _ALLOW_FIELDS), ("limit", _LIMIT_FIELDS), ("default", _DEFAULT_FIELDS)],
+    [
+        ("allow", _ALLOW_FIELDS),
+        ("limit", _LIMIT_FIELDS),
+        ("default", _DEFAULT_FIELDS),
+        ("model", ("ref", "effort", "max_output")),
+    ],
 )
-def test_topic_keys_cover_the_current_parser_vocabulary(topic, fields):
+def test_topic_keys_keep_their_value_definitions_in_indented_blocks(topic, fields):
     _, output, _, _ = _invoke(["help", topic])
-    rows = output.plain.split("Keys:\n", 1)[1].split("\n\n", 1)[0]
-    assert tuple(line.split()[0] for line in rows.splitlines()) == fields
+    definitions = list(re.finditer(r"^( *)([a-z_]+)=(\S+)\n", output.plain, re.M))
+    assert tuple(match[2] for match in definitions) == fields
+    for index, match in enumerate(definitions):
+        end = (
+            definitions[index + 1].start()
+            if index + 1 < len(definitions)
+            else output.plain.index("\nExamples:")
+        )
+        block = output.plain[match.end() : end]
+        indentation = match[1] + "  "
+        assert block.startswith(indentation)
+        if "|" not in match[3]:
+            assert "Possible values:" not in block
+            continue
+        values = block.split(f"\n{indentation}Possible values:\n", 1)[1]
+        rows = values.split("\n\n", 1)[0].splitlines()
+        assert all(line.startswith(indentation + "  ") for line in rows)
+        assert tuple(line.split()[0] for line in rows) == tuple(match[3].split("|"))
 
 
 def test_topic_content_preserves_value_rules_and_default_lifetimes():
@@ -159,7 +187,8 @@ def test_topic_content_preserves_value_rules_and_default_lifetimes():
     assert "combine TQ queries by union" in outputs["allow"]
     assert "With all or none, that key may appear only once" in outputs["allow"]
     assert "Existing policy restrictions still apply" in outputs["allow"]
-    assert "Non-negative decimal; cost only" in outputs["limit"]
+    assert "cost=DECIMAL|none" in outputs["limit"]
+    assert "Non-negative decimal" in outputs["limit"]
     assert "USD per run tree" in outputs["limit"]
     assert "seconds per run tree" in outputs["limit"]
     assert "Each key may appear once" in outputs["limit"]
@@ -173,10 +202,13 @@ def test_topic_content_preserves_value_rules_and_default_lifetimes():
         "TOOLANG_DEFAULT_RUNNABLE and runtime runnable defaults are unsupported"
         in outputs["default"]
     )
-    assert "none for automatic entry selection; Chat only" in outputs["default"]
+    assert "Select the entry ref; Chat only" in outputs["default"]
+    assert "none Use automatic entry selection" in outputs["default"]
     assert "Omit the ref to change parameters on an effective model" in outputs["model"]
-    assert "non-negative token budget, or auto" in outputs["model"]
-    assert "Positive output token count, or auto" in outputs["model"]
+    assert "Non-negative token budget" in outputs["model"]
+    assert "auto Clear the reasoning parameter" in outputs["model"]
+    assert "Positive output token count" in outputs["model"]
+    assert "auto Clear the output limit" in outputs["model"]
     assert "unset selects model-free execution" in outputs["model"]
     assert "--compact-model requires an exact ref" in outputs["model"]
     assert "none is not a model selection value" in outputs["model"]
