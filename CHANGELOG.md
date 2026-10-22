@@ -173,6 +173,31 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   preparation, API schemas, or interactive UI, reducing measured startup time.
   ([#918](https://github.com/openhat-ai/toolang/pull/918))
 
+- AGENT precedes `cd`, `chat`, `info`, `serve`, `start`, `stop`, and `top`,
+  replacing the earlier mixed positions.
+  ([#919](https://github.com/openhat-ai/toolang/pull/919))
+
+- **Breaking:** Command-suffix positions are removed, so rewrite
+  `too serve AGENT` and `too stop AGENT` as `too AGENT serve` and
+  `too AGENT stop`.
+  ([#919](https://github.com/openhat-ai/toolang/pull/919))
+
+- `caps`, `models`, `providers`, and `tools` keep optional AGENT prefixes
+  before the command.
+  ([#919](https://github.com/openhat-ai/toolang/pull/919))
+
+- Catalog commands keep ordinary operands: `too new NAME`, `too remove NAME`,
+  and `too clone SOURCE [TARGET]`.
+  ([#919](https://github.com/openhat-ai/toolang/pull/919))
+
+- Agent-scoped help states each accepted form's placement and runtime
+  requirements.
+  ([#919](https://github.com/openhat-ai/toolang/pull/919))
+
+- Command recognition no longer reads installed homes to guess bare words;
+  root completion escapes residents that collide with registered commands.
+  ([#919](https://github.com/openhat-ai/toolang/pull/919))
+
 ### Fixed
 
 - Failed preparation no longer leaves active registrations; runtime references
@@ -301,6 +326,9 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 - Invalid script FILE forms now exit 2 with native FILE diagnostics, bare
   `too run --` prints static help, and `too new` labels its operand `NAME`.
   ([#916](https://github.com/openhat-ai/toolang/pull/916))
+
+- Invalid catalog names and missing leaf operands report native parameter errors.
+  ([#919](https://github.com/openhat-ai/toolang/pull/919))
 
 ### Security
 
