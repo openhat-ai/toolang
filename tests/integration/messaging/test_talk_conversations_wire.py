@@ -19,13 +19,7 @@ from tests.support.chat_tui_pty import ChatTuiPtySession
 from toolang.teaming.agent_client import AgentClient
 from toolang.teaming.client import HubClient
 from toolang.teaming.ids import dm_id
-from toolang.teaming.backend.valkey.keys import (
-    CONVOS,
-    PRESENCE,
-    STATS,
-    TEAM_EVENTS,
-    convo_key,
-)
+from toolang.teaming.backend.valkey.keys import Keys
 from toolang.teaming.schemas import Message
 from toolang.common.version import displayed_toolang_version
 
@@ -57,7 +51,7 @@ def test_talk_empty_dm_first_send_peer_reply_and_observation(
     monkeypatch.setenv("TOOLANG_TMUX", "0")
     monkeypatch.setenv("COLUMNS", "180")
 
-    def command(*arguments):
+    def command(*arguments, group="talk"):
         return subprocess.run(
             [
                 sys.executable,
@@ -65,7 +59,7 @@ def test_talk_empty_dm_first_send_peer_reply_and_observation(
                 "toolang.cli.toolang.main",
                 "--root",
                 str(tmp_path),
-                "talk",
+                group,
                 *arguments,
             ],
             capture_output=True,
@@ -94,12 +88,18 @@ def test_talk_empty_dm_first_send_peer_reply_and_observation(
             server_version = (await human.info()).version
             assert server_version != "unknown"
             direct = dm_id(connection.human, alice.actor)
-            before = {key: await raw.dump(key) for key in (CONVOS, STATS, TEAM_EVENTS)}
-            listing = await asyncio.to_thread(command)
+            before = {
+                key: await raw.dump(key)
+                for key in (
+                    Keys(valkey.root_code).convos,
+                    Keys(valkey.root_code).stats,
+                    Keys(valkey.root_code).team_events,
+                )
+            }
+            listing = await asyncio.to_thread(command, "list", group="convo")
             assert listing.returncode == 0, listing.stderr
             assert all(
-                word in listing.stdout
-                for word in ("CONVERSATION", "MEMBERS", "alice", "bob")
+                word in listing.stdout for word in ("CONVO", "MEMBERS", "alice", "bob")
             )
             assert direct not in listing.stdout
             missing = await asyncio.to_thread(command, "alice,bob")
@@ -130,7 +130,9 @@ def test_talk_empty_dm_first_send_peer_reply_and_observation(
                 await asyncio.to_thread(tui.wait_for, "Type a message", direct)
                 tui.send(b"first human send\r")
                 async with asyncio.timeout(8):
-                    while not await raw.exists(convo_key(direct, "messages")):
+                    while not await raw.exists(
+                        Keys(valkey.root_code).convo_key(direct, "messages")
+                    ):
                         await asyncio.sleep(0.05)
                 entries = await human.history(direct)
                 assert [Message.decode(row[1]["data"]).body for row in entries] == [
@@ -144,7 +146,7 @@ def test_talk_empty_dm_first_send_peer_reply_and_observation(
                 assert await asyncio.to_thread(tui.wait_for_exit) == 0, tui.output
             finally:
                 tui.close()
-            listing = await asyncio.to_thread(command)
+            listing = await asyncio.to_thread(command, "list", group="convo")
             assert direct in listing.stdout and "Renamed pair" in listing.stdout
             await alice.register(connection.human)
             await bob.register(connection.human)
@@ -152,7 +154,7 @@ def test_talk_empty_dm_first_send_peer_reply_and_observation(
             try:
                 peer_direct = dm_id(connection.human, bob.actor)
                 await asyncio.to_thread(tui.wait_for, "Type a message", peer_direct)
-                assert not await raw.hexists(CONVOS, peer_direct)
+                assert not await raw.hexists(Keys(valkey.root_code).convos, peer_direct)
                 receipt = await bob.send("human:owner", body="peer creates this DM")
                 await asyncio.to_thread(tui.wait_for, "peer creates this DM")
                 assert receipt["conversation"] == peer_direct
@@ -244,7 +246,9 @@ def test_presence_expires_naturally_and_gc_names_remain_nonunique(
                 checkpoint = await anext(events)
                 assert checkpoint.event == "checkpoint"
                 await alice.register(connection.human)
-                deadline = int(await raw.zscore(PRESENCE, alice.actor))
+                deadline = int(
+                    await raw.zscore(Keys(valkey.root_code).presence, alice.actor)
+                )
                 first = await human.create_conversation("Development")
                 second = await human.create_conversation("Development")
                 assert first.id != second.id
@@ -256,7 +260,9 @@ def test_presence_expires_naturally_and_gc_names_remain_nonunique(
                 receipt = await human.send(first.id, body="retained message")
                 await human.send(first.id, body="last message")
                 await raw.xtrim(
-                    convo_key(first.id, "messages"), maxlen=1, approximate=False
+                    Keys(valkey.root_code).convo_key(first.id, "messages"),
+                    maxlen=1,
+                    approximate=False,
                 )
                 stats = await human.statistics(first.id)
                 assert stats["messages_total"] == 2 and stats["messages_retained"] == 1
@@ -274,7 +280,10 @@ def test_presence_expires_naturally_and_gc_names_remain_nonunique(
                             break
                     else:
                         pytest.fail("Subscription closed before natural expiry")
-                assert await raw.zscore(PRESENCE, alice.actor) is None
+                assert (
+                    await raw.zscore(Keys(valkey.root_code).presence, alice.actor)
+                    is None
+                )
                 assert not next(
                     row for row in await human.team() if row["member"] == alice.actor
                 )["online"]
@@ -289,7 +298,9 @@ def test_presence_expires_naturally_and_gc_names_remain_nonunique(
                             break
                     else:
                         pytest.fail("A second subscriber missed the expiry event")
-            await raw.xtrim(TEAM_EVENTS, maxlen=1, approximate=False)
+            await raw.xtrim(
+                Keys(valkey.root_code).team_events, maxlen=1, approximate=False
+            )
             async with aconnect_sse(
                 http, "GET", "/team/events", params={"after": checkpoint.id}
             ) as expired:

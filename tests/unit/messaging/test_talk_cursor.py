@@ -15,7 +15,7 @@ from tests.unit.messaging.test_agent_api import agent
 from tests.unit.messaging.test_loop import make_loop, prepare
 from toolang.common.layout import AgentLayout
 from toolang.teaming.api import create_app
-from toolang.teaming.backend.valkey.keys import (
+from tests.unit.messaging.keys import (
     PREFIX,
     TEAM_MEMBERS,
     PRESENCE,
@@ -305,7 +305,9 @@ def test_pending_cursor_is_discarded_after_backend_switch(tmp_path, monkeypatch)
             client(FakeServer(server_type="valkey"), "human:owner") for _ in range(2)
         ]
         for index, human in enumerate(humans):
-            human.config = BackendConfig(f"redis://cursor-{index}")
+            human.config = BackendConfig(
+                f"redis://cursor-{index}", root="/test/toolang"
+            )
         apps = [create_app(human, version="0.4.0-test") for human in humans]
         current = 0
 

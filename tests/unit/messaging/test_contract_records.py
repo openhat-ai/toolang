@@ -8,7 +8,7 @@ import pytest
 
 from tests.unit.messaging.test_protocol import client, snapshot
 from toolang.teaming.errors import StorageIntegrityError
-from toolang.teaming.backend.valkey.keys import CONVOS
+from tests.unit.messaging.keys import CONVOS
 
 
 @pytest.mark.parametrize(
@@ -37,7 +37,7 @@ def test_invalid_conversation_record_rejects_membership_without_writes(field, va
 
 def test_changed_record_is_revalidated_before_commit(monkeypatch):
     from toolang.teaming.backend.valkey import scripts
-    from toolang.teaming.backend.valkey.keys import TEAM_EVENTS, convo_key
+    from tests.unit.messaging.keys import TEAM_EVENTS, convo_key
 
     async def scenario():
         server = FakeServer(server_type="valkey")
@@ -73,7 +73,7 @@ def test_changed_record_is_revalidated_before_commit(monkeypatch):
 
 def test_team_read_revalidates_a_concurrently_added_member(monkeypatch):
     from toolang.teaming.backend.valkey import scripts
-    from toolang.teaming.backend.valkey.keys import TEAM_MEMBERS
+    from tests.unit.messaging.keys import TEAM_MEMBERS
 
     async def scenario():
         async with client(FakeServer(server_type="valkey"), "human:owner") as human:
@@ -95,7 +95,7 @@ def test_team_read_revalidates_a_concurrently_added_member(monkeypatch):
 
 
 def test_roster_is_a_team_subset_and_cas_preserves_json_semantics():
-    from toolang.teaming.backend.valkey.keys import ROSTER, TEAM_MEMBERS
+    from tests.unit.messaging.keys import ROSTER, TEAM_MEMBERS
     from toolang.teaming.roster import Roster
 
     async def scenario():
@@ -153,7 +153,7 @@ def test_persisted_conversation_cannot_represent_a_pending_dm(changes):
 
 @pytest.mark.parametrize("fields", [{"unexpected": "missing data"}, {"data": "{}"}])
 def test_event_without_a_valid_envelope_rejects_creation_without_writes(fields):
-    from toolang.teaming.backend.valkey.keys import TEAM_EVENTS
+    from tests.unit.messaging.keys import TEAM_EVENTS
 
     async def scenario():
         async with client(FakeServer(server_type="valkey"), "human:owner") as human:

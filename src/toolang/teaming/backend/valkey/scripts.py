@@ -276,21 +276,26 @@ INITIALIZE = (
     + """
 local fresh=redis.call('EXISTS',KEYS[1])==0
 expect(KEYS[1],'string')
+expect(KEYS[10],'string')
 if fresh then
+  if ARGV[3]=='1' then fail('missing initialized conversation schema') end
   local cursor='0'
   repeat
     local page=redis.call('SCAN',cursor,'MATCH',ARGV[2]..':*','COUNT',128)
     cursor=page[1]
     for _,key in ipairs(page[2]) do
-      if string.find(key,ARGV[2]..':convo:',1,true)==1 or string.find(key,ARGV[2]..':events:',1,true)==1 or (string.find(key,ARGV[2]..':agent:',1,true)==1 and string.sub(key,-5)==':talk') then fail('partial conversation dataset') end
+      fail('partial conversation dataset')
     end
   until cursor=='0'
+elseif redis.call('GET',KEYS[10])~=ARGV[4] then
+  fail('Toolang root ownership mismatch')
 end
 if not redis.call('GET',KEYS[1]) then
   if ARGV[3]=='1' then fail('missing initialized conversation schema') end
   for i=2,8 do if redis.call('EXISTS',KEYS[i])~=0 then fail('partial conversation dataset') end end
   expect(KEYS[9],'hash')
   if redis.call('HLEN',KEYS[9])>0 then fail('partial roster dataset') end
+  redis.call('SET',KEYS[10],ARGV[4])
   redis.call('SET',KEYS[1],tostring(hub_store_schema))
   redis.call('HSET',KEYS[5],'dm_count',0,'gc_count',0,'messages_total',0)
   redis.call('HSET',KEYS[6],'last_tick',-1,'last_seq',-1)

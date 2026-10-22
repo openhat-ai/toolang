@@ -26,7 +26,7 @@ from toolang.plugin.toolsets.loading import tools_from_toolsets
 from toolang.plugin.toolsets.convo import ConvoToolset
 from toolang.plugin.types import LoadedPlugin
 from toolang.teaming.agent_client import AgentClient, AgentEventClient
-from toolang.teaming.backend.valkey.keys import TEAM_MEMBERS, PRESENCE, talk_key
+from toolang.teaming.backend.valkey.keys import Keys
 from toolang.teaming.client import HubClient
 from toolang.teaming.events import HubScope
 from toolang.teaming.stream_client import HubStreamState
@@ -162,7 +162,7 @@ def test_inflight_message_survives_hub_restart_and_scoped_fanout(
                 )
                 await asyncio.to_thread(running_hub.stop)
                 if fault == "lease_loss":
-                    await raw.zadd(PRESENCE, {client.actor: 1})
+                    await raw.zadd(Keys(valkey.root_code).presence, {client.actor: 1})
                 if fault == "backend_switch":
                     (tmp_path / "config.toml").write_text(
                         f'[teaming]\nhuman = "owner"\n[teaming.backend]\nurl = "{valkey.url}?db=1"\n'
@@ -196,7 +196,9 @@ def test_inflight_message_survives_hub_restart_and_scoped_fanout(
                     while (
                         json.loads(
                             await current.execute_command(
-                                "HGET", TEAM_MEMBERS, client.actor
+                                "HGET",
+                                Keys(valkey.root_code).team_members,
+                                client.actor,
                             )
                             or '{"lease": null}'
                         ).get("lease")
@@ -217,8 +219,18 @@ def test_inflight_message_survives_hub_restart_and_scoped_fanout(
                             or loop.pending is not None
                         ):
                             await asyncio.sleep(0.05)
-                    assert await raw.hget(talk_key(client.actor), system) is None
-                    assert await second.hget(talk_key(client.actor), system) is None
+                    assert (
+                        await raw.hget(
+                            Keys(valkey.root_code).talk_key(client.actor), system
+                        )
+                        is None
+                    )
+                    assert (
+                        await second.hget(
+                            Keys(valkey.root_code).talk_key(client.actor), system
+                        )
+                        is None
+                    )
                     async with HubClient(running_hub.connection()) as replacement:
                         new_system = next(
                             c["conversation"]
@@ -228,7 +240,12 @@ def test_inflight_message_survives_hub_restart_and_scoped_fanout(
                         assert await replacement.history(new_system) == []
                 else:
                     async with asyncio.timeout(15):
-                        while await raw.hget(talk_key(client.actor), system) is None:
+                        while (
+                            await raw.hget(
+                                Keys(valkey.root_code).talk_key(client.actor), system
+                            )
+                            is None
+                        ):
                             await asyncio.sleep(0.05)
                     history = await human.history(system)
                     assert len(history) == 2

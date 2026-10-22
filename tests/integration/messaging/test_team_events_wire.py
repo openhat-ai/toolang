@@ -14,7 +14,7 @@ from tests.integration.messaging.test_valkey import (
 )
 from toolang.teaming.agent_client import AgentClient
 from toolang.teaming.errors import StorageIntegrityError
-from toolang.teaming.backend.valkey.keys import PRESENCE, STATS
+from toolang.teaming.backend.valkey.keys import Keys
 from toolang.teaming.messaging import MessagingClient
 
 pytestmark = pytest.mark.live_valkey
@@ -29,7 +29,7 @@ def test_invalid_counter_cannot_partially_commit_on_wire(valkey, field):
             Valkey.from_url(valkey.url, decode_responses=False) as raw,
         ):
             await alice.register(human.actor)
-            await raw.hset(STATS, field, "0.0")
+            await raw.hset(Keys(valkey.root_code).stats, field, "0.0")
             before = {key: await raw.dump(key) for key in await raw.keys("*")}
             with pytest.raises(StorageIntegrityError):
                 await human.send("alice", body="must not partially commit")
@@ -68,7 +68,7 @@ def test_team_sse_closes_on_expired_or_replaced_agent_lease(
                 stream.response.raise_for_status()
                 events = stream.aiter_sse()
                 assert (await anext(events)).event == "checkpoint"
-                await raw.zadd(PRESENCE, {alice.actor: 0})
+                await raw.zadd(Keys(valkey.root_code).presence, {alice.actor: 0})
                 if replaced:
                     await replacement.register(connection.human)
                 error = await anext(events)

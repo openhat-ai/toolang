@@ -20,7 +20,7 @@ from toolang.teaming.ids import (
     GC_SEQUENCE_LIMIT,
     GC_TICK_LIMIT,
 )
-from toolang.teaming.backend.valkey.keys import (
+from tests.unit.messaging.keys import (
     CONVOS,
     GC_ALLOCATOR,
     STATS,
@@ -122,7 +122,7 @@ def test_talk_thread_id_requires_a_canonical_conversation(conversation):
         talk_thread_id(conversation, agent_name="alice")
 
 
-@pytest.mark.parametrize("schema", ["1", "2", "3", "5"])
+@pytest.mark.parametrize("schema", ["1", "2", "3", "4", "6"])
 def test_other_conversation_schemas_fail_without_mutation(schema):
     async def scenario():
         raw = FakeAsyncValkey(decode_responses=True)
@@ -277,7 +277,7 @@ def test_directory_reads_use_bounded_batches_and_keep_visibility(monkeypatch):
                 # One ID read and two bounded batches; independent of visible count.
                 assert observed.await_count == 6
                 batches = [
-                    json.loads(call.args[-1]).get("conversations", [])
+                    json.loads(call.args[-2]).get("conversations", [])
                     for call in observed.await_args_list
                 ]
                 assert max(map(len, batches)) == 128

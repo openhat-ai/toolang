@@ -152,6 +152,9 @@ def serve(root: Path, config: TeamingRootConfig, *, port: int) -> int:
     """Serve one root with a lifetime lock and an explicitly bound socket."""
     from toolang.teaming.api import create_app
 
+    root = root.expanduser().resolve(strict=False)
+    if config.backend.root != str(root):
+        raise TeamingError("Hub backend configuration belongs to another Toolang root")
     hub = HubProcess(root)
     hub.lock.parent.mkdir(parents=True, exist_ok=True)
     with hub.lock.open("a+b") as lock:

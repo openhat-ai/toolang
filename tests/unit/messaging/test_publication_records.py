@@ -7,7 +7,7 @@ from fakeredis import FakeServer
 import pytest
 
 from tests.unit.messaging.test_protocol import client, snapshot
-from toolang.teaming.backend.valkey.keys import TEAM_MEMBERS
+from tests.unit.messaging.keys import TEAM_MEMBERS
 from toolang.teaming.backend.valkey.lua import TEAM_GUARD
 from toolang.teaming.errors import EventProtocolError
 

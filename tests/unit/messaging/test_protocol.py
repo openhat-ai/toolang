@@ -10,7 +10,8 @@ import pytest
 from valkey.exceptions import ConnectionError
 
 from toolang.teaming.backend.valkey import ValkeyBackend
-from toolang.teaming.backend.valkey.keys import (
+from toolang.teaming.backend.valkey.schema import HUB_STORE_SCHEMA
+from tests.unit.messaging.keys import (
     TEAM_MEMBERS,
     PRESENCE,
     TEAM_EVENTS,
@@ -36,7 +37,7 @@ from toolang.teaming.config import BackendConfig
 from toolang.teaming.errors import MessagingError, SendUnconfirmed
 from toolang.teaming.schemas import Message, direct_pair, identifier, target, stream_id
 
-CONFIG = BackendConfig("redis://test")
+CONFIG = BackendConfig("redis://test", root="/test/toolang")
 
 
 def client(server, actor, token=None):
@@ -414,7 +415,7 @@ def test_uncertain_send_is_not_retried_and_returns_recoverable_id(monkeypatch):
             writes = []
 
             async def execute(*args, **kwargs):
-                if args[0] == "EVAL" and '"action":"send"' in str(args[-1]):
+                if args[0] == "EVAL" and '"action":"send"' in str(args[-2]):
                     writes.append(args)
                     await original(*args, **kwargs)
                     raise ConnectionError("reply lost after acceptance")
@@ -454,7 +455,9 @@ def test_partial_datasets_are_never_initialized():
         await raw.delete(GC_ALLOCATOR)
         with pytest.raises(StorageIntegrityError):
             await backend.initialize()
-        assert await raw.get(SCHEMA) == "4" and not await raw.exists(GC_ALLOCATOR)
+        assert await raw.get(SCHEMA) == str(HUB_STORE_SCHEMA) and not await raw.exists(
+            GC_ALLOCATOR
+        )
         await backend.close()
 
     asyncio.run(scenario())
@@ -465,7 +468,9 @@ def test_driver_never_retries_writes_even_with_url_retry_option():
 
     async def scenario():
         backend = ValkeyBackend(
-            BackendConfig("redis://localhost?retry_on_timeout=true")
+            BackendConfig(
+                "redis://localhost?retry_on_timeout=true", root="/test/toolang"
+            )
         )
         connection = backend._client.connection_pool.make_connection()
         writes = []

@@ -172,7 +172,11 @@ def test_lifetime_lock_rejects_concurrent_serve_before_connecting(tmp_path):
             serve(
                 tmp_path,
                 TeamingRootConfig(
-                    "human:owner", BackendConfig("redis://localhost:6379/0"), 7000
+                    "human:owner",
+                    BackendConfig(
+                        "redis://localhost:6379/0", root=str(tmp_path.resolve())
+                    ),
+                    7000,
                 ),
                 port=7000,
             )
@@ -187,7 +191,11 @@ def test_busy_hub_port_fails_without_fallback_or_backend_access(tmp_path):
             serve(
                 tmp_path,
                 TeamingRootConfig(
-                    "human:owner", BackendConfig("redis://localhost:6379/0"), 7000
+                    "human:owner",
+                    BackendConfig(
+                        "redis://localhost:6379/0", root=str(tmp_path.resolve())
+                    ),
+                    7000,
                 ),
                 port=port,
             )
@@ -197,9 +205,13 @@ def test_busy_hub_port_fails_without_fallback_or_backend_access(tmp_path):
 def test_unavailable_backend_exits_and_does_not_publish_ready(tmp_path):
     config = replace(
         TeamingRootConfig(
-            "human:owner", BackendConfig("redis://localhost:6379/0"), 7000
+            "human:owner",
+            BackendConfig("redis://localhost:6379/0", root=str(tmp_path.resolve())),
+            7000,
         ),
-        backend=BackendConfig(f"unix://{tmp_path}/absent.sock"),
+        backend=BackendConfig(
+            f"unix://{tmp_path}/absent.sock", root=str(tmp_path.resolve())
+        ),
     )
     with socket.socket() as listener:
         listener.bind(("127.0.0.1", 0))
@@ -219,7 +231,11 @@ def test_client_construction_failure_removes_starting_record(tmp_path, monkeypat
         raise TeamingError("Invalid backend")
 
     monkeypatch.setattr(module, "MessagingClient", fail)
-    config = TeamingRootConfig("human:owner", BackendConfig("redis://localhost"), 7000)
+    config = TeamingRootConfig(
+        "human:owner",
+        BackendConfig("redis://localhost", root=str(tmp_path.resolve())),
+        7000,
+    )
     with socket.socket() as listener:
         listener.bind(("127.0.0.1", 0))
         port = listener.getsockname()[1]
@@ -246,7 +262,11 @@ def test_starting_hub_reserves_port_before_backend_access(tmp_path, monkeypatch)
         raise TeamingError("Stop after checking reservation")
 
     monkeypatch.setattr(module, "MessagingClient", check_reservation)
-    config = TeamingRootConfig("human:owner", BackendConfig("redis://localhost"), port)
+    config = TeamingRootConfig(
+        "human:owner",
+        BackendConfig("redis://localhost", root=str(tmp_path.resolve())),
+        port,
+    )
     with pytest.raises(TeamingError, match="Stop after checking reservation"):
         serve(tmp_path, config, port=port)
     assert not HubProcess(tmp_path).path.exists()
@@ -280,7 +300,7 @@ class SlowClient(module.MessagingClient):
         await asyncio.sleep(60)
     async def close(self): pass
 module.MessagingClient = SlowClient
-module.serve(root, TeamingRootConfig("human:owner", BackendConfig("redis://localhost"), port), port=port)
+module.serve(root, TeamingRootConfig("human:owner", BackendConfig("redis://localhost", root=str(root.resolve())), port), port=port)
 """
     with socket.socket() as listener:
         listener.bind(("127.0.0.1", 0))

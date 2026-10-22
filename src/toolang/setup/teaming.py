@@ -50,6 +50,7 @@ def resolve_teaming_setup(
         root_config(
             root_raw,
             source=root,
+            root=str(root.parent.expanduser().resolve(strict=False)),
             default_human=default_human
             if default_human is not None
             else getpass.getuser(),

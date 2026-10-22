@@ -5,8 +5,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 from hashlib import sha256
+import json
 from urllib.parse import urlsplit, parse_qs, unquote
 
+from toolang.common.instance_ids import area_id
 from .errors import TeamingError
 from .schemas import identifier
 
@@ -14,8 +16,15 @@ from .schemas import identifier
 @dataclass(frozen=True)
 class BackendConfig:
     url: str
+    root: str
 
     def __post_init__(self) -> None:
+        if (
+            not isinstance(self.root, str)
+            or not self.root
+            or not Path(self.root).is_absolute()
+        ):
+            raise TeamingError("Backend root must be an explicit canonical host path")
         try:
             parsed = urlsplit(self.url)
             if parsed.scheme not in {"redis", "rediss", "valkey", "valkeys", "unix"}:
@@ -40,8 +49,17 @@ class BackendConfig:
             raise TeamingError("Invalid teaming.backend.url") from exc
 
     @property
+    def root_code(self) -> str:
+        return area_id(self.root)
+
+    @property
     def identity(self) -> str:
-        return sha256(self.url.encode()).hexdigest()[:20]
+        material = json.dumps(
+            ["hub-backend:v1", self.url, self.root],
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        return sha256(material.encode()).hexdigest()[:20]
 
 
 @dataclass(frozen=True)
@@ -76,7 +94,7 @@ def _fields(
 
 
 def root_config(
-    config: Mapping[str, object], *, source: Path, default_human: str
+    config: Mapping[str, object], *, source: Path, default_human: str, root: str
 ) -> TeamingRootConfig:
     raw = _table(config.get("teaming", {}), "teaming", source)
     _fields(raw, {"human", "backend", "hub"}, "teaming", source, "root")
@@ -98,7 +116,7 @@ def root_config(
     if type(port) is not int or not 1 <= port <= 65535:
         raise TeamingError(f"{source}: teaming.hub.port must be an integer in 1..65535")
     try:
-        concrete = BackendConfig(url)
+        concrete = BackendConfig(url, root=root)
     except TeamingError as exc:
         raise TeamingError(f"{source}: {exc}") from exc
     return TeamingRootConfig(f"human:{human}", concrete, port)

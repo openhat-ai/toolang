@@ -23,7 +23,7 @@ from toolang.teaming.errors import (
     EventProtocolError,
     EventRecoveryRequired,
 )
-from toolang.teaming.backend.valkey.keys import EVENT_META, EVENT_STREAM, PREFIX
+from tests.unit.messaging.keys import EVENT_META, EVENT_STREAM, PREFIX
 from toolang.teaming.events import (
     HubCursor,
     HubScope,
@@ -35,7 +35,7 @@ from toolang.teaming.subscriptions import HubSubscription
 
 def backend(server):
     return ValkeyBackend(
-        BackendConfig("redis://test"),
+        BackendConfig("redis://test", root="/test/toolang"),
         client=FakeAsyncValkey(server=server, decode_responses=True),
     )
 
@@ -187,7 +187,7 @@ def test_partial_dataset_fails_closed_without_touching_messaging():
 
 
 def test_event_and_messaging_paths_reject_the_same_hub_store_schema():
-    from toolang.teaming.backend.valkey.keys import SCHEMA
+    from tests.unit.messaging.keys import SCHEMA
     from toolang.teaming.errors import StorageIntegrityError
 
     async def scenario():
@@ -279,7 +279,7 @@ def test_multi_origin_prefix_failure_keeps_committed_state_and_cursor():
 def test_staging_retries_and_activation_receipts_survive_switch(
     tmp_path, monkeypatch, interrupt
 ):
-    from toolang.teaming.backend.valkey.keys import generation_key
+    from tests.unit.messaging.keys import generation_key
     from toolang.teaming.records import MANIFEST
 
     harness = ExecutionHarness.create(
@@ -456,14 +456,16 @@ def test_idle_execution_feed_reset_is_detected_and_recovered(tmp_path):
 def test_hub_filters_and_cursor_errors_have_flat_http_contract(tmp_path):
     import httpx
     from toolang.teaming.api import create_app
-    from toolang.teaming.backend.valkey.keys import EVENT_AGENTS, generation_key
+    from tests.unit.messaging.keys import EVENT_AGENTS, generation_key
     from toolang.teaming.records import MANIFEST
     from toolang.teaming.messaging import MessagingClient
 
     async def scenario():
         driver = backend(FakeServer(server_type="valkey"))
         client = MessagingClient(
-            BackendConfig("redis://test"), actor="human:owner", backend=driver
+            BackendConfig("redis://test", root="/test/toolang"),
+            actor="human:owner",
+            backend=driver,
         )
         app = create_app(client, version="0.4.0-test")
         async with (
@@ -654,7 +656,7 @@ def test_teaming_keeps_lease_through_final_export_drain(tmp_path, monkeypatch, b
         await driver.initialize()
         async with harness:
             client = MessagingClient(
-                BackendConfig("redis://test"),
+                BackendConfig("redis://test", root="/test/toolang"),
                 actor=f"agent:{harness.setup.layout.name}",
                 backend=driver,
                 token="lease",
@@ -743,7 +745,9 @@ def test_teaming_close_bounds_unresponsive_lease_release(tmp_path, monkeypatch):
         driver = backend(FakeServer(server_type="valkey"))
         async with harness:
             client = MessagingClient(
-                BackendConfig("redis://test"), actor="agent:alice", backend=driver
+                BackendConfig("redis://test", root="/test/toolang"),
+                actor="agent:alice",
+                backend=driver,
             )
             lifecycle = TeamingLoop(
                 driver.events,
@@ -1129,7 +1133,7 @@ def test_recovery_bounds_records_work_before_it_consumes_the_snapshot_budget(
     ],
 )
 def test_malformed_stored_projection_is_a_protocol_failure(stored):
-    from toolang.teaming.backend.valkey.keys import generation_key
+    from tests.unit.messaging.keys import generation_key
 
     async def scenario():
         driver = backend(FakeServer(server_type="valkey"))
@@ -1210,7 +1214,7 @@ def test_hub_recovery_ignores_inherited_sse_ids(replacement):
 
 
 def test_stale_exporter_cannot_remove_the_new_owners_staging(tmp_path, monkeypatch):
-    from toolang.teaming.backend.valkey.keys import generation_key
+    from tests.unit.messaging.keys import generation_key
 
     harness = ExecutionHarness.create(
         tmp_path, source="flow example:\n  let result = Done\n", responses=[]
@@ -1345,7 +1349,7 @@ def test_projection_rejects_invalid_tree_structure(damage):
 def test_invalid_recovery_metadata_is_a_backend_error(damage):
     import httpx
     from toolang.teaming.api import create_app
-    from toolang.teaming.backend.valkey.keys import EVENT_AGENTS, generation_key
+    from tests.unit.messaging.keys import EVENT_AGENTS, generation_key
     from toolang.teaming.records import MANIFEST
     from toolang.teaming.records import field
     from toolang.teaming.messaging import MessagingClient
@@ -1353,7 +1357,9 @@ def test_invalid_recovery_metadata_is_a_backend_error(damage):
     async def scenario():
         driver = backend(FakeServer(server_type="valkey"))
         client = MessagingClient(
-            BackendConfig("redis://test"), actor="human:owner", backend=driver
+            BackendConfig("redis://test", root="/test/toolang"),
+            actor="human:owner",
+            backend=driver,
         )
         app = create_app(client, version="0.4.0-test")
         async with (
@@ -1436,7 +1442,7 @@ def test_old_event_dataset_is_rejected_without_mutation():
 def test_event_readers_reject_incompatible_wire_versions(version, representation):
     from toolang.execution.events import event_to_data
     from toolang.execution.types import EventCursor
-    from toolang.teaming.backend.valkey.keys import generation_key
+    from tests.unit.messaging.keys import generation_key
     from toolang.teaming.events import encode
     from toolang.teaming.records import field
     from toolang.teaming.subscriptions import _canonical

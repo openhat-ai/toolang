@@ -41,7 +41,7 @@ from toolang.cli.common.terminal_surfaces import (
 from toolang.cli.common.input_history import InputHistoryStore
 from toolang.teaming.messaging import MessagingClient
 from toolang.teaming.backend.valkey import ValkeyBackend
-from toolang.teaming.backend.valkey.keys import convo_key
+from toolang.teaming.backend.valkey.keys import Keys
 from toolang.teaming.config import BackendConfig
 from toolang.teaming.errors import SendUnconfirmed
 from toolang.teaming.schemas import Message
@@ -72,7 +72,7 @@ def typed(name):
 @pytest.fixture
 def messaging_cli(tmp_path, monkeypatch):
     server = FakeServer(server_type="valkey")
-    config = BackendConfig("redis://test")
+    config = BackendConfig("redis://test", root=str(tmp_path.resolve()))
 
     def client(_config=config, *, actor="human:bryan"):
         return MessagingClient(
@@ -292,7 +292,7 @@ def test_talk_uses_canonical_input_history_without_legacy_imports(
 ):
     human = "human:bryan"
     identity = sha256(
-        f"{tmp_path.resolve()}\0{BackendConfig('redis://test').identity}\0{human}".encode()
+        f"{tmp_path.resolve()}\0{BackendConfig('redis://test', root=str(tmp_path.resolve())).identity}\0{human}".encode()
     ).hexdigest()[:20]
     old_directory = tmp_path / ".runtime" / "talk-history"
     old_directory.mkdir(parents=True)
@@ -460,7 +460,15 @@ def test_directory_shows_previews_without_loading_agents_or_creating_conversatio
                     Message.create("agent:bob", "hello\x1b[2J\nworld").encode(),
                 ),
             ):
-                await raw.xadd(convo_key(group, "messages"), {"data": data}, id=sid)
+                await raw.xadd(
+                    Keys(
+                        BackendConfig(
+                            "redis://test", root=str(tmp_path.resolve())
+                        ).root_code
+                    ).convo_key(group, "messages"),
+                    {"data": data},
+                    id=sid,
+                )
             return pair, own, {g["conversation"] for g in await human.contacts()}
 
     pair, own, before = asyncio.run(prepare())
@@ -1157,7 +1165,7 @@ def test_messaging_commands_work_without_config_file(
     tmp_path, monkeypatch, capsys, arguments
 ):
     server = FakeServer(server_type="valkey")
-    expected = BackendConfig("redis://localhost:6379/0")
+    expected = BackendConfig("redis://localhost:6379/0", root=str(tmp_path.resolve()))
 
     def client(config=expected, *, actor):
         assert config == expected
