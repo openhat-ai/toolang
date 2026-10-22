@@ -91,7 +91,7 @@ when invoking the command.
 `--allow`, `--limit`, and `--default` use `<KEY>=<VALUE>` and short descriptions
 pointing to `too help allow`, `too help limit`, and `too help default`. Model
 options point to `too help model`. Keep field tables and model parameter details
-out of command help. `too help TOPIC` is not implemented yet.
+out of command help; the standalone topics above provide those references.
 
 ## Script selection and output
 

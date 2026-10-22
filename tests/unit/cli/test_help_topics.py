@@ -99,7 +99,8 @@ def test_topics_reject_agent_or_file_prefixes_without_preparation(prefix):
     status, output, error, _ = _invoke([prefix, "help"])
     assert status == 2 and not output.plain
     assert "Usage: too help [OPTIONS] [TOPIC]" in error
-    assert "Topics:" in error and "Traceback" not in error
+    assert "Command 'help' does not accept an agent prefix." in error
+    assert "Traceback" not in error
 
 
 @pytest.mark.parametrize("topic", TOPICS)
@@ -193,6 +194,7 @@ def test_topic_examples_keep_shell_argument_boundaries_at_44_columns(topic):
         command = "\n".join(lines).replace("\\\n", "")
         tokens = shlex.split(command)
         assert tokens[0] == "too"
+        assert tokens[1] == "gus" and tokens[2] in {"chat", "start"}
         commands.append(tokens)
     assert len(commands) == 2
     for tokens in commands:
