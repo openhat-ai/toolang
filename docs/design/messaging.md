@@ -229,6 +229,14 @@ Final output is a handling summary; replies use `convo.write`. Own messages and
 handler-error notices do not trigger another handler. Agent origin records contain
 context-derived thread/run IDs.
 
+The packaged handler instructs the model to send progress before investigating
+substantial work, discover a worker, spawn it, and send a dispatch notice before
+ending. File changes, coding, tests, multi-step research, and waits belong in the
+worker, which receives the source message references and reply destination and
+reports results or blockers through `convo.write`. New work omits the thread
+argument to create a `work_` thread. Final summaries record delivery problems
+and reasons for ignoring messages; they do not deliver replies.
+
 Source MEMBERS.md is checked before admission and each Model Call, including
 processing children and explicit rerun. Spawned independent work gains no
 implicit source scope; delegated requirements belong in input. In any thread,

@@ -13,7 +13,12 @@ from toolang.execution.executor import RunExecutor, RunSpec
 from toolang.execution.store import RunStore
 from toolang.common.ids import IdIssuer
 from toolang.execution.records import RunControlPayload
-from toolang.execution.runnables import resolve_driver_handler
+from toolang.execution.runnables import (
+    resolve_agic_routes,
+    resolve_call_target,
+    resolve_driver_handler,
+    resolve_runnable_reference,
+)
 from toolang.execution.types import DriverName, ThreadKind
 from toolang.lang import Program
 from toolang.lang.input import CallInput
@@ -84,6 +89,23 @@ def test_runtime_talk_precedes_unnamed_without_changing_user_state(source):
     assert captured.runnables == state.runnables
     assert captured.caps_for(target.module) == state.caps_for("agent")
     assert not state.runtime_sources and RUNTIME_TALK_MODULE not in state.modules
+
+
+@pytest.mark.parametrize("kind", ["agic", "flow"])
+@pytest.mark.parametrize("prefix", ["", "agent::"])
+def test_runtime_talk_unnamed_worker_alias_keeps_canonical_routing_identity(
+    kind, prefix
+):
+    state, talk = resolve_driver_handler(state_for(f"{kind}:\n  pass\n"), "talk")
+    target = resolve_call_target(state, talk.module, f"{prefix}{kind}:_")
+    canonical = resolve_runnable_reference(state, "_")
+    assert target == canonical
+    routes = resolve_agic_routes(state, talk.executable, module=talk.module)
+    assert all(routes.allows(action, target) for action in ("run", "spawn", "exec"))
+    restricted = resolve_agic_routes(
+        state, talk.executable, hands=("none",), module=talk.module
+    )
+    assert not restricted.allows("spawn", target)
 
 
 def test_runtime_talk_source_is_recorded_and_reused_by_rerun(tmp_path, monkeypatch):

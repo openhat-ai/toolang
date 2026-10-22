@@ -83,6 +83,37 @@ def test_protocol_preserves_guidance_and_execution_boundaries() -> None:
     assert "me.sync()" not in prompt
 
 
+@pytest.mark.parametrize(
+    "requirements",
+    [
+        (
+            "Final output ends this handler and is not delivered to the conversation",
+            "Before ending, check the convo__write receipts",
+            "Record why each ignored message needs no action",
+        ),
+        (
+            "Send a brief progress reply before worker discovery or task investigation",
+            "Substantial work includes file changes, coding, tests, multi-step research",
+            "Do not perform that work in this handler",
+        ),
+        (
+            "Use runtime__runnables to inspect worker targets and their input signatures",
+            "Omit thread for new work so runtime__spawn creates a work_ thread",
+            "Do not use runtime__run, runtime__exec, runtime__await, or polling to complete the work here",
+            "After confirmed admission, send a dispatch notice and end this handler",
+            "report its result or blocker via convo__write",
+        ),
+    ],
+    ids=["visible-outcomes", "early-feedback", "independent-dispatch"],
+)
+def test_talk_handler_requires_visible_outcomes_and_independent_dispatch(
+    requirements: tuple[str, ...],
+) -> None:
+    prompt = " ".join(talk_handler_source().split())
+    for requirement in requirements:
+        assert requirement in prompt
+
+
 def test_protocol_authoring_references_exist() -> None:
     authoring = prompts.load("protocol.md").split("# Authoring Toolang\n", 1)[1]
     paths = re.findall(

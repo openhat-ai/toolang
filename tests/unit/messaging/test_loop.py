@@ -752,6 +752,167 @@ def test_spawned_worker_sends_with_its_own_run_origin(tmp_path):
     asyncio.run(scenario())
 
 
+def test_builtin_talk_dispatch_releases_polling_before_worker_completion(
+    tmp_path, monkeypatch
+):
+    from toolang.execution.executor.executor import _Execution
+
+    server = FakeServer(server_type="valkey")
+    gate = AsyncGate()
+    execute = _Execution.execute
+
+    async def pause_worker(self, binding, runnable, **kwargs):
+        if binding.thread.startswith("work_"):
+            await gate.wait()
+        return await execute(self, binding, runnable, **kwargs)
+
+    monkeypatch.setattr(_Execution, "execute", pause_worker)
+
+    def tool_call(name, arguments):
+        return ModelCallResult(tool_calls=(ToolCall(name, name, name, arguments),))
+
+    async def scenario():
+        async with (
+            make_client(server) as client,
+            make_client(server, "human:owner") as human,
+        ):
+            await prepare(client, human)
+            source = await human.send("gc_00000001", body="Review the project.")
+            other = await human.send("gc_00000002", body="Are you available?")
+            reply_to = source["message"]["id"]
+            worker_input = (
+                "Review the project as requested by human:owner. "
+                f"Report the result or blocker via convo__write to gc_00000001, "
+                f"using reply_to={reply_to}."
+            )
+
+            def reply(message):
+                return tool_call(
+                    "convo__write",
+                    {
+                        "target": "gc_00000001",
+                        "message": message,
+                        "reply_to": reply_to,
+                    },
+                )
+
+            harness = harness_with_msg(
+                tmp_path,
+                server,
+                [
+                    reply("I will delegate the project review."),
+                    tool_call("runtime__runnables", {}),
+                    tool_call(
+                        "runtime__spawn",
+                        {"runnable": "_", "input": {"_": worker_input}},
+                    ),
+                    reply("The review has been dispatched; results will follow here."),
+                    ModelCallResult(message=ModelMessage.assistant("Dispatched.")),
+                    tool_call(
+                        "convo__write",
+                        {
+                            "target": "gc_00000002",
+                            "message": "Yes, I am available.",
+                            "reply_to": other["message"]["id"],
+                        },
+                    ),
+                    ModelCallResult(message=ModelMessage.assistant("Answered.")),
+                    reply("Project review complete."),
+                    ModelCallResult(message=ModelMessage.assistant("Result sent.")),
+                ],
+            )
+            async with harness:
+                loop = make_loop(tmp_path, client, harness)
+                handling = asyncio.create_task(loop.poll())
+                try:
+                    await asyncio.wait_for(asyncio.shield(handling), 2)
+                    workers = [
+                        run
+                        for run in harness.store.list_runs()
+                        if run.thread.id.startswith("work_")
+                    ]
+                    assert len(workers) == 1, [
+                        step.error
+                        for run in harness.store.list_runs()
+                        for step in harness.store.list_steps(run_id=run.id)
+                        if step.error is not None
+                    ]
+                    worker = workers[0]
+                    await asyncio.wait_for(gate.wait_until_entered(), 2)
+                    assert worker.parent is None
+                    assert worker.status in {"pending", "running"}
+                    control = harness.store.get_run_control(run_id=worker.id, index=0)
+                    assert control is not None and isinstance(
+                        control.payload, RunControlPayload
+                    )
+                    assert worker_input in repr(control.payload.input)
+                    messages = [
+                        Message.decode(fields["data"])
+                        for _, fields in await client.history("gc_00000001")
+                    ]
+                    assert [message.body for message in messages] == [
+                        "Review the project.",
+                        "I will delegate the project review.",
+                        "The review has been dispatched; results will follow here.",
+                    ]
+                    assert all(
+                        message.in_reply_to == reply_to for message in messages[1:]
+                    )
+                    assert (
+                        await client.talk_cursor("gc_00000001") == source["stream_id"]
+                    )
+                    talk = next(
+                        run
+                        for run in harness.store.list_runs()
+                        if run.thread.id.startswith("talk_")
+                    )
+                    assert talk.status == "succeeded"
+                    assert all(
+                        message.origin is not None and message.origin["run"] == talk.id
+                        for message in messages[1:]
+                    )
+                    await asyncio.wait_for(loop.poll(), 2)
+                    assert await client.talk_cursor("gc_00000002") == other["stream_id"]
+                    other_messages = await client.history("gc_00000002")
+                    assert len(other_messages) == 2
+                    assert (
+                        Message.decode(other_messages[-1][1]["data"]).body
+                        == "Yes, I am available."
+                    )
+                    live_worker = harness.store.get_run(run_id=worker.id)
+                    assert live_worker is not None and live_worker.status in {
+                        "pending",
+                        "running",
+                    }
+                finally:
+                    gate.release()
+                    await asyncio.wait_for(handling, 2)
+                    await asyncio.wait_for(
+                        asyncio.gather(
+                            *(
+                                root.task
+                                for root in tuple(harness.executor._root_runs.values())
+                            )
+                        ),
+                        2,
+                    )
+                result = Message.decode(
+                    (await client.history("gc_00000001"))[-1][1]["data"]
+                )
+                assert result.body == "Project review complete."
+                assert result.in_reply_to == reply_to
+                assert result.origin == {"thread": worker.thread.id, "run": worker.id}
+                finished = harness.store.get_run(run_id=worker.id)
+                assert finished is not None and finished.status == "succeeded"
+                await (
+                    loop.poll()
+                )  # Progress, dispatch, and result messages are our own.
+                assert harness.adapter.pending_responses == 0
+                assert len(harness.store.list_runs()) == 3
+
+    asyncio.run(scenario())
+
+
 def test_convo_is_unavailable_without_configuration_and_fences_offline_sends(tmp_path):
     from toolang.base.types.tool import ToolContext
     from toolang.teaming.errors import MessagingError

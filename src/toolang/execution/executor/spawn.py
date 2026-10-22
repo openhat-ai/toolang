@@ -343,6 +343,9 @@ def _outer_templates(
             ):
                 if setting is None or setting.name == "none":
                     continue
+                if setting.name == "default" and setting.module not in state.modules:
+                    # Default prompts need no declaration in the published State.
+                    continue
                 program = state_program(state, setting.module)
                 declaration = (
                     program.find_instruct(setting.name)
