@@ -21,12 +21,6 @@ from toolang.catalog import source as cap_source
 from toolang.catalog import cap as cap_store
 from toolang.catalog import config as cap_config
 from toolang.catalog.types import CAP_KINDS, CapKind
-from toolang.state import state as cap_state
-from toolang.state.prepare import (
-    inspect_root_caps,
-    inspect_agent_caps,
-    prepare_agent_state,
-)
 from ..common.context import (
     context_agent,
     context_layout,
@@ -447,10 +441,14 @@ def _target_scope(ctx: typer.Context) -> tuple[MutableScope, str]:
 
 
 def _entry_form(entry: "StateCap") -> CapForm:
+    from toolang.state import state as cap_state
+
     return cap_state.entry_form(entry)
 
 
 def _entry_scope_label(entry: "StateCap", *, agent_name: str) -> CapScope:
+    from toolang.state import state as cap_state
+
     return cap_state.entry_scope(entry, agent_name=agent_name)
 
 
@@ -463,6 +461,7 @@ def _cap_entries(
 ) -> "tuple[tuple[StateCap, ...], tuple[StateCap, ...]]":
     """Inspect root caps, optionally overlaid with the selected agent's caps."""
 
+    from toolang.state.prepare import inspect_agent_caps, inspect_root_caps
     from ..common.progress import make_cli_progress
 
     if not include_agent and not layout.root.exists():
@@ -536,6 +535,7 @@ def _refresh_agent_state(
     toolang_root: Path,
     agent_name: str,
 ) -> None:
+    from toolang.state.prepare import prepare_agent_state
     from ..common.progress import make_cli_progress
 
     progress = make_cli_progress(preparation=True)

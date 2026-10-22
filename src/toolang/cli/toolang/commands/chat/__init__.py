@@ -10,7 +10,7 @@ from typer._click.exceptions import ClickException
 
 from toolang.cli.common.agent_argument import AgentArgument
 
-from toolang.cli.common.agent_server import DEVELOPMENT_WHEEL_HELP
+from toolang.cli.common.parameters import DEVELOPMENT_WHEEL_HELP
 from toolang.cli.common.context import ModelCatalogOption, cli_context, user_call
 from toolang.common.typer.options import BARE_VALUE
 from toolang.cli.common.workspaces import (

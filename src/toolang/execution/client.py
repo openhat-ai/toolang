@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from toolang.base.types.message import Message
 from toolang.execution.events import RunTracer
-from toolang.execution.executor import LocalRunHandle, RunExecutor
 from toolang.execution.inspection.history import RunHistory
 from toolang.execution.records import ControlRecord
 from toolang.execution.schemas import (
@@ -18,6 +17,9 @@ from toolang.execution.schemas import (
     RunRequest,
 )
 from toolang.execution.types import ControlTiming
+
+if TYPE_CHECKING:
+    from toolang.execution.executor import LocalRunHandle, RunExecutor
 
 
 class RunHandle(Protocol):

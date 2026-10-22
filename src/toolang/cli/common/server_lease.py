@@ -11,7 +11,6 @@ from uuid import uuid4
 import httpx
 
 from toolang.api.version import AGENT_API_VERSION
-from toolang.api.schemas import RuntimeLifecyclePayload
 from toolang.up.lifecycle import LEASE_RENEW_SEC, LEASE_TTL_SEC
 from toolang.up.types import AgentServerRef
 
@@ -32,6 +31,8 @@ class ServerLease:
         self._expires_at = time.monotonic() + LEASE_TTL_SEC
 
     def _request(self, method: str) -> None:
+        from toolang.api.schemas import RuntimeLifecyclePayload
+
         issued_at = time.monotonic()
         with httpx.Client(timeout=3.0) as http:
             response = http.request(

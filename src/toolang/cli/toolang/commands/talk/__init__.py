@@ -10,7 +10,6 @@ from typer._click.exceptions import ClickException
 
 from toolang.cli.common.context import context_root
 from toolang.cli.common.execution_progress.config import resolve_progress_max_width
-from toolang.cli.common.input import resolve_inputbox_max_width
 from toolang.cli.common.messaging import settings, talk_context
 from toolang.cli.common.terminal_session import prepare_terminal
 from toolang.teaming.client import HubClient
@@ -95,6 +94,7 @@ def talk_command(
             )
         resolved = conversation_id(resolved)
         from .tui import TalkTui
+        from toolang.cli.common.input import resolve_inputbox_max_width
         from toolang.cli.common.terminal_surfaces import resolve_terminal_surfaces
 
         directory = root / "human" / "talk-input"

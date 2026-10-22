@@ -13,7 +13,7 @@ import os
 import threading
 import time
 from dataclasses import replace
-from typing import Literal, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Literal, Protocol, runtime_checkable
 from urllib.error import URLError
 from urllib.parse import urlsplit
 from urllib.request import urlopen
@@ -50,8 +50,6 @@ from toolang.plugin.loading import create_sandbox
 from toolang.setup.config import (
     load_setup_dotenvs,
 )
-from toolang.state.prepare import prepare_agent_state
-from toolang.state.state import AgentState
 from toolang.state.config import CAP_ALLOW_FIELDS
 from toolang.up.mounts import (
     prepare_source_mounts,
@@ -68,8 +66,11 @@ from toolang.up.instance import (
 )
 from toolang.up.observation import RuntimeRegistration
 from toolang.up.config import placement_policy
-from toolang.up.server import ServeSpec, build_serve_argv, resolve_serve
 from toolang.up.types import ExecutionDrivers, ServerLifetime
+
+if TYPE_CHECKING:
+    from toolang.state.state import AgentState
+    from toolang.up.server import ServeSpec
 
 SANDBOX_READY_TIMEOUT_SEC = 30.0
 SANDBOX_ATTACH_GRACE_SEC = 0.2
@@ -139,6 +140,7 @@ async def resolve_launch(
     lifetime: ServerLifetime = "persistent",
 ) -> LaunchSpec:
     """Resolve source state, server inputs, and one sandbox selection."""
+    from toolang.up.server import resolve_serve
 
     selected, config = _select_sandbox_configs(
         tuple(source.config for source in config_sources(layout)),
@@ -273,6 +275,7 @@ def prepare_launch_state(
     spec: LaunchSpec, *, progress: ProgressSink | None = None
 ) -> AgentState:
     """Prepare host-owned State before creating or entering a workload."""
+    from toolang.state.prepare import prepare_agent_state
 
     try:
         state = prepare_agent_state(
@@ -316,6 +319,8 @@ async def _launch_locked(
     *,
     progress: ProgressSink | None,
 ) -> SandboxHandle:
+    from toolang.up.server import build_serve_argv
+
     owns_launch = False
     sandbox_name = spec.sandbox.partition(":")[0].replace("_", " ").title()
     prepare_label = f"Preparing {sandbox_name} sandbox..."
@@ -1048,6 +1053,7 @@ async def register_host_server(
     environ: Mapping[str, str] | None = None,
 ) -> SandboxRef:
     """Confirm a managed launch, or register a direct server before preparation."""
+    from toolang.up.server import resolve_serve
 
     own = process_ref(
         os.getpid(),

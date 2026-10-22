@@ -65,7 +65,6 @@ from ...common.agent_server import (
 )
 from ...common.execution_progress.config import resolve_progress_max_width
 from ...common.run_client import acquire_run_client
-from ...common.script_progress import ScriptRunPresenter
 from ...common.terminal_surfaces import resolve_terminal_surfaces
 
 
@@ -490,6 +489,8 @@ async def _execute_rerun(
     show_progress: bool,
     on_accept: Callable[[str], None] | None = None,
 ) -> RunDetail:
+    from ...common.script_progress import ScriptRunPresenter
+
     environ = load_runtime_environ(layout, base_environ=os.environ)
     tracer = (
         ScriptRunPresenter(

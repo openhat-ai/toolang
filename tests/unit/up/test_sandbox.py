@@ -20,6 +20,7 @@ from toolang.base.types.sandbox import (
     SandboxRequest,
 )
 from toolang.common.layout import AgentLayout
+from toolang.state import prepare as state_prepare
 from toolang.up import sandbox
 from toolang.up.instance import SandboxState
 from toolang.up import process as process_runtime
@@ -1401,13 +1402,13 @@ def test_launch_prepares_state_once_before_workload_with_state_overrides(
         ),
     )
     captured = []
-    original = sandbox.prepare_agent_state
+    original = state_prepare.prepare_agent_state
 
     def prepare(layout, **kwargs):
         captured.append(kwargs)
         return original(layout, **kwargs)
 
-    monkeypatch.setattr(sandbox, "prepare_agent_state", prepare)
+    monkeypatch.setattr(state_prepare, "prepare_agent_state", prepare)
     original_launch = implementation.launch
 
     async def launch(plan):
@@ -1443,12 +1444,12 @@ def test_local_prepare_failure_never_creates_a_workload_and_allows_retry(
         sandbox, "create_sandbox", lambda *_args, **_kwargs: implementation
     )
     spec = _launch_spec(tmp_path)
-    original = sandbox.prepare_agent_state
+    original = state_prepare.prepare_agent_state
 
     def reject(*_args, **_kwargs):
         raise OSError("cannot read State source")
 
-    monkeypatch.setattr(sandbox, "prepare_agent_state", reject)
+    monkeypatch.setattr(state_prepare, "prepare_agent_state", reject)
     events = []
     with pytest.raises(OSError, match="cannot read State source"):
         asyncio.run(sandbox.launch(spec, progress=events.append))
@@ -1460,7 +1461,7 @@ def test_local_prepare_failure_never_creates_a_workload_and_allows_retry(
     assert not (
         spec.serve.layout.root / ".runtime" / "instances" / "alice.json"
     ).exists()
-    monkeypatch.setattr(sandbox, "prepare_agent_state", original)
+    monkeypatch.setattr(state_prepare, "prepare_agent_state", original)
 
     async def ready(*_args, **_kwargs):
         return None
