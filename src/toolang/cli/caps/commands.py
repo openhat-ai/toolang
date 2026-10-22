@@ -341,7 +341,7 @@ def _make_add_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
             typer.Argument(
                 metavar="SOURCE-REF",
                 click_type=TextType(),
-                help=f"{title} source: GitHub ref or URL",
+                help=f"{title} source: ref or URL",
             ),
         ],
     ) -> None:

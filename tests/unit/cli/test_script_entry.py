@@ -687,7 +687,7 @@ def test_run_rejects_global_root_overrides(root_args, capsys):
 def test_target_first_run_rejects_agent(target, capsys):
     _source()
     assert cli.main([target, "run"]) == 2
-    assert "does not accept AGENT" in capsys.readouterr().err
+    assert "Usage:" in capsys.readouterr().err
 
 
 def test_script_cannot_select_a_synthetic_runtime_runnable(monkeypatch, capsys):

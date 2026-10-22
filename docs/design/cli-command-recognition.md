@@ -20,14 +20,14 @@ factory compatible with Typer's `Annotated` parameter declarations:
 def top(
     agent: Annotated[
         str | None,
-        AgentArgument("resident,before"),
+        AgentArgument("resident,before,after"),
     ] = None,
 ): ...
 
 def info(
     agent: Annotated[
         str,
-        AgentArgument("resident,visiting,roaming,after"),
+        AgentArgument("resident,visiting,roaming,after,before"),
     ],
 ): ...
 ```
@@ -85,7 +85,9 @@ Apply these rules to the remaining tokens, in order:
 Only the command position is examined. Never search later tokens for a command,
 extract options from messages, or retry another interpretation after selection.
 After selecting a command, reject a prefix if it has no AGENT parameter or does
-not allow `before`; do not fall back to script execution.
+not allow `before`. Use native `NoArgsIsHelpError` with the selected command's
+Context to show its help and usage with exit status 2; do not add a separate
+AGENT rejection message or fall back to script execution.
 
 Paths, `.too` suffixes, source schemes, URLs, `agent:NAME`, and instance-shaped
 `NAME@...` tokens are candidate evidence, not proof of valid selectors. Syntax
@@ -166,6 +168,8 @@ callbacks, and `ctx.params["agent"]`; see [Typer Context](https://typer.tiangolo
 Mark a prefix as command-line input, not an empty-string placeholder or a
 `default_map` default. Selector conversion and placement checks do not acquire
 sources. Current optional declarations default to `None` for root/global scope.
+A supplied prefix counts as input for a leaf command's native no-arguments
+handling, so a complete `too AGENT start` invocation executes normally.
 
 Nested command groups bind only invocation data in their callback and pass it
 through Context. Executable leaf callbacks own existence checks, source
@@ -184,20 +188,19 @@ Instances retain their underlying placement instead of adding a placement tag.
 ## Usage and diagnostics
 
 Generate required/optional notation from native parameters and position from
-the AGENT tags. Show the allowed placements in the argument description.
+the AGENT tags. Describe accepted forms as `Agent name`, `Agent name, ref, URL`,
+or `Agent name, path, ref, URL`, without internal placement labels.
 Usage shows one recommended form, using the first position tag in the declaration.
-When both are accepted, parsing still supports both; the argument description
-can mention the alternative position. This recommendation is derived from the
-tags, without another setting. Keep existing help panels, rendering, and
-command-specific no-arguments behavior.
+When both are accepted, parsing still supports both. This recommendation is
+derived from the tags, without another setting. Keep existing help panels,
+rendering, and command-specific no-arguments behavior.
 
 | Condition | Diagnostic |
 | --- | --- |
 | Unknown command | Native `No such command 'NAME'.`, with ordinary typo suggestions |
-| Prefix supplied to a command without AGENT | `Command 'list' does not accept AGENT.` |
-| Prefix supplied to an after-only command | `AGENT must follow 'info'.` |
+| Prefix supplied to a command without AGENT or to an after-only command | Native help and usage for the selected command, exit 2 |
 | Malformed selector | Native `Invalid value for 'AGENT': ...` from its owner |
-| Unsupported placement | `Invalid value for 'AGENT': command 'top' does not support remote agents.` |
+| Unsupported placement | `Invalid value for 'AGENT': remote agents are not supported` |
 | Invalid command options/operands | Native option, conversion, missing-argument, or extra-argument diagnostics |
 
 Presence/position routing errors happen after command selection and before its
@@ -215,25 +218,30 @@ script runtime.
 
 ## Command capabilities
 
-Retain the current inventory and placement restrictions, with lifecycle/info
-commands declared after-only as agreed. The following groups summarize parameter declarations; they are not another
-runtime registry.
+The following groups summarize parameter declarations; they are not another
+runtime registry. Dual positions suit commands where AGENT is the only positional
+operand; the declaration still determines the recommended spelling.
 
 | Commands | AGENT tags | Required |
 | --- | --- | --- |
-| `chat`, `workspace`, `inspect`, `steer`, `cancel`, `rerun`, `rewind`, `fork` | `resident,visiting,roaming,before` | Yes |
+| `chat` | `resident,visiting,roaming,before,after` | Yes |
+| `workspace`, `inspect`, `steer`, `cancel`, `rerun`, `rewind`, `fork` | `resident,visiting,roaming,before` | Yes |
 | `chore` | `resident,before` | Yes |
-| `cd`, `caps`, `psyche`, `skill`, `service`, `prompt`, `models`, `providers`, `tools` | `resident,visiting,roaming,before` | No |
-| `top` | `resident,before` | No |
-| `info` | `resident,visiting,roaming,after` | Yes |
-| `start`, `stop`, `serve` | `resident,visiting,after` | Yes |
+| `cd` | `resident,visiting,roaming,before,after` | No |
+| `caps`, `psyche`, `skill`, `service`, `prompt`, `models`, `providers`, `tools` | `resident,visiting,roaming,before` | No |
+| `top` | `resident,before,after` | No |
+| `info` | `resident,visiting,roaming,after,before` | Yes |
+| `start`, `stop` | `resident,visiting,after,before` | Yes |
+| `serve` | `resident,visiting,after` | Yes |
 | `remove`, internal `_serve` | `resident,after` | Yes |
 | Other current commands, including `new`, `clone`, `list`, and `run` | No AGENT parameter | Not applicable |
 
+`serve` and `remove` keep the system-level command first. Inspection commands
+such as `caps`, `models`, `providers`, and `tools` keep AGENT before the command.
 Runtime placement rules, including the lack of roaming lifecycle commands, do
-not change. Intentional compatibility changes are command-first-only
-lifecycle/info forms, native root-option positioning, and missing-command errors
-for standalone agent selectors instead of agent-group help.
+not change. Intentional compatibility changes are native root-option positioning
+and missing-command errors for standalone agent selectors instead of agent-group
+help.
 
 ## Performance and maintenance
 
@@ -270,6 +278,8 @@ Offline CLI tests should establish these observable guarantees:
   `after,before` changes usage without changing the accepted forms.
 - Known-command precedence, explicit resident escapes, malformed refs, unknown
   names, and missing commands select the intended operation and error context.
+- Unsupported prefix forms show the selected command's native help with status 2
+  and no preparation, callback execution, or separate rejection diagnostic.
 - Optional prefix AGENT never consumes a business operand; prefix binding
   preserves native parameter-source, conversion, callback, and requiredness behavior.
 - Both script entries resolve the same runnable and produce equivalent dynamic

@@ -619,7 +619,7 @@ def test_hidden_is_no_longer_a_command():
     ("args", "error"),
     [
         ([], "No such command 'channel'."),
-        (["list"], "Command 'list' does not accept AGENT."),
+        (["list"], "Usage:"),
         (["--help"], "No such command 'channel'."),
     ],
 )
@@ -679,9 +679,9 @@ def test_agent_usage_keeps_recommended_position_and_normal_weight(
         (
             "serve",
             "Run an agent in the foreground",
-            "Agent name, GitHub ref, or URL",
+            "Agent name, ref, URL",
         ),
-        ("_serve", "Run an agent server", "Local agent name"),
+        ("_serve", "Run an agent server", "Agent name"),
     ],
 )
 @pytest.mark.parametrize("args", [[], ["--help"], ["-h"], ["--unknown"]])
@@ -750,14 +750,14 @@ def test_agent_help_matches_target_scope(command, tmp_path, capsys):
     if command == "new":
         expected = "Agent name: [a-z][a-z0-9_]{0,63}"
     elif command in {"start", "stop", "serve"}:
-        expected = "Agent name, GitHub ref, or URL"
+        expected = "Agent name, ref, URL"
     elif command in {"remove", "_serve", "chore"}:
-        expected = "Local agent name"
+        expected = "Agent name"
     else:
-        expected = "Agent name, .too path, GitHub ref, or URL"
+        expected = "Agent name, path, ref, URL"
     assert f"* AGENT {expected}" in output
     if command != "new":
-        assert "placements: resident" in output
+        assert "placements:" not in output
 
 
 @pytest.mark.parametrize("kind", ["psyche", "skill", "service", "prompt"])
@@ -769,15 +769,15 @@ def test_cap_children_inherit_agent_usage_from_group(kind, command, tmp_path, ca
     assert "AGENT Agent name" not in output
     assert too_main(["--root", str(tmp_path), kind, "--help"]) == 0
     group_help = " ".join(strip_ansi(capsys.readouterr().out).split())
-    assert "AGENT Agent name, .too path, GitHub ref, or URL" in group_help
-    assert "placements: resident, visiting, roaming" in group_help
+    assert "AGENT Agent name, path, ref, URL" in group_help
+    assert "placements:" not in group_help
 
 
 @pytest.mark.parametrize("command", ["caps", "models", "providers", "tools"])
 def test_inspection_help_describes_all_agent_targets(command, tmp_path, capsys):
     assert too_main(["--root", str(tmp_path), command, "--help"]) == 0
     output = " ".join(strip_ansi(capsys.readouterr().out).split())
-    assert "AGENT Agent name, .too path, GitHub ref, or URL" in output
+    assert "AGENT Agent name, path, ref, URL" in output
 
 
 @pytest.mark.parametrize("kind", ["psyche", "skill", "service", "prompt"])

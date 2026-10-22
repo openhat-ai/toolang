@@ -254,7 +254,7 @@ def _report_foreground_ready(
 
 def start(
     ctx: typer.Context,
-    agent: Annotated[str, AgentArgument("resident,visiting,after")],
+    agent: Annotated[str, AgentArgument("resident,visiting,after,before")],
     sandbox: Annotated[
         str | None,
         typer.Option(
@@ -455,7 +455,7 @@ def _retain_started(
 
 def stop(
     ctx: typer.Context,
-    agent: Annotated[str, AgentArgument("resident,visiting,after")],
+    agent: Annotated[str, AgentArgument("resident,visiting,after,before")],
     force: Annotated[
         bool,
         typer.Option(help="Force-stop when graceful shutdown does not complete"),

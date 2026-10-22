@@ -9,12 +9,14 @@ import pytest
 import typer
 from typer._click import Context
 from typer._click.core import ParameterSource
-from typer._click.exceptions import UsageError
-from typer.core import TyperArgument
+from typer._click.exceptions import BadParameter, NoArgsIsHelpError, UsageError
+from typer._click.globals import get_current_context
+from typer.core import TyperArgument, TyperGroup
 
 from toolang.cli.common.agent_argument import AgentArgument, agent_parameter
 from toolang.cli.common.context import CliContext, cli_context
 from toolang.cli.common.help import CliCommand, CliGroup
+from toolang.cli.common.lazy import LazyCommand
 from toolang.cli.common.parameters import RootOption
 from toolang.cli.toolang import main as cli
 from toolang.cli.toolang.routing import resolve_command
@@ -42,6 +44,141 @@ def _app(callback):
 def test_invalid_contracts_fail_at_declaration(tags):
     with pytest.raises(ValueError, match="AGENT"):
         AgentArgument(tags)
+
+
+@pytest.mark.parametrize(
+    "tags,description",
+    [
+        ("resident,before,after", "Agent name"),
+        ("resident,visiting,after,before", "Agent name, ref, URL"),
+        ("resident,visiting,roaming,before", "Agent name, path, ref, URL"),
+    ],
+)
+def test_agent_descriptions_are_concise(tags, description):
+    assert AgentArgument(tags).help == description
+
+
+@pytest.mark.parametrize(
+    "tags,selector,message",
+    [
+        (
+            "resident,before",
+            "https://example.test/a.too",
+            "remote agents are not supported",
+        ),
+        ("resident,visiting,before", "work.too", "paths are not supported"),
+        ("roaming,before", "alice", "agent names are not supported"),
+    ],
+)
+def test_placement_errors_use_concise_parameter_diagnostics(tags, selector, message):
+    def invoke(agent: Annotated[str, AgentArgument(tags)]):
+        pytest.fail("unsupported selector reached execution")
+
+    command = _app(invoke)
+    with pytest.raises(BadParameter) as error:
+        command.main(args=[selector, "call"], standalone_mode=False)
+    assert error.value.format_message() == f"Invalid value for 'AGENT': {message}"
+
+
+@pytest.mark.parametrize("accepts_after", [False, True])
+def test_rejected_prefix_uses_native_command_help(accepts_after):
+    def plain():
+        pytest.fail("unsupported prefix invoked a callback")
+
+    def after(agent: Annotated[str, AgentArgument("resident,after")]):
+        pytest.fail("unsupported prefix invoked a callback")
+
+    command = _app(after if accepts_after else plain)
+    with pytest.raises(NoArgsIsHelpError) as error:
+        command.main(args=["alice", "call"], prog_name="too", standalone_mode=False)
+    assert error.value.exit_code == 2
+    assert error.value.ctx.command is command.commands["call"]
+    assert "Usage: too call" in error.value.ctx.get_help()
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "cd",
+        "info",
+        "start",
+        "stop",
+        "chat",
+        "top",
+    ],
+)
+def test_unambiguous_agent_commands_accept_both_positions(name, tmp_path):
+    root = typer.main.get_command(cli.app)
+    assert isinstance(root, TyperGroup)
+    proxy = root.commands[name]
+    assert isinstance(proxy, LazyCommand)
+    command = proxy.load()
+    parameter = agent_parameter(command)
+    assert parameter is not None
+    assert parameter.contract.positions == {"before", "after"}
+    seen = []
+
+    def capture(**params):
+        ctx = get_current_context()
+        seen.append((params["agent"], cli_context(ctx).selector, ctx.command))
+
+    command.callback = capture
+    for selector in (
+        "alice",
+        "agent:alice",
+        "https://example.test/alice.too",
+        "work.too",
+    ):
+        placement = (
+            "visiting"
+            if selector.startswith("https:")
+            else "roaming"
+            if selector.endswith(".too")
+            else "resident"
+        )
+        if placement not in parameter.contract.placements:
+            continue
+        for words in ([selector, name], [name, selector]):
+            root.main(
+                args=["--root", str(tmp_path), *words],
+                prog_name="too",
+                standalone_mode=False,
+            )
+        assert seen[-2] == seen[-1]
+        assert seen[-1][0] == ("alice" if selector == "agent:alice" else selector)
+        assert seen[-1][2] is command
+
+
+@pytest.mark.parametrize(
+    "name", ["list", "new", "clone", "run", "serve", "remove", "_serve"]
+)
+@pytest.mark.parametrize("tail", [[], ["--help"], ["--unknown"], ["bob"]])
+def test_rejected_agent_forms_show_usage_without_side_effects(
+    name, tail, tmp_path, monkeypatch, capsys
+):
+    monkeypatch.setenv("TOOLANG_ROOT", str(tmp_path))
+    monkeypatch.setattr("sys.argv", ["too"])
+    assert cli.main(["alice", name, *tail]) == 2
+    output = capsys.readouterr()
+    assert not output.out
+    assert f"Usage: too {name} " in output.err
+    assert "does not accept AGENT" not in output.err
+    assert "AGENT must follow" not in output.err
+    assert not tuple(tmp_path.iterdir())
+
+
+@pytest.mark.parametrize("name", ["caps", "models", "providers", "tools"])
+def test_inspection_commands_keep_agent_before_the_command(
+    name, tmp_path, monkeypatch, capsys
+):
+    monkeypatch.setenv("TOOLANG_ROOT", str(tmp_path))
+    monkeypatch.setattr("sys.argv", ["too"])
+    assert cli.main([name, "alice"]) == 2
+    output = capsys.readouterr()
+    assert not output.out
+    assert "Got unexpected extra argument" in output.err
+    assert f"Usage: too [AGENT] {name} " in output.err
+    assert not tuple(tmp_path.iterdir())
 
 
 @pytest.mark.parametrize(
@@ -240,12 +377,11 @@ def test_help_precedes_selector_validation(selector, monkeypatch, capsys):
 @pytest.mark.parametrize(
     "args,diagnostic",
     [
-        (["alice", "list"], "Command 'list' does not accept AGENT."),
-        (["alice", "info"], "AGENT must follow 'info'."),
-        (["alice", "start"], "AGENT must follow 'start'."),
+        (["alice", "list"], "Usage:"),
+        (["alice", "_serve"], "Usage:"),
         (
             ["https://example.test/a.too", "top", "--once"],
-            "does not support remote agents",
+            "remote agents are not supported",
         ),
         (["agent:alice", "missing"], "No such command 'missing'"),
         (["unknown", "missing"], "No such command 'unknown'"),
@@ -326,7 +462,7 @@ def test_builtin_precedence_does_not_parse_a_script_file(tmp_path, monkeypatch, 
     )
     assert cli.main([str(source), "chat", "--help"]) == 0
     assert cli.main([str(source), "list"]) == 2
-    assert "does not accept AGENT" in capsys.readouterr().err
+    assert "Usage:" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize("explicit", [False, True])
@@ -371,7 +507,7 @@ def test_native_completion_keeps_prefix_binding_and_uses_agent_metadata(tmp_path
     "tail",
     [
         ["agent:alice", "list"],
-        ["agent:alice", "info"],
+        ["agent:alice", "_serve"],
         ["agent:alice", "--help"],
         ["agent:alice", "-h"],
     ],

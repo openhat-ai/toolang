@@ -77,13 +77,11 @@ class _AgentType(StringParamType):
         placement = selected.layout.placement if selected.layout else "resident"
         if placement not in self.contract.placements:
             label = {
-                "resident": "resident",
-                "visiting": "remote",
-                "roaming": "local .too",
+                "resident": "agent names",
+                "visiting": "remote agents",
+                "roaming": "paths",
             }[placement]
-            self.fail(
-                f"command '{ctx.info_name}' does not support {label} agents", param, ctx
-            )
+            self.fail(f"{label} are not supported", param, ctx)
         ctx.obj = selected
         return (selected.agent or text) if placement == "resident" else text
 
@@ -112,20 +110,17 @@ class _AgentType(StringParamType):
 def AgentArgument(tags: str, **kwargs: Any) -> ArgumentInfo:
     """Declare accepted placements and positions, in usage recommendation order."""
     contract = AgentContract.parse(tags)
-    labels = ", ".join(
-        tag for tag in ("resident", "visiting", "roaming") if tag in contract.placements
-    )
+    forms = []
+    if "resident" in contract.placements:
+        forms.append("name")
+    if "roaming" in contract.placements:
+        forms.append("path")
+    if "visiting" in contract.placements:
+        forms.extend(("ref", "URL"))
     help_text = kwargs.pop(
         "help",
-        "Local agent name"
-        if contract.placements == {"resident"}
-        else "Agent name, GitHub ref, or URL"
-        if "roaming" not in contract.placements
-        else "Agent name, .too path, GitHub ref, or URL",
+        f"Agent {', '.join(forms)}",
     )
-    help_text = f"{help_text}; placements: {labels}"
-    if len(contract.positions) == 2:
-        help_text += "; accepted before or after the command"
     return typer.Argument(
         metavar="AGENT",
         click_type=_AgentType(contract),

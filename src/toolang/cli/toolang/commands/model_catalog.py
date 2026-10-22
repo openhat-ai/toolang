@@ -54,10 +54,7 @@ def models_command(
     ctx: typer.Context,
     agent: Annotated[
         str | None,
-        AgentArgument(
-            "resident,visiting,roaming,before",
-            help="Agent name, .too path, GitHub ref, or URL; omit for root configuration",
-        ),
+        AgentArgument("resident,visiting,roaming,before"),
     ] = None,
     model_catalog: ModelCatalogOption = None,
     all_: Annotated[
@@ -182,10 +179,7 @@ def providers_command(
     ctx: typer.Context,
     agent: Annotated[
         str | None,
-        AgentArgument(
-            "resident,visiting,roaming,before",
-            help="Agent name, .too path, GitHub ref, or URL; omit for root configuration",
-        ),
+        AgentArgument("resident,visiting,roaming,before"),
     ] = None,
     model_catalog: ModelCatalogOption = None,
     all_: Annotated[

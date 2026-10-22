@@ -83,7 +83,7 @@ def clone_agent(
         typer.Argument(
             metavar="SOURCE",
             click_type=TextType(),
-            help="Local agent name, GitHub ref, or URL",
+            help="Agent name, ref, URL",
         ),
     ],
     target: Annotated[
@@ -177,7 +177,7 @@ def list_agents(ctx: typer.Context) -> None:
 
 def info_agent(
     ctx: typer.Context,
-    agent: Annotated[str, AgentArgument("resident,visiting,roaming,after")],
+    agent: Annotated[str, AgentArgument("resident,visiting,roaming,after,before")],
     model_catalog: ModelCatalogOption = None,
     instance: InstanceOption = None,
 ) -> None:

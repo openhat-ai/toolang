@@ -16,9 +16,10 @@ formatting conventions. Command help describes their options and output modes.
 | Input | Interpretation |
 | --- | --- |
 | `too new NAME`, `too clone SOURCE [NAME]`, `too remove AGENT`, `too list` | Agent catalog commands; command first |
-| `too serve AGENT`, `too start AGENT`, `too stop AGENT` | Foreground/background lifecycle for resident or visiting agents; AGENT follows the command |
-| `too info AGENT` | Resident, visiting, or roaming agent information |
-| `too cd`, `too AGENT cd` | Interactive shell in the Toolang root or selected agent home; `exit` returns to the calling shell |
+| `too serve AGENT` | Foreground lifecycle for resident or visiting agents; command first |
+| `too start AGENT`, `too stop AGENT` | Background lifecycle for resident or visiting agents; AGENT may also precede the command |
+| `too info AGENT`, `too AGENT info` | Resident, visiting, or roaming agent information |
+| `too cd`, `too AGENT cd`, `too cd AGENT` | Interactive shell in the Toolang root or selected agent home; `exit` returns to the calling shell |
 | `too AGENT chat`, `too AGENT chore list`, `too AGENT inspect runs` | Agent work, authoring, and history |
 | `too run FILE [RUNNABLE]`, `too FILE [RUNNABLE]` | Two entry forms of the same local script command |
 | `too init DIR` | Create executable `aid.too` and comment-only `toolang.toml` without overwriting |

@@ -21,7 +21,7 @@ from ...common.output import shorten_home_path
 def cd(
     ctx: typer.Context,
     agent: Annotated[
-        str | None, AgentArgument("resident,visiting,roaming,before")
+        str | None, AgentArgument("resident,visiting,roaming,before,after")
     ] = None,
 ) -> None:
     """Run the configured interactive shell from the selected directory."""

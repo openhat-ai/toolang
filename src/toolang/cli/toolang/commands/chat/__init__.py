@@ -30,7 +30,7 @@ from toolang.cli.common.parameters import (
 
 def chat_command(
     ctx: typer.Context,
-    agent: Annotated[str, AgentArgument("resident,visiting,roaming,before")],
+    agent: Annotated[str, AgentArgument("resident,visiting,roaming,before,after")],
     thread: Annotated[
         str | None,
         typer.Option(

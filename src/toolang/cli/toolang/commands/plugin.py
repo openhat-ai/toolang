@@ -31,10 +31,7 @@ def list_tools(
     ctx: typer.Context,
     agent: Annotated[
         str | None,
-        AgentArgument(
-            "resident,visiting,roaming,before",
-            help="Agent name, .too path, GitHub ref, or URL; omit for root configuration",
-        ),
+        AgentArgument("resident,visiting,roaming,before"),
     ] = None,
     query: Annotated[
         list[str] | None,

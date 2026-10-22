@@ -146,14 +146,18 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   when unset.
   ([#912](https://github.com/openhat-ai/toolang/pull/912))
 
-- **Breaking:** `info`, `start`, `stop`, and `serve` accept AGENT only after
-  the command, with global options before the command or agent, so rewrite
-  `too AGENT info` as `too info AGENT`.
+- `cd`, `info`, `start`, `stop`, `chat`, and `top` accept AGENT before or
+  after the command, while `serve` and `remove` require it after and `caps`,
+  `models`, `providers`, and `tools` before.
   ([#916](https://github.com/openhat-ai/toolang/pull/916))
 
-- Known residents and explicit agent refs alone report `Missing command`, while
-  unknown commands, unsupported agent forms, and invalid selectors have
-  distinct errors.
+- **Breaking:** `serve` accepts AGENT only after the command, so rewrite
+  `too AGENT serve` as `too serve AGENT`, with global options before the
+  command or agent.
+  ([#916](https://github.com/openhat-ai/toolang/pull/916))
+
+- Known residents and explicit refs alone report `Missing command`;
+  unsupported agent positions show native command help and usage with exit 2.
   ([#916](https://github.com/openhat-ai/toolang/pull/916))
 
 ### Fixed
@@ -274,6 +278,11 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 - Roaming `rerun`, `fork --chat`, and `rewind --chat` preserve the
   invocation's `--root` for continuation instances instead of re-reading
   `TOOLANG_ROOT`.
+  ([#916](https://github.com/openhat-ai/toolang/pull/916))
+
+- AGENT help lists accepted forms as `name`, `path`, `ref`, and `URL` without
+  placement tags, and placement errors such as `remote agents are not
+  supported` omit the command name.
   ([#916](https://github.com/openhat-ai/toolang/pull/916))
 
 ### Security

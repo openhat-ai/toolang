@@ -19,7 +19,7 @@ from toolang.up.types import TopPeriod as Period, TopRecent as Recent
 
 def top(
     ctx: typer.Context,
-    agent: Annotated[str | None, AgentArgument("resident,before")] = None,
+    agent: Annotated[str | None, AgentArgument("resident,before,after")] = None,
     period: Annotated[Period, typer.Option(help="Rolling usage period")] = Period.hour,
     recent: Annotated[
         Recent, typer.Option(help="Recently completed root Runs")

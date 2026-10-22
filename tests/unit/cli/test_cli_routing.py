@@ -206,19 +206,20 @@ def test_cli_models_rejects_unsupported_target_forms(
     assert not tuple(tmp_path.iterdir())
 
 
-def test_cli_formats_a_routing_error_without_a_panel(
+def test_cli_rejected_prefix_shows_native_help_without_a_panel(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    result = _call_main(["alice", "remove"])
+    result = _call_main(["alice", "_serve"])
     output = capsys.readouterr()
     stderr = strip_ansi(output.err)
     lines = stderr.splitlines()
 
     assert result == 2
-    assert lines[0].startswith("Error: ")
+    assert lines[0] == "Run an agent server."
     assert lines[-1].strip()
     assert "╭" not in stderr
-    assert "AGENT must follow 'remove'." in stderr
+    assert "Usage: toolang _serve [OPTIONS] <AGENT>" in stderr
+    assert "AGENT must follow" not in stderr
 
 
 def test_cli_no_args_still_shows_root_help(

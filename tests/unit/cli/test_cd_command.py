@@ -232,7 +232,7 @@ def test_cd_help_describes_optional_agent(
         "Enter an agent home, or the Toolang root if no agent is specified."
         in " ".join(output.split())
     )
-    assert "Agent name, .too path, GitHub ref, or URL" in output
+    assert "Agent name, path, ref, URL" in output
     assert "* AGENT" not in output
     assert "omit for the Toolang root" not in output
     assert "Examples:" not in output

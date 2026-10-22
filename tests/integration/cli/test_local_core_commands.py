@@ -3886,7 +3886,8 @@ def test_plugin_inventory_commands_have_only_direct_plural_forms(
     assert nested.exit_code == 2
     assert "unexpected extra argument" in nested.stderr.lower()
     assert targeted.exit_code == 2
-    assert f"Command '{command}' does not accept AGENT." in targeted.stderr
+    assert "Usage:" in targeted.stderr
+    assert f"{command} [OPTIONS]" in targeted.stderr
 
 
 def test_agent_info_builds_state_and_setup_without_server(
@@ -4324,7 +4325,7 @@ def test_tools_help_and_missing_agent_need_no_setup(
     help_result = runner.invoke(cli.app, ["--root", str(tmp_path), "tools", "--help"])
     assert help_result.exit_code == 0
     assert "[AGENT] tools" in strip_ansi(help_result.stdout)
-    assert "root configuration" in strip_ansi(help_result.stdout)
+    assert "Agent name, path, ref, URL" in strip_ansi(help_result.stdout)
     missing = _invoke(tmp_path, "missing", "tools")
     assert missing.exit_code != 0
     assert "Agent missing not found" in missing.stderr

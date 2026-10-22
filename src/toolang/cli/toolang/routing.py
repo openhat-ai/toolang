@@ -5,7 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from typer._click import Command, Context
-from typer._click.exceptions import ClickException, UsageError
+from typer._click.exceptions import NoArgsIsHelpError, UsageError
+from typer.core import TyperGroup
 
 from toolang.catalog.agent import LocalAgents
 from ..common.agent_argument import agent_parameter, bind_prefix
@@ -50,17 +51,15 @@ def resolve_command(
         if agent is None or "before" not in agent.contract.positions:
             if ctx.resilient_parsing:
                 return None, None, args
-            message = (
-                f"Command '{name}' does not accept AGENT."
-                if agent is None
-                else f"AGENT must follow '{name}'."
-            )
-            error = ClickException(message)
-            error.exit_code = 2
-            raise error
+            with command.context_class(command, info_name=name, parent=ctx) as selected:
+                raise NoArgsIsHelpError(selected)
         bind_prefix(ctx, command, first)
+        tail = args[2:]
+        if not tail and command.no_args_is_help and not isinstance(command, TyperGroup):
+            # The bound AGENT already supplies input to this leaf command.
+            tail = ["--"]
         # Selected LazyCommand.make_context still applies the caller's UI hooks.
-        return name, group.commands[name], args[2:]
+        return name, group.commands[name], tail
     if local_script_candidate(first):
         from .commands.script import implicit_entry
 
