@@ -437,6 +437,11 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   invocation examples.
   ([#928](https://github.com/openhat-ai/toolang/pull/928))
 
+- `too AGENT info` for a stopped agent reports current local tools, models,
+  caps, chores, and workspaces, honors `--catalog`, and drops the redundant
+  Agent row.
+  ([#931](https://github.com/openhat-ai/toolang/pull/931))
+
 ### Security
 
 - The locked certifi trust store advances to 2026.10.19, resolving trust-store
