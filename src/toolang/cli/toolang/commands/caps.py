@@ -3,15 +3,22 @@
 from __future__ import annotations
 
 from functools import cache
+from typing import Annotated
 
 import typer
 
 from toolang.catalog.types import CapKind
-from toolang.cli.common.routing import OptionalPrefixAgentGroup
+from toolang.cli.common.agent_argument import AgentArgument
+from toolang.cli.common.help import CliGroup
 
 
-class _CapGroup(OptionalPrefixAgentGroup):
-    argument_help = "Agent name, .too path, GitHub ref, or URL; omit for root scope"
+def _bind_agent(
+    ctx: typer.Context,
+    agent: Annotated[
+        str | None, AgentArgument("resident,visiting,roaming,before")
+    ] = None,
+) -> None:
+    """Keep the optional selection on the group context."""
 
 
 @cache
@@ -19,8 +26,8 @@ def _apps() -> dict[CapKind, typer.Typer]:
     from toolang.cli.caps.commands import create_cap_apps
 
     return create_cap_apps(
-        group_cls=_CapGroup,
-        agent_help="Agent name, .too path, GitHub ref, or URL",
+        group_cls=CliGroup,
+        group_callback=_bind_agent,
     )
 
 

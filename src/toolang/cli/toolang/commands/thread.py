@@ -11,6 +11,8 @@ from typing import Annotated, TypeVar
 from uuid import uuid4
 
 import typer
+
+from toolang.cli.common.agent_argument import AgentArgument
 from typer._click.exceptions import ClickException
 
 from toolang.cli.common.parameters import InstanceOption
@@ -50,6 +52,7 @@ from ...common.context import (
     cli_context,
     ModelCatalogOption,
     context_layout,
+    select_agent_instance,
     load_runtime_environ,
     resolve_model_catalog_option,
     user_call,
@@ -68,6 +71,7 @@ from ...common.terminal_surfaces import resolve_terminal_surfaces
 
 def steer_command(
     ctx: typer.Context,
+    agent: Annotated[str, AgentArgument("resident,visiting,roaming,before")],
     run: Annotated[
         str,
         typer.Argument(
@@ -109,6 +113,7 @@ def steer_command(
 
 def cancel_command(
     ctx: typer.Context,
+    agent: Annotated[str, AgentArgument("resident,visiting,roaming,before")],
     run: Annotated[
         str,
         typer.Argument(
@@ -140,6 +145,7 @@ def cancel_command(
 
 def rerun_command(
     ctx: typer.Context,
+    agent: Annotated[str, AgentArgument("resident,visiting,roaming,before")],
     run: Annotated[
         str,
         typer.Argument(
@@ -175,7 +181,7 @@ def rerun_command(
 ) -> None:
     """Start a new root run from one terminal source invocation."""
 
-    layout = context_layout(ctx)
+    layout = select_agent_instance(ctx)
     show_progress = sys.stderr.isatty()
     model_override = user_call(_rerun_model_override, model_body=model)
     commands = user_call(_restart_commands, allow_options=allows, limit_options=limit)
@@ -204,6 +210,7 @@ def rerun_command(
 
 def rewind_command(
     ctx: typer.Context,
+    agent: Annotated[str, AgentArgument("resident,visiting,roaming,before")],
     point: Annotated[
         str,
         typer.Argument(
@@ -254,6 +261,7 @@ def rewind_command(
 
 def fork_command(
     ctx: typer.Context,
+    agent: Annotated[str, AgentArgument("resident,visiting,roaming,before")],
     point: Annotated[
         str,
         typer.Argument(
@@ -380,6 +388,7 @@ def _open_chat(
         try:
             chat_command(
                 ctx,
+                agent=cli_context(ctx).selector or context_layout(ctx).name,
                 thread=thread_id,
                 driver="chat" if continued is not previous else None,
             )
@@ -609,12 +618,11 @@ def _continue_instance(
     source = context_layout(ctx)
     if placement_policy(source.placement).reuse_executor:
         return source
-    from toolang.cli.common.context import resolve_root
     from toolang.up.replay import prepare_continuation
 
     destination = prepare_continuation(
         source,
-        toolang_root=resolve_root(None),
+        toolang_root=cli_context(ctx).root,
         source_run=source_run,
         source_thread=thread_id,
     )

@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Annotated
 
 import typer
+from typer._click.exceptions import ClickException
 
 from toolang.cli.common.parameters import PathType, TextType
 
@@ -15,45 +16,47 @@ from toolang.common.layout import AgentLayout
 from ...common.context import (
     cli_context,
     context_layout,
+    prepare_agent,
     require_prefix_agent,
     user_call,
 )
 from ...common.output import echo_collection_summary, echo_table
-from ...common.routing import RequiredPrefixAgentCommand, RequiredPrefixAgentGroup
+from ...common.agent_argument import AgentArgument
+from ...common.help import CliCommand, CliGroup
 
 
-class _WorkspaceGroup(RequiredPrefixAgentGroup):
-    argument_help = "Agent name, .too path, GitHub ref, or URL"
-
-
-class _WorkspaceCommand(RequiredPrefixAgentCommand):
-    argument_help = "Agent name, .too path, GitHub ref, or URL"
+def _bind_agent(
+    ctx: typer.Context,
+    agent: Annotated[str, AgentArgument("resident,visiting,roaming,before")],
+) -> None:
+    """Keep selection on the owning group for its executable children."""
 
 
 def workspace_app() -> typer.Typer:
     app = typer.Typer(
-        cls=_WorkspaceGroup,
+        cls=CliGroup,
         help="Manage agent workspaces",
         add_completion=False,
         no_args_is_help=True,
         pretty_exceptions_enable=False,
         pretty_exceptions_show_locals=False,
     )
+    app.callback()(_bind_agent)
     app.command(
         "list",
         help="List configured workspaces",
-        cls=_WorkspaceCommand,
+        cls=CliCommand,
     )(list_workspaces)
     app.command(
         "add",
         help="Add a workspace",
-        cls=_WorkspaceCommand,
+        cls=CliCommand,
         no_args_is_help=True,
     )(add_workspace)
     app.command(
         "remove",
         help="Remove a workspace",
-        cls=_WorkspaceCommand,
+        cls=CliCommand,
         no_args_is_help=True,
     )(remove_workspace)
     return app
@@ -74,22 +77,29 @@ def add_workspace(
         ),
     ] = None,
 ) -> None:
-    require_prefix_agent(ctx)
+    layout = _editable_layout(ctx)
     configured = ConfiguredWorkspaces(
-        _authored_config(context_layout(ctx)),
-        lock_path=_workspace_edit_lock(context_layout(ctx)),
+        _authored_config(layout),
+        lock_path=_workspace_edit_lock(layout),
     )
     selected_name, selected_path = user_call(configured.add, path, name=name)
-    _refresh_project(context_layout(ctx))
+    _refresh_project(layout)
     typer.echo(f"Workspace {selected_name} added: {selected_path}")
 
 
 def list_workspaces(ctx: typer.Context) -> None:
     require_prefix_agent(ctx)
     layout = context_layout(ctx)
+    if layout.placement == "visiting":
+        layout = prepare_agent(ctx)
     if layout.placement == "roaming":
         source = cli_context(ctx).source
         assert source is not None
+        if not source.is_file():
+            raise ClickException(f"agent program not found: {source}")
+        from toolang.up.source import roaming_layout
+
+        user_call(roaming_layout, source)
         config_path = source.parent / "toolang.toml"
     else:
         config_path = layout.config
@@ -107,11 +117,16 @@ def list_workspaces(ctx: typer.Context) -> None:
     echo_collection_summary(len(workspaces), "workspace")
 
 
-def _authored_config(layout: AgentLayout) -> Path:
-    if layout.placement == "visiting":
+def _editable_layout(ctx: typer.Context) -> AgentLayout:
+    require_prefix_agent(ctx)
+    if context_layout(ctx).placement == "visiting":
         raise typer.BadParameter(
             "visiting agents have no durable workspace configuration; use -w or --workdir"
         )
+    return prepare_agent(ctx)
+
+
+def _authored_config(layout: AgentLayout) -> Path:
     if layout.placement == "roaming":
         return layout.program.resolve(strict=True).parent / "toolang.toml"
     return layout.config
@@ -132,13 +147,13 @@ def remove_workspace(
         typer.Argument(metavar="NAME", click_type=TextType(), help="Workspace name"),
     ],
 ) -> None:
-    require_prefix_agent(ctx)
+    layout = _editable_layout(ctx)
     configured = ConfiguredWorkspaces(
-        _authored_config(context_layout(ctx)),
-        lock_path=_workspace_edit_lock(context_layout(ctx)),
+        _authored_config(layout),
+        lock_path=_workspace_edit_lock(layout),
     )
     path = user_call(configured.remove, name)
-    _refresh_project(context_layout(ctx))
+    _refresh_project(layout)
     typer.echo(f"Workspace {name} removed: {path}")
 
 

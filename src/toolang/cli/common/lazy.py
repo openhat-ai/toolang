@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from importlib import import_module
+from threading import Lock
 from typing import Any
 
 import typer
@@ -38,18 +39,20 @@ class LazyCommand(TyperCommand):
         )
         self._loader = loader
         self._loaded: Command | None = None
+        self._load_lock = Lock()
 
     def load(self) -> Command:
         """Load and cache the real command."""
 
-        if self._loaded is None:
-            command = self._loader()
-            if command.name != self.name:
-                raise RuntimeError(
-                    f"lazy command name mismatch: expected {self.name!r}, "
-                    f"got {command.name!r}"
-                )
-            self._loaded = command
+        with self._load_lock:
+            if self._loaded is None:
+                command = self._loader()
+                if command.name != self.name:
+                    raise RuntimeError(
+                        f"lazy command name mismatch: expected {self.name!r}, "
+                        f"got {command.name!r}"
+                    )
+                self._loaded = command
         return self._loaded
 
     def make_context(

@@ -7,32 +7,29 @@ import subprocess
 import sys
 from typing import TextIO
 
+from typing import Annotated
+
 import typer
+
+from toolang.cli.common.agent_argument import AgentArgument
 from typer._click.exceptions import ClickException
 
-from ...common.context import context_agent, context_layout, context_root
+from ...common.context import context_agent, prepare_agent, context_root
 from ...common.output import shorten_home_path
 
 
-def should_prepare_target(arguments: list[str]) -> bool:
-    """Defer help, usage errors, and non-TTY calls to normal CLI handling."""
-
-    if arguments not in ([], ["--"]):
-        return False
-    try:
-        _require_interactive_terminal(sys.stdin, sys.stdout)
-    except ClickException:
-        return False
-    return True
-
-
-def cd(ctx: typer.Context) -> None:
+def cd(
+    ctx: typer.Context,
+    agent: Annotated[
+        str | None, AgentArgument("resident,visiting,roaming,before,after")
+    ] = None,
+) -> None:
     """Run the configured interactive shell from the selected directory."""
 
     agent = context_agent(ctx)
-    layout = context_layout(ctx) if agent else None
-    directory = layout.home if layout else context_root(ctx)
     _require_interactive_terminal(sys.stdin, sys.stdout)
+    layout = prepare_agent(ctx) if agent else None
+    directory = layout.home if layout else context_root(ctx)
     executable = os.environ.get("SHELL", "/bin/sh")
     destination = f"{layout.name}'s home" if layout else "the Toolang root"
     try:

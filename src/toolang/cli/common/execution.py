@@ -14,7 +14,7 @@ from toolang.common.version import displayed_toolang_version
 from toolang.execution.errors import RunStoreSchemaError
 from toolang.execution.store import RunStore
 
-from .context import context_layout
+from .context import select_agent_instance
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,7 +34,7 @@ def open_execution(
 ) -> Iterator[ExecutionResources | None]:
     """Open one agent's execution store in the requested access mode."""
 
-    layout = context_layout(ctx)
+    layout = select_agent_instance(ctx)
     if not layout.run_store.is_file():
         if required:
             raise ClickException(f"execution history not found: {layout.name}")

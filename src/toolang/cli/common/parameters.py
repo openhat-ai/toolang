@@ -82,10 +82,12 @@ DriverOption = Annotated[
 
 def _selected_instance(ctx: typer.Context, value: str | None) -> str | None:
     if value is not None:
-        from .context import context_layout
+        from toolang.common.instance_ids import decode_instance_id
 
-        if context_layout(ctx).instance_id != value:
-            raise typer.BadParameter("instance does not match the selected target")
+        try:
+            decode_instance_id(value)
+        except ValueError as exc:
+            raise typer.BadParameter(str(exc)) from exc
     return value
 
 

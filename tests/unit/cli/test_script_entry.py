@@ -32,6 +32,76 @@ def _source(text: str = "agic():\n  Hello.\n") -> str:
     return "demo.too"
 
 
+@pytest.mark.parametrize("explicit", [False, True])
+@pytest.mark.parametrize(
+    "source",
+    ["missing", "invalid", "directory", "root_option", "expanduser", "resolve"],
+)
+def test_completion_suppresses_script_header_errors(
+    explicit, source, tmp_path, monkeypatch, capsys
+):
+    from typer._click.shell_completion import _resolve_context
+
+    label = "demo.too"
+    if source == "invalid":
+        Path(label).write_text("flow broken(:\n")
+    elif source == "directory":
+        Path(label).mkdir()
+    elif source == "root_option":
+        _source()
+    elif source in {"expanduser", "resolve"}:
+        original = getattr(Path, source)
+
+        def fail_script_path(self, *args, **kwargs):
+            if self == Path(label):
+                error = RuntimeError if source == "expanduser" else OSError
+                raise error("cannot resolve script path")
+            return original(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, source, fail_script_path)
+    command = typer.main.get_command(cli.app)
+    before = set(tmp_path.rglob("*"))
+    ctx = _resolve_context(
+        command,
+        {},
+        "too",
+        [
+            *(["--root", str(tmp_path)] if source == "root_option" else []),
+            *(["run"] if explicit else []),
+            label,
+        ],
+    )
+    assert ctx.command.name == "run"
+    assert ctx.resilient_parsing
+    assert set(tmp_path.rglob("*")) == before
+    output = capsys.readouterr()
+    assert not output.out and not output.err
+    if source in {"expanduser", "resolve"}:
+        assert cli.main([*(["run"] if explicit else []), label]) == 1
+        assert "cannot resolve script path" in capsys.readouterr().err
+        assert set(tmp_path.rglob("*")) == before
+
+
+@pytest.mark.parametrize("explicit", [False, True])
+def test_completion_keeps_valid_script_signatures(explicit, monkeypatch, tmp_path):
+    from typer._click.shell_completion import _resolve_context
+
+    label = _source("flow research(topic: Text):\n  pass\n")
+    monkeypatch.setattr(
+        script, "_run", lambda *_args, **_kwargs: pytest.fail("completion ran script")
+    )
+    before = set(tmp_path.rglob("*"))
+    ctx = _resolve_context(
+        typer.main.get_command(cli.app),
+        {},
+        "too",
+        [*(["run"] if explicit else []), label, "research"],
+    )
+    assert ctx.command.name == "research"
+    assert any(param.name == "topic" and param.required for param in ctx.command.params)
+    assert set(tmp_path.rglob("*")) == before
+
+
 @pytest.mark.parametrize("executable", ["too", "toolang"])
 @pytest.mark.parametrize("arguments", [[], ["--help"], ["-h"]])
 def test_init_without_directory_only_shows_help(
@@ -368,7 +438,7 @@ def test_entry_selector_requires_an_entry_of_the_requested_kind(
         script, "_run", lambda *args, **kwargs: pytest.fail("ran wrong kind")
     )
     other = "flow" if kind == "agic" else "agic"
-    assert cli.main([path, f"{other}:_"]) == 1
+    assert cli.main([path, f"{other}:_"]) == 2
     article = "an" if other == "agic" else "a"
     assert f"runnable is not {article} {other}" in capsys.readouterr().err
     Path(path).write_text("agic main():\n  Named.\n")
@@ -467,26 +537,38 @@ def test_no_entry_shows_help_or_requires_an_explicit_runnable(arguments, monkeyp
 
 
 @pytest.mark.parametrize("executable", ["too", "toolang"])
-@pytest.mark.parametrize("arguments", [[], ["--help"]])
+@pytest.mark.parametrize("arguments", [[], ["--help"], ["--"]])
 def test_static_run_help(executable, arguments, monkeypatch, capsys):
     monkeypatch.setattr("sys.argv", [executable])
     assert cli.main(["run", *arguments]) == 0
     output = " ".join(capsys.readouterr().out.split())
-    assert f"{executable} run [OPTIONS] <FILE> [RUNNABLE] [ARGUMENTS]" in output
+    assert f"{executable} run [OPTIONS] <FILE> [RUNNABLE] [ARGS...]" in output
     assert "* FILE" in output
     assert "Path to a .too file" in output
     assert "RUNNABLE" in output
     assert "Execute a .too file." in output
-    assert "Runnable arguments" in output
+    assert "ARGS Runnable arguments" in output
     assert "script" not in output.lower()
     assert "NAME=VALUE" not in output
     assert "local" not in output.lower()
-    assert "ARGUMENTS..." not in output
+    assert "ARGUMENTS" not in output
     assert (
         "Omit run if RUNNABLE is not a Toolang command, e.g. "
         f"{executable} aid.too whats_for." in output
     )
     assert "Add --help after FILE or RUNNABLE for details." in output
+
+
+@pytest.mark.parametrize("explicit", [False, True])
+@pytest.mark.parametrize(
+    "arguments", [["--model", "dummy"], ["--", "hello"], ["topic=x"]]
+)
+def test_missing_script_entry_uses_one_concise_diagnostic(explicit, arguments, capsys):
+    path = _source("flow research(_: Text) -> Text:\n  pass\n")
+    assert cli.main([*(["run"] if explicit else []), path, *arguments]) == 2
+    error = capsys.readouterr().err
+    assert error.startswith("Error: No unnamed entry; select a runnable.\n")
+    assert "Usage: too " in error
 
 
 @pytest.mark.parametrize("root_boundary", [[], ["--"]])
@@ -584,9 +666,18 @@ def test_run_reports_invalid_files_without_hosting_advice(
     assert cli.main(["run", target, *arguments]) == 2
     output = " ".join(capsys.readouterr().err.split())
     assert f"{reason}: {target}" in output
+    assert "Invalid value for 'FILE'" in output
+    assert "Usage: too run [OPTIONS] <FILE> [RUNNABLE] [ARGS...]" in output
     assert "serve" not in output
     assert "local" not in output.lower()
-    assert "ARGUMENTS..." not in output
+
+
+@pytest.mark.parametrize("label", ["--help", "-h"])
+def test_run_option_boundary_keeps_a_following_filename_literal(label, capsys):
+    assert cli.main(["run", "--", label]) == 2
+    error = capsys.readouterr().err
+    assert "Invalid value for 'FILE'" in error
+    assert f"expected a .too file: {label}" in error
 
 
 @pytest.mark.parametrize("explicit", [False, True])
@@ -614,10 +705,10 @@ def test_run_rejects_global_root_overrides(root_args, capsys):
 
 
 @pytest.mark.parametrize("target", ["alice", "demo.too"])
-def test_target_first_run_points_to_serve(target, capsys):
+def test_target_first_run_rejects_agent(target, capsys):
     _source()
     assert cli.main([target, "run"]) == 2
-    assert "serve TARGET" in capsys.readouterr().err
+    assert "Usage:" in capsys.readouterr().err
 
 
 def test_script_cannot_select_a_synthetic_runtime_runnable(monkeypatch, capsys):
@@ -642,3 +733,23 @@ def test_script_help_allows_unnamed_entry_with_explicit_main(
     output = capsys.readouterr().out
     assert f"{kind}: <entry:1>" in " ".join(output.split())
     assert f"main {kind}" in " ".join(output.split())
+
+
+@pytest.mark.parametrize("explicit_run", [False, True])
+def test_escaped_script_filename_stays_literal_across_entry_forms(
+    explicit_run, monkeypatch, capsys
+):
+    source = Path("-demo.too")
+    source.write_text("flow research():\n  pass\n")
+    calls = []
+    monkeypatch.setattr(
+        script,
+        "_run",
+        lambda path, **kwargs: calls.append((path, kwargs["runnable"])) or 0,
+    )
+    header = ["run", "--", str(source)] if explicit_run else ["--", str(source)]
+    assert cli.main([*header, "research", "--help"]) == 0
+    assert calls == []
+    assert "research" in capsys.readouterr().out
+    assert cli.main([*header, "research"]) == 0
+    assert calls == [(source.resolve(), "research")]

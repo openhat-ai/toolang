@@ -13,6 +13,8 @@ from rich.console import Console, RenderableType
 from rich.table import Table
 from rich.text import Text
 import typer
+
+from toolang.cli.common.agent_argument import AgentArgument
 from typer._click import Context
 from typer._click.exceptions import ClickException, UsageError
 
@@ -773,6 +775,7 @@ def write_inspect_help(ctx: Context, formatter: HelpFormatter) -> None:
 
 def inspect_command(
     ctx: typer.Context,
+    agent: Annotated[str, AgentArgument("resident,visiting,roaming,before")],
     subjects: Annotated[
         list[str],
         typer.Argument(

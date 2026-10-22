@@ -6,6 +6,8 @@ from typing import Annotated
 
 from rich.console import Console
 import typer
+
+from toolang.cli.common.agent_argument import AgentArgument
 from typer._click.exceptions import ClickException
 
 from toolang.cli.common.context import context_agent, context_layout, context_root
@@ -17,6 +19,7 @@ from toolang.up.types import TopPeriod as Period, TopRecent as Recent
 
 def top(
     ctx: typer.Context,
+    agent: Annotated[str | None, AgentArgument("resident,before,after")] = None,
     period: Annotated[Period, typer.Option(help="Rolling usage period")] = Period.hour,
     recent: Annotated[
         Recent, typer.Option(help="Recently completed root Runs")

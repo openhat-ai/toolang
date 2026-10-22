@@ -42,7 +42,9 @@ def test_script_root_and_runnable_share_field_sections(theme, width, color_syste
         stdin=UnreadableStdin(),
     )
     parent = root.context_class(root, info_name="too demo.too", terminal_width=width)
-    command = root.commands["greet"]
+    proxy = root.commands["greet"]
+    assert isinstance(proxy, LazyCommand)
+    command = proxy.load()
     child = command.context_class(command, parent=parent, info_name="greet")
     console = Console(width=width, force_terminal=True, color_system=color_system)
     for ctx in (parent, child):
@@ -243,8 +245,8 @@ def test_root_help_shows_the_source_version_in_dim_parentheses(
         (["prompt", "--help"], 0),
         (["prompt", "new", "--help"], 0),
         (["prompt", "new"], 0),
-        (["serve", "--port", "1234"], 0),
-        (["workspace", "list"], 0),
+        (["serve", "--port", "1234"], 2),
+        (["workspace", "list"], 2),
         (["prompt", "new", "--unknown"], 2),
     ],
 )
@@ -617,7 +619,7 @@ def test_hidden_is_no_longer_a_command():
     ("args", "error"),
     [
         ([], "No such command 'channel'."),
-        (["list"], "list does not accept an agent target here"),
+        (["list"], "Usage:"),
         (["--help"], "No such command 'channel'."),
     ],
 )
@@ -645,7 +647,7 @@ def test_chore_clone_command_is_removed(target, tmp_path, capsys):
         (["serve"], "too serve [OPTIONS] <AGENT>"),
     ],
 )
-def test_virtual_agent_usage_keeps_position_and_normal_weight(
+def test_agent_usage_keeps_recommended_position_and_normal_weight(
     arguments, usage, tmp_path, capsys, monkeypatch
 ):
     monkeypatch.setattr("sys.argv", ["too"])
@@ -677,13 +679,13 @@ def test_virtual_agent_usage_keeps_position_and_normal_weight(
         (
             "serve",
             "Run an agent in the foreground",
-            "Agent name, .too path, GitHub ref, or URL",
+            "Agent name, ref, URL",
         ),
-        ("_serve", "Run an agent server", "Local agent name"),
+        ("_serve", "Run an agent server", "Agent name"),
     ],
 )
 @pytest.mark.parametrize("args", [[], ["--help"], ["-h"], ["--unknown"]])
-def test_real_and_virtual_agent_arguments_share_usage(
+def test_after_agent_arguments_share_usage(
     command, description, argument_help, args, tmp_path, capsys, monkeypatch
 ):
     monkeypatch.setattr("sys.argv", ["too"])
@@ -694,9 +696,10 @@ def test_real_and_virtual_agent_arguments_share_usage(
     assert f"Usage: too {command} [OPTIONS] <AGENT>" in output.splitlines()
     if status == 0:
         assert output.startswith(description + ".\n")
-        assert f"* AGENT {argument_help}" in [
-            " ".join(line.split()) for line in output.splitlines()
-        ]
+        assert any(
+            line.startswith(f"* AGENT {argument_help}")
+            for line in [" ".join(line.split()) for line in output.splitlines()]
+        )
         assert "Show this message and exit\n" in output
         assert output.index("Options:") < output.index("Allow fields:")
 
@@ -726,47 +729,58 @@ def test_real_and_virtual_agent_arguments_share_usage(
     ],
 )
 def test_agent_help_matches_target_scope(command, tmp_path, capsys):
-    assert too_main(["--root", str(tmp_path), *command.split(), "--help"]) == 0
-    output = strip_ansi(capsys.readouterr().out)
-    row = next(
-        line for line in output.splitlines() if line.lstrip().startswith("* AGENT ")
+    words = command.split()
+    assert (
+        too_main(
+            [
+                "--root",
+                str(tmp_path),
+                *(["a"] if len(words) > 1 else []),
+                *words,
+                "--help",
+            ]
+        )
+        == 0
     )
+    output = " ".join(strip_ansi(capsys.readouterr().out).split())
+    if len(words) > 1:
+        assert "<AGENT>" in output
+        assert "* AGENT" not in output
+        return
     if command == "new":
-        expected = "Agent name: [a-z][a-z0-9_]{0,63}"
-    elif command in {"start", "stop"}:
-        expected = "Agent name, GitHub ref, or URL"
-    elif command.split()[0] in {
-        "remove",
-        "_serve",
-        "chore",
-    }:
-        expected = "Local agent name"
+        assert "new [OPTIONS] <NAME>" in output
+        assert "* NAME New agent name" in output
+        assert "AGENT" not in output
+        return
+    elif command in {"start", "stop", "serve"}:
+        expected = "Agent name, ref, URL"
+    elif command in {"remove", "_serve", "chore"}:
+        expected = "Agent name"
     else:
-        expected = "Agent name, .too path, GitHub ref, or URL"
-    assert " ".join(row.split()) == f"* AGENT {expected}"
+        expected = "Agent name, path, ref, URL"
+    assert f"* AGENT {expected}" in output
+    if command != "new":
+        assert "placements:" not in output
 
 
 @pytest.mark.parametrize("kind", ["psyche", "skill", "service", "prompt"])
 @pytest.mark.parametrize("command", ["new", "list"])
-def test_cap_agent_help_distinguishes_mutation_and_listing(
-    kind, command, tmp_path, capsys
-):
+def test_cap_children_inherit_agent_usage_from_group(kind, command, tmp_path, capsys):
     assert too_main(["--root", str(tmp_path), kind, command, "--help"]) == 0
     output = " ".join(strip_ansi(capsys.readouterr().out).split())
-    agent_help = "Agent name, .too path, GitHub ref, or URL"
-    expected = (
-        f"Local agent name; omit for root {kind}s"
-        if command == "new"
-        else f"{agent_help}; omit for root {kind}s only"
-    )
-    assert f"AGENT {expected}" in output
+    assert f"[AGENT] {kind} {command}" in output
+    assert "AGENT Agent name" not in output
+    assert too_main(["--root", str(tmp_path), kind, "--help"]) == 0
+    group_help = " ".join(strip_ansi(capsys.readouterr().out).split())
+    assert "AGENT Agent name, path, ref, URL" in group_help
+    assert "placements:" not in group_help
 
 
 @pytest.mark.parametrize("command", ["caps", "models", "providers", "tools"])
 def test_inspection_help_describes_all_agent_targets(command, tmp_path, capsys):
     assert too_main(["--root", str(tmp_path), command, "--help"]) == 0
     output = " ".join(strip_ansi(capsys.readouterr().out).split())
-    assert "AGENT Agent name, .too path, GitHub ref, or URL; omit for root" in output
+    assert "AGENT Agent name, path, ref, URL" in output
 
 
 @pytest.mark.parametrize("kind", ["psyche", "skill", "service", "prompt"])
@@ -802,7 +816,7 @@ def test_prompt_help_uses_conventional_metavars(tmp_path, capsys, monkeypatch):
     output = strip_ansi(capsys.readouterr().out)
     assert "Usage: too [AGENT] prompt new [OPTIONS] <NAME>" in " ".join(output.split())
     assert "<str>" not in output
-    for name in ("AGENT", "NAME"):
+    for name in ("NAME",):
         row = next(
             line
             for line in output.splitlines()
@@ -816,11 +830,11 @@ def test_prompt_help_uses_conventional_metavars(tmp_path, capsys, monkeypatch):
     ("arguments", "options"),
     [
         (
-            ["a", "serve"],
+            ["serve", "a"],
             ("--sandbox", "--allow", "--limit", "--default", "--compact-model"),
         ),
         (
-            ["a", "start"],
+            ["start", "a"],
             ("--sandbox", "--allow", "--limit", "--default", "--compact-model"),
         ),
         (
@@ -863,7 +877,7 @@ def test_help_uses_semantic_configuration_metavars(
         assert "--help" in option_rows[-1].split()
 
 
-def test_error_usage_preserves_the_virtual_agent_position(
+def test_error_usage_preserves_the_recommended_agent_position(
     tmp_path, capsys, monkeypatch
 ):
     monkeypatch.setattr("sys.argv", ["too"])

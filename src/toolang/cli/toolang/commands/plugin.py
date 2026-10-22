@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 
-from toolang.cli.common.context import context_layout
+from toolang.cli.common.context import prepare_agent
 
 import asyncio
 from typing import Annotated
 
 import typer
+
+from toolang.cli.common.agent_argument import AgentArgument
 
 from ...common.context import context_agent, context_root
 from ...common.output import echo_collection_summary, echo_table
@@ -27,6 +29,10 @@ from toolang.setup.tools import load_tool_setup
 
 def list_tools(
     ctx: typer.Context,
+    agent: Annotated[
+        str | None,
+        AgentArgument("resident,visiting,roaming,before"),
+    ] = None,
     query: Annotated[
         list[str] | None,
         typer.Option(
@@ -51,7 +57,7 @@ def list_tools(
         setup = asyncio.run(
             load_tool_setup(
                 (
-                    context_layout(ctx)
+                    prepare_agent(ctx)
                     if agent is not None
                     else AgentLayout.resident(context_root(ctx), "default")
                 ),

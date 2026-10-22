@@ -10,6 +10,8 @@ import shutil
 from typing import Annotated, cast
 
 import typer
+
+from toolang.cli.common.agent_argument import AgentArgument
 from typer._click.exceptions import ClickException
 
 from toolang.cli.common.parameters import InstanceOption
@@ -35,6 +37,7 @@ from ...common.context import (
     cli_context,
     context_root,
     require_runtime_agent,
+    select_agent_instance,
     resolve_model_catalog_option,
     ui_base_url,
     user_call,
@@ -56,9 +59,9 @@ def new_agent(
     agent: Annotated[
         str,
         typer.Argument(
-            metavar="AGENT",
+            metavar="NAME",
             click_type=TextType(),
-            help="Agent name: [a-z][a-z0-9_]{0,63}",
+            help="New agent name",
         ),
     ],
 ) -> None:
@@ -80,7 +83,7 @@ def clone_agent(
         typer.Argument(
             metavar="SOURCE",
             click_type=TextType(),
-            help="Local agent name, GitHub ref, or URL",
+            help="Agent name, ref, URL",
         ),
     ],
     target: Annotated[
@@ -131,10 +134,7 @@ def clone_agent(
 
 def remove_agent(
     ctx: typer.Context,
-    agent: Annotated[
-        str,
-        typer.Argument(metavar="AGENT", click_type=TextType(), help="Local agent name"),
-    ],
+    agent: Annotated[str, AgentArgument("resident,after")],
 ) -> None:
     from toolang.up import sandbox as sandbox_runtime
 
@@ -177,17 +177,12 @@ def list_agents(ctx: typer.Context) -> None:
 
 def info_agent(
     ctx: typer.Context,
-    agent: str | None = typer.Argument(
-        None,
-        help="Agent name, .too path, GitHub ref, or URL",
-        hidden=True,
-    ),
+    agent: Annotated[str, AgentArgument("resident,visiting,roaming,after,before")],
     model_catalog: ModelCatalogOption = None,
     instance: InstanceOption = None,
 ) -> None:
     agent_name = require_runtime_agent(ctx, agent)
-    selected_layout = cli_context(ctx).layout
-    layout = selected_layout or AgentLayout.resident(context_root(ctx), agent_name)
+    layout = select_agent_instance(ctx)
     agent_name = layout.name
     process = agents.AgentProcess(layout)
     status = user_call(process.status, ui_base_url=ui_base_url())

@@ -22,6 +22,8 @@ from toolang.cli.common.terminal_session import prepare_terminal
 from toolang.cli.common.terminal_title import agent_label
 
 import typer
+
+from toolang.cli.common.agent_argument import AgentArgument
 from typer._click.core import ParameterSource
 from typer._click.exceptions import ClickException
 
@@ -32,7 +34,6 @@ from toolang.cli.common.parameters import (
     DriverOption,
     DefaultOptions,
     LimitOptions,
-    TextType,
 )
 
 from toolang.common.layout import AgentLayout
@@ -62,6 +63,7 @@ from ...common.context import (
     cli_context,
     context_root,
     require_runtime_agent,
+    select_agent_instance,
     load_runtime_environ,
     resolve_model_catalog_option,
     ui_base_url,
@@ -83,11 +85,7 @@ from ...common.progress import CliProgress, runtime_startup_failure_message
 
 def run(
     ctx: typer.Context,
-    agent: str | None = typer.Argument(
-        None,
-        help="Agent name, .too path, GitHub ref, or URL",
-        hidden=True,
-    ),
+    agent: Annotated[str, AgentArgument("resident,visiting,after")],
     sandbox: Annotated[
         str | None,
         typer.Option(
@@ -256,9 +254,7 @@ def _report_foreground_ready(
 
 def start(
     ctx: typer.Context,
-    agent: str | None = typer.Argument(
-        None, help="Agent Name or remote Source Ref", hidden=True
-    ),
+    agent: Annotated[str, AgentArgument("resident,visiting,after,before")],
     sandbox: Annotated[
         str | None,
         typer.Option(
@@ -459,9 +455,7 @@ def _retain_started(
 
 def stop(
     ctx: typer.Context,
-    agent: str | None = typer.Argument(
-        None, help="Agent Name or remote Source Ref", hidden=True
-    ),
+    agent: Annotated[str, AgentArgument("resident,visiting,after,before")],
     force: Annotated[
         bool,
         typer.Option(help="Force-stop when graceful shutdown does not complete"),
@@ -471,8 +465,7 @@ def stop(
     from ...common.progress import make_cli_progress
 
     agent_name = require_runtime_agent(ctx, agent)
-    root = context_root(ctx)
-    layout = cli_context(ctx).layout or AgentLayout.resident(root, agent_name)
+    layout = select_agent_instance(ctx)
     from toolang.up.instance import read_instance
 
     entry = read_instance(layout.runtime_status)
@@ -507,10 +500,7 @@ def stop(
 
 def serve(
     ctx: typer.Context,
-    agent: Annotated[
-        str,
-        typer.Argument(metavar="AGENT", click_type=TextType(), help="Local agent name"),
-    ],
+    agent: Annotated[str, AgentArgument("resident,after")],
     allows: AllowOptions = None,
     limits: LimitOptions = None,
     defaults: DefaultOptions = None,

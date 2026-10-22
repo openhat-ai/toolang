@@ -46,7 +46,8 @@ project `.env` files or resident-root dotenv files. Source-owned edit guards rem
 ## Runnable input and help
 
 The selected language signature generates the CLI's named inputs, primary input,
-requiredness, and help. File help selects among declarations; runnable help
+requiredness, and help. File help lists declaration metadata without building every runnable signature;
+only the selected runnable gets a complete native parameter set. Runnable help
 explains that declaration and derives a Flow outline from its statements/docs.
 Explicit `run` disambiguates runnable names that collide with CLI commands.
 [CLI](cli.md#routing) owns routing and entry selection.

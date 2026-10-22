@@ -12,6 +12,7 @@ from toolang.up import source as agent_sources
 
 from toolang.common.layout import AgentLayout
 from toolang.state.prepare import prepare_agent_state
+from tests.support.cli import invoke_script
 
 
 _REF = "github://example/caps/prompts/review.md@main"
@@ -109,7 +110,7 @@ def test_offline_info_never_prepares_or_fetches(tmp_path, monkeypatch, capsys):
         "_fetch_github_file",
         lambda _: pytest.fail("history query fetched a capability"),
     )
-    assert main(["--root", str(tmp_path), "dev", "info"]) == 0
+    assert main(["--root", str(tmp_path), "info", "dev"]) == 0
     output = capsys.readouterr()
     assert "not running" in output.out
     assert "Prepared" not in output.err
@@ -146,31 +147,21 @@ def test_remote_cap_inspection_shares_agent_and_cap_progress(
 
 
 @pytest.mark.parametrize("command", ["tools", "models", "providers", "workspace"])
-def test_remote_source_only_route_finishes_before_command_dispatch(
+def test_remote_help_and_invalid_options_do_not_prepare_sources(
     tmp_path, monkeypatch, capsys, command
 ):
-    from toolang.cli.toolang.routing import dispatch_visiting
+    from toolang.cli.toolang import main as cli
 
     selector = "https://example.test/dev.too"
     monkeypatch.setattr(
-        agent_sources, "_fetch_http_text", lambda _: "flow run():\n  pass\n"
+        agent_sources,
+        "_fetch_http_text",
+        lambda _: pytest.fail("invalid/help invocation fetched a source"),
     )
-    dispatched = []
-
-    def run_app(args, layout):
-        output = capsys.readouterr()
-        assert output.out == ""
-        assert f"{selector} fetching" in output.err
-        assert output.err.count("Prepared agent in ") == 1
-        dispatched.append(layout)
-        return 0
-
-    assert (
-        dispatch_visiting(["--root", str(tmp_path), selector, command], run_app=run_app)
-        == 0
-    )
-    assert len(dispatched) == 1
-    assert capsys.readouterr().err == ""
+    for tail, expected in ((["--help"], 0), (["--unknown"], 2)):
+        assert cli.main(["--root", str(tmp_path), selector, command, *tail]) == expected
+        capsys.readouterr()
+    assert not list(tmp_path.rglob("agent.too"))
 
 
 @pytest.mark.parametrize("quiet", [False, True])
@@ -181,7 +172,6 @@ def test_local_script_completes_preparation_before_setup_and_execution(
     from io import StringIO
 
     from tests.support.execution_harness import ExecutionHarness
-    from toolang.cli.toolang.commands import script
     from toolang.execution.executor import RunExecutor
     from toolang.setup import SetupWatcher
 
@@ -227,7 +217,7 @@ def test_local_script_completes_preparation_before_setup_and_execution(
     monkeypatch.setattr(RunExecutor, "start", start)
     try:
         args = [str(source), "flow:run", *(["--quiet"] if quiet else []), "--", "done"]
-        assert script.dispatch([], args, prog_name="too", stdin=StringIO()) == (
+        assert invoke_script(args, prog_name="too", stdin=StringIO()) == (
             1 if setup_fails else 0
         )
         assert bool(observed) == (not setup_fails)

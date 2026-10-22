@@ -7,10 +7,12 @@ from pathlib import Path
 from shutil import get_terminal_size
 from typing import Annotated
 import typer
+
+from toolang.cli.common.agent_argument import AgentArgument
 from wcwidth import wcswidth
 from toolang.base.types.model import Provider
 from toolang.cli.common.context import (
-    context_layout,
+    prepare_agent,
     context_agent,
     context_root,
     ModelCatalogOption,
@@ -50,6 +52,10 @@ PROVIDER_COLUMNS = ("provider", "models", "api", "env")
 
 def models_command(
     ctx: typer.Context,
+    agent: Annotated[
+        str | None,
+        AgentArgument("resident,visiting,roaming,before"),
+    ] = None,
     model_catalog: ModelCatalogOption = None,
     all_: Annotated[
         bool,
@@ -171,6 +177,10 @@ def _echo_models(records: Sequence[Mapping[str, object]], *, width: int) -> None
 
 def providers_command(
     ctx: typer.Context,
+    agent: Annotated[
+        str | None,
+        AgentArgument("resident,visiting,roaming,before"),
+    ] = None,
     model_catalog: ModelCatalogOption = None,
     all_: Annotated[
         bool,
@@ -257,7 +267,7 @@ def _layout(ctx: typer.Context) -> tuple[AgentLayout, bool]:
     agent = context_agent(ctx)
     return (
         (
-            context_layout(ctx)
+            prepare_agent(ctx)
             if agent is not None
             else AgentLayout.resident(context_root(ctx), "default")
         ),

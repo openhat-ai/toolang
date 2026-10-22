@@ -152,11 +152,7 @@ def test_local_script_saves_only_to_an_explicit_destination(
     if entry == "echo":
         args.extend(("--", "hello"))
     monkeypatch.setattr("sys.stdin", StringIO())
-    result = (
-        script.dispatch([], args, prog_name="toolang")
-        if entry == "echo"
-        else cli.main(["run", *args])
-    )
+    result = cli.main(["run", *args])
     output = capsys.readouterr()
 
     assert result == expected_status

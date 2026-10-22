@@ -6,6 +6,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Literal
 
 import typer
+
+from toolang.cli.common.agent_argument import AgentArgument
 from typer._click.exceptions import ClickException
 from typer.core import TyperGroup
 
@@ -25,13 +27,17 @@ from toolang.state.prepare import (
     inspect_agent_caps,
     prepare_agent_state,
 )
-from ..common.context import context_agent, context_layout, context_root, user_call
+from ..common.context import (
+    context_agent,
+    context_layout,
+    prepare_agent,
+    context_root,
+    user_call,
+)
 from ..common.output import echo_collection_summary
 from ..common.records import check_output_options, echo_compact_records
-from ..common.routing import (
-    OptionalPrefixAgentCommand,
-    OptionalPrefixAgentListCommand,
-)
+from ..common.help import CliCommand
+
 
 if TYPE_CHECKING:
     from toolang.state.state import StateCap
@@ -49,40 +55,16 @@ CAP_FORMS: tuple[CapForm, ...] = (
 CAP_SCOPES: tuple[CapScope, ...] = ("root", "home", "here")
 
 
-def _kind_command_cls(label: str) -> type[OptionalPrefixAgentCommand]:
-    return type(
-        f"{label.title().replace(' ', '')}ScopeCommand",
-        (OptionalPrefixAgentCommand,),
-        {"argument_help": f"Local agent name; omit for root {label}"},
-    )
-
-
-def _kind_list_command_cls(
-    label: str, agent_help: str
-) -> type[OptionalPrefixAgentListCommand]:
-    return type(
-        f"{label.title().replace(' ', '')}ListScopeCommand",
-        (OptionalPrefixAgentListCommand,),
-        {"argument_help": f"{agent_help}; omit for root {label} only"},
-    )
-
-
 def create_cap_apps(
     *,
     group_cls: type[TyperGroup] | None = None,
-    agent_help: str = "Local agent name",
+    group_callback: Callable[..., None] | None = None,
 ) -> dict[CapKind, typer.Typer]:
     cap_titles: dict[CapKind, str] = {
         "psyche": "Psyche",
         "skill": "Skill",
         "service": "Service",
         "prompt": "Prompt",
-    }
-    cap_labels: dict[CapKind, str] = {
-        "psyche": "psyches",
-        "skill": "skills",
-        "service": "services",
-        "prompt": "prompts",
     }
     cap_group_help: dict[CapKind, str] = {
         "psyche": "Manage psyche caps",
@@ -145,9 +127,6 @@ def create_cap_apps(
     apps: dict[CapKind, typer.Typer] = {}
     for kind in cap_titles:
         title = cap_titles[kind]
-        label = cap_labels[kind]
-        command_cls = _kind_command_cls(label)
-        list_command_cls = _kind_list_command_cls(label, agent_help)
         cap_app = typer.Typer(
             help=cap_group_help[kind],
             cls=group_cls,
@@ -156,12 +135,14 @@ def create_cap_apps(
             pretty_exceptions_enable=False,
             pretty_exceptions_show_locals=False,
         )
+        if group_callback is not None:
+            cap_app.callback()(group_callback)
         for spec in command_specs:
             cap_app.command(
                 spec.name,
                 help=spec.help(kind),
                 no_args_is_help=spec.no_args_is_help,
-                cls=(list_command_cls if spec.name == "list" else command_cls),
+                cls=CliCommand,
             )(spec.factory(kind, title))
         apps[kind] = cap_app
     return apps
@@ -169,6 +150,9 @@ def create_cap_apps(
 
 def list_caps(
     ctx: typer.Context,
+    agent: Annotated[
+        str | None, AgentArgument("resident,visiting,roaming,before")
+    ] = None,
     query: Annotated[
         list[str] | None,
         typer.Option(
@@ -198,6 +182,7 @@ def list_caps(
         else AgentLayout.resident(context_root(ctx), agent_name)
     )
     entries, allowed = _cap_entries(
+        ctx,
         layout,
         include_agent=selected_agent is not None,
         kinds=set(CAP_KINDS),
@@ -257,6 +242,7 @@ def _make_cap_list_command(kind: CapKind, title: str) -> Callable[..., None]:
             else AgentLayout.resident(context_root(ctx), agent_name)
         )
         entries, allowed = _cap_entries(
+            ctx,
             layout,
             include_agent=selected_agent is not None,
             kinds={kind},
@@ -355,7 +341,7 @@ def _make_add_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
             typer.Argument(
                 metavar="SOURCE-REF",
                 click_type=TextType(),
-                help=f"{title} source: GitHub ref or URL",
+                help=f"{title} source: ref or URL",
             ),
         ],
     ) -> None:
@@ -469,6 +455,7 @@ def _entry_scope_label(entry: "StateCap", *, agent_name: str) -> CapScope:
 
 
 def _cap_entries(
+    ctx: typer.Context,
     layout: AgentLayout,
     *,
     include_agent: bool,
@@ -491,6 +478,7 @@ def _cap_entries(
                     progress=progress.sink,
                 )
             else:
+                layout = prepare_agent(ctx, progress=progress.sink)
                 result = user_call(
                     inspect_agent_caps, layout, kinds=kinds, progress=progress.sink
                 )
