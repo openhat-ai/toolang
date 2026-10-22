@@ -142,12 +142,18 @@ def test_contracts_generate_natural_descriptions(
         ("roaming", "alice", "agent names are not supported"),
     ],
 )
-def test_placement_errors_are_native(placements, selector, message):
-    def invoke(agent: Annotated[str, AgentArgument("source", placements=placements)]):
+@pytest.mark.parametrize("agent_first", [False, True])
+def test_placement_errors_are_native(placements, selector, message, agent_first):
+    def invoke(
+        agent: Annotated[
+            str, AgentArgument("source", placements=placements, both_orders=True)
+        ],
+    ):
         pytest.fail("unsupported selector reached execution")
 
     with pytest.raises(BadParameter, match=message):
-        _app(invoke).main([selector, "call"], standalone_mode=False)
+        args = [selector, "call"] if agent_first else ["call", selector]
+        _app(invoke).main(args, standalone_mode=False)
 
 
 @pytest.mark.parametrize(
@@ -197,7 +203,8 @@ def test_optional_prefix_never_consumes_business_operands(supplied):
     ]
 
 
-def test_native_conversion_and_callback_run_once():
+@pytest.mark.parametrize("args", [["alice", "call", "12"], ["call", "alice", "12"]])
+def test_native_conversion_and_callback_run_once(args):
     seen = []
 
     def converted(ctx: typer.Context, value: str):
@@ -207,19 +214,58 @@ def test_native_conversion_and_callback_run_once():
     def invoke(
         ctx: typer.Context,
         count: int,
-        agent: Annotated[str, AgentArgument("source", callback=converted)],
+        agent: Annotated[
+            str, AgentArgument("source", both_orders=True, callback=converted)
+        ],
     ):
         return agent, count, cli_context(ctx).agent
 
     command = _app(invoke)
-    assert command.main(["alice", "call", "12"], standalone_mode=False) == (
+    assert command.main(args, standalone_mode=False) == (
         "ALICE",
         12,
         "alice",
     )
+    child = command.commands["call"]
+    parent = Context(command, info_name="too")
+    ctx = Context(child, info_name="call", parent=parent)
+    assert ctx.get_usage().splitlines() == [
+        "Usage: too <AGENT> call [OPTIONS] <COUNT>",
+        "Usage: too call [OPTIONS] <AGENT> <COUNT>",
+    ]
     assert seen == [("alice", ParameterSource.COMMANDLINE)]
     with pytest.raises(UsageError, match="not a valid int"):
-        command.main(["alice", "call", "wrong"], standalone_mode=False)
+        command.main([*args[:-1], "wrong"], standalone_mode=False)
+
+
+@pytest.mark.parametrize("agent_first", [False, True])
+def test_dual_orders_preserve_option_values_and_literal_business_operands(agent_first):
+    def invoke(
+        agent: Annotated[str, AgentArgument("source", both_orders=True)],
+        message: str,
+        mode: Annotated[str, typer.Option()] = "default",
+    ):
+        return agent, message, mode
+
+    command = _app(invoke)
+    args = (
+        ["alice", "call", "--mode", "top"]
+        if agent_first
+        else ["call", "--mode", "top", "alice"]
+    )
+    assert command.main([*args, "--", "--literal"], standalone_mode=False) == (
+        "alice",
+        "--literal",
+        "top",
+    )
+
+
+def test_dual_order_prefix_does_not_consume_a_second_agent():
+    def invoke(agent: Annotated[str, AgentArgument("source", both_orders=True)]):
+        pytest.fail("extra agent reached execution")
+
+    with pytest.raises(UsageError, match="unexpected extra argument"):
+        _app(invoke).main(["alice", "call", "bob"], standalone_mode=False)
 
 
 def test_group_carries_prefix_to_leaf_contract_without_stealing_name(tmp_path):
@@ -306,7 +352,8 @@ def test_invalid_leaf_parameter_shape_is_rejected(multiple):
 
 def test_cached_native_parameters_isolate_concurrent_contexts(tmp_path):
     def invoke(
-        ctx: typer.Context, agent: Annotated[str | None, AgentArgument("source")] = None
+        ctx: typer.Context,
+        agent: Annotated[str | None, AgentArgument("source", both_orders=True)] = None,
     ):
         state = cli_context(ctx)
         return agent, state.agent, state.root, ctx.command
@@ -315,24 +362,31 @@ def test_cached_native_parameters_isolate_concurrent_contexts(tmp_path):
     child = command.commands["call"]
     parameter = agent_parameter(child)
     before = vars(parameter).copy()
-    cases = [(f"agent{i}", tmp_path / str(i), i % 2 == 0) for i in range(24)]
+    cases = [(f"agent{i}", tmp_path / str(i), i % 3) for i in range(24)]
 
     def run(case):
-        name, root, supplied = case
+        name, root, position = case
+        tail = (
+            [name, "call"]
+            if position == 1
+            else ["call", name]
+            if position == 2
+            else ["call"]
+        )
         return command.main(
-            ["--root", str(root), *([name] if supplied else []), "call"],
+            ["--root", str(root), *tail],
             standalone_mode=False,
         )
 
     with ThreadPoolExecutor(max_workers=8) as pool:
         results = list(pool.map(run, cases))
-    for (name, root, supplied), (
+    for (name, root, position), (
         argument,
         selected,
         selected_root,
         selected_command,
     ) in zip(cases, results, strict=True):
-        assert argument == selected == (name if supplied else None)
+        assert argument == selected == (name if position else None)
         assert selected_root == root
         assert selected_command is child
     assert vars(parameter) == before
@@ -341,15 +395,21 @@ def test_cached_native_parameters_isolate_concurrent_contexts(tmp_path):
 @pytest.mark.parametrize(
     "selector", ["agent:", "gh:", "alice@r-invalid", "https://invalid.test/a.txt"]
 )
-def test_eager_help_precedes_selector_validation(selector, monkeypatch, capsys):
+@pytest.mark.parametrize("agent_first", [False, True])
+def test_eager_help_precedes_selector_validation(
+    selector, agent_first, monkeypatch, capsys
+):
     monkeypatch.setattr("sys.argv", ["too"])
-    assert cli.main([selector, "chat", "--help"]) == 0
+    args = [selector, "chat"] if agent_first else ["chat", selector]
+    assert cli.main([*args, "--help"]) == 0
     assert "Usage: too <AGENT> chat" in capsys.readouterr().out
-    assert cli.main([selector, "chat"]) == 2
+    assert cli.main(args) == 2
     assert "Invalid value for 'AGENT'" in capsys.readouterr().err
 
 
-@pytest.mark.parametrize("name", ["list", "new", "clone", "remove", "run", "_serve"])
+@pytest.mark.parametrize(
+    "name", ["list", "new", "clone", "remove", "talk", "run", "_serve"]
+)
 def test_catalog_and_script_commands_reject_agent_prefix(
     name, tmp_path, monkeypatch, capsys
 ):
@@ -408,7 +468,7 @@ def test_root_command_completion_survives_an_unreadable_agent_inventory(monkeypa
     }
 
 
-@pytest.mark.parametrize("tail", [["models"], ["info"], ["skill", "list"]])
+@pytest.mark.parametrize("tail", [["models"], ["inspect"], ["skill", "list"]])
 def test_native_completion_does_not_offer_agent_suffixes(tail, tmp_path, monkeypatch):
     from toolang.catalog.agent import LocalAgents
     from typer._click.shell_completion import _resolve_context, _resolve_incomplete
@@ -420,6 +480,165 @@ def test_native_completion_does_not_offer_agent_suffixes(tail, tmp_path, monkeyp
     target, value = _resolve_incomplete(ctx, args, "al")
     assert not isinstance(target, AgentParameter)
     assert "alice" not in [item.value for item in target.shell_complete(ctx, value)]
+
+
+@pytest.mark.parametrize("name", ["info", "chat", "cd", "start", "stop", "serve"])
+@pytest.mark.parametrize("agent_first", [False, True])
+def test_dual_order_completion_consumes_the_agent_once(
+    name, agent_first, tmp_path, monkeypatch
+):
+    from toolang.catalog.agent import LocalAgents
+    from typer._click.shell_completion import _resolve_context, _resolve_incomplete
+
+    monkeypatch.setattr(LocalAgents, "list", lambda _: ("alice",))
+    command = typer.main.get_command(cli.app)
+    args = ["--root", str(tmp_path)]
+    if not agent_first:
+        ctx = _resolve_context(command, {}, "too", [*args, name])
+        parameter, value = _resolve_incomplete(ctx, [*args, name], "al")
+        assert isinstance(parameter, AgentParameter)
+        assert [item.value for item in parameter.shell_complete(ctx, value)] == [
+            "alice"
+        ]
+    args += ["alice", name] if agent_first else [name, "alice"]
+    ctx = _resolve_context(command, {}, "too", args)
+    parameter, _ = _resolve_incomplete(ctx, args, "")
+    assert not isinstance(parameter, AgentParameter)
+    assert ctx.params["agent"] == "alice"
+    assert ctx.get_parameter_source("agent") is ParameterSource.COMMANDLINE
+
+
+@pytest.mark.parametrize(
+    "name,module,callback",
+    [
+        ("info", "agent", "info_agent"),
+        ("chat", "chat", "chat_command"),
+        ("cd", "cd", "cd"),
+        ("start", "runtime", "start"),
+        ("serve", "runtime", "run"),
+        ("stop", "runtime", "stop"),
+    ],
+)
+@pytest.mark.parametrize(
+    "selector,kind",
+    [
+        ("alice", "name"),
+        ("agent:top", "name"),
+        ("gh:owner/alice", "remote"),
+        ("gh:owner/repo/alice.too@main", "remote"),
+        ("https://example.test/alice.too", "remote"),
+        ("./alice.too", "path"),
+        ("{root}/source with spaces/alice.too", "path"),
+        ("alice@t0000000001", "visiting_instance"),
+        ("alice@s00000010000000001", "roaming_instance"),
+    ],
+)
+def test_public_dual_orders_bind_the_same_selector(
+    name, module, callback, selector, kind, tmp_path, monkeypatch, capsys
+):
+    from functools import wraps
+    from importlib import import_module
+
+    owner = import_module(f"toolang.cli.toolang.commands.{module}")
+    monkeypatch.chdir(tmp_path)
+    selector = selector.format(root=tmp_path)
+    seen = []
+
+    @wraps(getattr(owner, callback))
+    def invoke(**kwargs):
+        ctx = kwargs["ctx"]
+        seen.append(
+            (
+                kwargs["agent"],
+                cli_context(ctx),
+                ctx.get_parameter_source("agent"),
+            )
+        )
+
+    monkeypatch.setattr(owner, callback, invoke)
+    error = None
+    if kind.endswith("instance") and name == "cd":
+        error = "instances are not supported"
+    elif name in {"start", "stop", "serve"}:
+        if kind == "path":
+            error = "paths are not supported"
+        elif kind == "roaming_instance":
+            error = "roaming instances are not supported"
+    for args in ([selector, name], [name, selector]):
+        assert cli.main(["--root", str(tmp_path), *args]) == (2 if error else 0)
+        if error:
+            assert error in capsys.readouterr().err
+            assert not seen
+    if not error:
+        assert len(seen) == 2 and seen[0] == seen[1]
+        argument, state, parameter_source = seen[0]
+        assert argument == selector.removeprefix("agent:")
+        assert parameter_source is ParameterSource.COMMANDLINE
+        assert state.root == tmp_path
+        assert state.agent == ("top" if selector == "agent:top" else "alice")
+        assert not state.prepared and not state.instance_selected
+        if kind == "path":
+            assert state.source == Path(selector).resolve()
+            assert state.layout is not None and state.layout.placement == "roaming"
+        elif kind == "remote":
+            assert state.layout is not None and state.layout.placement == "visiting"
+        elif kind.endswith("instance"):
+            assert state.address is not None
+            assert state.address.placement == kind.removesuffix("_instance")
+    assert not tuple(tmp_path.iterdir())
+
+
+@pytest.mark.parametrize(
+    "args,expected",
+    [
+        (["info", "chat"], ("info", "chat")),
+        (["chat", "info"], ("chat", "info")),
+        (["agent:chat", "info"], ("info", "chat")),
+        (["agent:info", "chat"], ("chat", "info")),
+    ],
+)
+def test_dual_order_command_names_keep_command_precedence(
+    args, expected, tmp_path, monkeypatch
+):
+    from functools import wraps
+    from toolang.cli.toolang.commands import agent, chat
+
+    seen = []
+    for owner, callback in ((agent, "info_agent"), (chat, "chat_command")):
+
+        @wraps(getattr(owner, callback))
+        def invoke(**kwargs):
+            seen.append((kwargs["ctx"].command.name, kwargs["agent"]))
+
+        monkeypatch.setattr(owner, callback, invoke)
+
+    assert cli.main(["--root", str(tmp_path), *args]) == 0
+    assert seen == [expected]
+    assert not tuple(tmp_path.iterdir())
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["inspect", "alice", "runs"],
+        *[[name, "alice"] for name in ("top", "caps", "tools", "models", "providers")],
+        *[
+            [name, "alice", "run_example"]
+            for name in ("cancel", "rerun", "fork", "rewind")
+        ],
+        ["steer", "alice", "run_example", "continue"],
+        ["workspace", "list", "alice"],
+        ["chore", "list", "alice"],
+        *[[kind, "list", "alice"] for kind in ("psyche", "skill", "service", "prompt")],
+        *[
+            [kind, "new", "alice", "review"]
+            for kind in ("psyche", "skill", "service", "prompt")
+        ],
+    ],
+)
+def test_scoped_commands_reject_command_first_agent_operands(args, tmp_path):
+    assert cli.main(["--root", str(tmp_path), *args]) == 2
+    assert not tuple(tmp_path.iterdir())
 
 
 @pytest.mark.parametrize("supplied", [False, True])

@@ -32,7 +32,11 @@ agent. Root help links to the topic directory beside `too more`.
 | `too init DIR` | Create executable `aid.too` and comment-only `toolang.toml` without overwriting |
 
 The root Typer group recognizes the command, then its native parameter contract
-binds AGENT exclusively from the prefix. [Command recognition](cli-command-recognition.md)
+binds AGENT. `info`, `chat`, `cd`, `start`, `stop`, and `serve` accept both
+`too AGENT COMMAND` and `too COMMAND AGENT`. Inspection commands, Run/Thread
+controls, and resource groups retain agent-first scope. Catalog commands keep
+their command-first name/source operands; Talk takes CONVO.
+[Command recognition](cli-command-recognition.md)
 owns precedence, declarations, usage, diagnostics, and completion. Commands are
 registered once; each invocation keeps selection in Context. Executable leaf
 callbacks own source preparation after native argument validation.
@@ -40,6 +44,9 @@ callbacks own source preparation after native argument validation.
 Each executable leaf declares one native `AgentArgument`: `source` for authored
 configuration, `home` for retained state or control, and `execute` for execution.
 The declaration generates its type, metavar, concise description, and completion.
+Its `both_orders` setting explicitly enables the command-first agent operand;
+the default remains prefix-only. Dual-order help shows both usage forms and
+one agent argument row.
 Groups only carry the raw prefix; their selected leaf validates it and owns the
 argument row. Every role displays `AGENT`; its description lists accepted input
 forms and uses `Running` when a live target is required. Placement and driver

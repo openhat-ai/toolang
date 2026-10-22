@@ -704,6 +704,22 @@ def test_agent_usage_keeps_recommended_position_and_normal_weight(
         ).bold
 
 
+@pytest.mark.parametrize("command", ["info", "chat", "cd", "start", "stop", "serve"])
+@pytest.mark.parametrize("agent_first", [False, True])
+def test_dual_order_help_advertises_both_forms_once_per_argument(
+    command, agent_first, tmp_path, monkeypatch, capsys
+):
+    monkeypatch.setattr("sys.argv", ["too"])
+    args = ["alice", command] if agent_first else [command, "alice"]
+    assert too_main(["--root", str(tmp_path), *args, "--help"]) == 0
+    output = strip_ansi(capsys.readouterr().out)
+    agent = "[AGENT]" if command == "cd" else "<AGENT>"
+    assert f"Usage: too {agent} {command} [OPTIONS]" in output.splitlines()
+    assert f"Usage: too {command} [OPTIONS] {agent}" in output.splitlines()
+    arguments = output.split("Arguments:\n", 1)[1].split("Options:", 1)[0]
+    assert arguments.count("AGENT") == 1
+
+
 @pytest.mark.parametrize(
     "command,description,metavar,argument_help,usage",
     [

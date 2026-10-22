@@ -19,6 +19,7 @@ from typer.core import TyperArgument, TyperCommand, TyperGroup
 from toolang.common.typer.ui import HelpFormatter, argument_usage
 from .agent_argument import (
     AgentParameter,
+    agent_parameter,
     agent_parameters,
     agent_prefix,
     install_agent_parameter,
@@ -33,15 +34,19 @@ def parameter_usage(param: Parameter, ctx: Context) -> list[str]:
     return [argument_usage(param)]
 
 
-def _usage_path(ctx: Context) -> Text:
-    """Render one leaf-owned agent prefix before the selected root command."""
+def _usage_path(ctx: Context, *, agent_after: bool = False) -> Text:
+    """Render the command path with its optional leaf-owned agent prefix."""
     contexts = []
     current: Context | None = ctx
     while current is not None:
         contexts.append(current)
         current = current.parent
     contexts.reverse()
-    agents = agent_parameters(ctx.command) if ctx.parent is not None else ()
+    agents = (
+        agent_parameters(ctx.command)
+        if ctx.parent is not None and not agent_after
+        else ()
+    )
     owner = contexts[1] if len(contexts) > 1 else None
     path = Text()
     for current in contexts:
@@ -123,14 +128,24 @@ class CliCommand(TyperCommand):
             and isinstance(ctx, HelpContext)
             and ctx._parameters_parsed
         ):
-            # Completion only consumes the command tail; the prefix has been parsed.
-            return [param for param in params if not isinstance(param, AgentParameter)]
+            return [
+                param
+                for param in params
+                if not isinstance(param, AgentParameter)
+                or param.accepts_positional(ctx)
+            ]
         return params
 
     def format_usage(self, ctx: Context, formatter: NativeHelpFormatter) -> None:
         write_usage(
             formatter, _usage_path(ctx), " ".join(self.collect_usage_pieces(ctx))
         )
+        if (agent := agent_parameter(self)) is not None and agent.contract.both_orders:
+            write_usage(
+                formatter,
+                _usage_path(ctx, agent_after=True),
+                " ".join(self._collect_usage_pieces(ctx, agent_after=True)),
+            )
 
     def write_help_sections(self, ctx: Context, formatter: HelpFormatter) -> None:
         """Let subclasses append caller-owned sections."""
@@ -139,9 +154,17 @@ class CliCommand(TyperCommand):
         _format_help(ctx, formatter)
 
     def collect_usage_pieces(self, ctx: Context) -> list[str]:
+        return self._collect_usage_pieces(ctx)
+
+    def _collect_usage_pieces(
+        self, ctx: Context, *, agent_after: bool = False
+    ) -> list[str]:
         pieces = [self.options_metavar] if self.options_metavar else []
         for param in self.get_params(ctx):
-            pieces.extend(parameter_usage(param, ctx))
+            if agent_after and isinstance(param, AgentParameter):
+                pieces.append(argument_usage(param))
+            else:
+                pieces.extend(parameter_usage(param, ctx))
         return pieces
 
 

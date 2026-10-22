@@ -8,18 +8,23 @@ separate follow-up surfaces.
 
 ## Grammar
 
-Use one command tree and one agent-prefix form:
+Use one command tree with leaf-owned agent positions:
 
 ```text
 too [OPTIONS] AGENT COMMAND [ARGUMENTS]
+too [OPTIONS] COMMAND AGENT [ARGUMENTS]
 too [OPTIONS] COMMAND [ARGUMENTS]
 ```
 
-Agent-scoped commands use the first form. Commands with optional agent scope also
-allow the second: `too top`, `too models`, or `too skill list` use root scope.
+`info`, `chat`, `cd`, `start`, `stop`, and `serve` accept both explicit agent
+positions. Other agent-scoped commands require the prefix, including inspection,
+Run/Thread controls, and resource groups. A command-first agent occupies the
+first positional argument, before business operands; command options may appear
+before or after it. Commands with optional agent scope retain omission: `too top`,
+`too models`, or `too skill list` use root scope.
 Catalog commands such as `too new NAME`, `too clone SOURCE [NAME]`, and
 `too remove NAME` have ordinary Typer operands and no agent-prefix slot.
-There is no command-suffix agent form: use `too alice info`, not `too info alice`.
+`talk` takes a conversation target and has no agent-prefix form.
 Global options precede the agent or command.
 
 After native Typer parsing of global options, inspect only the command header:
@@ -48,6 +53,7 @@ Extend the existing `AgentContract`, `AgentArgument`, `AgentParameter`, and
 | Role | `source`, `home`, or `execute`; determines lookup. |
 | Forms | Accepted name, path, ref, URL, and explicit instance forms. |
 | Placements | Accepted resident, visiting, and roaming targets. |
+| Both orders | Whether AGENT may also follow the command; defaults to prefix-only. |
 | Requiredness | Whether omitted selection uses root scope; represented by the native parameter default/required value. |
 | Runtime requirement | Whether the action requires a live owner and a particular driver. |
 
@@ -66,8 +72,10 @@ without an agent parameter rejects an inherited prefix before help or execution.
 Thus `too a skill list` accepts source inspection while `too a skill edit x` accepts
 resident authoring. Parent callbacks cannot prematurely restrict either leaf.
 
-`AgentParameter` sources the inherited prefix from invocation-local Context and
-marks it `COMMANDLINE` input. Native Typer owns defaults, requiredness, conversion,
+`AgentParameter` sources an inherited prefix from invocation-local Context, or
+registers its native positional input when the leaf permits both orders and no
+prefix is present. Both supplied forms are `COMMANDLINE` input.
+Native Typer owns defaults, requiredness, conversion,
 callbacks, remaining parameters, eager help, errors, and completion. Agent-aware
 leaves disable `no_args_is_help`: native requiredness diagnoses missing inputs,
 and a bound prefix can satisfy an otherwise empty command tail. Groups may show
@@ -89,10 +97,12 @@ shared helpers never infer them from native parameter names.
 Lazy command metadata references the same contract used to construct the native
 command. Root help and recognition do not load unrelated implementations or parse
 local scripts. Prefix usage renders `AGENT` before the top-level command/group;
-the selected leaf determines whether it is required, for example:
+dual-order leaves show a second Usage line with AGENT after the command.
+The selected leaf determines whether it is required, for example:
 
 ```text
 too AGENT info [OPTIONS]
+too info [OPTIONS] AGENT
 too AGENT workspace add [OPTIONS] PATH
 too AGENT chore run [OPTIONS] CHORE
 ```
@@ -156,9 +166,11 @@ Completion reads the same contracts. It may enumerate scoped resident/active
 entries or an explicitly supplied source path's retained places, but never fetches
 sources, probes runtimes, or searches for offline roaming homes by short name.
 Root command completion stays registry-based; lexical selector suggestions use
-shared metadata. Tail completion excludes the prefix parameter.
+shared metadata. Tail completion excludes a bound prefix or a prefix-only agent
+parameter; dual-order leaves otherwise complete the native agent operand.
 Help/completion never invoke command actions.
 
 Remove public `--instance`/`-i`. Private bootstrap receives concrete root/home,
 placement, identity, and runtime-generation bindings. There are no old-syntax
-aliases, dual format readers, alternate agent positions, or migration paths.
+aliases, dual format readers, or migration paths. Only the six dual-order leaves
+accept an agent after the command.

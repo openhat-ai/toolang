@@ -1,4 +1,4 @@
-"""Native leaf parameters for agent prefixes."""
+"""Native leaf parameters for command-owned agent positions."""
 
 from __future__ import annotations
 
@@ -30,6 +30,7 @@ class AgentContract:
     placements: frozenset[AgentPlacement]
     requires_live: bool = False
     required_driver: str | None = None
+    both_orders: bool = False
 
     @classmethod
     def parse(
@@ -39,6 +40,7 @@ class AgentContract:
         *,
         requires_live: bool = False,
         required_driver: str | None = None,
+        both_orders: bool = False,
     ) -> AgentContract:
         if role not in _ROLES:
             raise ValueError("AGENT requires a source, home, or execute role")
@@ -56,6 +58,7 @@ class AgentContract:
             cast(frozenset[AgentPlacement], tags),
             requires_live,
             required_driver,
+            both_orders,
         )
 
     @property
@@ -201,14 +204,16 @@ def AgentArgument(
     placements: str = "resident,visiting,roaming",
     requires_live: bool = False,
     required_driver: str | None = None,
+    both_orders: bool = False,
     **kwargs: Any,
 ) -> ArgumentInfo:
-    """Declare one native agent-prefix argument and its leaf contract."""
+    """Declare one native agent argument and its leaf contract."""
     contract = AgentContract.parse(
         role,
         placements,
         requires_live=requires_live,
         required_driver=required_driver,
+        both_orders=both_orders,
     )
     return typer.Argument(
         metavar=kwargs.pop("metavar", "AGENT"),
@@ -247,9 +252,13 @@ class AgentParameter(TyperArgument):
         assert isinstance(self.type, _AgentType)
         self.contract = self.type.contract
 
+    def accepts_positional(self, ctx: Context) -> bool:
+        """Share the native input position with parsing and completion."""
+        return self.contract.both_orders and agent_prefix(ctx) is None
+
     def add_to_parser(self, parser: Any, ctx: Context) -> None:
-        # The argument is supplied only by the command header, never its tail.
-        return None
+        if self.accepts_positional(ctx):
+            super().add_to_parser(parser, ctx)
 
     def consume_value(
         self, ctx: Context, opts: Mapping[str, Any]

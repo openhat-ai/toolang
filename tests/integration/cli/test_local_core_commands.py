@@ -3893,9 +3893,11 @@ def test_plugin_inventory_commands_have_only_direct_plural_forms(
     assert f"{command} [OPTIONS]" in targeted.stderr
 
 
+@pytest.mark.parametrize("agent_first", [False, True])
 def test_agent_info_builds_state_and_setup_without_server(
     tmp_path: Path,
     monkeypatch,
+    agent_first,
 ) -> None:
     root = tmp_path / "toolang"
     LocalAgents(root / "agents").create(
@@ -3920,7 +3922,7 @@ def test_agent_info_builds_state_and_setup_without_server(
 
     monkeypatch.setattr("toolang.setup.SetupWatcher", _SetupWatcher)
 
-    result = _invoke(root, "alice", "info")
+    result = _invoke(root, *(["alice", "info"] if agent_first else ["info", "alice"]))
 
     assert result.exit_code == 0
     assert "ALICE" in result.stdout
