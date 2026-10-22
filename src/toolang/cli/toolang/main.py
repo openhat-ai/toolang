@@ -193,6 +193,9 @@ class _ToolangHelpFormatter(HelpFormatter):
         self.write_text(
             f"Run '{ctx.find_root().info_name} more' to see additional commands."
         )
+        self.write_text(
+            f"Run '{ctx.find_root().info_name} help' to see option help topics."
+        )
 
 
 class _ToolangHelpContext(HelpContext):
@@ -317,6 +320,13 @@ _registered_command(
     help="Show additional commands",
     hidden=True,
     cls=_MoreCommandsCommand,
+)
+
+_registered_group(
+    "toolang.cli.toolang.commands.help:help_app",
+    name="help",
+    help="Read shared option syntax",
+    hidden=True,
 )
 
 

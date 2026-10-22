@@ -11,6 +11,12 @@ exposes raw CST; formatting requires valid syntax; highlighting tolerates
 incomplete source. [Authoring conventions](../authoring.md#automatic-formatting) define
 formatting conventions. Command help describes their options and output modes.
 
+`too help` lists the `allow`, `limit`, `default`, and `model` option-reference
+topics. `too help TOPIC` displays syntax, definitions, and examples directly;
+adding `-h` or `--help` displays the same reference. These commands run offline
+without reading stdin, loading project configuration/catalogs, or preparing an
+agent. Root help links to the topic directory beside `too more`.
+
 ## Routing
 
 | Input | Interpretation |
