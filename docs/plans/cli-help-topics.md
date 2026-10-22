@@ -6,6 +6,9 @@ provides the corresponding fields, rules, and examples without runtime setup.
 
 Status: proposed; human confirmation is required before implementation.
 
+See [Expected output and design review](cli-help-topics-output.md) for all topic
+pages, navigation/error cases, and representative affected command help.
+
 ## Scope
 
 - In: a topic-help entry point, discovery links, and relocation of the existing
@@ -20,8 +23,8 @@ Status: proposed; human confirmation is required before implementation.
 
 ## Action items
 
-- [ ] Add `too help [TOPIC]` through the existing lazy command factory. Support
-  exactly four case-sensitive topics in this order:
+- [ ] Add `too help [TOPIC]` as a native command group through the existing lazy
+  group factory, with four fixed, case-sensitive topic subcommands in this order:
 
   | Topic | Summary | Referenced options |
   | --- | --- | --- |
@@ -32,10 +35,11 @@ Status: proposed; human confirmation is required before implementation.
 
   `too help` and `too help --help` show the same usage and topic directory,
   with a reminder to use `too COMMAND --help` for command-specific options.
-  `too help TOPIC` prints only that topic's reference. Successful output goes
-  to stdout and exits 0. Unknown topics and extra operands use native parameter
-  diagnostics on stderr and exit 2; command names such as `chat` are not topics.
-  Keep `-h` and `--help` equivalent and support the same paths through `toolang`.
+  For each topic, bare invocation, `-h`, and `--help` show the same reference;
+  eager help must stay on the selected topic. Successful output goes to stdout
+  and exits 0. Unknown topics, options, and extra operands use native diagnostics
+  on stderr and exit 2; command names such as `chat` are not topics. Support
+  the same paths through `toolang`. Topic leaves have no business operands.
 
 - [ ] Make topics discoverable without expanding the main command directory.
   Register `help` as a root-hidden command, like `more`, and add
@@ -105,6 +109,15 @@ Status: proposed; human confirmation is required before implementation.
   preserving their section extension points. Keep the small, fixed topic
   directory and reference writers in CLI-owned code, using the existing
   `HelpFormatter` for headings, definition lists, wrapping, and examples.
+  Reuse one style hierarchy: all section headings use `cli.heading`, topic and
+  example commands use `cli.command.name`, and field/parameter labels use
+  `cli.argument.name`. Definitions are bold cyan in UV and bold in PLAIN;
+  explanations and important rules use normal foreground, not dim text.
+  Pass authored `Text` spans from CLI writers; add no per-section colors,
+  automatic prose highlighter, or renderer-specific field knowledge. Plain text
+  retains alignment and spacing. Topic examples use explanations above full-width
+  commands, with authored shell continuations where needed to remain copyable
+  at 44 columns; existing command-example layouts remain unchanged.
   Topic output must not read stdin, fetch sources, inspect agents, load model
   catalogs or project configuration, start services, or create runtime files.
   Preserve lazy imports; shared formatting must not acquire policy/runtime
@@ -119,7 +132,7 @@ Status: proposed; human confirmation is required before implementation.
 
 - [ ] Implement in the following likely touchpoints after approval:
   `src/toolang/cli/toolang/main.py` for registration/footer;
-  new `src/toolang/cli/toolang/commands/help.py` for the topic command;
+  new `src/toolang/cli/toolang/commands/help.py` for the group and topic commands;
   `src/toolang/cli/common/{help,help_sections,parameters}.py` for reference
   extraction and pointers; `src/toolang/cli/toolang/commands/chat/__init__.py`
   and `commands/runtime.py` for default-option metadata; and
@@ -135,7 +148,8 @@ Status: proposed; human confirmation is required before implementation.
   `tests/system/cli/test_cli_entry_points.py`:
 
   - Topic directory, all four topic pages, both executable names, unknown topics,
-    extra operands, and native help aliases produce the specified output/status.
+    extra operands/options, and native help aliases produce the specified
+    output/status. Topic-specific `--help` stays on the selected topic.
   - Chat, serve/start/internal runtime, rerun, Script file, and runnable help
     retain their options and relevant topic pointers, with no old appendices
     or dangling heading references. Assignment options consistently show
@@ -153,7 +167,9 @@ Status: proposed; human confirmation is required before implementation.
   - The reserved-name cases select the intended command, agent, or runnable.
   - At 44/80/120 columns in PLAIN/UV themes and monochrome/color output, text
     remains complete, wraps within width, and uses shared heading styles.
-    Assert content/layout properties rather than full-output snapshots.
+    Field labels and explanations have distinct emphasis; prose stays readable.
+    Wrapped example commands retain valid shell argument boundaries. Assert
+    content/layout/style properties rather than full-output snapshots.
 
 - [ ] Validate links and examples, generate the user-visible changelog update
   through `too aid.too update_changelog`, and run `git diff --check` plus the
