@@ -1,0 +1,134 @@
+# Plan
+
+Move shared option-reference details into explicit CLI help topics. Success means
+ordinary `--help` keeps visible options concise, while `too help TOPIC`
+provides the corresponding fields, rules, and examples without runtime setup.
+
+Status: proposed; human confirmation is required before implementation.
+
+## Scope
+
+- In: a topic-help entry point, discovery links, and relocation of the existing
+  `Allow fields`, `Limit fields`, `Default fields`, and `Model parameters`
+  appendices across Chat, runtime commands, rerun, and generated script help.
+  This supersedes only their placement and references in
+  [CLI Help Consistency](cli-help-consistency.md).
+- Out: option names, accepted values, parsing, policy and execution semantics,
+  command-help aliases, additional topics, `--help-all`, pagers, interactive Chat
+  help, and unrelated help layouts. This definition ships no implementation code.
+
+## Action items
+
+- [ ] Add `too help [TOPIC]` through the existing lazy command factory. Support
+  exactly four case-sensitive topics in this order:
+
+  | Topic | Summary | Referenced options |
+  | --- | --- | --- |
+  | `allow` | Resource fields and selection rules | `--allow` |
+  | `limit` | Run limit fields and units | `--limit` |
+  | `default` | Run defaults and Chat session entry | `--default` |
+  | `model` | Model selection and parameters | `--model`, `--compact-model` |
+
+  `too help` and `too help --help` show the same usage and topic directory,
+  with a reminder to use `too COMMAND --help` for command-specific options.
+  `too help TOPIC` prints only that topic's reference. Successful output goes
+  to stdout and exits 0. Unknown topics and extra operands use native parameter
+  diagnostics on stderr and exit 2; command names such as `chat` are not topics.
+  Keep `-h` and `--help` equivalent and support the same paths through `toolang`.
+
+- [ ] Make topics discoverable without expanding the main command directory.
+  Register `help` as a root-hidden command, like `more`, and add
+  `Run 'too help' to see option help topics.` to the root-help footer alongside
+  the existing `too more` hint. Use the invoked executable name in that footer.
+  Replace references to removed appendix headings in option descriptions with
+  explicit topic commands; use the documented `too` alias in these shared strings:
+
+  ```text
+  --allow <RESOURCE>=<QUERY>  Select allowed resources; see 'too help allow'
+  --limit <FIELD>=<VALUE>    Set run limits; see 'too help limit'
+  --default <FIELD>=<VALUE>  Set run defaults; see 'too help default'
+  --compact-model <MODEL>   Set the compaction model; see 'too help model'
+  ```
+
+  Both Script and rerun `--model` descriptions point to `too help model`.
+  Keep existing option visibility, ordering, metavars, required markers, bare
+  values, caller-owned sections, Examples, flow outlines, and epilogs.
+
+- [ ] Relocate reference content into the matching topic. Each page contains
+  option syntax, field/parameter rows, applicable value and repetition rules,
+  and one or two short examples. Preserve these details:
+
+  | Topic | Required content |
+  | --- | --- |
+  | `allow` | `models`, `tools`, `psyches`, `skills`, `services`, `prompts`; TQ queries, `all`, and `none`; union of repeated resource queries; sentinel mixing restrictions; existing policy restrictions still apply. |
+  | `limit` | `agic_model_calls`, `agic_tool_calls`, `tokens`, `cost`, `time`; per-agic versus run-tree accounting; USD and seconds; non-negative integers, decimal cost, `none`, and duplicate-field rejection. |
+  | `default` | `model` and Chat-only `runnable`; `none` resets the Chat entry; each field once; quoting; a cross-reference to `too help model` for model value syntax. |
+  | `model` | `[ref=]MODEL`; `effort` as a level, non-negative token budget, or `auto`; `max_output` as a positive integer or `auto`; parameter-only overrides; `default`/`unset` with caller-specific restrictions; quoting; exact-model requirement of `--compact-model` for a new runtime. |
+
+  Verify content against `cli/common/policy.py`, `base/model_settings.py`,
+  [Queries](../design/queries.md), and
+  [Model runtime configuration](../design/models.md#runtime-configuration).
+  Model help describes syntax, not installed models or provider capabilities;
+  direct users to `too models` for inventory. Do not duplicate model rules in
+  the `default` topic or introduce a TQ language manual in `allow`.
+
+- [ ] Remove automatic field appendices from `CliCommand` and `CliGroup` while
+  preserving their section extension points. Keep the small, fixed topic
+  directory and reference writers in CLI-owned code, using the existing
+  `HelpFormatter` for headings, definition lists, wrapping, and examples.
+  Topic output must not read stdin, fetch sources, inspect agents, load model
+  catalogs or project configuration, start services, or create runtime files.
+  Preserve lazy imports; shared formatting must not acquire policy/runtime
+  dependencies. No generic help framework or new dependency is needed.
+
+- [ ] Preserve existing command recognition for the new reserved name `help`.
+  It accepts no AGENT operand; prefixed agent/file forms receive the existing
+  unsupported-prefix diagnostic. A resident named `help` remains selectable as
+  `agent:help`; a script runnable named `help` remains selectable through
+  `too run FILE help` or a typed runnable selector. Keep `too more` unchanged.
+  See [Command recognition](../design/cli-command-recognition.md).
+
+- [ ] Implement in the following likely touchpoints after approval:
+  `src/toolang/cli/toolang/main.py` for registration/footer;
+  new `src/toolang/cli/toolang/commands/help.py` for the topic command;
+  `src/toolang/cli/common/{help,help_sections,parameters}.py` for reference
+  extraction and pointers; and `src/toolang/cli/toolang/commands/{script,thread}.py`
+  for local model option descriptions. Replace `help_sections.py` with a CLI-owned
+  `help_topics.py` if the former has no remaining callers. Leave the shared
+  renderer and routing algorithm unchanged. Synchronize `docs/design/cli.md`
+  and `docs/design/scripts.md` with the implemented help contract.
+
+- [ ] Add offline acceptance coverage in
+  `tests/unit/cli/{test_cli_help,test_cli_routing,test_script_command,test_script_entry}.py`,
+  `tests/integration/cli/test_runtime_commands.py`, and
+  `tests/system/cli/test_cli_entry_points.py`:
+
+  - Topic directory, all four topic pages, both executable names, unknown topics,
+    extra operands, and native help aliases produce the specified output/status.
+  - Chat, serve/start/internal runtime, rerun, Script file, and runnable help
+    retain their options and relevant topic pointers, with no old appendices
+    or dangling heading references. Unrelated custom sections stay intact.
+  - Topic field rows match parser vocabulary; rules and examples cover repeated
+    queries, sentinels, duplicates, units, Chat-only defaults, model quoting,
+    and compaction restrictions without changing parser behavior.
+  - Missing configuration/credentials and a nonexistent root do not prevent
+    topic output or create files. Guard against stdin, network, source loading,
+    catalog initialization, and execution imports in subprocess probes.
+  - The reserved-name cases select the intended command, agent, or runnable.
+  - At 44/80/120 columns in PLAIN/UV themes and monochrome/color output, text
+    remains complete, wraps within width, and uses shared heading styles.
+    Assert content/layout properties rather than full-output snapshots.
+
+- [ ] Validate links and examples, generate the user-visible changelog update
+  through `too aid.too update_changelog`, and run `git diff --check` plus the
+  required implementation checks: `uv run ruff check .`,
+  `uv run ruff format --check .`, `uv run ty check`, and `uv run pytest -n auto`.
+  Maintainer review verifies the changelog entry. For this definition-only
+  change, verify the current implementation and plan links, then run
+  `git diff --check`; no product tests or changelog change are required.
+
+## Open questions
+
+None. Risks are missed discovery links, reference/parser drift, accidental
+runtime imports, and the new reserved command name. Shared topic writers and
+the acceptance cases above cover them. Human confirmation remains pending.
