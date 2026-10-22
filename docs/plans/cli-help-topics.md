@@ -36,9 +36,14 @@ pages, navigation/error cases, and representative affected command help.
   `too help` and `too help --help` show the same usage and topic directory,
   with a reminder to use `too COMMAND --help` for command-specific options.
   For each topic, bare invocation, `-h`, and `--help` show the same reference;
-  eager help must stay on the selected topic. Successful output goes to stdout
-  and exits 0. Unknown topics, options, and extra operands use native diagnostics
-  on stderr and exit 2; command names such as `chat` are not topics. Support
+  eager help must stay on the selected topic. Render reference content directly:
+  single-option topics start with the option declaration and a short explanation;
+  `model` starts with its topic title and the relevant option forms. Omit the
+  helper command's description/Usage/Options wrapper and its self-help row.
+  Keep normal directory help and native usage in invocation errors.
+  Successful output goes to stdout and exits 0. Unknown topics, options, and
+  extra operands use native diagnostics on stderr and exit 2; command names
+  such as `chat` are not topics. Support
   the same paths through `toolang`. Topic leaves have no business operands.
 
 - [ ] Make topics discoverable without expanding the main command directory.
@@ -109,6 +114,8 @@ pages, navigation/error cases, and representative affected command help.
   preserving their section extension points. Keep the small, fixed topic
   directory and reference writers in CLI-owned code, using the existing
   `HelpFormatter` for headings, definition lists, wrapping, and examples.
+  Give only topic leaves a CLI-owned `format_help` override for reference output;
+  native subcommand parsing, eager help callbacks, and error usage stay intact.
   Reuse one style hierarchy: all section headings use `cli.heading`, topic and
   example commands use `cli.command.name`, and field/parameter labels use
   `cli.argument.name`. Definitions are bold cyan in UV and bold in PLAIN;
@@ -150,6 +157,8 @@ pages, navigation/error cases, and representative affected command help.
   - Topic directory, all four topic pages, both executable names, unknown topics,
     extra operands/options, and native help aliases produce the specified
     output/status. Topic-specific `--help` stays on the selected topic.
+    Successful topic pages contain target-option syntax and no helper-command
+    Usage/Options boilerplate; directory help and native error usage are retained.
   - Chat, serve/start/internal runtime, rerun, Script file, and runnable help
     retain their options and relevant topic pointers, with no old appendices
     or dangling heading references. Assignment options consistently show

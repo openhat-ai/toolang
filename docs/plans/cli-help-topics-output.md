@@ -20,10 +20,25 @@ exact spacing follows terminal width. The examples assume an installed
 - `too help`, `too help -h`, and `too help --help` are identical.
 - For each topic, bare invocation, `-h`, and `--help` are identical. Implement
   topics as native subcommands so eager help stays on the selected topic.
+- Successful topic output is reference content only: declarations describe
+  the target options. Omit helper-command Usage, Options, and self-help rows.
+  Native invocation errors may still show the helper command usage.
 - `toolang` supports the same forms; usage/footer spellings follow the invoked
   executable. Shared option pointers and examples use the `too` alias.
 - Success uses stdout and exit 0. Invalid topics/options/operands use stderr
   and exit 2. An unsupported AGENT prefix shows native help on stderr, exit 2.
+
+## Reference patterns
+
+| Reference | Relevant presentation |
+| --- | --- |
+| [Go: `go help environment`](https://pkg.go.dev/cmd/go#hdr-Environment_variables) | Topic prose followed by variable definitions; no help-command usage wrapper. |
+| [GitHub CLI: `gh help formatting`](https://cli.github.com/manual/gh_help_formatting) | Formatting rules and examples directly, without helper-command flags. |
+| [Git: `git help revisions`](https://git-scm.com/docs/gitrevisions) | A topic manual with its own description and syntax reference. |
+| [curl: `curl --help http`](https://curl.se/docs/manpage.html) | A classified option list; its Usage describes curl execution. |
+
+Use reference-only topic bodies. The directory explains how to request help;
+a selected topic explains the referenced option or shared value grammar.
 
 ## `too help`
 
@@ -52,15 +67,9 @@ Use 'too COMMAND --help' for command-specific options.
 stdout; exit 0.
 
 ```text
+--allow <FIELD>=<VALUE>
+
 Select allowed resources.
-
-Usage: too help allow [OPTIONS]
-
-Options:
-  -h, --help  Show this message and exit
-
-Syntax:
-  --allow <FIELD>=<VALUE>
 
 Fields:
   models    Model queries
@@ -90,15 +99,9 @@ Examples:
 stdout; exit 0.
 
 ```text
+--limit <FIELD>=<VALUE>
+
 Set run limits.
-
-Usage: too help limit [OPTIONS]
-
-Options:
-  -h, --help  Show this message and exit
-
-Syntax:
-  --limit <FIELD>=<VALUE>
 
 Fields:
   agic_model_calls  Maximum model calls per agic
@@ -126,15 +129,9 @@ Examples:
 stdout; exit 0.
 
 ```text
+--default <FIELD>=<VALUE>
+
 Set runtime or Chat session defaults.
-
-Usage: too help default [OPTIONS]
-
-Options:
-  -h, --help  Show this message and exit
-
-Syntax:
-  --default <FIELD>=<VALUE>
 
 Fields:
   model     Default model and parameters
@@ -174,12 +171,7 @@ See also:
 stdout; exit 0.
 
 ```text
-Select models and set model parameters.
-
-Usage: too help model [OPTIONS]
-
-Options:
-  -h, --help  Show this message and exit
+Model selection
 
 Syntax:
   --model <MODEL>          Script or rerun
@@ -541,6 +533,9 @@ Use 'too COMMAND --help' for command-specific options.
 
 - Corrected ambiguous `too help TOPIC --help` behavior: topics are native
   subcommands, so this displays the selected reference, not the directory.
+- Removed the helper-command description/Usage/Options wrapper from successful
+  topic pages. Single-option pages begin with the option declaration; the
+  model page begins with its topic title and the relevant option forms.
 - Corrected undefined table-label styling: fields/parameters and descriptions
   now have separate semantic styles, reusing the existing CLI palette.
 - Corrected long example commands wrapping inside two-column tables: topic
