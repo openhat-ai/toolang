@@ -1,6 +1,7 @@
 """Agent info summarizes resources from the unified setup accessors."""
 
 from pathlib import Path
+import shlex
 
 import pytest
 from toolang.up import source as agent_sources
@@ -18,6 +19,32 @@ from toolang.up.identity import allocate_roaming
 from toolang.plugin.models import query
 from toolang.plugin.toolsets.collections import ToolCollection
 from toolang.setup import AgentSetup
+
+
+@pytest.mark.parametrize("name", ["alice", "info", "top", "run", "more"])
+@pytest.mark.parametrize("width", [44, 80])
+def test_info_copy_command_selects_resident_names_that_collide_with_commands(
+    tmp_path, monkeypatch, capsys, name, width
+):
+    from rich.console import Console
+    from toolang.catalog.agent import LocalAgents
+    from toolang.cli.common import output
+
+    root = tmp_path / "toolang root"
+    monkeypatch.setenv("TOOLANG_ROOT", str(tmp_path / "other root"))
+    LocalAgents(root / "agents").create(name, content="flow main():\n  pass\n")
+    monkeypatch.setattr(
+        output, "_INFO_CONSOLE", Console(width=width, color_system=None)
+    )
+
+    assert main(["--root", str(root), f"agent:{name}", "info"]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    (command,) = [
+        line.partition("Command: ")[2] for line in lines if "Command: " in line
+    ]
+    args = shlex.split(command)
+    assert args[0] == "too"
+    assert main(args[1:]) == 0
 
 
 def _setup(tmp_path: Path, refs: tuple[str, ...]) -> AgentSetup:

@@ -313,7 +313,7 @@ def test_chat_thread_selection_requires_one_matching_home(
 
 
 def test_info_copy_command_binds_the_offline_home_and_quotes_paths(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, capsys
 ):
     import shlex
     from toolang.cli.toolang.commands import agent
@@ -333,7 +333,12 @@ def test_info_copy_command_binds_the_offline_home_and_quotes_paths(
     assert captured["Toolang root"] == str(root)
     assert captured["Agent root"] == str(layout.root)
     assert captured["Agent"] == layout.instance_name
-    assert shlex.split(captured["Command"]) == [
+    (command,) = [
+        line.removeprefix("Command: ")
+        for line in capsys.readouterr().out.splitlines()
+        if line.startswith("Command: ")
+    ]
+    assert shlex.split(command) == [
         "too",
         "--root",
         str(root),

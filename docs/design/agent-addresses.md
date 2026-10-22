@@ -157,10 +157,11 @@ registration. A later runtime at that home reuses the address with a new generat
 
 `top` shows full resident names or `name@ID` addresses. The address equals the
 active filename stem; a nonresident agent-root basename supplies only the ID.
-`info` shows `Toolang root`, `Agent root`, `Home`, `Agent`, and `Command`, plus
-runtime details when available. Its shell-quoted copy command includes `--root T`
-and a source-path address for roaming, remaining usable offline. Addresses copied
-from `top` still require the same Toolang root when used in another command.
+`info` shows `Toolang root`, `Agent root`, `Home`, and `Agent`, plus runtime
+details when available. An unwrapped, shell-quoted `Command` line follows the
+table; it includes `--root T` and a source-path address for roaming, remaining
+usable offline. Resident names that collide with commands use `agent:NAME`.
+Addresses copied from `top` require the same Toolang root in another command.
 
 Expanded `top`/`chore` scope, home-based `cd`, JSON binding metadata, and Toolang-root
 scoping of hub backend namespaces remain follow-ups; namespace formats are not

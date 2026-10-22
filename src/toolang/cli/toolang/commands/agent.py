@@ -234,40 +234,33 @@ def info_agent(
         if layout.placement == "roaming"
         else layout.instance_name
     )
+    if layout.placement == "resident" and selector in getattr(
+        ctx.find_root().command, "commands", {}
+    ):
+        selector = f"agent:{selector}"
+    toolang_root = str(context_root(ctx).expanduser().resolve())
+    command = shlex.join(["too", "--root", toolang_root, selector, "info"])
     rows = [
-        ("Toolang root", str(context_root(ctx).expanduser().resolve())),
+        ("Toolang root", toolang_root),
         ("Agent root", str(layout.root)),
         ("Home", shorten_home_path(layout.home)),
         ("Agent", layout.instance_name),
-        (
-            "Command",
-            shlex.join(
-                [
-                    "too",
-                    "--root",
-                    str(context_root(ctx).expanduser().resolve()),
-                    selector,
-                    "info",
-                ]
-            ),
-        ),
         *resources,
         ("Status", status_value),
     ]
     if status.status == "running":
         rows.append(("Drivers", _drivers_summary(runtime_state.get("drivers"))))
-    if status.status == "stopped":
-        echo_pairs_table(rows, avatar=agent_avatar(), title=agent_name.upper())
-        return
-    if status.sandbox:
-        rows.append(("Sandbox", status.sandbox))
-    if runtime_identity is not None and status.status != "stopped":
-        rows.append(runtime_identity)
-    if status.endpoint:
-        rows.append(("API", status.endpoint))
-    if status.webui_url:
-        rows.append(("WebUI", status.webui_url))
+    if status.status != "stopped":
+        if status.sandbox:
+            rows.append(("Sandbox", status.sandbox))
+        if runtime_identity is not None:
+            rows.append(runtime_identity)
+        if status.endpoint:
+            rows.append(("API", status.endpoint))
+        if status.webui_url:
+            rows.append(("WebUI", status.webui_url))
     echo_pairs_table(rows, avatar=agent_avatar(), title=agent_name.upper())
+    typer.echo(f"Command: {command}")
 
 
 def _drivers_summary(value: object) -> str:
