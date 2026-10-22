@@ -10,8 +10,9 @@ Status: proposed; human confirmation is required before implementation.
 
 - In: a topic-help entry point, discovery links, and relocation of the existing
   `Allow fields`, `Limit fields`, `Default fields`, and `Model parameters`
-  appendices across Chat, runtime commands, rerun, and generated script help.
-  This supersedes only their placement and references in
+  appendices across Chat, runtime commands, rerun, and generated script help;
+  consistent assignment metavars and caller-specific default descriptions.
+  This supersedes their placement, references, and assignment metavars in
   [CLI Help Consistency](cli-help-consistency.md).
 - Out: option names, accepted values, parsing, policy and execution semantics,
   command-help aliases, additional topics, `--help-all`, pagers, interactive Chat
@@ -26,7 +27,7 @@ Status: proposed; human confirmation is required before implementation.
   | --- | --- | --- |
   | `allow` | Resource fields and selection rules | `--allow` |
   | `limit` | Run limit fields and units | `--limit` |
-  | `default` | Run defaults and Chat session entry | `--default` |
+  | `default` | CLI defaults and their setting lifetime | `--default` |
   | `model` | Model selection and parameters | `--model`, `--compact-model` |
 
   `too help` and `too help --help` show the same usage and topic directory,
@@ -44,14 +45,24 @@ Status: proposed; human confirmation is required before implementation.
   explicit topic commands; use the documented `too` alias in these shared strings:
 
   ```text
-  --allow <RESOURCE>=<QUERY>  Select allowed resources; see 'too help allow'
+  --allow <FIELD>=<VALUE>    Select allowed resources; see 'too help allow'
   --limit <FIELD>=<VALUE>    Set run limits; see 'too help limit'
-  --default <FIELD>=<VALUE>  Set run defaults; see 'too help default'
+  --default <FIELD>=<VALUE>  Set session defaults; see 'too help default'
   --compact-model <MODEL>   Set the compaction model; see 'too help model'
   ```
 
+  Use `<FIELD>=<VALUE>` consistently for assignment options: FIELD names a
+  supported key and VALUE follows that field's grammar. The `allow` topic
+  explains resource fields and query values; these meanings do not need separate
+  RESOURCE/QUERY metavars. Keep placeholders uppercase and literal keys lowercase.
+  This changes only display; `--allow tools=none` and other accepted inputs stay
+  unchanged. Semantic operands such as `<MODEL>` and `[TOPIC]` keep their names.
+  The `--default` row above is for Chat; runtime commands say `Set runtime
+  defaults`. Supply caller-specific metadata through the existing Annotated
+  declarations/factories without mutating shared parameters.
+
   Both Script and rerun `--model` descriptions point to `too help model`.
-  Keep existing option visibility, ordering, metavars, required markers, bare
+  Keep existing option visibility, ordering, other metavars, required markers, bare
   values, caller-owned sections, Examples, flow outlines, and epilogs.
 
 - [ ] Relocate reference content into the matching topic. Each page contains
@@ -62,7 +73,7 @@ Status: proposed; human confirmation is required before implementation.
   | --- | --- |
   | `allow` | `models`, `tools`, `psyches`, `skills`, `services`, `prompts`; TQ queries, `all`, and `none`; union of repeated resource queries; sentinel mixing restrictions; existing policy restrictions still apply. |
   | `limit` | `agic_model_calls`, `agic_tool_calls`, `tokens`, `cost`, `time`; per-agic versus run-tree accounting; USD and seconds; non-negative integers, decimal cost, `none`, and duplicate-field rejection. |
-  | `default` | `model` and Chat-only `runnable`; `none` resets the Chat entry; each field once; quoting; a cross-reference to `too help model` for model value syntax. |
+  | `default` | `model` and Chat-only `runnable`; setting lifetime and supported commands as below; `runnable=none` returns to automatic Chat entry resolution; each field once; quoting; a cross-reference to `too help model` for model value syntax. |
   | `model` | `[ref=]MODEL`; `effort` as a level, non-negative token budget, or `auto`; `max_output` as a positive integer or `auto`; parameter-only overrides; `default`/`unset` with caller-specific restrictions; quoting; exact-model requirement of `--compact-model` for a new runtime. |
 
   Verify content against `cli/common/policy.py`, `base/model_settings.py`,
@@ -71,6 +82,24 @@ Status: proposed; human confirmation is required before implementation.
   Model help describes syntax, not installed models or provider capabilities;
   direct users to `too models` for inventory. Do not duplicate model rules in
   the `default` topic or introduce a TQ language manual in `allow`.
+
+  Retain `--default` as the canonical CLI option: configuration migration removed
+  the `[default]` table, while CLI defaults still apply to a runtime or session
+  containing multiple runs. The `default` topic documents CLI overrides and
+  presents this applicability table, rather than implying a config namespace:
+
+  | Context | Option and fields | Lifetime |
+  | --- | --- | --- |
+  | Runtime startup: `serve`, `start`, internal `_serve` | `--default model=BODY` | Runtime instance; existing-server compatibility checks still apply. |
+  | Chat | `--default model=BODY`, `--default runnable=REF` | Current Chat session; does not reconfigure the runtime or other sessions. |
+  | Script and rerun | `--model BODY`; no `--default` | One run; use `too help model` for syntax. |
+
+  Configuration uses structured `[model]` tables; legacy `[default]` tables are
+  ignored. `TOOLANG_DEFAULT_MODEL` remains supported. Global
+  `TOOLANG_DEFAULT_RUNNABLE` and runtime `--default runnable=REF` are rejected;
+  configured driver handlers own runtime entry selection. State these boundaries
+  briefly without adding a config-help topic, restoring removed options, or
+  renaming internal `RunDefaults`/override structures in this presentation change.
 
 - [ ] Remove automatic field appendices from `CliCommand` and `CliGroup` while
   preserving their section extension points. Keep the small, fixed topic
@@ -92,8 +121,10 @@ Status: proposed; human confirmation is required before implementation.
   `src/toolang/cli/toolang/main.py` for registration/footer;
   new `src/toolang/cli/toolang/commands/help.py` for the topic command;
   `src/toolang/cli/common/{help,help_sections,parameters}.py` for reference
-  extraction and pointers; and `src/toolang/cli/toolang/commands/{script,thread}.py`
-  for local model option descriptions. Replace `help_sections.py` with a CLI-owned
+  extraction and pointers; `src/toolang/cli/toolang/commands/chat/__init__.py`
+  and `commands/runtime.py` for default-option metadata; and
+  `src/toolang/cli/toolang/commands/{script,thread}.py` for local model descriptions.
+  Replace `help_sections.py` with a CLI-owned
   `help_topics.py` if the former has no remaining callers. Leave the shared
   renderer and routing algorithm unchanged. Synchronize `docs/design/cli.md`
   and `docs/design/scripts.md` with the implemented help contract.
@@ -107,10 +138,15 @@ Status: proposed; human confirmation is required before implementation.
     extra operands, and native help aliases produce the specified output/status.
   - Chat, serve/start/internal runtime, rerun, Script file, and runnable help
     retain their options and relevant topic pointers, with no old appendices
-    or dangling heading references. Unrelated custom sections stay intact.
+    or dangling heading references. Assignment options consistently show
+    `<FIELD>=<VALUE>`; Chat/runtime default descriptions name the correct
+    lifetime. Unrelated custom sections stay intact.
   - Topic field rows match parser vocabulary; rules and examples cover repeated
     queries, sentinels, duplicates, units, Chat-only defaults, model quoting,
     and compaction restrictions without changing parser behavior.
+    Check the default topic's applicability table and preserve existing coverage
+    for ignored legacy config, retained model environment overrides, rejected
+    global runnable settings, and rejection of options on the wrong surface.
   - Missing configuration/credentials and a nonexistent root do not prevent
     topic output or create files. Guard against stdin, network, source loading,
     catalog initialization, and execution imports in subprocess probes.
