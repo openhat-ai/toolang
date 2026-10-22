@@ -27,7 +27,7 @@ help formatter. The human approved this command-only portion of
 - [x] Cover stdout/exit 0, native stderr/exit 2, reserved-name collisions,
   44/80/120-column styling, copyable examples, and offline operation without
   stdin, configuration/catalog loading, source acquisition, or runtime setup.
-- [ ] Document the new entry, generate its changelog entry through `aid.too`,
+- [x] Document the new entry, generate its changelog entry through `aid.too`,
   run the default checks, and open an implementation PR with this plan.
 
 ## Risks and open questions
