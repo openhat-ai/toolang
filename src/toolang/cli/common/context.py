@@ -40,24 +40,6 @@ class CliContext:
     address: AgentAddress | None = None
 
 
-def parse_target(text: str) -> AgentTarget | Path | AgentAddress:
-    """Delegate selector syntax to its owner without reading or fetching a source."""
-    from toolang.up.source import parse_agent_target
-    from toolang.up.addresses import parse_address
-
-    if address := parse_address(text):
-        return address
-
-    if ":" not in text.split("/", 1)[0] and (
-        text.endswith(".too") or text.startswith(("./", "../", "/", "~/"))
-    ):
-        path = Path(text).expanduser().resolve()
-        if path.suffix != ".too":
-            raise ValueError(f"agent program must point to a .too file: {text}")
-        return path
-    return parse_agent_target(text)
-
-
 def target_context(root: Path, target: AgentTarget | Path | AgentAddress) -> CliContext:
     """Create invocation-local binding data; source preparation belongs to execution."""
     from toolang.up.source import visiting_layout
@@ -140,73 +122,6 @@ def require_runtime_agent(ctx: Context, agent: str | None) -> str:
     if selected:
         return selected
     show_help(ctx)
-
-
-def select_agent_instance(ctx: Context, *, record: str | None = None) -> AgentLayout:
-    """Resolve an existing retained instance when an executable callback needs it."""
-    state = cli_context(ctx)
-    layout = context_layout(ctx)
-    if state.instance_selected:
-        return layout
-    if layout.placement == "resident" and not layout.home.is_dir():
-        raise ClickException(f"Agent {layout.name} not found")
-    if state.source is not None:
-        from toolang.up.identity import select_roaming, retained_roaming
-
-        from toolang.common.typer.options import BARE_VALUE
-
-        record = record or (
-            ctx.params.get("run") or ctx.params.get("point") or ctx.params.get("thread")
-        )
-        if record == BARE_VALUE:
-            record = None
-        if record:
-            from contextlib import closing
-            from toolang.execution.store import RunStore
-
-            matches = []
-            for candidate in user_call(
-                retained_roaming, state.source, toolang_root=state.root
-            ):
-                if candidate.run_store.is_file():
-                    with closing(
-                        RunStore(candidate.run_store, read_only=True)
-                    ) as store:
-                        if (
-                            store.get_run(run_id=record) is not None
-                            or store.get_thread(thread_id=record) is not None
-                        ):
-                            matches.append(candidate)
-            if not matches:
-                raise ClickException(
-                    f"record not found in retained instances: {record}"
-                )
-            if len(matches) != 1:
-                raise ClickException(
-                    "record matches multiple instances; specify name@ID or file.too@ID"
-                )
-            layout = matches[0]
-        else:
-            layout = user_call(select_roaming, state.source, toolang_root=state.root)
-    from toolang.up.instance import read_instance
-
-    entry = read_instance(layout.runtime_status)
-    if layout.placement != "resident":
-        from toolang.up.identity import verify_identity
-
-        if entry is None:
-            raise ClickException(
-                f"instance ownership not found: {layout.instance_name}"
-            )
-        user_call(verify_identity, layout, entry["control"])
-        from toolang.up.private_paths import verify_area, verify_home_paths
-
-        user_call(verify_area, layout.root.parent, state.root)
-        user_call(verify_home_paths, layout.root, layout.name)
-    state.layout = layout
-    state.launch_id = entry["launch_id"] if entry else None
-    state.instance_selected = True
-    return layout
 
 
 def prepare_agent(ctx: Context, *, progress: ProgressSink | None = None) -> AgentLayout:

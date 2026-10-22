@@ -11,6 +11,7 @@ from typing import Annotated, cast
 
 import typer
 
+from ...common.execution import select_agent_instance
 from toolang.cli.common.agent_argument import AgentArgument, AgentNameType
 from typer._click.exceptions import ClickException
 
@@ -36,7 +37,6 @@ from ...common.context import (
     cli_context,
     context_root,
     require_runtime_agent,
-    select_agent_instance,
     resolve_model_catalog_option,
     ui_base_url,
     user_call,

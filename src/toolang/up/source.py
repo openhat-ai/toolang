@@ -12,7 +12,7 @@ import time
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlsplit
 from urllib.request import Request, urlopen
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from toolang.common.files import EditLock, atomic_write_text
 from toolang.common.github import (
@@ -31,6 +31,9 @@ from toolang.common.source import (
     parse_remote_source,
 )
 from .identity import visiting_home_guard
+
+if TYPE_CHECKING:
+    from .addresses import AgentAddress
 
 AgentTargetForm = Literal["name", "shorthand", "ref"]
 _MAX_ROAMING_PROJECTION_ATTEMPTS = 3
@@ -94,6 +97,23 @@ def parse_agent_target(text: str) -> AgentTarget:
     _require_too_path(source.path, text)
     identity = source.render() if isinstance(source, GitHubRef) else text.strip()
     return AgentTarget(text=identity, source=source, declared_ref=text.strip())
+
+
+def parse_agent_selector(text: str) -> AgentTarget | Path | AgentAddress:
+    """Parse selector syntax without acquiring sources or homes."""
+    from .addresses import parse_address
+
+    if address := parse_address(text):
+        return address
+
+    if ":" not in text.split("/", 1)[0] and (
+        text.endswith(".too") or text.startswith(("./", "../", "/", "~/"))
+    ):
+        path = Path(text).expanduser().resolve()
+        if path.suffix != ".too":
+            raise ValueError(f"agent program must point to a .too file: {text}")
+        return path
+    return parse_agent_target(text)
 
 
 def fetch_agent_ref(

@@ -144,3 +144,31 @@ def test_missing_area_ownership_is_not_recreated_over_retained_data(tmp_path):
         allocate_roaming(source, toolang_root=root)
     assert not ownership.exists()
     assert layout.runtime_status.read_bytes() == before
+
+
+def test_path_selection_revalidates_the_ownership_snapshot_it_pins(
+    tmp_path, monkeypatch
+):
+    from toolang.up import addresses
+    from toolang.up.instance import update_instance
+
+    root = tmp_path / "root"
+    source = tmp_path / "aid.too"
+    layout = allocate_roaming(source, toolang_root=root)
+    select = addresses.select_roaming
+
+    def replaced(*args, **kwargs):
+        selected = select(*args, **kwargs)
+
+        def replace(entry):
+            entry["launch_id"] = "replacement"
+            entry["control"]["source_ref"] = "https://other.example/aid.too"
+
+        update_instance(layout.runtime_status, replace)
+        return selected
+
+    monkeypatch.setattr(addresses, "select_roaming", replaced)
+    selector = parse_address(f"{source}@{layout.instance_id}")
+    assert selector is not None
+    with pytest.raises(ValueError, match="identity"):
+        resolve_address(root, selector)

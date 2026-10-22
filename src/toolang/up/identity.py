@@ -120,6 +120,23 @@ def verify_identity(layout: AgentLayout, control: dict) -> None:
         raise ValueError("instance ID collision: conflicting source ownership")
 
 
+def read_home_identity(layout: AgentLayout, *, toolang_root: Path) -> dict | None:
+    """Read and verify the ownership snapshot a home operation will pin."""
+    if layout.placement != "resident":
+        if layout.toolang_root != toolang_root.expanduser().resolve():
+            raise ValueError("instance belongs to a different Toolang root")
+        verify_area(layout.root.parent, toolang_root)
+        verify_home_paths(layout.root, layout.name)
+    entry = read_instance(layout.runtime_status, layout.instance)
+    if layout.placement != "resident":
+        if entry is None:
+            raise FileNotFoundError(
+                f"instance ownership not found: {layout.instance_name}"
+            )
+        verify_identity(layout, entry["control"])
+    return entry
+
+
 @contextmanager
 def visiting_home_guard(layout: AgentLayout) -> Iterator[None]:
     """Claim a new home or verify full ownership before any cache/history write."""

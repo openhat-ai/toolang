@@ -8,6 +8,7 @@ from typing import Annotated
 import typer
 from typer._click.exceptions import ClickException
 
+from toolang.cli.common.execution import select_agent_instance
 from toolang.cli.common.agent_argument import AgentArgument
 
 from toolang.cli.common.parameters import DEVELOPMENT_WHEEL_HELP
@@ -15,7 +16,6 @@ from toolang.cli.common.context import (
     ModelCatalogOption,
     cli_context,
     context_layout,
-    select_agent_instance,
     user_call,
 )
 from toolang.cli.common.workspaces import (
@@ -103,11 +103,14 @@ def _prepare_roaming_chat(ctx: typer.Context, thread: str | None) -> bool:
         return False
     if state.source is None or state.prepared or state.instance_selected:
         return False
+    from toolang.common.typer.options import BARE_VALUE
     from toolang.up.identity import allocate_roaming
     from toolang.up.source import materialize_roaming_program
 
     if thread is not None:
-        state.layout = select_agent_instance(ctx)
+        state.layout = select_agent_instance(
+            ctx, record=None if thread == BARE_VALUE else thread
+        )
         state.prepared = True
         return False
     if not state.source.is_file():

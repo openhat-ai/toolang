@@ -274,6 +274,10 @@ Other locks remain beside their protected objects:
 | `.runtime/active/register.lock` | Discovery publication/removal within one Toolang root |
 | `hub/hub.lock` | One Hub process per root for its lifetime |
 
+Visiting preparation briefly holds `/tmp/toolang/.<area_id>.lock` to publish
+area ownership, then uses `/tmp/toolang/<area_id>/.<hotel_id>.lock` to claim its
+home. Different homes prepare concurrently; repeated claims of one home serialize.
+
 Thread fork/rewind use SQLite transactions, without `runs.db.threads.lock`.
 Each agent reuses one `talk_` thread per backend/conversation. Its `runs.db` stores
 `talk_bindings` and admitted `talk_batches`, including exact input, cursor range,

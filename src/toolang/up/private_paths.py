@@ -104,6 +104,34 @@ def _validate_directory(
 
 
 @contextmanager
+def _private_guard(path: Path, parent_fd: int) -> Iterator[None]:
+    try:
+        descriptor = os.open(
+            path.name,
+            os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+            0o600,
+            dir_fd=parent_fd,
+        )
+    except FileExistsError:
+        descriptor = os.open(path.name, os.O_RDWR | os.O_NOFOLLOW, dir_fd=parent_fd)
+    try:
+        info = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(info.st_mode)
+            or info.st_uid != os.geteuid()
+            or stat.S_IMODE(info.st_mode) != 0o600
+        ):
+            raise ValueError(f"unsafe visiting guard: {path}")
+        with file_write_lock(path, create=False):
+            current = path.lstat()
+            if (current.st_dev, current.st_ino) != (info.st_dev, info.st_ino):
+                raise ValueError(f"visiting guard changed: {path}")
+            yield
+    finally:
+        os.close(descriptor)
+
+
+@contextmanager
 def visiting_paths(layout: AgentLayout) -> Iterator[VisitingPaths]:
     """Pin every untrusted directory with O_NOFOLLOW and directory-relative I/O."""
     parent = paths.VISITING_ROOT
@@ -134,33 +162,14 @@ def visiting_paths(layout: AgentLayout) -> Iterator[VisitingPaths]:
     locks = ExitStack()
     try:
         parent_fd, _ = open_directory(parent, base, create=True)
-        # A sidecar guard serializes first creation before the home guard exists.
-        lock = parent / f".{area.name}.lock"
-        try:
-            lock_fd = os.open(
-                lock.name,
-                os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
-                0o600,
-                dir_fd=parent_fd,
-            )
-        except FileExistsError:
-            lock_fd = os.open(lock.name, os.O_RDWR | os.O_NOFOLLOW, dir_fd=parent_fd)
-        try:
-            info = os.fstat(lock_fd)
-            if (
-                not stat.S_ISREG(info.st_mode)
-                or info.st_uid != os.geteuid()
-                or stat.S_IMODE(info.st_mode) != 0o600
-            ):
-                raise ValueError(f"unsafe visiting guard: {lock}")
-            locks.enter_context(file_write_lock(lock, create=False))
-            current = lock.lstat()
-            if (current.st_dev, current.st_ino) != (info.st_dev, info.st_ino):
-                raise ValueError(f"visiting guard changed: {lock}")
-        finally:
-            os.close(lock_fd)
-        area_fd, _ = open_directory(area, parent_fd, create=True)
-        verify_area(area, layout.toolang_root, create=True)
+        # Serialize area ownership publication briefly; independent homes use
+        # separate guards while their source inputs are prepared.
+        with _private_guard(parent / f".{area.name}.lock", parent_fd):
+            area_fd, _ = open_directory(area, parent_fd, create=True)
+            verify_area(area, layout.toolang_root, create=True)
+        locks.enter_context(
+            _private_guard(area / f".{layout.instance_id}.lock", area_fd)
+        )
         root_fd, created = open_directory(layout.root, area_fd, create=True)
         agents_fd, _ = open_directory(layout.root / "agents", root_fd, create=created)
         home_fd, _ = open_directory(layout.home, agents_fd, create=created)

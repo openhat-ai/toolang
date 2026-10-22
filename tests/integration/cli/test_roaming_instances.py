@@ -342,6 +342,29 @@ def test_info_copy_command_binds_the_offline_home_and_quotes_paths(
     ]
 
 
+def test_record_home_lookup_reports_incompatible_history_without_changing_it(
+    tmp_path, monkeypatch, capsys
+):
+    import sqlite3
+    from toolang.up.identity import allocate_roaming
+
+    root = tmp_path / "root"
+    source = tmp_path / "aid.too"
+    monkeypatch.setenv("TOOLANG_ROOT", str(root))
+    layout = allocate_roaming(source, toolang_root=root)
+    with closing(RunStore(layout.run_store)) as store:
+        store.create_thread(thread_id="chat_saved")
+    with sqlite3.connect(layout.run_store) as connection:
+        connection.execute("PRAGMA user_version = 99999")
+    before = layout.run_store.read_bytes()
+    assert main([str(source), "chat", "-t", "chat_saved"]) == 1
+    message = capsys.readouterr().err
+    assert "execution history is incompatible" in message
+    assert str(layout.run_store) in "".join(message.split())
+    assert "Upgrade this CLI" in message
+    assert layout.run_store.read_bytes() == before
+
+
 def test_visiting_instance_chat_uses_cached_home_without_fetching(
     tmp_path, monkeypatch
 ):

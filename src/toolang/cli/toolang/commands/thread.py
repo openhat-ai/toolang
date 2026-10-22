@@ -51,7 +51,6 @@ from ...common.context import (
     cli_context,
     ModelCatalogOption,
     context_layout,
-    select_agent_instance,
     load_runtime_environ,
     resolve_model_catalog_option,
     user_call,
@@ -89,7 +88,7 @@ def steer_command(
 ) -> None:
     """Persist one next-step steer control."""
 
-    with open_execution(ctx, required=True) as resources:
+    with open_execution(ctx, required=True, record=run) as resources:
         if resources is None:  # pragma: no cover
             raise RuntimeError("execution resources were not opened")
         run_id = _active_run_id(RunHistory(resources.store), run)
@@ -122,7 +121,7 @@ def cancel_command(
 ) -> None:
     """Persist one immediate cancel control."""
 
-    with open_execution(ctx, required=True) as resources:
+    with open_execution(ctx, required=True, record=run) as resources:
         if resources is None:  # pragma: no cover
             raise RuntimeError("execution resources were not opened")
         run_id = _active_run_id(RunHistory(resources.store), run)
@@ -176,14 +175,14 @@ def rerun_command(
 ) -> None:
     """Start a new root run from one terminal source invocation."""
 
-    layout = select_agent_instance(ctx)
     show_progress = sys.stderr.isatty()
     model_override = user_call(_rerun_model_override, model_body=model)
     commands = user_call(_restart_commands, allow_options=allows, limit_options=limit)
     selected_catalog = resolve_model_catalog_option(model_catalog)
-    with open_execution(ctx, required=True) as resources:
+    with open_execution(ctx, required=True, record=run) as resources:
         if resources is None:  # pragma: no cover
             raise RuntimeError("execution resources were not opened")
+        layout = context_layout(ctx)
         _thread_id, source = _anchor(RunHistory(resources.store), run)
     result = _run_rerun(
         layout=layout,
@@ -220,7 +219,7 @@ def rewind_command(
 ) -> None:
     """Rewind one idle thread before a terminal anchor run."""
 
-    with open_execution(ctx, required=True) as resources:
+    with open_execution(ctx, required=True, record=point) as resources:
         if resources is None:  # pragma: no cover
             raise RuntimeError("execution resources were not opened")
         history = RunHistory(resources.store)
@@ -270,7 +269,7 @@ def fork_command(
 ) -> None:
     """Fork one thread through a terminal anchor run."""
 
-    with open_execution(ctx, required=True) as resources:
+    with open_execution(ctx, required=True, record=point) as resources:
         if resources is None:  # pragma: no cover
             raise RuntimeError("execution resources were not opened")
         history = RunHistory(resources.store)

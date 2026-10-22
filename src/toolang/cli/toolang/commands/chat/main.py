@@ -668,14 +668,14 @@ def _target_thread_id(ctx: typer.Context, target: str | None) -> str | None:
             )
         return threads[0].id
     if target.startswith("run_"):
-        with open_execution(ctx, required=True) as resources:
+        with open_execution(ctx, required=True, record=target) as resources:
             if resources is None:  # pragma: no cover
                 raise RuntimeError("execution resources were not opened")
             run = RunHistory(resources.store).get_run(target)
         if run is None:
             raise ClickException(f"run not found: {target}")
         return run.thread_id
-    with open_execution(ctx, required=True) as resources:
+    with open_execution(ctx, required=True, record=target) as resources:
         if resources is None:  # pragma: no cover
             raise RuntimeError("execution resources were not opened")
         if resources.store.get_thread(thread_id=target) is None:

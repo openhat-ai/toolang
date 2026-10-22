@@ -6,7 +6,7 @@ from pathlib import Path
 from toolang.common.instance_ids import area_id, decode_instance_id
 from toolang.common import layout as paths
 from toolang.common.layout import AgentLayout, derive_agent_name, validate_agent_name
-from .identity import layout_from_control, select_roaming
+from .identity import layout_from_control, read_home_identity, select_roaming
 from .instance import read_instance
 from .private_paths import verify_area, verify_home_paths
 
@@ -78,7 +78,7 @@ def resolve_address(root: Path, address: AgentAddress) -> tuple[AgentLayout, str
         layout = layout_from_control(entry["control"])
         if layout.home != home or layout.toolang_root != root:
             raise ValueError("instance does not match the selected agent")
-    entry = read_instance(layout.runtime_status)
-    if entry is None:
-        raise FileNotFoundError(f"instance ownership not found: {layout.instance_name}")
+        return layout, entry["launch_id"]
+    entry = read_home_identity(layout, toolang_root=root)
+    assert entry is not None
     return layout, entry["launch_id"]

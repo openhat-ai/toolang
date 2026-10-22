@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import stat
+from threading import Barrier
 
 import pytest
 
@@ -48,6 +49,22 @@ def test_parallel_claims_share_one_fully_bound_private_home(
     for path in (isolated_visiting_root, layout.root, layout.home, layout.runtime):
         assert stat.S_IMODE(path.stat().st_mode) == 0o700
     assert stat.S_IMODE(layout.runtime_status.stat().st_mode) == 0o600
+
+
+def test_different_visiting_homes_can_be_prepared_concurrently(tmp_path):
+    ready = Barrier(2)
+    layouts = (
+        _layout(tmp_path, "https://one.example/alice.too"),
+        _layout(tmp_path, "https://two.example/alice.too"),
+    )
+
+    def claim(layout):
+        with visiting_home_guard(layout):
+            ready.wait(timeout=5)
+            return read_instance(layout.runtime_status)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        assert all(pool.map(claim, layouts))
 
 
 @pytest.mark.parametrize("version", [3, 4])

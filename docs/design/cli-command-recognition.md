@@ -81,6 +81,11 @@ happen before their effects. No second callback dispatch, process-global target,
 parameter mutation, or callback-default repair is permitted. Cached command trees
 remain safe across invocations.
 
+`up.source` owns selector parsing; `up.identity` verifies retained ownership.
+CLI context holds invocation data, while CLI execution resolves record-bound
+homes and opens their stores. Callbacks pass Run/Thread selectors explicitly;
+shared helpers never infer them from native parameter names.
+
 Lazy command metadata references the same contract used to construct the native
 command. Root help and recognition do not load unrelated implementations or parse
 local scripts. Prefix usage renders `AGENT` before the top-level command/group;

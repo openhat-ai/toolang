@@ -67,13 +67,13 @@ class AgentContract:
             forms.append("path")
         if "visiting" in self.placements:
             forms.extend(("ref", "url"))
+        if self.role in {"home", "execute"} and self.placements != {"resident"}:
+            forms.append("instance")
         return tuple(forms)
 
     @property
     def description(self) -> str:
         forms = tuple("URL" if form == "url" else form for form in self.forms)
-        if self.role in {"home", "execute"} and self.placements != {"resident"}:
-            forms += ("instance",)
         joined = (
             forms[0] if len(forms) == 1 else f"{', '.join(forms[:-1])} or {forms[-1]}"
         )
@@ -100,10 +100,11 @@ class _AgentType(StringParamType):
         from .context import (
             CliContext,
             cli_context,
-            parse_target,
             resolve_root,
             target_context,
         )
+
+        from toolang.up.source import parse_agent_selector
 
         text = super().convert(value, param, ctx)
         if ctx is None:
@@ -116,7 +117,7 @@ class _AgentType(StringParamType):
                 resolve_root(Path(explicit) if explicit is not None else None)
             )
         try:
-            selected = target_context(cli_context(ctx).root, parse_target(text))
+            selected = target_context(cli_context(ctx).root, parse_agent_selector(text))
         except (OSError, RuntimeError, ValueError) as exc:
             self.fail(str(exc), param, ctx)
         if selected.address is not None and self.contract.role == "source":
