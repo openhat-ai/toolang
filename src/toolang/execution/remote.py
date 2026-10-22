@@ -84,45 +84,7 @@ class _RemoteRunHandle:
     _client: RemoteRunClient = field(repr=False)
 
     async def wait(self) -> RunDetail:
-        try:
-            await asyncio.shield(self._reader)
-        except asyncio.CancelledError:
-            if not self._client.connected:
-                raise RemoteRunClientError(
-                    "remote run client is disconnected"
-                ) from None
-            raise
-        except RemoteRunClientError as exc:
-            _LOGGER.error(
-                "remote run wait failed run=%s phase=stream error=%s status=%s cause=%s",
-                self.run_id,
-                type(exc).__name__,
-                exc.status_code,
-                type(exc.__cause__).__name__ if exc.__cause__ else None,
-            )
-            raise
-        self._client._require_connected()
-        detail = asyncio.create_task(self._client._run_detail(self.run_id))
-        self._client._details.add(detail)
-        try:
-            return await detail
-        except asyncio.CancelledError:
-            if not self._client.connected:
-                raise RemoteRunClientError(
-                    "remote run client is disconnected"
-                ) from None
-            raise
-        except RemoteRunClientError as exc:
-            _LOGGER.error(
-                "remote run wait failed run=%s phase=detail error=%s status=%s cause=%s",
-                self.run_id,
-                type(exc).__name__,
-                exc.status_code,
-                type(exc.__cause__).__name__ if exc.__cause__ else None,
-            )
-            raise
-        finally:
-            self._client._details.discard(detail)
+        return await self._client._wait_for_run(self.run_id, self._reader)
 
 
 class RemoteRunClient:
@@ -144,7 +106,7 @@ class RemoteRunClient:
         self._http = client
         self._owns_http = client is None
         self._readers: set[asyncio.Task[None]] = set()
-        self._details: set[asyncio.Task[RunDetail]] = set()
+        self._detail_tasks: set[asyncio.Task[RunDetail]] = set()
         self._connection_lock = asyncio.Lock()
         self._connected = False
 
@@ -277,6 +239,49 @@ class RemoteRunClient:
         delivery.set()
         return handle
 
+    async def _wait_for_run(self, run_id: str, reader: asyncio.Task[None]) -> RunDetail:
+        try:
+            await asyncio.shield(reader)
+        except asyncio.CancelledError:
+            if not self.connected:
+                raise RemoteRunClientError(
+                    "remote run client is disconnected"
+                ) from None
+            raise
+        except RemoteRunClientError as exc:
+            _LOGGER.error(
+                "remote run wait failed run=%s phase=stream error=%s status=%s cause=%s",
+                run_id,
+                type(exc).__name__,
+                exc.status_code,
+                type(exc.__cause__).__name__ if exc.__cause__ else None,
+            )
+            raise
+        self._require_connected()
+        detail = asyncio.create_task(
+            self._run_detail(run_id), name=f"toolang-remote-detail-{run_id}"
+        )
+        self._detail_tasks.add(detail)
+        try:
+            return await detail
+        except asyncio.CancelledError:
+            if not self.connected:
+                raise RemoteRunClientError(
+                    "remote run client is disconnected"
+                ) from None
+            raise
+        except RemoteRunClientError as exc:
+            _LOGGER.error(
+                "remote run wait failed run=%s phase=detail error=%s status=%s cause=%s",
+                run_id,
+                type(exc).__name__,
+                exc.status_code,
+                type(exc.__cause__).__name__ if exc.__cause__ else None,
+            )
+            raise
+        finally:
+            self._detail_tasks.discard(detail)
+
     async def cancel(
         self,
         run_id: str,
@@ -346,13 +351,15 @@ class RemoteRunClient:
             if not self._connected:
                 return
             self._connected = False
-            pending = (*self._readers, *self._details)
-            for task in pending:
-                task.cancel()
-            if pending:
-                await asyncio.gather(*pending, return_exceptions=True)
-            if self._owns_http and self._http is not None:
-                await self._http.aclose()
+            try:
+                pending = (*self._readers, *self._detail_tasks)
+                for task in pending:
+                    task.cancel()
+                if pending:
+                    await asyncio.gather(*pending, return_exceptions=True)
+            finally:
+                if self._owns_http and self._http is not None:
+                    await self._http.aclose()
 
     async def fork_thread(self, thread_id: str, *, run_id: str) -> ThreadInfo:
         """Fork through a recorded run using the owning agent."""

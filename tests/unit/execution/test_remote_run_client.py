@@ -1279,6 +1279,66 @@ def test_remote_client_lifecycle_waits_for_detail_cancellation_cleanup(
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("owned_http", [False, True])
+def test_remote_client_canceled_disconnect_preserves_http_ownership(
+    monkeypatch: pytest.MonkeyPatch,
+    owned_http: bool,
+) -> None:
+    async def scenario() -> None:
+        entered = asyncio.Event()
+        cleanup_entered = asyncio.Event()
+        cleanup_release = asyncio.Event()
+        active = 0
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal active
+            if request.method == "POST":
+                return _stream_response(_begin(), _end())
+            active += 1
+            entered.set()
+            try:
+                await asyncio.Event().wait()
+                raise AssertionError("detail request must be canceled")
+            finally:
+                cleanup_entered.set()
+                try:
+                    await cleanup_release.wait()
+                finally:
+                    active -= 1
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+            if owned_http:
+                monkeypatch.setattr(remote.httpx, "AsyncClient", lambda: http)
+            client = RemoteRunClient(
+                "http://runtime.test", client=None if owned_http else http
+            )
+            await client.connect()
+            handle = await client.run(_request())
+            pending = asyncio.create_task(handle.wait())
+            closing: asyncio.Task[None] | None = None
+            try:
+                await asyncio.wait_for(entered.wait(), timeout=5)
+                closing = asyncio.create_task(client.disconnect())
+                await asyncio.wait_for(cleanup_entered.wait(), timeout=5)
+                closing.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await asyncio.wait_for(closing, timeout=5)
+                assert active == 0
+                assert http.is_closed is owned_http
+                assert not client.connected
+                with pytest.raises(RemoteRunClientError, match="disconnected"):
+                    await pending
+            finally:
+                cleanup_release.set()
+                await asyncio.gather(
+                    *(task for task in (pending, closing) if task is not None),
+                    return_exceptions=True,
+                )
+                await client.disconnect()
+
+    asyncio.run(scenario())
+
+
 def test_remote_client_disconnect_settles_pre_acceptance_run(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
