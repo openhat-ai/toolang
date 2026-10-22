@@ -115,13 +115,6 @@ class _ScriptEntryCommand(CliCommand):
                     raise
         return super().make_context(info_name, args, parent=parent, **extra)
 
-    def format_usage(self, ctx: Context, formatter: NativeHelpFormatter) -> None:
-        pieces = [
-            "[ARGUMENTS]" if piece == "[ARGUMENTS...]" else piece
-            for piece in self.collect_usage_pieces(ctx)
-        ]
-        formatter.write_usage(ctx.command_path, " ".join(pieces))
-
     def format_help(self, ctx: Context, formatter: NativeHelpFormatter) -> None:
         super().format_help(ctx, formatter)
         formatter.write_paragraph()
@@ -139,7 +132,7 @@ def script_entry(
     ] = None,
     arguments: Annotated[
         list[str] | None,
-        typer.Argument(metavar="ARGUMENTS", help="Runnable arguments"),
+        typer.Argument(metavar="ARGS", help="Runnable arguments"),
     ] = None,
 ) -> None:
     """Describe static entry help; the command resolves FILE before invocation."""

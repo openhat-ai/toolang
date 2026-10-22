@@ -542,16 +542,16 @@ def test_static_run_help(executable, arguments, monkeypatch, capsys):
     monkeypatch.setattr("sys.argv", [executable])
     assert cli.main(["run", *arguments]) == 0
     output = " ".join(capsys.readouterr().out.split())
-    assert f"{executable} run [OPTIONS] <FILE> [RUNNABLE] [ARGUMENTS]" in output
+    assert f"{executable} run [OPTIONS] <FILE> [RUNNABLE] [ARGS...]" in output
     assert "* FILE" in output
     assert "Path to a .too file" in output
     assert "RUNNABLE" in output
     assert "Execute a .too file." in output
-    assert "Runnable arguments" in output
+    assert "ARGS Runnable arguments" in output
     assert "script" not in output.lower()
     assert "NAME=VALUE" not in output
     assert "local" not in output.lower()
-    assert "ARGUMENTS..." not in output
+    assert "ARGUMENTS" not in output
     assert (
         "Omit run if RUNNABLE is not a Toolang command, e.g. "
         f"{executable} aid.too whats_for." in output
@@ -667,10 +667,9 @@ def test_run_reports_invalid_files_without_hosting_advice(
     output = " ".join(capsys.readouterr().err.split())
     assert f"{reason}: {target}" in output
     assert "Invalid value for 'FILE'" in output
-    assert "Usage: too run [OPTIONS] <FILE>" in output
+    assert "Usage: too run [OPTIONS] <FILE> [RUNNABLE] [ARGS...]" in output
     assert "serve" not in output
     assert "local" not in output.lower()
-    assert "ARGUMENTS..." not in output
 
 
 @pytest.mark.parametrize("label", ["--help", "-h"])
