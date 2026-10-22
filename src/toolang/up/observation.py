@@ -1,25 +1,27 @@
-"""Host-owned discovery references to authoritative agent runtime records."""
+"""Observe agent runtime status through authoritative files and discovery references."""
 
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import contextmanager
-from dataclasses import dataclass, replace
-import json
+from dataclasses import dataclass
 import re
 from pathlib import Path
 from typing import Any, TypeGuard, cast
 
 
-from toolang.common.files import atomic_write_text, file_write_lock
 from toolang.common import layout as paths
 from toolang.common.layout import AgentLayout
 from toolang.common.place_codes import root_code
 from toolang.up.identity import layout_from_control, verify_identity
 from toolang.up.instance import (
-    RUNTIME_STATUS_FORMAT,
     read_document,
     read_instance,
+)
+from .registry import (
+    instance_filename,
+    read_reference,
+    registration_current,
+    remove_registration,
 )
 from toolang.up.types import (
     ALL_DRIVERS,
@@ -32,163 +34,22 @@ def instance_identity(layout: AgentLayout) -> str:
     return layout.address
 
 
-def instance_filename(layout: AgentLayout) -> str:
-    return f"{layout.address}.json"
-
-
-def _read_reference(path: Path) -> dict[str, Any] | None:
-    try:
-        reference = json.loads(path.read_text(encoding="utf-8"))
-    except FileNotFoundError:
-        return None
-    if not isinstance(reference, dict):
-        raise ValueError("invalid runtime reference")
-    if (
-        type(reference.get("version")) is not int
-        or reference["version"] != RUNTIME_STATUS_FORMAT
-    ):
-        raise ValueError("unsupported runtime reference version")
-    if not isinstance(reference.get("status"), str) or not isinstance(
-        reference.get("launch_id"), str
-    ):
-        raise ValueError("incomplete runtime reference")
-    status = Path(reference["status"])
-    if (
-        not status.is_absolute()
-        or str(status) != reference["status"]
-        or ".." in status.parts
-    ):
-        raise ValueError("runtime reference requires a normalized absolute status path")
-    return reference
-
-
-def _registration_current(
-    path: Path, launch_id: str | None, status_path: Path | None = None
-) -> bool:
-    reference = _read_reference(path)
-    return (
-        reference is not None
-        and (launch_id is None or reference["launch_id"] == launch_id)
-        and (status_path is None or reference["status"] == str(status_path))
-    )
-
-
-def _register_lock(path: Path) -> Path:
-    return path.parent / "register.lock"
-
-
-@contextmanager
-def registration_lock(toolang_root: Path):
-    """Serialize candidate checks and publication across source-local allocators."""
-    with file_write_lock(toolang_root / ".runtime" / "active" / "register.lock"):
-        yield
-
-
-def verify_registration(
-    layout: AgentLayout, *, toolang_root: Path, require_absent: bool = False
-) -> None:
-    """Reject an occupied name before attempting this caller's publication."""
-    path = toolang_root / ".runtime" / "active" / instance_filename(layout)
-    reference = _read_reference(path)
-    if reference is not None and (
-        require_absent or reference["status"] != str(layout.runtime_status)
-    ):
-        raise ValueError(f"place code collision in runtime registry: {layout.address}")
-
-
-class RuntimeRegistration:
-    """Publish only a discovery reference to an already initialized workload."""
-
-    def __init__(
-        self,
-        layout: AgentLayout,
-        *,
-        toolang_root: Path,
-        launch_id: str,
-    ) -> None:
-        self.token = launch_id
-        self.toolang_root = toolang_root.expanduser().resolve()
-        self.layout = replace(layout, root=self.toolang_root)
-        self.path = (
-            self.toolang_root / ".runtime" / "active" / instance_filename(layout)
-        )
-        self.payload = {
-            "version": RUNTIME_STATUS_FORMAT,
-            "status": str(layout.runtime_status),
-            "launch_id": self.token,
-        }
-
-    def __enter__(self) -> RuntimeRegistration:
-        with registration_lock(self.toolang_root):
-            verify_registration(self.layout, toolang_root=self.toolang_root)
-            entry = read_instance(self.layout.runtime_status, self.layout.instance)
-            if entry is None or entry["launch_id"] != self.token:
-                raise ValueError(
-                    "runtime publication requires matching instance identity"
-                )
-            verify_identity(self.layout, entry["control"])
-            try:
-                atomic_write_text(self.path, json.dumps(self.payload))
-            except BaseException:
-                self.close()
-                raise
-        return self
-
-    def close(self) -> None:
-        _remove_reference(self.path, self.token, self.layout.runtime_status)
-
-    def __exit__(self, *exc: object) -> None:
-        self.close()
-
-
-def _remove_reference(path: Path, launch_id: str, status_path: Path) -> None:
-    try:
-        if not path.is_file():
-            return
-        with file_write_lock(_register_lock(path)):
-            reference = _read_reference(path)
-            if (
-                reference is not None
-                and reference["launch_id"] == launch_id
-                and reference["status"] == str(status_path)
-            ):
-                path.unlink(missing_ok=True)
-    except (OSError, ValueError):
-        pass
-
-
-def remove_registration(layout: AgentLayout, launch_id: str) -> None:
-    entry = read_instance(layout.runtime_status, layout.instance)
-    if entry is None or entry["launch_id"] != launch_id:
-        return
-    root = entry["control"].get("root")
-    if isinstance(root, str):
-        _remove_reference(
-            Path(root)
-            / ".runtime"
-            / "active"
-            / instance_filename(layout_from_control(entry["control"])),
-            launch_id,
-            layout.runtime_status,
-        )
-
-
 def running_instances(root: Path) -> tuple[dict, ...]:
     """Follow references and reconcile only definitively dead workload identities."""
     from toolang.up.process import AgentProcess
 
     root = root.expanduser().resolve()
     candidates = []
-    records: dict[Path, dict] = {}
+    status_entries: dict[Path, dict] = {}
     for path in sorted((root / ".runtime" / "active").glob("*.json")):
         try:
-            reference = _read_reference(path)
+            reference = read_reference(path)
             if reference is None:
                 continue
-            status_path = Path(reference["status"])
-            if status_path not in records:
+            status_path = reference.status
+            if status_path not in status_entries:
                 document = read_document(status_path)
-                records[status_path] = (
+                status_entries[status_path] = (
                     {
                         entry["launch_id"]: entry
                         for entry in document["instances"].values()
@@ -200,7 +61,7 @@ def running_instances(root: Path) -> tuple[dict, ...]:
                     if document is not None
                     else {}
                 )
-            entry = records[status_path].get(reference["launch_id"])
+            entry = status_entries[status_path].get(reference.launch_id)
             if entry is None:
                 continue
             control = entry["control"]
@@ -235,7 +96,7 @@ def running_instances(root: Path) -> tuple[dict, ...]:
             )
             if status is None or status.status != "running":
                 continue
-            if not _registration_current(
+            if not registration_current(
                 path, entry["launch_id"], layout.runtime_status
             ):
                 continue
@@ -264,14 +125,14 @@ def active_layout(root: Path, address: str) -> tuple[AgentLayout, str]:
     """Resolve one exact active address without a historical or cross-root scan."""
     root = root.expanduser().resolve()
     path = root / ".runtime" / "active" / f"{address}.json"
-    reference = _read_reference(path)
+    reference = read_reference(path)
     if reference is None:
         raise FileNotFoundError(
             f"active instance not found: {address}; use a source path for offline access"
         )
-    status_path = Path(reference["status"])
+    status_path = reference.status
     entry = read_instance(status_path)
-    if entry is None or entry["launch_id"] != reference["launch_id"]:
+    if entry is None or entry["launch_id"] != reference.launch_id:
         raise ValueError("selected execution owner was replaced")
     layout = _runtime_layout(entry["control"], status_path, root)
     if layout.address != address:
@@ -304,7 +165,7 @@ class RuntimeSource:
         verify_identity(self.layout, entry["control"])
 
     def is_current(self) -> bool:
-        return self.registration is not None and _registration_current(
+        return self.registration is not None and registration_current(
             self.registration, self.launch_id, self.layout.runtime_status
         )
 
@@ -498,10 +359,10 @@ def runtime_inventory(
     for reference_path in reference_paths:
         fallback: AgentLayout | None = None
         try:
-            reference = _read_reference(reference_path)
+            reference = read_reference(reference_path)
             if reference is None:
                 continue
-            status_path = root / Path(reference["status"]).expanduser()
+            status_path = root / reference.status.expanduser()
             if (
                 selected_status is not None
                 and status_path is not None
@@ -513,7 +374,7 @@ def runtime_inventory(
                         f"runtime registry {reference_path.name}: resident status does not match the selected agent"
                     )
                 continue
-            launch_id = reference["launch_id"]
+            launch_id = reference.launch_id
             fallback = _fallback_layout(reference_path, status_path, root)
             document, error = read_once(status_path)
             if error is not None:
@@ -824,7 +685,7 @@ def runtime_inventory(
     current: dict[str, _SnapshotCandidate] = {}
     for candidate in candidates_list:
         try:
-            if not _registration_current(
+            if not registration_current(
                 candidate.registration, candidate.launch_id, candidate.status_path
             ):
                 continue

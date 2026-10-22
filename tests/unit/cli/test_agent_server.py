@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from toolang.up import workload as workloads
+
 from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
@@ -258,7 +260,7 @@ def test_copied_runtime_status_cannot_attach_to_another_root(
 def test_only_stable_placements_reuse_an_executor(
     tmp_path, monkeypatch, placement, attach_only
 ):
-    from toolang.up.identity import allocate_roaming
+    from toolang.up.allocation import allocate_roaming
 
     if placement == "resident":
         layout = AgentLayout.resident(tmp_path, "alice")
@@ -297,7 +299,7 @@ def test_only_stable_placements_reuse_an_executor(
 
 @pytest.mark.parametrize("phase", ["stopped", "failed", "preparing"])
 def test_roaming_requires_its_callers_unstarted_identity(tmp_path, monkeypatch, phase):
-    from toolang.up.identity import allocate_roaming
+    from toolang.up.allocation import allocate_roaming
     from toolang.up.instance import update_instance
 
     source = tmp_path / "alice.too"
@@ -1466,7 +1468,7 @@ def test_persistent_acquisition_waits_for_http_after_running_report(
         layout.runtime_status,
         lambda entry: entry["control"].update(identity_bindings(layout)),
     )
-    agent_server.agents.write_runtime_state(
+    workloads.write_runtime_state(
         layout,
         endpoint=ref.endpoint,
         started_at="2026-10-08T00:00:00Z",

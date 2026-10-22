@@ -168,7 +168,8 @@ def test_zombie_reference_is_exited(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_releasing_dead_ref_clears_active_report_but_preserves_failure(
     tmp_path: Path, status: str
 ) -> None:
-    from toolang.up.process import AgentProcess, write_runtime_state
+    from toolang.up.process import AgentProcess
+    from toolang.up.workload import write_runtime_state
 
     layout = AgentLayout.resident(tmp_path, "alice")
     layout.home.mkdir(parents=True)

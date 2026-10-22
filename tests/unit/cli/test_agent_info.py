@@ -14,7 +14,7 @@ from tests.support.setup import materialized_setup
 from toolang.base.types.model import Model, ModelToolang, Provider
 from toolang.cli.toolang.commands import agent
 from toolang.common.layout import AgentLayout
-from toolang.up.identity import allocate_roaming
+from toolang.up.allocation import allocate_roaming
 from toolang.plugin.models import query
 from toolang.plugin.toolsets.collections import ToolCollection
 from toolang.setup import AgentSetup

@@ -9,7 +9,7 @@ import pytest
 from watchfiles import Change
 
 from toolang.up import source as agent_sources
-from toolang.up.identity import select_roaming
+from toolang.up.allocation import select_roaming
 
 from toolang.base.types.message import Message, TextPart, message_text
 from toolang.catalog.templates import load_template

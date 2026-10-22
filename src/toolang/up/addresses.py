@@ -6,7 +6,8 @@ from pathlib import Path
 from toolang.common.place_codes import root_code, decode_place_code
 from toolang.common import layout as paths
 from toolang.common.layout import AgentLayout, derive_agent_name, validate_agent_name
-from .identity import layout_from_control, read_home_identity, select_roaming
+from .allocation import select_roaming
+from .identity import layout_from_control, read_home_identity
 from .instance import read_instance
 from .private_paths import verify_root_namespace, verify_home_paths
 

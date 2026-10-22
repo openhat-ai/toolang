@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from contextlib import nullcontext
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextlib import contextmanager, nullcontext
+from contextvars import ContextVar
 import os
 from pathlib import Path
+import time
 from uuid import uuid4
 
 import psutil
@@ -14,13 +16,57 @@ from toolang.common.layout import AgentLayout
 from .identity import identity_bindings, visiting_home_guard
 from .instance import (
     control_owner,
+    initialize_instance,
     patch_workload,
+    process_alive,
     read_instance,
     remove_finished_instance,
     update_instance,
 )
-from .observation import RuntimeRegistration, remove_registration
+from .registry import RuntimeRegistration, remove_registration
 from .types import ExecutionDrivers
+
+
+def prepare_workload(
+    layout: AgentLayout,
+    *,
+    launch_id: str,
+    requested_at: float,
+    owner: Mapping[str, int | float],
+) -> None:
+    """Initialize status only after allocation exclusively creates a new place."""
+    initialize_instance(
+        layout.runtime_status,
+        launch_id=launch_id,
+        control=identity_bindings(layout),
+        workload={
+            "status": "preparing",
+            "requested_at": requested_at,
+            "pid": owner["pid"],
+            "process_created": owner["created"],
+        },
+    )
+
+
+def fail_workload(
+    layout: AgentLayout,
+    launch_id: str,
+    message: str,
+    *,
+    updated_at: str | None = None,
+    location: str = "host",
+) -> None:
+    """Record failure only for the caller's launch, preserving recovery references."""
+    fields: dict[str, object] = {"status": "failed", "pid": None, "message": message}
+    if updated_at is not None:
+        fields["updated_at"] = updated_at
+    patch_workload(
+        layout.runtime_status,
+        launch_id,
+        fields,
+        instance=layout.instance,
+        location=location,
+    )
 
 
 def owns_preparation(layout: AgentLayout, entry: dict) -> bool:
@@ -123,15 +169,13 @@ class ForegroundWorkload:
             },
         )
         try:
-            self._registration.__enter__()
+            self._registration.publish()
         except BaseException:
             self.close()
             raise
         return self
 
     def close(self) -> None:
-        from .process import stop_runtime_state
-
         stop_runtime_state(self.layout, expected_pid=os.getpid(), launch_id=self.token)
         self._registration.close()
         remove_finished_instance(self.layout, self.token)
@@ -160,3 +204,166 @@ def fail_preparation(layout: AgentLayout, error: BaseException) -> None:
             {"status": "failed", "pid": None, "message": str(error)},
         )
         remove_registration(layout, entry["launch_id"])
+
+
+# Durable ownership replaces locks held across process creation/readiness/shutdown.
+_OPERATIONS: ContextVar[tuple[tuple[Path, str | None], ...]] = ContextVar(
+    "runtime_operations", default=()
+)
+
+
+@contextmanager
+def management_operation(
+    layout: AgentLayout, *, stage: str, on_wait: Callable[[], None] | None = None
+) -> Iterator[None]:
+    key = (layout.runtime_status, layout.instance)
+    held = _OPERATIONS.get()
+    if key in held:
+        yield
+        return
+    if layout.placement == "visiting":
+        with visiting_home_guard(layout):
+            pass
+    owner = {
+        "token": uuid4().hex,
+        **control_owner(),
+        "stage": stage,
+    }
+    claimed = False
+    while not claimed:
+
+        def claim(entry):
+            nonlocal claimed
+            previous = entry["control"].get("operation")
+            if previous is not None:
+                alive = process_alive(previous.get("pid"), previous.get("created"))
+                if alive is None:
+                    raise ValueError("cannot verify the runtime control owner")
+                if alive:
+                    return
+            entry["control"]["operation"] = owner
+            claimed = True
+
+        update_instance(
+            layout.runtime_status, claim, instance=layout.instance, on_wait=on_wait
+        )
+        if not claimed:
+            if on_wait is not None:
+                on_wait()
+            time.sleep(0.05)
+    token = _OPERATIONS.set((*held, key))
+    try:
+        yield
+    finally:
+        _OPERATIONS.reset(token)
+        completed_launch: str | None = None
+
+        def release(entry):
+            nonlocal completed_launch
+            if entry["control"].get("operation") == owner:
+                completed_launch = entry["launch_id"]
+                entry["control"].pop("operation", None)
+
+        if layout.runtime_status.exists():
+            update_instance(layout.runtime_status, release, instance=layout.instance)
+            if completed_launch is not None:
+                remove_finished_instance(layout, completed_launch)
+
+
+def write_runtime_state(
+    layout: AgentLayout,
+    *,
+    endpoint: str,
+    started_at: str,
+    pid: int | None,
+    sandbox: str = "host",
+    process_created: object = None,
+    sandbox_description: str | None = None,
+    sandbox_instance: str | None = None,
+    models: Sequence[str] | None = None,
+    drivers: Sequence[str] | None = None,
+    workspace_additions: Mapping[str, str] | None = None,
+    status: str = "running",
+    message: str | None = None,
+    launch_id: str | None = None,
+    location: str = "host",
+    lifetime: str | None = None,
+    api_version: int | None = None,
+    resource_counts: Mapping[str, object] | None = None,
+) -> Path:
+    """Persist one minimal runtime state file for a running agent."""
+
+    path = layout.runtime_status
+    payload: dict[str, object] = {
+        "agent": layout.name,
+        "status": status,
+        "endpoint": endpoint,
+        "started_at": started_at,
+        "updated_at": started_at,
+        "pid": pid,
+        "process_created": process_created,
+        "sandbox": sandbox,
+        "models": list(models or ()),
+        "drivers": list(drivers if drivers is not None else ("chat", "talk", "chore")),
+        "workspace_additions": dict(workspace_additions or {}),
+        "message": message,
+    }
+    if resource_counts is not None:
+        payload["resource_counts"] = dict(resource_counts)
+    if lifetime is not None:
+        payload["lifetime"] = lifetime
+        payload["api_version"] = api_version
+    if sandbox_instance is not None:
+        payload["sandbox_instance"] = sandbox_instance
+    if sandbox_description is not None:
+        payload["sandbox_description"] = sandbox_description
+    entry = read_instance(path, layout.instance, location=location)
+    identity = launch_id or (entry or {}).get("launch_id")
+    if not identity:
+        identity = uuid4().hex
+        update_instance(
+            path,
+            lambda entry: entry.update(launch_id=identity),
+            instance=layout.instance,
+            location=location,
+        )
+    patch_workload(path, identity, payload, instance=layout.instance, location=location)
+    return path
+
+
+def stop_runtime_state(
+    layout: AgentLayout,
+    *,
+    expected_pid: int | None = None,
+    expected_started_at: str | None = None,
+    launch_id: str | None = None,
+    location: str = "host",
+) -> bool:
+    """Mark one runtime state as stopped while keeping the last endpoint."""
+
+    path = layout.runtime_status
+    changed = False
+
+    def finish(entry):
+        nonlocal changed
+        state = entry["workload"]
+        if expected_pid is not None and state.get("pid") != expected_pid:
+            return
+        if (
+            expected_started_at is not None
+            and state.get("started_at") != expected_started_at
+        ):
+            return
+        if state.get("status") not in {"running", "starting", "preparing"}:
+            return
+        state.update(
+            status="stopped",
+            pid=None,
+            updated_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        )
+        changed = True
+
+    update_instance(
+        path, finish, instance=layout.instance, launch_id=launch_id, location=location
+    )
+    return changed

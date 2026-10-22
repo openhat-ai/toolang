@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from toolang.up import workload as workloads
+
 import asyncio
 from dataclasses import replace
 from pathlib import Path
@@ -322,7 +324,7 @@ agic chat(_: Part[]) -> Part[]:
     core.setup = _Snapshot(setup)
     core.state = _Snapshot(harness.state)
     (core.layout.home / ".lab" / "subdir").mkdir(parents=True)
-    agents.write_runtime_state(
+    workloads.write_runtime_state(
         core.layout,
         endpoint="http://127.0.0.1:7001",
         started_at="2026-08-25T00:00:00Z",
@@ -460,7 +462,7 @@ def test_profile_preserves_source_version_and_short_docker_instance(
 ) -> None:
     layout = AgentLayout.resident(tmp_path, "alice")
     layout.home.mkdir(parents=True)
-    agents.write_runtime_state(
+    workloads.write_runtime_state(
         layout,
         endpoint="http://127.0.0.1:7001",
         started_at="2026-08-25T00:00:00Z",
@@ -497,7 +499,7 @@ def test_profile_preserves_source_version_and_short_docker_instance(
 def test_profile_rejects_invalid_docker_instance(tmp_path: Path) -> None:
     layout = AgentLayout.resident(tmp_path, "alice")
     layout.home.mkdir(parents=True)
-    agents.write_runtime_state(
+    workloads.write_runtime_state(
         layout,
         endpoint="http://127.0.0.1:7001",
         started_at="2026-08-25T00:00:00Z",
@@ -520,7 +522,7 @@ def test_profile_rejects_invalid_docker_instance(tmp_path: Path) -> None:
 def test_profile_rejects_missing_host_description(tmp_path: Path) -> None:
     layout = AgentLayout.resident(tmp_path, "alice")
     layout.home.mkdir(parents=True)
-    agents.write_runtime_state(
+    workloads.write_runtime_state(
         layout,
         endpoint="http://127.0.0.1:7001",
         started_at="2026-08-25T00:00:00Z",

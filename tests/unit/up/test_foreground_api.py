@@ -17,10 +17,11 @@ from toolang.common.layout import AgentLayout
 from toolang.execution.types import ThreadKind
 from toolang.state.types import StateSyncResult
 from toolang.up.foreground import foreground_api
-from toolang.up.identity import allocate_roaming
+from toolang.up.allocation import allocate_roaming
 from toolang.up.instance import read_instance
 from toolang.up.lifecycle import LAUNCH_HEADER, ServerLifecycle
-from toolang.up.observation import RuntimeRegistration, runtime_inventory
+from toolang.up.registry import RuntimeRegistration
+from toolang.up.observation import runtime_inventory
 
 
 @pytest.mark.parametrize("placement", ["resident", "visiting", "roaming"])

@@ -210,7 +210,7 @@ def test_recheck_rejects_a_root_replaced_while_waiting_for_the_home_guard(
 def test_management_claims_source_ownership_before_creating_lifecycle_metadata(
     tmp_path,
 ):
-    from toolang.up.instance import management_operation
+    from toolang.up.workload import management_operation
 
     layout = _layout(tmp_path)
     assert not layout.place.exists()

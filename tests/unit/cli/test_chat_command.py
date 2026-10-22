@@ -218,7 +218,7 @@ def test_chat_latest_uses_selected_history_for_agent_sessions(
     if placement == "roaming":
         source = tmp_path / "alice.too"
         source.write_text("agic chat:\n  Reply directly.\n")
-        from toolang.up.identity import allocate_roaming
+        from toolang.up.allocation import allocate_roaming
 
         layout = allocate_roaming(source, toolang_root=chat_layout.place)
         selector = str(source)

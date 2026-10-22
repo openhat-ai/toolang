@@ -16,7 +16,7 @@ from tests.support.runtime_observation import NOW, binding, completed, usage
 from toolang.base.types.message import Message
 
 from toolang.common.layout import AgentLayout
-from toolang.up.identity import allocate_roaming
+from toolang.up.allocation import allocate_roaming
 from toolang.execution.schemas import LiveSnapshot, LiveTreeSnapshot, RunNode, StepNode
 from toolang.execution.store import RunStore
 from toolang.execution.types import RunReport

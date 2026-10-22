@@ -139,7 +139,7 @@ def test_unreadable_home_metadata_is_unknown_instead_of_absent(
 def test_scope_observation_keeps_registered_stopped_instances_without_mutation(
     tmp_path, placement
 ):
-    from toolang.up.identity import allocate_roaming
+    from toolang.up.allocation import allocate_roaming
     from toolang.up.instance import update_instance
     from toolang.up.workload import ForegroundWorkload
 

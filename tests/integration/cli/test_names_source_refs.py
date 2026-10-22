@@ -155,7 +155,7 @@ def test_script_entry_points_keep_the_filename_and_share_the_normalized_home(
     assert result.returncode == 0, result.stderr
     assert result.stdout == "done"
     assert source.is_file()
-    from toolang.up.identity import select_roaming
+    from toolang.up.allocation import select_roaming
 
     layout = select_roaming(source, toolang_root=tmp_path / "registry")
     assert layout.name == "daily_report_v2"

@@ -30,7 +30,8 @@ def select_agent_instance(
     ctx: typer.Context, *, record: str | None = None
 ) -> AgentLayout:
     """Bind one existing home; callers supply their concrete history selector."""
-    from toolang.up.identity import read_home_identity, retained_roaming, select_roaming
+    from toolang.up.allocation import retained_roaming, select_roaming
+    from toolang.up.identity import read_home_identity
 
     state = cli_context(ctx)
     layout = context_layout(ctx)

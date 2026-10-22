@@ -266,7 +266,7 @@ def test_automatic_port_selection_rejects_incompatible_selected_status(
 @pytest.mark.parametrize(
     "preferred,expected", [(None, 7002), (7001, 7002), (7123, 7123), (8123, 8123)]
 )
-def test_default_agent_port_reserves_hub_port_without_changing_other_records(
+def test_default_agent_port_reserves_hub_port_without_changing_other_status_files(
     tmp_path, monkeypatch, preferred, expected
 ):
     layout = AgentLayout.resident(tmp_path, "alice")
@@ -593,10 +593,10 @@ def test_server_owns_statistics_and_joins_worker_before_closing_source(
         "toolang.up.instance.patch_workload", lambda *args, **kwargs: True
     )
     monkeypatch.setattr(
-        server.agents, "write_runtime_state", lambda *args, **kwargs: None
+        server.workloads, "write_runtime_state", lambda *args, **kwargs: None
     )
     monkeypatch.setattr(
-        server.agents, "stop_runtime_state", lambda *args, **kwargs: None
+        server.workloads, "stop_runtime_state", lambda *args, **kwargs: None
     )
 
     def run(app, **kwargs):

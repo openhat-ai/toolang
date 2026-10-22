@@ -64,7 +64,8 @@ from toolang.up.instance import (
     process_alive,
     runtime_lock,
 )
-from toolang.up.observation import RuntimeRegistration
+from toolang.up.registry import RuntimeRegistration, remove_registration
+from toolang.up.workload import begin_workload, fail_workload, management_operation
 from toolang.up.config import placement_policy
 from toolang.up.types import ExecutionDrivers, ServerLifetime
 
@@ -256,8 +257,6 @@ def management_lock(
             detail=layout.name,
         )
 
-    from toolang.up.instance import management_operation
-
     with management_operation(layout, stage=stage, on_wait=on_wait):
         if waiting:
             emit_progress(
@@ -446,16 +445,11 @@ async def _launch_locked(
             )
     except BaseException as exc:
         if owns_launch and spec.serve.launch_id is not None:
-            patch_workload(
-                spec.serve.layout.runtime_status,
+            fail_workload(
+                spec.serve.layout,
                 spec.serve.launch_id,
-                {
-                    "status": "failed",
-                    "pid": None,
-                    "message": str(exc),
-                    "updated_at": _now(),
-                },
-                instance=spec.serve.layout.instance,
+                str(exc),
+                updated_at=_now(),
             )
             entry = read_instance(
                 spec.serve.layout.runtime_status, spec.serve.layout.instance
@@ -465,8 +459,6 @@ async def _launch_locked(
                 and entry["launch_id"] == spec.serve.launch_id
                 and not entry["control"].get("ref")
             ):
-                from .observation import remove_registration
-
                 remove_registration(spec.serve.layout, spec.serve.launch_id)
         _startup_progress(
             progress,
@@ -1042,8 +1034,6 @@ def _clear_state(layout: AgentLayout, *, expected: SandboxState) -> None:
         instance=layout.instance,
         launch_id=expected.launch_id,
     )
-    from toolang.up.observation import remove_registration
-
     if cleared:
         remove_registration(layout, expected.launch_id)
 
@@ -1215,8 +1205,6 @@ async def _release_abandoned_temporary(layout: AgentLayout) -> None:
                     )
                 else:
                     await _recover_unreferenced(sibling)
-                    from toolang.up.observation import remove_registration
-
                     remove_registration(sibling, current["launch_id"])
 
 
@@ -1264,8 +1252,6 @@ async def _recover_unreferenced(layout: AgentLayout) -> SandboxState | None:
         {"status": "stopped", "pid": None},
         instance=layout.instance,
     )
-    from toolang.up.observation import remove_registration
-
     remove_registration(layout, entry["launch_id"])
     return None
 
@@ -1325,7 +1311,6 @@ def _begin_launch(spec: LaunchSpec) -> None:
     assert spec.serve.launch_id is not None
 
     from .contract import startup_contract
-    from .workload import begin_workload
 
     begin_workload(
         layout,
@@ -1341,7 +1326,7 @@ def _begin_launch(spec: LaunchSpec) -> None:
         layout,
         toolang_root=spec.serve.toolang_root or layout.root or layout.place,
         launch_id=spec.serve.launch_id,
-    ).__enter__()
+    ).publish()
 
 
 def _remember_success(spec: LaunchSpec, state: SandboxState, *, selector: str) -> None:

@@ -1,13 +1,13 @@
+from toolang.up.registry import instance_filename
 from toolang.up.workload import ForegroundWorkload
 from concurrent.futures import ThreadPoolExecutor
 from uuid import UUID
 
 import pytest
 
-from toolang.up.identity import allocate_roaming, select_roaming
+from toolang.up.allocation import allocate_roaming, select_roaming
 from toolang.up.instance import read_instance, patch_workload
 from toolang.up.observation import (
-    instance_filename,
     runtime_inventory,
 )
 
@@ -16,7 +16,7 @@ def test_parallel_allocations_are_isolated_and_keep_history(tmp_path, monkeypatc
     source = tmp_path / "aid.too"
     source.write_text("flow main():\n  pass\n")
     root = tmp_path / "global"
-    monkeypatch.setattr("toolang.up.identity.time.time_ns", lambda: 100_000_000)
+    monkeypatch.setattr("toolang.up.allocation.time.time_ns", lambda: 100_000_000)
     with ThreadPoolExecutor(max_workers=4) as pool:
         layouts = list(
             pool.map(lambda _: allocate_roaming(source, toolang_root=root), range(12))
@@ -82,8 +82,8 @@ def test_select_rejects_unknown_or_corrupt_identity(tmp_path):
 def test_instance_identity_uses_canonical_path_even_with_the_same_clock_and_nonce(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setattr("toolang.up.identity.time.time_ns", lambda: 100_000_000)
-    monkeypatch.setattr("toolang.up.identity.uuid4", lambda: UUID(int=1))
+    monkeypatch.setattr("toolang.up.allocation.time.time_ns", lambda: 100_000_000)
+    monkeypatch.setattr("toolang.up.allocation.uuid4", lambda: UUID(int=1))
     first = allocate_roaming(
         tmp_path / "one" / "aid.too", toolang_root=tmp_path / "global"
     )
@@ -121,7 +121,7 @@ def test_retained_selection_rejects_inconsistent_identity_bindings(
 def test_registry_publication_failure_retains_a_failed_selectable_identity(
     tmp_path, monkeypatch
 ):
-    from toolang.up.observation import RuntimeRegistration
+    from toolang.up.registry import RuntimeRegistration
 
     source = tmp_path / "aid.too"
     root = tmp_path / "global"
@@ -129,7 +129,7 @@ def test_registry_publication_failure_retains_a_failed_selectable_identity(
     def fail(_registration):
         raise PermissionError("registry is read-only")
 
-    monkeypatch.setattr(RuntimeRegistration, "__enter__", fail)
+    monkeypatch.setattr(RuntimeRegistration, "publish", fail)
     with pytest.raises(PermissionError, match="registry is read-only"):
         allocate_roaming(source, toolang_root=root)
     retained = select_roaming(source, toolang_root=root)
@@ -147,7 +147,7 @@ def test_clock_rollback_and_other_sources_do_not_reorder_one_source(
     from toolang.common.place_codes import roaming_timestamp_ms
 
     now = [500_000_000]
-    monkeypatch.setattr("toolang.up.identity.time.time_ns", lambda: now[0])
+    monkeypatch.setattr("toolang.up.allocation.time.time_ns", lambda: now[0])
     source = tmp_path / "aid.too"
     root = tmp_path / "global"
     first = allocate_roaming(source, toolang_root=root)
@@ -172,7 +172,7 @@ def test_roaming_full_id_collision_fails_once_and_preserves_owner(
     from toolang.common import place_codes
 
     monkeypatch.setattr(place_codes, "_tag", lambda *_: 123)
-    monkeypatch.setattr("toolang.up.identity.time.time_ns", lambda: 100_000_000)
+    monkeypatch.setattr("toolang.up.allocation.time.time_ns", lambda: 100_000_000)
     root = tmp_path / "global"
     first_source = tmp_path / "one" / "a-id.too"
     second_source = (
@@ -228,7 +228,7 @@ def test_allocation_rejects_untrusted_retained_ownership_without_rewriting_it(
 
 def test_timestamp_overflow_does_not_wrap_or_publish(tmp_path, monkeypatch):
     monkeypatch.setattr(
-        "toolang.up.identity.time.time_ns", lambda: (2**48 - 1) * 1_000_000
+        "toolang.up.allocation.time.time_ns", lambda: (2**48 - 1) * 1_000_000
     )
     source = tmp_path / "aid.too"
     root = tmp_path / "global"
@@ -246,7 +246,7 @@ def test_parallel_source_allocators_fence_a_global_full_id_collision(
     from toolang.common import place_codes
 
     monkeypatch.setattr(place_codes, "_tag", lambda *_: 123)
-    monkeypatch.setattr("toolang.up.identity.time.time_ns", lambda: 100_000_000)
+    monkeypatch.setattr("toolang.up.allocation.time.time_ns", lambda: 100_000_000)
     root = tmp_path / "global"
 
     def launch(source):
@@ -290,7 +290,7 @@ def test_a_shared_path_tag_does_not_mix_retained_source_order_or_selection(
 
     monkeypatch.setattr(place_codes, "_tag", lambda *_: 123)
     now = [500_000_000]
-    monkeypatch.setattr("toolang.up.identity.time.time_ns", lambda: now[0])
+    monkeypatch.setattr("toolang.up.allocation.time.time_ns", lambda: now[0])
     root = tmp_path / "global"
     source = tmp_path / "a-id.too"
     first = allocate_roaming(source, toolang_root=root)
@@ -316,7 +316,7 @@ def test_new_roaming_allocation_rejects_a_dangling_reference_to_its_candidate(
 
     source = tmp_path / "aid.too"
     root = tmp_path / "global"
-    monkeypatch.setattr("toolang.up.identity.time.time_ns", lambda: 100_000_000)
+    monkeypatch.setattr("toolang.up.allocation.time.time_ns", lambda: 100_000_000)
     candidate = replace(
         AgentLayout.roaming(
             source, place_code=roaming_place_code(str(source), 100), root=root
@@ -405,7 +405,7 @@ def test_retained_selection_waits_for_initial_status_publication(
     from contextlib import contextmanager
     from threading import Event, current_thread
     from toolang.common import files
-    from toolang.up import identity
+    from toolang.up import allocation, instance
 
     source = tmp_path / "aid.too"
     root = tmp_path / "global"
@@ -413,10 +413,10 @@ def test_retained_selection_waits_for_initial_status_publication(
     preparing = Event()
     selector_reached_boundary = Event()
     finish_publication = Event()
-    original_write = identity.atomic_write_text
-    original_read = identity.read_instance
+    original_write = instance.atomic_write_text
+    original_read = allocation.read_instance
     original_lock = files.file_write_lock
-    original_select = identity._select_retained_roaming
+    original_select = allocation._select_retained_roaming
 
     def paused_write(path, content, **kwargs):
         if path.name == "status.json":
@@ -437,8 +437,8 @@ def test_retained_selection_waits_for_initial_status_publication(
         with original_lock(path, **kwargs):
             yield
 
-    monkeypatch.setattr(identity, "atomic_write_text", paused_write)
-    monkeypatch.setattr(identity, "read_instance", observed_read)
+    monkeypatch.setattr(instance, "atomic_write_text", paused_write)
+    monkeypatch.setattr(allocation, "read_instance", observed_read)
     monkeypatch.setattr(files, "file_write_lock", observed_lock)
     with (
         ThreadPoolExecutor(max_workers=1, thread_name_prefix="allocator") as allocator,
@@ -455,7 +455,7 @@ def test_retained_selection_waits_for_initial_status_publication(
             return original_select(source, place_code, toolang_root)
 
         monkeypatch.setattr(
-            identity, "_select_retained_roaming", start_allocation_then_select
+            allocation, "_select_retained_roaming", start_allocation_then_select
         )
         try:
             if guard_already_exists:

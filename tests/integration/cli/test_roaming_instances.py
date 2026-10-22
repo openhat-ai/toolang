@@ -6,7 +6,7 @@ import pytest
 from toolang.cli.toolang.main import main
 from toolang.execution.store import RunStore
 from toolang.stats.recent import recent_source
-from toolang.up.identity import select_roaming
+from toolang.up.allocation import select_roaming
 
 
 def test_roaming_chat_help_does_not_allocate_an_instance(tmp_path, monkeypatch):
@@ -131,7 +131,7 @@ def test_resident_stop_selects_and_fences_the_original_owner(tmp_path, monkeypat
 def test_roaming_rejects_hosting_commands_without_mutating_instances(
     tmp_path, monkeypatch, command, explicit_instance
 ):
-    from toolang.up.identity import allocate_roaming
+    from toolang.up.allocation import allocate_roaming
 
     source = tmp_path / "aid.too"
     source.write_text("flow main():\n  pass\n")
@@ -287,7 +287,7 @@ def test_chat_thread_selection_requires_one_matching_home(
 ):
     from toolang.cli.common.context import context_layout
     from toolang.cli.toolang.commands.chat import main as chat
-    from toolang.up.identity import allocate_roaming
+    from toolang.up.allocation import allocate_roaming
 
     root = tmp_path / "root"
     source = tmp_path / "aid.too"
@@ -318,7 +318,7 @@ def test_info_shows_the_offline_agent_root_without_a_command_footer(
     tmp_path, monkeypatch, capsys
 ):
     from toolang.cli.toolang.commands import agent
-    from toolang.up.identity import allocate_roaming
+    from toolang.up.allocation import allocate_roaming
     from toolang.up.workload import fail_preparation
 
     source = tmp_path / "a id.too"
@@ -342,7 +342,7 @@ def test_record_home_lookup_reports_incompatible_history_without_changing_it(
     tmp_path, monkeypatch, capsys
 ):
     import sqlite3
-    from toolang.up.identity import allocate_roaming
+    from toolang.up.allocation import allocate_roaming
 
     root = tmp_path / "root"
     source = tmp_path / "aid.too"
