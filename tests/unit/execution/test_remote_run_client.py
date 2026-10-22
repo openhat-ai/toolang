@@ -804,12 +804,15 @@ def test_remote_client_logs_stream_transport_failure_without_sensitive_details(c
     assert private not in caplog.text
 
 
-def test_remote_client_logs_terminal_detail_failure_separately(caplog):
+@pytest.mark.parametrize("failure", ["http", "transport"])
+def test_remote_client_logs_terminal_detail_failure_separately(caplog, failure):
     caplog.set_level("ERROR", logger=remote.__name__)
 
     async def handler(request: httpx.Request) -> httpx.Response:
         if request.method == "POST":
             return _stream_response(_begin(), _end())
+        if failure == "transport":
+            raise httpx.ReadError("private-detail-must-not-log", request=request)
         return httpx.Response(503, json={"detail": "private-detail-must-not-log"})
 
     async def scenario() -> None:
@@ -817,14 +820,17 @@ def test_remote_client_logs_terminal_detail_failure_separately(caplog):
             client = RemoteRunClient("https://runtime.test", client=http)
             await client.connect()
             handle = await client.run(_request())
-            with pytest.raises(RemoteRunClientError, match="HTTP 503"):
+            error = "HTTP 503" if failure == "http" else "transport failed: ReadError"
+            with pytest.raises(RemoteRunClientError, match=error):
                 await handle.wait()
             await client.disconnect()
 
     asyncio.run(scenario())
+    status = "503" if failure == "http" else "None"
+    cause = "None" if failure == "http" else "ReadError"
     assert (
-        "run=run_remote phase=detail error=RemoteRunClientError status=503"
-        in caplog.text
+        f"run=run_remote phase=detail error=RemoteRunClientError status={status} "
+        f"cause={cause}" in caplog.text
     )
     assert "private-detail-must-not-log" not in caplog.text
 
@@ -1088,6 +1094,247 @@ def test_remote_client_disconnect_detaches_stream_without_canceling_remote_run()
         await owned.disconnect()
         assert owned_http is not None
         assert owned_http.is_closed
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("owned_http", [False, True])
+def test_remote_client_disconnect_settles_all_pending_details(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    owned_http: bool,
+) -> None:
+    async def scenario() -> None:
+        entered = asyncio.Event()
+        release = asyncio.Event()
+        active = 0
+        canceled = 0
+        requests: list[str] = []
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal active, canceled
+            requests.append(request.url.path)
+            if request.method == "POST":
+                return _stream_response(_begin(), _end())
+            active += 1
+            if active == 2:
+                entered.set()
+            try:
+                await release.wait()
+                return httpx.Response(
+                    200, json=_DETAIL_ADAPTER.dump_python(_detail(), mode="json")
+                )
+            except asyncio.CancelledError:
+                canceled += 1
+                raise
+            finally:
+                active -= 1
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+            if owned_http:
+                monkeypatch.setattr(remote.httpx, "AsyncClient", lambda: http)
+            client = RemoteRunClient(
+                "http://runtime.test", client=None if owned_http else http
+            )
+            await client.connect()
+            handle = await client.run(_request())
+            waits = [asyncio.create_task(handle.wait()) for _ in range(2)]
+            try:
+                await asyncio.wait_for(entered.wait(), timeout=1)
+                await client.disconnect()
+                assert active == 0
+                assert canceled == 2
+                assert http.is_closed is owned_http
+                for pending in waits:
+                    with pytest.raises(RemoteRunClientError, match="disconnected"):
+                        await asyncio.wait_for(pending, timeout=1)
+                with pytest.raises(RemoteRunClientError, match="disconnected"):
+                    await handle.wait()
+                assert not any(path.endswith("/cancel") for path in requests)
+            finally:
+                for pending in waits:
+                    pending.cancel()
+                await asyncio.gather(*waits, return_exceptions=True)
+                await client.disconnect()
+
+    asyncio.run(scenario())
+    assert "remote run wait failed" not in caplog.text
+
+
+def test_remote_client_canceling_detail_wait_preserves_other_waiters() -> None:
+    async def scenario() -> None:
+        entered = asyncio.Event()
+        release = asyncio.Event()
+        active = 0
+        requests: list[str] = []
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal active
+            requests.append(request.url.path)
+            if request.method == "POST":
+                return _stream_response(_begin(), _end())
+            active += 1
+            if active == 2:
+                entered.set()
+            try:
+                await release.wait()
+                return httpx.Response(
+                    200, json=_DETAIL_ADAPTER.dump_python(_detail(), mode="json")
+                )
+            finally:
+                active -= 1
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+            client = RemoteRunClient("http://runtime.test", client=http)
+            await client.connect()
+            handle = await client.run(_request())
+            first = asyncio.create_task(handle.wait())
+            second = asyncio.create_task(handle.wait())
+            try:
+                await asyncio.wait_for(entered.wait(), timeout=1)
+                first.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await first
+                assert client.connected and active == 1
+                release.set()
+                assert await asyncio.wait_for(second, timeout=1) == _detail()
+                assert not any(path.endswith("/cancel") for path in requests)
+            finally:
+                first.cancel()
+                second.cancel()
+                await asyncio.gather(first, second, return_exceptions=True)
+                await client.disconnect()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("operation", ["disconnect", "connect"])
+def test_remote_client_lifecycle_waits_for_detail_cancellation_cleanup(
+    operation: str,
+) -> None:
+    async def scenario() -> None:
+        entered = asyncio.Event()
+        cleanup_entered = asyncio.Event()
+        cleanup_release = asyncio.Event()
+        following_entered = asyncio.Event()
+        active = False
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal active
+            if request.method == "POST":
+                return _stream_response(_begin(), _end())
+            active = True
+            entered.set()
+            try:
+                await asyncio.Event().wait()
+                raise AssertionError("detail request must be canceled")
+            finally:
+                cleanup_entered.set()
+                await cleanup_release.wait()
+                active = False
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+            client = RemoteRunClient("http://runtime.test", client=http)
+            await client.connect()
+            handle = await client.run(_request())
+            pending = asyncio.create_task(handle.wait())
+            closing: asyncio.Task[None] | None = None
+            following: asyncio.Task[None] | None = None
+
+            async def follow() -> None:
+                following_entered.set()
+                if operation == "disconnect":
+                    await client.disconnect()
+                else:
+                    await client.connect()
+
+            try:
+                await asyncio.wait_for(entered.wait(), timeout=5)
+                closing = asyncio.create_task(client.disconnect())
+                await asyncio.wait_for(cleanup_entered.wait(), timeout=5)
+                following = asyncio.create_task(follow())
+                await asyncio.wait_for(following_entered.wait(), timeout=5)
+                assert active
+                assert not closing.done()
+                assert not following.done()
+                cleanup_release.set()
+                await asyncio.wait_for(closing, timeout=5)
+                await asyncio.wait_for(following, timeout=5)
+                assert not active
+                assert client.connected is (operation == "connect")
+                with pytest.raises(RemoteRunClientError, match="disconnected"):
+                    await pending
+            finally:
+                cleanup_release.set()
+                await asyncio.gather(
+                    *(
+                        task
+                        for task in (pending, closing, following)
+                        if task is not None
+                    ),
+                    return_exceptions=True,
+                )
+                await client.disconnect()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("owned_http", [False, True])
+def test_remote_client_canceled_disconnect_preserves_http_ownership(
+    monkeypatch: pytest.MonkeyPatch,
+    owned_http: bool,
+) -> None:
+    async def scenario() -> None:
+        entered = asyncio.Event()
+        cleanup_entered = asyncio.Event()
+        cleanup_release = asyncio.Event()
+        active = 0
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal active
+            if request.method == "POST":
+                return _stream_response(_begin(), _end())
+            active += 1
+            entered.set()
+            try:
+                await asyncio.Event().wait()
+                raise AssertionError("detail request must be canceled")
+            finally:
+                cleanup_entered.set()
+                try:
+                    await cleanup_release.wait()
+                finally:
+                    active -= 1
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+            if owned_http:
+                monkeypatch.setattr(remote.httpx, "AsyncClient", lambda: http)
+            client = RemoteRunClient(
+                "http://runtime.test", client=None if owned_http else http
+            )
+            await client.connect()
+            handle = await client.run(_request())
+            pending = asyncio.create_task(handle.wait())
+            closing: asyncio.Task[None] | None = None
+            try:
+                await asyncio.wait_for(entered.wait(), timeout=5)
+                closing = asyncio.create_task(client.disconnect())
+                await asyncio.wait_for(cleanup_entered.wait(), timeout=5)
+                closing.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await asyncio.wait_for(closing, timeout=5)
+                assert active == 0
+                assert http.is_closed is owned_http
+                assert not client.connected
+                with pytest.raises(RemoteRunClientError, match="disconnected"):
+                    await pending
+            finally:
+                cleanup_release.set()
+                await asyncio.gather(
+                    *(task for task in (pending, closing) if task is not None),
+                    return_exceptions=True,
+                )
+                await client.disconnect()
 
     asyncio.run(scenario())
 

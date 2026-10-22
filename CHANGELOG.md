@@ -423,6 +423,10 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 - Inherited default prompts whose runtime module is absent from published Agent
   State no longer fail with `Program not found: _`.
 
+- Ctrl+Q after a successful Chat run no longer closes HTTP under a pending
+  detail fetch or prints a spurious `ReadError`.
+  ([#926](https://github.com/openhat-ai/toolang/pull/926))
+
 ### Security
 
 - The locked certifi trust store advances to 2026.10.19, resolving trust-store
