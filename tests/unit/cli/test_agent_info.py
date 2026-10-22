@@ -73,9 +73,8 @@ def test_model_summary_counts_effective_setup_resources(
 
 @pytest.mark.parametrize("sandbox", ["host", "docker:python:3.13-slim"])
 @pytest.mark.parametrize("placement", ["resident", "roaming", "visiting"])
-@pytest.mark.parametrize("target_first", [False])
 def test_running_info_uses_runtime_resources_without_loading_local_sources(
-    tmp_path, monkeypatch, capsys, sandbox, placement, target_first
+    tmp_path, monkeypatch, capsys, sandbox, placement
 ):
 
     monkeypatch.setenv("HOME", str(tmp_path))
@@ -106,10 +105,7 @@ def test_running_info_uses_runtime_resources_without_loading_local_sources(
             "resolve_visiting_layout",
             lambda *a, **kw: pytest.fail("running info must not fetch sources"),
         )
-    arguments = [
-        *global_args,
-        *(["info", selector] if target_first else ["info", selector]),
-    ]
+    arguments = [*global_args, selector, "info"]
     layout.home.mkdir(parents=True, exist_ok=True)
     if placement == "roaming":
         layout.program.symlink_to(source)
@@ -211,14 +207,13 @@ def test_running_info_formats_driver_metadata(
     monkeypatch.setattr(AgentProcess, "state", lambda _self: metadata)
     monkeypatch.setattr(agent, "_running_resources", lambda *_args, **_kwargs: [])
 
-    assert main(["--root", str(tmp_path), "info", "alice"]) == 0
+    assert main(["--root", str(tmp_path), "alice", "info"]) == 0
     assert f"Drivers: {expected}" in capsys.readouterr().out
 
 
 @pytest.mark.parametrize("placement", ["roaming", "visiting"])
-@pytest.mark.parametrize("target_first", [False])
 def test_offline_info_does_not_materialize_a_fresh_nonresident_target(
-    tmp_path, monkeypatch, capsys, placement, target_first
+    tmp_path, monkeypatch, capsys, placement
 ):
     source = tmp_path / "alice.too"
     source.write_text("flow run():\n  pass\n")
@@ -240,5 +235,5 @@ def test_offline_info_does_not_materialize_a_fresh_nonresident_target(
         "materialize_roaming_program",
         lambda *args, **kwargs: pytest.fail("history query materialized source"),
     )
-    assert main(["info", selector] if target_first else ["info", selector]) == 1
+    assert main([selector, "info"]) == 1
     assert not layout.agent_state.exists()

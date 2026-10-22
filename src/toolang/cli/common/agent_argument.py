@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import typer
 from typer._click import Command, Context, Parameter
@@ -15,36 +15,101 @@ from typer._click.types import StringParamType
 from typer.core import TyperArgument, TyperGroup
 from typer.models import ArgumentInfo
 
-from toolang.common.layout import AgentPlacement
+from toolang.common.layout import AgentPlacement, validate_agent_name
 
 _PREFIX = f"{__name__}.prefix"
-_POSITIONS = frozenset({"before", "after"})
+AgentRole = Literal["source", "home", "execute"]
+_ROLES = frozenset({"source", "home", "execute"})
+_DRIVERS = frozenset({"chat", "talk", "chore"})
 _PLACEMENTS = frozenset({"resident", "visiting", "roaming"})
 
 
 @dataclass(frozen=True, slots=True)
 class AgentContract:
+    role: AgentRole
     placements: frozenset[AgentPlacement]
-    positions: frozenset[str]
-    recommended: str
+    requires_live: bool = False
+    required_driver: str | None = None
 
     @classmethod
-    def parse(cls, tags: str) -> AgentContract:
-        ordered = list(dict.fromkeys(tag.strip() for tag in tags.split(",")))
-        unknown = set(ordered) - _POSITIONS - _PLACEMENTS
-        if unknown:
+    def parse(
+        cls,
+        role: str,
+        placements: str,
+        *,
+        requires_live: bool = False,
+        required_driver: str | None = None,
+    ) -> AgentContract:
+        if role not in _ROLES:
+            raise ValueError("AGENT requires a source, home, or execute role")
+        tags = frozenset(tag.strip() for tag in placements.split(","))
+        if not tags or tags - _PLACEMENTS:
             raise ValueError(
-                f"invalid AGENT tags: {', '.join(repr(tag) for tag in sorted(unknown))}"
+                "AGENT requires valid resident/visiting/roaming placements"
             )
-        positions = [tag for tag in ordered if tag in _POSITIONS]
-        placements = frozenset(ordered) & _PLACEMENTS
-        if not positions or not placements:
-            raise ValueError("AGENT requires placement and position tags")
+        if required_driver is not None and required_driver not in _DRIVERS:
+            raise ValueError("AGENT requires a valid driver")
+        if role == "source" and (requires_live or required_driver is not None):
+            raise ValueError("source AGENT cannot require a runtime")
         return cls(
-            cast(frozenset[AgentPlacement], placements),
-            frozenset(positions),
-            positions[0],
+            cast(AgentRole, role),
+            cast(frozenset[AgentPlacement], tags),
+            requires_live,
+            required_driver,
         )
+
+    @property
+    def forms(self) -> tuple[str, ...]:
+        forms = []
+        if "resident" in self.placements:
+            forms.append("name")
+        if "roaming" in self.placements:
+            forms.append("path")
+        if "visiting" in self.placements:
+            forms.extend(("ref", "url"))
+        return tuple(forms)
+
+    @property
+    def metavar(self) -> str:
+        return "ADDRESS" if self.role == "home" else "AGENT"
+
+    @property
+    def description(self) -> str:
+        ordered = [
+            placement
+            for placement in ("resident", "visiting", "roaming")
+            if placement in self.placements
+        ]
+        scope = " or ".join(ordered) if self.placements != _PLACEMENTS else ""
+        if self.role == "home":
+            label = " ".join(part for part in (scope, "agent address") if part)
+            if self.requires_live:
+                label = f"running {label}"
+            if self.required_driver is not None:
+                label += f" with the {self.required_driver} driver"
+            return label
+        forms = self.forms
+        joined = (
+            forms[0] if len(forms) == 1 else f"{', '.join(forms[:-1])} or {forms[-1]}"
+        )
+        if self.placements == {"resident"}:
+            return "resident agent name"
+        if self.placements == {"resident", "roaming"}:
+            return "local agent name or path"
+        if self.role == "execute" and scope:
+            return f"{scope} agent by {joined}"
+        return f"agent {joined}"
+
+
+class AgentNameType(StringParamType):
+    """Validate an ordinary catalog name without binding an agent prefix."""
+
+    def convert(self, value: Any, param: Parameter | None, ctx: Context | None) -> str:
+        name = super().convert(value, param, ctx)
+        try:
+            return validate_agent_name(name)
+        except ValueError as exc:
+            self.fail(str(exc), param, ctx)
 
 
 class _AgentType(StringParamType):
@@ -88,44 +153,58 @@ class _AgentType(StringParamType):
     def shell_complete(
         self, ctx: Context, param: Parameter, incomplete: str
     ) -> list[CompletionItem]:
-        from toolang.catalog.agent import LocalAgents
-        from .context import CliContext, resolve_root
-
         if "resident" not in self.contract.placements:
             return []
-        explicit = ctx.find_root().params.get("toolang_root")
-        root = (
-            ctx.obj.root
-            if isinstance(ctx.obj, CliContext)
-            else resolve_root(Path(explicit) if explicit is not None else None)
+        return complete_agent_names(ctx, incomplete)
+
+
+def complete_agent_names(ctx: Context, incomplete: str) -> list[CompletionItem]:
+    """Complete lexical name prefixes without resolving or acquiring a home."""
+    from toolang.catalog.agent import LocalAgents
+    from .context import CliContext, resolve_root
+
+    explicit = ctx.find_root().params.get("toolang_root")
+    root = (
+        ctx.obj.root
+        if isinstance(ctx.obj, CliContext)
+        else resolve_root(Path(explicit) if explicit is not None else None)
+    )
+    requested_escape = incomplete.startswith("agent:")
+    stem = incomplete.removeprefix("agent:") if requested_escape else incomplete
+    commands = getattr(ctx.find_root().command, "commands", {})
+    return [
+        CompletionItem(
+            f"agent:{name}" if requested_escape or name in commands else name
         )
-        escape = "agent:" if incomplete.startswith("agent:") else ""
-        return [
-            CompletionItem(f"{escape}{name}")
-            for name in LocalAgents(root / "agents").list()
-            if f"{escape}{name}".startswith(incomplete)
-        ]
+        for name in LocalAgents(root / "agents").list()
+        if name.startswith(stem)
+    ]
 
 
-def AgentArgument(tags: str, **kwargs: Any) -> ArgumentInfo:
-    """Declare accepted placements and positions, in usage recommendation order."""
-    contract = AgentContract.parse(tags)
-    forms = []
-    if "resident" in contract.placements:
-        forms.append("name")
-    if "roaming" in contract.placements:
-        forms.append("path")
-    if "visiting" in contract.placements:
-        forms.extend(("ref", "URL"))
-    help_text = kwargs.pop(
-        "help",
-        f"Agent {', '.join(forms)}",
+def prefix_supplied(ctx: Context) -> bool:
+    return _PREFIX in ctx.meta
+
+
+def AgentArgument(
+    role: AgentRole,
+    *,
+    placements: str = "resident,visiting,roaming",
+    requires_live: bool = False,
+    required_driver: str | None = None,
+    **kwargs: Any,
+) -> ArgumentInfo:
+    """Declare one native agent-prefix argument and its leaf contract."""
+    contract = AgentContract.parse(
+        role,
+        placements,
+        requires_live=requires_live,
+        required_driver=required_driver,
     )
     return typer.Argument(
-        metavar="AGENT",
+        metavar=kwargs.pop("metavar", contract.metavar),
         click_type=_AgentType(contract),
         show_default=False,
-        help=help_text,
+        help=kwargs.pop("help", contract.description),
         **kwargs,
     )
 
@@ -160,11 +239,18 @@ class AgentParameter(TyperArgument):
 
     def _prefix(self, ctx: Context) -> str | None:
         bound = ctx.meta.get(_PREFIX)
-        return bound[1] if bound is not None and bound[0] is ctx.command else None
+        if bound is not None:
+            owner, raw = bound
+            current: Context | None = ctx
+            while current is not None:
+                if current.command is owner:
+                    return raw
+                current = current.parent
+        return None
 
     def add_to_parser(self, parser: Any, ctx: Context) -> None:
-        if "after" in self.contract.positions and self._prefix(ctx) is None:
-            super().add_to_parser(parser, ctx)
+        # The argument is supplied only by the command header, never its tail.
+        return None
 
     def consume_value(
         self, ctx: Context, opts: Mapping[str, Any]
@@ -174,33 +260,27 @@ class AgentParameter(TyperArgument):
         return super().consume_value(ctx, opts)
 
     def get_usage_pieces(self, ctx: Context) -> list[str]:
-        return (
-            []
-            if self.contract.recommended == "before"
-            else super().get_usage_pieces(ctx)
-        )
+        return []
 
 
 def install_agent_parameter(command: Command) -> None:
-    """Adapt Typer-built arguments once, at command construction."""
+    """Adapt native leaf arguments once, during command construction."""
     for index, param in enumerate(command.params):
-        if isinstance(param, TyperArgument) and isinstance(param.type, _AgentType):
+        if (
+            isinstance(param, TyperArgument)
+            and not isinstance(param, AgentParameter)
+            and isinstance(param.type, _AgentType)
+        ):
             command.params[index] = AgentParameter(param)
     agent = agent_parameter(command)
     if agent is None:
         return
+    if isinstance(command, TyperGroup):
+        raise ValueError("AGENT belongs to executable leaves, not group callbacks")
     if agent.nargs != 1:
         raise ValueError("AGENT must be a single value")
-    positional = [param for param in command.params if isinstance(param, TyperArgument)]
-    if not agent.required and "after" in agent.contract.positions:
-        if isinstance(command, TyperGroup):
-            raise ValueError("optional after AGENT cannot precede a group subcommand")
-        if positional[-1] is not agent or any(
-            param.nargs == -1 for param in positional
-        ):
-            raise ValueError(
-                "optional after AGENT must be last and cannot accompany variadic arguments"
-            )
+    # An inherited prefix can satisfy this leaf even when its native tail is empty.
+    command.no_args_is_help = False
 
 
 def agent_parameter(command: Command) -> AgentParameter | None:
@@ -210,6 +290,23 @@ def agent_parameter(command: Command) -> AgentParameter | None:
     if len(parameters) > 1:
         raise ValueError("a command can declare only one AGENT parameter")
     return next(iter(parameters), None)
+
+
+def agent_parameters(command: Command) -> tuple[AgentParameter, ...]:
+    """Read leaf contracts, including the selected group's native descendants."""
+    from .lazy import LazyCommand
+
+    if isinstance(command, LazyCommand):
+        return command.agent_parameters()
+    if (agent := agent_parameter(command)) is not None:
+        return (agent,)
+    if isinstance(command, TyperGroup):
+        return tuple(
+            agent
+            for child in command.commands.values()
+            for agent in agent_parameters(child)
+        )
+    return ()
 
 
 def bind_prefix(ctx: Context, command: Command, raw: str) -> None:

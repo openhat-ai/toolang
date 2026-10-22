@@ -1,6 +1,6 @@
 # Implement agent addresses and unified CLI operands
 
-Definition for #914. No implementation is included in that PR. The approved
+Approved in #914. No implementation is included in that PR. The approved
 contracts live in [agent addresses](../design/agent-addresses.md) and
 [CLI command recognition](../design/cli-command-recognition.md); this plan records
 implementation scope and verification only.
@@ -20,6 +20,11 @@ Deliver in independently reviewable increments:
 
 Each implementation PR names its increment and completed acceptance scenarios;
 subsequent increments follow the same target contract without temporary aliases.
+
+Increment 1 implements prefix-only grammar, native leaf declarations, group
+propagation, generated descriptions, and lexical completion. Existing instance
+flags and lookup behavior remain until increment 2; `cd` retains source preparation,
+and `top`/`chore` retain resident scope until their home bindings are expanded.
 
 ## Typical cases
 

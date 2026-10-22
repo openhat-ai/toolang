@@ -11,7 +11,7 @@ from typing import Annotated, cast
 
 import typer
 
-from toolang.cli.common.agent_argument import AgentArgument
+from toolang.cli.common.agent_argument import AgentArgument, AgentNameType
 from typer._click.exceptions import ClickException
 
 from toolang.cli.common.parameters import InstanceOption
@@ -60,7 +60,7 @@ def new_agent(
         str,
         typer.Argument(
             metavar="NAME",
-            click_type=TextType(),
+            click_type=AgentNameType(),
             help="New agent name",
         ),
     ],
@@ -83,14 +83,14 @@ def clone_agent(
         typer.Argument(
             metavar="SOURCE",
             click_type=TextType(),
-            help="Agent name, ref, URL",
+            help="agent name, ref or url",
         ),
     ],
     target: Annotated[
         str | None,
         typer.Argument(
             metavar="TARGET",
-            click_type=TextType(),
+            click_type=AgentNameType(),
             help="New agent name",
         ),
     ] = None,
@@ -134,7 +134,12 @@ def clone_agent(
 
 def remove_agent(
     ctx: typer.Context,
-    agent: Annotated[str, AgentArgument("resident,after")],
+    agent: Annotated[
+        str,
+        typer.Argument(
+            metavar="NAME", click_type=AgentNameType(), help="resident agent name"
+        ),
+    ],
 ) -> None:
     from toolang.up import sandbox as sandbox_runtime
 
@@ -177,7 +182,7 @@ def list_agents(ctx: typer.Context) -> None:
 
 def info_agent(
     ctx: typer.Context,
-    agent: Annotated[str, AgentArgument("resident,visiting,roaming,after,before")],
+    agent: Annotated[str, AgentArgument("home")],
     model_catalog: ModelCatalogOption = None,
     instance: InstanceOption = None,
 ) -> None:

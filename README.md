@@ -128,10 +128,10 @@ Below are some common commands. Run `too --help` for usage details, or `too more
 ```bash
 too new NAME                 # Create an agent
 too clone SOURCE [TARGET]    # Clone an agent
-too info AGENT               # Show agent information
+too AGENT info               # Show agent information
 too AGENT cd                 # Enter an agent home
-too start AGENT              # Start an agent in the background
-too stop AGENT               # Stop an agent
+too AGENT start              # Start an agent in the background
+too AGENT stop               # Stop an agent
 too AGENT chat               # Chat directly with an agent
 
 too init PROJECT_DIR         # Initialize Toolang in a directory

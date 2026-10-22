@@ -70,7 +70,7 @@ from ...common.terminal_surfaces import resolve_terminal_surfaces
 
 def steer_command(
     ctx: typer.Context,
-    agent: Annotated[str, AgentArgument("resident,visiting,roaming,before")],
+    agent: Annotated[str, AgentArgument("home", requires_live=True)],
     run: Annotated[
         str,
         typer.Argument(
@@ -112,7 +112,7 @@ def steer_command(
 
 def cancel_command(
     ctx: typer.Context,
-    agent: Annotated[str, AgentArgument("resident,visiting,roaming,before")],
+    agent: Annotated[str, AgentArgument("home", requires_live=True)],
     run: Annotated[
         str,
         typer.Argument(
@@ -144,7 +144,7 @@ def cancel_command(
 
 def rerun_command(
     ctx: typer.Context,
-    agent: Annotated[str, AgentArgument("resident,visiting,roaming,before")],
+    agent: Annotated[str, AgentArgument("home")],
     run: Annotated[
         str,
         typer.Argument(
@@ -209,7 +209,7 @@ def rerun_command(
 
 def rewind_command(
     ctx: typer.Context,
-    agent: Annotated[str, AgentArgument("resident,visiting,roaming,before")],
+    agent: Annotated[str, AgentArgument("home")],
     point: Annotated[
         str,
         typer.Argument(
@@ -260,7 +260,7 @@ def rewind_command(
 
 def fork_command(
     ctx: typer.Context,
-    agent: Annotated[str, AgentArgument("resident,visiting,roaming,before")],
+    agent: Annotated[str, AgentArgument("home")],
     point: Annotated[
         str,
         typer.Argument(

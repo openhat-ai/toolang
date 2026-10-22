@@ -21,20 +21,30 @@ agent. Root help links to the topic directory beside `too more`.
 
 | Input | Interpretation |
 | --- | --- |
-| `too new NAME`, `too clone SOURCE [TARGET]`, `too remove AGENT`, `too list` | Agent catalog commands; command first |
-| `too serve AGENT` | Foreground lifecycle for resident or visiting agents; command first |
-| `too start AGENT`, `too stop AGENT` | Background lifecycle for resident or visiting agents; AGENT may also precede the command |
-| `too info AGENT`, `too AGENT info` | Resident, visiting, or roaming agent information |
-| `too cd`, `too AGENT cd`, `too cd AGENT` | Interactive shell in the Toolang root or selected agent home; `exit` returns to the calling shell |
+| `too new NAME`, `too clone SOURCE [TARGET]`, `too remove NAME`, `too list` | Agent catalog commands; ordinary command operands |
+| `too AGENT serve` | Foreground lifecycle for resident or visiting agents |
+| `too AGENT start`, `too AGENT stop` | Background lifecycle for resident or visiting agents |
+| `too AGENT info` | Resident, visiting, or roaming agent information |
+| `too cd`, `too AGENT cd` | Interactive shell in the Toolang root or selected agent home; `exit` returns to the calling shell |
 | `too AGENT chat`, `too AGENT chore list`, `too AGENT inspect runs` | Agent work, authoring, and history |
 | `too run FILE [RUNNABLE]`, `too FILE [RUNNABLE]` | Two entry forms of the same local script command |
 | `too init DIR` | Create executable `aid.too` and comment-only `toolang.toml` without overwriting |
 
 The root Typer group recognizes the command, then its native parameter contract
-binds AGENT from the permitted position. [Command recognition](cli-command-recognition.md)
+binds AGENT exclusively from the prefix. [Command recognition](cli-command-recognition.md)
 owns precedence, declarations, usage, diagnostics, and completion. Commands are
 registered once; each invocation keeps selection in Context. Executable leaf
 callbacks own source preparation after native argument validation.
+
+Each executable leaf declares one native `AgentArgument`: `source` for authored
+configuration, `home` for retained state or control, and `execute` for execution.
+The declaration generates its type, metavar, concise description, and completion.
+Groups only carry the raw prefix; their selected leaf validates it and owns the
+argument row. Home parameters display `ADDRESS`; other roles display `AGENT`.
+Native Typer owns defaults, requiredness, conversion, callbacks, and eager help.
+Agent leaves disable automatic empty-tail help so a prefix can satisfy the
+argument without synthetic argv tokens. Selection stays in invocation Context;
+cached commands and parameters are never modified during invocation.
 
 A registered command wins a name collision; `agent:NAME` explicitly selects a
 resident. Following a `.too` operand with a registered command selects that
@@ -43,10 +53,12 @@ command, even if it rejects AGENT. Use `run FILE RUNNABLE`, `agic:NAME`,
 operands are never rerouted. A local `.too` suffix selects script syntax even if
 the file is absent; explicit source schemes take precedence over that suffix.
 
-A known resident or explicit agent selector alone reports a missing command;
-adding `--help` displays root help. A bare unknown name reports an unknown
-command. Allowed command forms use native eager help before selector conversion
-or source preparation. [Architecture](architecture.md#agent-sources) owns agent
+A bare word reports a native unknown-command error, whether or not a matching
+resident exists. An explicit selector such as `agent:alice` alone reports a
+missing command; adding `--help` displays root help. Recognition never reads
+homes to choose an interpretation. Allowed command forms use native eager help
+before selector conversion or source preparation.
+[Architecture](architecture.md#agent-sources) owns agent
 names, remote refs, and placements.
 
 Global options, including `--root`/`-r`, precede the command or AGENT.
@@ -85,6 +97,10 @@ exits. [Hosting](hosting.md) owns startup compatibility and recovery.
 
 ### Instance selection
 
+The native operand grammar is implemented. The new decorated addresses and
+area layout in [agent addresses](agent-addresses.md) are the next increment;
+the following instance behavior remains current until that increment lands.
+
 - Existing targets accept `--instance` / `-i` on history/control commands.
 - `-i I` / `--instance I` takes the complete 17-character ID, including `v`/`r`.
   Top displays `A@I`; selectors reject `A@I`, markerless bodies and noncanonical
@@ -101,7 +117,7 @@ exits. [Hosting](hosting.md) owns startup compatibility and recovery.
 
 ## Resource and plugin inspection
 
-`too info AGENT` shows enabled `Drivers` immediately
+`too AGENT info` shows enabled `Drivers` immediately
 after `Status` while the agent is running. It reads existing runtime metadata
 and formats selections in `chat,talk,chore` order, with `none` for an empty set
 and `-` for unavailable metadata. Nonrunning agents omit the row.

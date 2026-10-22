@@ -3917,7 +3917,7 @@ def test_agent_info_builds_state_and_setup_without_server(
 
     monkeypatch.setattr("toolang.setup.SetupWatcher", _SetupWatcher)
 
-    result = _invoke(root, "info", "alice")
+    result = _invoke(root, "alice", "info")
 
     assert result.exit_code == 0
     assert "ALICE" in result.stdout
@@ -3927,12 +3927,11 @@ def test_agent_info_builds_state_and_setup_without_server(
     assert "not running" in result.stdout
 
 
-@pytest.mark.parametrize("target_first", [False])
 @pytest.mark.parametrize(
     "status", ["stopped", "preparing", "starting", "running", "failed", "unknown"]
 )
 def test_agent_info_fields_follow_the_compact_layout(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, target_first: bool, status: str
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, status: str
 ) -> None:
     from toolang.base.types.model import Model, ModelToolang, Provider
     from toolang.plugin.models import query
@@ -4034,8 +4033,7 @@ def test_agent_info_fields_follow_the_compact_layout(
         agent_commands, "echo_pairs_table", lambda rows, **kwargs: captured.extend(rows)
     )
 
-    args = ("info", "alice") if target_first else ("info", "alice")
-    result = _invoke(root, *args)
+    result = _invoke(root, "alice", "info")
 
     assert result.exit_code == 0, result.stderr
     expected = ["Home", "Tools", "Models", "Caps", "Chores", "Workspaces", "Status"]
@@ -4100,7 +4098,7 @@ def test_agent_info_reports_only_state_published_caps(
     from toolang.state.prepare import prepare_agent_state
 
     prepare_agent_state(AgentLayout.resident(root, "alice"))
-    result = _invoke(root, "info", "alice")
+    result = _invoke(root, "alice", "info")
 
     assert result.exit_code == 0
     assert "1 prompt" in strip_ansi(result.stdout)
@@ -4150,7 +4148,7 @@ def test_roaming_agent_info_uses_the_source_layout(
         ),
     )
 
-    result = cli.main(["info", str(source)])
+    result = cli.main([str(source), "info"])
     capsys.readouterr()
 
     assert result == 0
@@ -4195,7 +4193,7 @@ def test_visiting_agent_info_uses_the_materialized_layout(
         lambda *_args, **_kwargs: layout,
     )
 
-    result = cli.main(["info", selector])
+    result = cli.main([selector, "info"])
     capsys.readouterr()
 
     assert result == 0
@@ -4325,7 +4323,7 @@ def test_tools_help_and_missing_agent_need_no_setup(
     help_result = runner.invoke(cli.app, ["--root", str(tmp_path), "tools", "--help"])
     assert help_result.exit_code == 0
     assert "[AGENT] tools" in strip_ansi(help_result.stdout)
-    assert "Agent name, path, ref, URL" in strip_ansi(help_result.stdout)
+    assert "agent name, path, ref or url" in strip_ansi(help_result.stdout)
     missing = _invoke(tmp_path, "missing", "tools")
     assert missing.exit_code != 0
     assert "Agent missing not found" in missing.stderr
@@ -4395,9 +4393,7 @@ def test_non_execution_commands_reject_workspace_options(
     monkeypatch.setattr("toolang.setup.SetupWatcher", _EmptySetupWatcher)
 
     value = () if option == "--no-auto-workspace" else (str(tmp_path),)
-    args = (
-        (*command, "alice") if command[0] in {"info", "start"} else ("alice", *command)
-    )
+    args = ("alice", *command)
     result = _invoke(tmp_path, *args, option, *value)
 
     assert result.exit_code == 2
@@ -4445,7 +4441,7 @@ def test_running_roaming_inspection_preserves_runtime_workspaces(
         }
 
     monkeypatch.setattr(RuntimeClient, "get", get)
-    result = cli.main(["info", str(source)])
+    result = cli.main([str(source), "info"])
     output = capsys.readouterr()
 
     assert result == 0, output.err

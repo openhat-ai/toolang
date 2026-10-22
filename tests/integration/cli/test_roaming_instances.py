@@ -71,7 +71,7 @@ def test_mismatched_instance_placement_is_a_parameter_error(
         "resolve_visiting_layout",
         lambda *_args, **_kwargs: pytest.fail("instance validation fetched a source"),
     )
-    args = ["info", selector] if command == "info" else [selector, "inspect", "runs"]
+    args = [selector, "info"] if command == "info" else [selector, "inspect", "runs"]
     before = set(tmp_path.rglob("*"))
     assert main([*args, "--instance", instance]) == 2
     error = capsys.readouterr().err
@@ -122,15 +122,15 @@ def test_resident_stop_selects_and_fences_the_original_owner(tmp_path, monkeypat
         return True
 
     monkeypatch.setattr(AgentProcess, "stop", stop)
-    assert main(["stop", "aid"]) == 0
+    assert main(["aid", "stop"]) == 0
     assert captured["layout"].root == layout.root
     assert captured["expected_launch_id"] == "selected-owner"
 
 
 @pytest.mark.parametrize("command", ["serve", "start", "stop"])
-@pytest.mark.parametrize("target_first", [True, False])
+@pytest.mark.parametrize("explicit_instance", [False, True])
 def test_roaming_rejects_hosting_commands_without_mutating_instances(
-    tmp_path, monkeypatch, command, target_first
+    tmp_path, monkeypatch, command, explicit_instance
 ):
     from toolang.up.identity import allocate_roaming
 
@@ -145,8 +145,10 @@ def test_roaming_rejects_hosting_commands_without_mutating_instances(
         path.name: path.read_bytes()
         for path in (root / ".runtime" / "instances").glob("*.json")
     }
-    args = [str(source), command] if target_first else [command, str(source)]
-    assert main([*args, "-i", layout.instance_id]) != 0
+    args = [str(source), command]
+    if explicit_instance:
+        args += ["-i", layout.instance_id]
+    assert main(args) == 2
     assert layout.runtime_status.read_bytes() == before
     assert list((source.parent / ".toolang").glob("aid@r*")) == [layout.root]
     assert {

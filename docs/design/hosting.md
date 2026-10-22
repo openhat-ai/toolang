@@ -127,7 +127,7 @@ incompatible selector without executing or restarting the server.
 `chat --dev [PATH]` installs a local Toolang wheel in a new non-host runtime;
 bare `--dev` searches the working directory. It is rejected for host execution.
 Attachment accepts an explicit wheel only when its path and content match the
-running selection. Use `too stop <agent-or-ref>` to stop a retained server explicitly.
+running selection. Use `too <agent-or-ref> stop` to stop a retained server explicitly.
 
 For execution commands, `--catalog` and `--compact-model` configure new runtimes.
 On attachment, explicit values must match saved settings; omitted values retain
@@ -145,7 +145,7 @@ wheel and select it with:
 
 ```sh
 uv build --wheel
-too start alice --sandbox docker --dev
+too alice start --sandbox docker --dev
 ```
 
 A following non-option token is consumed as PATH. Before a runnable selector or
@@ -326,11 +326,11 @@ keep placement defaults: resident chat,talk,chore; visiting chat,talk. Roaming
 Chat owns a fresh server and stops it on exit. Standalone scripts use embedded
 host execution or stop the guest server they created when the command exits.
 
-Use `too start <agent-or-ref>` for unattended availability. It promotes an
+Use `too <agent-or-ref> start` for unattended availability. It promotes an
 automatic visiting server in place or reuses a persistent server, reports actual
 drivers, and never adds drivers implicitly. To change a running server's drivers
 or startup configuration, stop and restart it with the desired options.
-`too stop <agent-or-ref>` explicitly ends the current generation and active work;
+`too <agent-or-ref> stop` explicitly ends the current generation and active work;
 clients do not relaunch it. Start cannot detach foreground serve.
 
 The server owns idle exit, with no supervisor process. Automatic clients renew

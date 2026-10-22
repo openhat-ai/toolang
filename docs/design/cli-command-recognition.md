@@ -1,7 +1,8 @@
 # CLI command recognition and agent parameters
 
-Target contract for the next CLI revision. Implementation follows approval of
-this definition. [CLI](cli.md) describes current behavior;
+The grammar and native leaf declarations are implemented. Decorated addresses,
+expanded home lookup, and bound execution remain the next increment.
+[CLI](cli.md) describes current behavior;
 [agent addresses](agent-addresses.md) defines home lookup and runtime ownership.
 
 ## Grammar

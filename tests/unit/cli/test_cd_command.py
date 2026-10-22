@@ -232,7 +232,7 @@ def test_cd_help_describes_optional_agent(
         "Enter an agent home, or the Toolang root if no agent is specified."
         in " ".join(output.split())
     )
-    assert "Agent name, path, ref, URL" in output
+    assert "agent name, path, ref or url" in output
     assert "* AGENT" not in output
     assert "omit for the Toolang root" not in output
     assert "Examples:" not in output
@@ -242,10 +242,10 @@ def test_cd_help_describes_optional_agent(
 @pytest.mark.parametrize(
     "arguments",
     [
-        ["cd", "alice"],
+        ["alice", "cd"],
         ["agent:missing", "cd"],
         ["./agent.too", "cd"],
-        ["cd", "https://example.com/agent.too"],
+        ["https://example.com/agent.too", "cd"],
     ],
 )
 def test_cd_rejects_unsupported_targets_without_launching(

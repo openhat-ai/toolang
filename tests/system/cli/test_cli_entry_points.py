@@ -16,7 +16,6 @@ from typer.core import TyperGroup
 from typer.testing import CliRunner
 
 from toolang.cli.common.lazy import LazyCommand
-from toolang.cli.common.agent_argument import agent_parameter
 from toolang.cli.toolang.main import app as toolang_app
 from toolang.common.version import displayed_toolang_version
 from tests import PROJECT_ROOT
@@ -44,22 +43,6 @@ CLI_COMMANDS = tuple(
     for name, app in (("toolang", toolang_app),)
     for path in _command_paths(app)
 )
-
-
-def _help_arguments(app: typer.Typer, path: tuple[str, ...]) -> list[str]:
-    arguments = list(path)
-    if len(path) > 1:
-        root = typer.main.get_command(app)
-        assert isinstance(root, TyperGroup)
-        owner = root.commands[path[0]]
-        if isinstance(owner, LazyCommand):
-            owner = owner.load()
-        agent = agent_parameter(owner)
-        if agent is not None and agent.required:
-            arguments.insert(
-                0 if agent.contract.recommended == "before" else 1, "agent:example"
-            )
-    return [*arguments, "--help"]
 
 
 def _project_scripts() -> dict[str, str]:
@@ -175,7 +158,7 @@ print(json.dumps(loaded), file=sys.stderr)
 raise SystemExit(status)
 """
     completed = subprocess.run(
-        [sys.executable, "-c", probe, *_help_arguments(toolang_app, path)],
+        [sys.executable, "-c", probe, *path, "--help"],
         cwd=PROJECT_ROOT,
         stdin=subprocess.DEVNULL,
         check=False,
@@ -323,7 +306,7 @@ def test_inspect_help_is_concise_and_consistent() -> None:
 def test_every_cli_command_renders_help(
     name: str, app: typer.Typer, path: tuple[str, ...]
 ) -> None:
-    result = CliRunner().invoke(app, _help_arguments(app, path), prog_name=name)
+    result = CliRunner().invoke(app, [*path, "--help"], prog_name=name)
 
     assert result.exit_code == 0, result.output
     reference = len(path) == 2 and path[0] == "help"

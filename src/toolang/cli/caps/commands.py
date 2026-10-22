@@ -52,7 +52,6 @@ CAP_SCOPES: tuple[CapScope, ...] = ("root", "home", "here")
 def create_cap_apps(
     *,
     group_cls: type[TyperGroup] | None = None,
-    group_callback: Callable[..., None] | None = None,
 ) -> dict[CapKind, typer.Typer]:
     cap_titles: dict[CapKind, str] = {
         "psyche": "Psyche",
@@ -129,8 +128,6 @@ def create_cap_apps(
             pretty_exceptions_enable=False,
             pretty_exceptions_show_locals=False,
         )
-        if group_callback is not None:
-            cap_app.callback()(group_callback)
         for spec in command_specs:
             cap_app.command(
                 spec.name,
@@ -144,9 +141,7 @@ def create_cap_apps(
 
 def list_caps(
     ctx: typer.Context,
-    agent: Annotated[
-        str | None, AgentArgument("resident,visiting,roaming,before")
-    ] = None,
+    agent: Annotated[str | None, AgentArgument("source")] = None,
     query: Annotated[
         list[str] | None,
         typer.Option(
@@ -223,6 +218,7 @@ def _make_cap_list_command(kind: CapKind, title: str) -> Callable[..., None]:
         human: Annotated[
             bool, typer.Option("--human", help="Display a table (default)")
         ] = False,
+        agent: Annotated[str | None, AgentArgument("source")] = None,
     ) -> None:
         from toolang.state.collections import cap_collection
 
@@ -269,6 +265,9 @@ def _make_new_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
             str,
             typer.Argument(metavar="NAME", click_type=TextType(), help=f"{title} name"),
         ],
+        agent: Annotated[
+            str | None, AgentArgument("source", placements="resident")
+        ] = None,
     ) -> None:
         scope, agent_name = _target_scope(ctx)
         selected_agent = context_agent(ctx)
@@ -301,6 +300,9 @@ def _make_edit_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
             str,
             typer.Argument(metavar="NAME", click_type=TextType(), help=f"{title} name"),
         ],
+        agent: Annotated[
+            str | None, AgentArgument("source", placements="resident")
+        ] = None,
     ) -> None:
         scope, agent_name = _target_scope(ctx)
         selected_agent = context_agent(ctx)
@@ -338,6 +340,9 @@ def _make_add_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
                 help=f"{title} source: ref or URL",
             ),
         ],
+        agent: Annotated[
+            str | None, AgentArgument("source", placements="resident")
+        ] = None,
     ) -> None:
         scope, agent_name = _target_scope(ctx)
         selected_agent = context_agent(ctx)
@@ -385,6 +390,9 @@ def _make_remove_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
             str,
             typer.Argument(metavar="NAME", click_type=TextType(), help=f"{title} name"),
         ],
+        agent: Annotated[
+            str | None, AgentArgument("source", placements="resident")
+        ] = None,
     ) -> None:
         scope, agent_name = _target_scope(ctx)
         selected_agent = context_agent(ctx)
@@ -410,6 +418,9 @@ def _make_delete_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
             str,
             typer.Argument(metavar="NAME", click_type=TextType(), help=f"{title} name"),
         ],
+        agent: Annotated[
+            str | None, AgentArgument("source", placements="resident")
+        ] = None,
     ) -> None:
         scope, agent_name = _target_scope(ctx)
         selected_agent = context_agent(ctx)

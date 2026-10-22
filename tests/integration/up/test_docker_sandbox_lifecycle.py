@@ -307,8 +307,8 @@ def test_docker_restart_reuses_settings_after_queries_reconcile_killed_guest(
 
     try:
         command(
-            "start",
             "restart",
+            "start",
             "--sandbox",
             "docker",
             "--dev",
@@ -338,7 +338,7 @@ def test_docker_restart_reuses_settings_after_queries_reconcile_killed_guest(
         assert entry is not None and entry["workload"]["status"] == "stopped"
         assert entry["workload"]["pid"] is None
         unchanged = layout.runtime_status.stat().st_mtime_ns
-        command("info", "restart")
+        command("restart", "info")
         command("list")
         assert layout.runtime_status.stat().st_mtime_ns == unchanged
         assert SandboxState.load(layout.runtime_status) == first
@@ -351,7 +351,7 @@ def test_docker_restart_reuses_settings_after_queries_reconcile_killed_guest(
             == 0
         ), "queries must retain resources for control-side release"
 
-        command("start", "restart", "--dev", str(docker_wheel_dir))
+        command("restart", "start", "--dev", str(docker_wheel_dir))
         second = SandboxState.load(layout.runtime_status)
         assert second is not None
         containers.add(second.ref.runtime_id)
@@ -367,8 +367,8 @@ def test_docker_restart_reuses_settings_after_queries_reconcile_killed_guest(
             ).returncode
             != 0
         ), "restart must release the previous container"
-        command("stop", "restart")
-        repeated = command("stop", "restart", expected=1)
+        command("restart", "stop")
+        repeated = command("restart", "stop", expected=1)
         assert "not running" in repeated.stderr
         entry = read_instance(layout.runtime_status)
         assert entry is not None and entry["workload"]["status"] == "stopped"
@@ -378,7 +378,7 @@ def test_docker_restart_reuses_settings_after_queries_reconcile_killed_guest(
         assert layout.run_store.exists()
     finally:
         subprocess.run(
-            (*base, "stop", "restart", "--force"),
+            (*base, "restart", "stop", "--force"),
             env=env,
             capture_output=True,
             timeout=30,

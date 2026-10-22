@@ -67,7 +67,7 @@ def test_http_caps_accept_markdown_content_negotiation(tmp_path, capsys, kind):
 def test_new_rejects_invalid_names_without_writing(tmp_path, name):
     root = tmp_path / "root"
     result = runner.invoke(app, ["--root", str(root), "new", name])
-    assert result.exit_code == 1
+    assert result.exit_code == 2
     assert "invalid agent name" in result.output
     assert not root.exists()
 

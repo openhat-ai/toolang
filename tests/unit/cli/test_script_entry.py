@@ -635,7 +635,8 @@ def test_script_and_hosting_help_use_consistent_usage_and_fit_the_terminal(
     )
     assert cli.main(page) == 0
     output = strip_ansi(capsys.readouterr().out)
-    assert f"Usage: {executable} {page[0]}" in output
+    prefix = "<AGENT> " if page[0] == "serve" else ""
+    assert f"Usage: {executable} {prefix}{page[0]}" in output
     assert all(cell_len(line) <= width for line in output.splitlines())
     if page == ["run", "demo.too", "--help"]:
         assert "agic: <entry:1>" in " ".join(output.split())

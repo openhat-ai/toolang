@@ -110,7 +110,7 @@ def test_offline_info_never_prepares_or_fetches(tmp_path, monkeypatch, capsys):
         "_fetch_github_file",
         lambda _: pytest.fail("history query fetched a capability"),
     )
-    assert main(["--root", str(tmp_path), "info", "dev"]) == 0
+    assert main(["--root", str(tmp_path), "dev", "info"]) == 0
     output = capsys.readouterr()
     assert "not running" in output.out
     assert "Prepared" not in output.err

@@ -46,7 +46,10 @@ ChoreName = Annotated[
 ]
 
 
-def list_chores(ctx: typer.Context) -> None:
+def list_chores(
+    ctx: typer.Context,
+    agent: Annotated[str, AgentArgument("home", placements="resident")],
+) -> None:
     """List chores and status"""
     require_prefix_agent(ctx)
     layout = context_layout(ctx)
@@ -199,7 +202,11 @@ def _echo_chores(entries: Sequence[ChoreInfo], *, width: int) -> None:
     )
 
 
-def new_chore(ctx: typer.Context, name: ChoreName = None) -> None:
+def new_chore(
+    ctx: typer.Context,
+    agent: Annotated[str, AgentArgument("source", placements="resident")],
+    name: ChoreName = None,
+) -> None:
     """Create a chore"""
     require_prefix_agent(ctx)
     layout = context_layout(ctx)
@@ -213,7 +220,11 @@ def new_chore(ctx: typer.Context, name: ChoreName = None) -> None:
     typer.echo(f"chore {saved.name} created\t{_path(saved)}")
 
 
-def edit_chore(ctx: typer.Context, chore: ChoreRef) -> None:
+def edit_chore(
+    ctx: typer.Context,
+    agent: Annotated[str, AgentArgument("source", placements="resident")],
+    chore: ChoreRef,
+) -> None:
     """Edit a chore"""
     catalog = AuthoredChores(
         context_layout(ctx).home,
@@ -231,7 +242,11 @@ def edit_chore(ctx: typer.Context, chore: ChoreRef) -> None:
     typer.echo(str(_path(saved)))
 
 
-def delete_chore(ctx: typer.Context, chore: ChoreRef) -> None:
+def delete_chore(
+    ctx: typer.Context,
+    agent: Annotated[str, AgentArgument("source", placements="resident")],
+    chore: ChoreRef,
+) -> None:
     """Delete a chore; keep history"""
     catalog = AuthoredChores(
         context_layout(ctx).home,
@@ -244,7 +259,16 @@ def delete_chore(ctx: typer.Context, chore: ChoreRef) -> None:
     typer.echo(f"chore {path.stem} deleted")
 
 
-def run_chore(ctx: typer.Context, chore: ChoreRef) -> None:
+def run_chore(
+    ctx: typer.Context,
+    agent: Annotated[
+        str,
+        AgentArgument(
+            "home", placements="resident", requires_live=True, required_driver="chore"
+        ),
+    ],
+    chore: ChoreRef,
+) -> None:
     """Queue one manual chore run"""
     runtime_post(
         ctx,
@@ -254,7 +278,16 @@ def run_chore(ctx: typer.Context, chore: ChoreRef) -> None:
     typer.echo(f"chore {chore} manual run requested")
 
 
-def cancel_chore(ctx: typer.Context, chore: ChoreRef) -> None:
+def cancel_chore(
+    ctx: typer.Context,
+    agent: Annotated[
+        str,
+        AgentArgument(
+            "home", placements="resident", requires_live=True, required_driver="chore"
+        ),
+    ],
+    chore: ChoreRef,
+) -> None:
     """Cancel the current chore occurrence; keep future scheduled work"""
     runtime_post(
         ctx,
@@ -270,12 +303,6 @@ def _path(chore: ChoreFile) -> Path:
     return chore.path
 
 
-def _bind_agent(
-    ctx: typer.Context, agent: Annotated[str, AgentArgument("resident,before")]
-) -> None:
-    """Bind selection without preparing sources in the group callback."""
-
-
 def _create_app() -> typer.Typer:
     app = typer.Typer(
         cls=CliGroup,
@@ -285,7 +312,6 @@ def _create_app() -> typer.Typer:
         pretty_exceptions_enable=False,
         pretty_exceptions_show_locals=False,
     )
-    app.callback()(_bind_agent)
     for name, command, short_help in (
         ("list", list_chores, "List chores and status"),
         ("new", new_chore, "Create a chore"),

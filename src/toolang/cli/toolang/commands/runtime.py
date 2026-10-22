@@ -23,7 +23,7 @@ from toolang.cli.common.terminal_title import agent_label
 
 import typer
 
-from toolang.cli.common.agent_argument import AgentArgument
+from toolang.cli.common.agent_argument import AgentArgument, AgentNameType
 from typer._click.core import ParameterSource
 from typer._click.exceptions import ClickException
 
@@ -85,7 +85,7 @@ from ...common.progress import CliProgress, runtime_startup_failure_message
 
 def run(
     ctx: typer.Context,
-    agent: Annotated[str, AgentArgument("resident,visiting,after")],
+    agent: Annotated[str, AgentArgument("execute", placements="resident,visiting")],
     sandbox: Annotated[
         str | None,
         typer.Option(
@@ -254,7 +254,7 @@ def _report_foreground_ready(
 
 def start(
     ctx: typer.Context,
-    agent: Annotated[str, AgentArgument("resident,visiting,after,before")],
+    agent: Annotated[str, AgentArgument("execute", placements="resident,visiting")],
     sandbox: Annotated[
         str | None,
         typer.Option(
@@ -455,7 +455,7 @@ def _retain_started(
 
 def stop(
     ctx: typer.Context,
-    agent: Annotated[str, AgentArgument("resident,visiting,after,before")],
+    agent: Annotated[str, AgentArgument("home", placements="resident,visiting")],
     force: Annotated[
         bool,
         typer.Option(help="Force-stop when graceful shutdown does not complete"),
@@ -500,7 +500,10 @@ def stop(
 
 def serve(
     ctx: typer.Context,
-    agent: Annotated[str, AgentArgument("resident,after")],
+    agent: Annotated[
+        str,
+        typer.Argument(metavar="NAME", click_type=AgentNameType(), help="agent name"),
+    ],
     allows: AllowOptions = None,
     limits: LimitOptions = None,
     defaults: DefaultOptions = None,

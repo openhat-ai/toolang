@@ -16,7 +16,7 @@ from typer._click.exceptions import ClickException, UsageError
 from typer.core import TyperArgument, TyperCommand, TyperGroup
 
 from toolang.common.typer.ui import HelpFormatter, argument_usage
-from .agent_argument import agent_parameter, install_agent_parameter
+from .agent_argument import agent_parameters, install_agent_parameter
 from .help_sections import write_field_sections
 
 
@@ -29,19 +29,25 @@ def parameter_usage(param: Parameter, ctx: Context) -> list[str]:
 
 
 def _usage_path(ctx: Context) -> Text:
-    """Insert recommended prefix operands at their owning command level."""
+    """Render one leaf-owned agent prefix before the selected root command."""
     contexts = []
     current: Context | None = ctx
     while current is not None:
         contexts.append(current)
         current = current.parent
+    contexts.reverse()
+    agents = agent_parameters(ctx.command) if ctx.parent is not None else ()
+    owner = contexts[1] if len(contexts) > 1 else None
     path = Text()
-    for current in reversed(contexts):
-        agent = agent_parameter(current.command)
+    for current in contexts:
         if path:
             path.append(" ")
-        if agent is not None and agent.contract.recommended == "before":
-            path.append("<AGENT> " if agent.required else "[AGENT] ", style="cli.usage")
+        if current is owner and agents:
+            metavars = {agent.metavar or "AGENT" for agent in agents}
+            metavar = next(iter(metavars)) if len(metavars) == 1 else "AGENT"
+            required = all(agent.required for agent in agents)
+            prefix = f"<{metavar}>" if required else f"[{metavar}]"
+            path.append(f"{prefix} ", style="cli.usage")
         path.append(current.info_name or "", style="cli.command.name")
         if current is not ctx:
             for param in current.command.get_params(current):
@@ -123,6 +129,9 @@ class CliGroup(TyperGroup):
     def write_help_sections(self, ctx: Context, formatter: HelpFormatter) -> None:
         """Write option fields; subclasses can append caller-owned sections."""
         write_field_sections(ctx, formatter)
+        if ctx.parent is not None and agent_parameters(self):
+            formatter.write_paragraph()
+            formatter.write_text("See subcommand help for accepted agent forms.")
 
     def __init__(self, *, subcommand_metavar: str | None = None, **kwargs: Any) -> None:
         super().__init__(

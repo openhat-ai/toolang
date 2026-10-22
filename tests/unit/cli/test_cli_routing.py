@@ -125,11 +125,12 @@ def test_nonresident_cap_mutations_remain_rejected(
         "resolve_remote_ref",
         lambda *_args, **_kwargs: pytest.fail("must not fetch a cap"),
     )
-    assert _call_main([selectors[target], kind, operation, "example"]) == 1
+    assert _call_main([selectors[target], kind, operation, "example"]) == 2
     assert (
-        "cap changes require a resident agent; clone the source first"
-        in capsys.readouterr().err
-    )
+        "paths are not supported"
+        if target == "source"
+        else "remote agents are not supported"
+    ) in capsys.readouterr().err
     assert source.read_text() == "agic:\n  Reply directly.\n"
     assert not layout.root.exists()
     assert not (tmp_path / "toolang.toml").exists()
@@ -217,10 +218,10 @@ def test_cli_rejected_prefix_shows_native_help_without_a_panel(
     lines = stderr.splitlines()
 
     assert result == 2
-    assert lines[0] == "Run an agent server."
+    assert lines[0] == "Error: Command '_serve' does not accept an agent prefix."
     assert lines[-1].strip()
     assert "╭" not in stderr
-    assert "Usage: toolang _serve [OPTIONS] <AGENT>" in stderr
+    assert "Usage: toolang _serve [OPTIONS] <NAME>" in stderr
     assert "AGENT must follow" not in stderr
 
 
@@ -394,19 +395,19 @@ def test_cli_exposes_plural_list_resources_and_removes_channels() -> None:
         ),
         (
             ["inspect"],
-            "Usage: toolang <AGENT> inspect [OPTIONS] <SUBJECT>...",
+            "Usage: toolang <ADDRESS> inspect [OPTIONS] <SUBJECT>...",
             "SUBJECT",
             "SUBJECT...",
         ),
         (
             ["rewind"],
-            "Usage: toolang <AGENT> rewind [OPTIONS] <RUN>",
+            "Usage: toolang <ADDRESS> rewind [OPTIONS] <RUN>",
             "RUN",
             "{RUN}",
         ),
         (
             ["fork"],
-            "Usage: toolang <AGENT> fork [OPTIONS] <RUN>",
+            "Usage: toolang <ADDRESS> fork [OPTIONS] <RUN>",
             "RUN",
             "{RUN}",
         ),
@@ -475,19 +476,13 @@ def test_cli_complete_command_validates_the_resident_target(
     assert "Agent alice not found" in output.err
 
 
-def test_cli_bare_resident_requires_a_command_and_help_is_root_help(
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
+def test_cli_bare_words_do_not_trigger_resident_lookup(tmp_path, capsys):
     program = tmp_path / "agents" / "alice" / "agent.too"
     program.parent.mkdir(parents=True)
     program.write_text("agic:\n  Reply directly.\n", encoding="utf-8")
-    assert _call_main(["--root", str(tmp_path), "alice"]) == 2
-    output = capsys.readouterr()
-    assert not output.out
-    assert "Missing command" in output.err
-    assert _call_main(["--root", str(tmp_path), "alice", "--help"]) == 0
-    assert "Agent commands:" in capsys.readouterr().out
+    for tail in ([], ["--help"]):
+        assert _call_main(["--root", str(tmp_path), "alice", *tail]) == 2
+        assert "No such command 'alice'" in capsys.readouterr().err
 
 
 def test_cli_explicit_resident_without_command_reports_missing_command(
@@ -912,11 +907,8 @@ def test_cli_dev_states_reach_each_lazy_command(
             [
                 "--root",
                 str(tmp_path),
-                *(
-                    [command, "alice"]
-                    if command in {"serve", "start"}
-                    else ["alice", command]
-                ),
+                "alice",
+                command,
                 *operands,
                 *options,
             ]
@@ -935,11 +927,8 @@ def test_cli_bare_dev_keeps_unknown_option_errors(command, tmp_path, capsys):
             [
                 "--root",
                 str(tmp_path),
-                *(
-                    [command, "alice"]
-                    if command in {"serve", "start"}
-                    else ["alice", command]
-                ),
+                "alice",
+                command,
                 "--dev",
                 "--unknown",
             ]
@@ -958,7 +947,7 @@ def test_remote_agent_parse_failure_is_reported_before_runtime_execution(
         lambda *_args, **_kwargs: pytest.fail("runtime ran before agent parsed"),
     )
     result = cli.main(
-        ["--root", str(tmp_path), "serve", "https://example.test/broken.too"]
+        ["--root", str(tmp_path), "https://example.test/broken.too", "serve"]
     )
     assert result == 1
     assert "Failed to parse agent" in capsys.readouterr().err
@@ -977,7 +966,7 @@ def test_visiting_serve_prepares_with_the_acquired_source_receipt(
     )
     monkeypatch.setattr("toolang.up.server.serve", lambda *_args, **_kwargs: 0)
     assert (
-        cli.main(["--root", str(tmp_path), "serve", "https://example.test/receipt.too"])
+        cli.main(["--root", str(tmp_path), "https://example.test/receipt.too", "serve"])
         == 0
     )
     assert len(acquired) == 1 and acquired[0] is not None

@@ -215,6 +215,14 @@ class _ToolangGroup(CliGroup):
     def resolve_command(self, ctx: Context, args: list[str]):
         return routing.resolve_command(self, ctx, args)
 
+    def shell_complete(self, ctx: Context, incomplete: str):
+        from ..common.agent_argument import complete_agent_names, prefix_supplied
+
+        items = super().shell_complete(ctx, incomplete)
+        if not incomplete.startswith("-") and not prefix_supplied(ctx):
+            items.extend(complete_agent_names(ctx, incomplete))
+        return items
+
     def list_commands(self, ctx: Context) -> list[str]:
         names = TyperGroup.list_commands(self, ctx)
         ordered = [name for name in _COMMAND_ORDER if name in names]

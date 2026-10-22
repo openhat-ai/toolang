@@ -25,13 +25,6 @@ from ...common.agent_argument import AgentArgument
 from ...common.help import CliCommand, CliGroup
 
 
-def _bind_agent(
-    ctx: typer.Context,
-    agent: Annotated[str, AgentArgument("resident,visiting,roaming,before")],
-) -> None:
-    """Keep selection on the owning group for its executable children."""
-
-
 def workspace_app() -> typer.Typer:
     app = typer.Typer(
         cls=CliGroup,
@@ -41,7 +34,6 @@ def workspace_app() -> typer.Typer:
         pretty_exceptions_enable=False,
         pretty_exceptions_show_locals=False,
     )
-    app.callback()(_bind_agent)
     app.command(
         "list",
         help="List configured workspaces",
@@ -64,6 +56,7 @@ def workspace_app() -> typer.Typer:
 
 def add_workspace(
     ctx: typer.Context,
+    agent: Annotated[str, AgentArgument("source", placements="resident,roaming")],
     path: Annotated[
         Path,
         typer.Argument(
@@ -87,7 +80,10 @@ def add_workspace(
     typer.echo(f"Workspace {selected_name} added: {selected_path}")
 
 
-def list_workspaces(ctx: typer.Context) -> None:
+def list_workspaces(
+    ctx: typer.Context,
+    agent: Annotated[str, AgentArgument("source")],
+) -> None:
     require_prefix_agent(ctx)
     layout = context_layout(ctx)
     if layout.placement == "visiting":
@@ -142,6 +138,7 @@ def _workspace_edit_lock(layout: AgentLayout) -> Path:
 
 def remove_workspace(
     ctx: typer.Context,
+    agent: Annotated[str, AgentArgument("source", placements="resident,roaming")],
     name: Annotated[
         str,
         typer.Argument(metavar="NAME", click_type=TextType(), help="Workspace name"),

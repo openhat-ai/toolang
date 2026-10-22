@@ -244,7 +244,7 @@ def test_root_help_shows_the_source_version_in_dim_parentheses(
         (["--help"], 0),
         (["prompt", "--help"], 0),
         (["prompt", "new", "--help"], 0),
-        (["prompt", "new"], 0),
+        (["prompt", "new"], 2),
         (["serve", "--port", "1234"], 2),
         (["workspace", "list"], 2),
         (["prompt", "new", "--unknown"], 2),
@@ -422,7 +422,7 @@ def test_unknown_option_is_not_hidden_by_a_missing_agent(
     output = capsys.readouterr()
     assert not output.out
     assert strip_ansi(output.err).startswith(
-        f"Error: No such option: --unknown\n\nUsage: too <AGENT> {command} [OPTIONS]"
+        f"Error: No such option: --unknown\n\nUsage: too <{'AGENT' if command == 'chat' else 'ADDRESS'}> {command} [OPTIONS]"
     )
 
 
@@ -650,7 +650,7 @@ def test_chore_clone_command_is_removed(target, tmp_path, capsys):
         (["a", "chat"], "too <AGENT> chat [OPTIONS]"),
         (["a", "prompt", "new"], "too [AGENT] prompt new [OPTIONS] <NAME>"),
         (["a", "workspace"], "too <AGENT> workspace [OPTIONS] <COMMAND> [ARGUMENTS]"),
-        (["serve"], "too serve [OPTIONS] <AGENT>"),
+        (["serve"], "too <AGENT> serve [OPTIONS]"),
     ],
 )
 def test_agent_usage_keeps_recommended_position_and_normal_weight(
@@ -680,113 +680,104 @@ def test_agent_usage_keeps_recommended_position_and_normal_weight(
 
 
 @pytest.mark.parametrize(
-    ("command", "description", "argument_help"),
+    "command,description,metavar,argument_help,usage",
     [
         (
             "serve",
             "Run an agent in the foreground",
-            "Agent name, ref, URL",
+            "AGENT",
+            "resident or visiting agent by name, ref or url",
+            "too <AGENT> serve [OPTIONS]",
         ),
-        ("_serve", "Run an agent server", "Agent name"),
+        (
+            "_serve",
+            "Run an agent server",
+            "NAME",
+            "agent name",
+            "too _serve [OPTIONS] <NAME>",
+        ),
     ],
 )
 @pytest.mark.parametrize("args", [[], ["--help"], ["-h"], ["--unknown"]])
-def test_after_agent_arguments_share_usage(
-    command, description, argument_help, args, tmp_path, capsys, monkeypatch
+def test_lifecycle_and_bootstrap_use_their_native_operand_forms(
+    command,
+    description,
+    metavar,
+    argument_help,
+    usage,
+    args,
+    tmp_path,
+    capsys,
+    monkeypatch,
 ):
     monkeypatch.setattr("sys.argv", ["too"])
-    status = 2 if "--unknown" in args else 0
+    status = 2 if "--unknown" in args or (command == "serve" and not args) else 0
     assert too_main(["--root", str(tmp_path), command, *args]) == status
     captured = capsys.readouterr()
     output = strip_ansi(captured.err if status else captured.out)
-    assert f"Usage: too {command} [OPTIONS] <AGENT>" in output.splitlines()
+    assert f"Usage: {usage}" in output.splitlines()
     if status == 0:
         assert output.startswith(description + ".\n")
-        assert any(
-            line.startswith(f"* AGENT {argument_help}")
-            for line in [" ".join(line.split()) for line in output.splitlines()]
-        )
+        assert f"{metavar} {argument_help}" in " ".join(output.split())
         assert "Show this message and exit\n" in output
         assert output.index("Options:") < output.index("Allow fields:")
 
 
 @pytest.mark.parametrize(
-    "command",
+    "command,metavar,description",
     [
-        "new",
-        "remove",
-        "start",
-        "stop",
-        "_serve",
-        "serve",
-        "info",
-        "chat",
-        "inspect",
-        "steer",
-        "cancel",
-        "rerun",
-        "rerun",
-        "fork",
-        "rewind",
-        "workspace",
-        "workspace list",
-        "chore",
-        "chore list",
+        ("new", "NAME", "New agent name"),
+        ("remove", "NAME", "resident agent name"),
+        ("_serve", "NAME", "agent name"),
+        ("start", "AGENT", "resident or visiting agent by name, ref or url"),
+        ("serve", "AGENT", "resident or visiting agent by name, ref or url"),
+        ("stop", "ADDRESS", "resident or visiting agent address"),
+        ("info", "ADDRESS", "agent address"),
+        ("chat", "AGENT", "agent name, path, ref or url"),
+        ("inspect", "ADDRESS", "agent address"),
+        ("steer", "ADDRESS", "running agent address"),
+        ("cancel", "ADDRESS", "running agent address"),
+        ("rerun", "ADDRESS", "agent address"),
+        ("fork", "ADDRESS", "agent address"),
+        ("rewind", "ADDRESS", "agent address"),
+        ("workspace list", "AGENT", "agent name, path, ref or url"),
+        ("chore list", "ADDRESS", "resident agent address"),
+        (
+            "chore run",
+            "ADDRESS",
+            "running resident agent address with the chore driver",
+        ),
     ],
 )
-def test_agent_help_matches_target_scope(command, tmp_path, capsys):
-    words = command.split()
-    assert (
-        too_main(
-            [
-                "--root",
-                str(tmp_path),
-                *(["a"] if len(words) > 1 else []),
-                *words,
-                "--help",
-            ]
-        )
-        == 0
-    )
+def test_agent_help_matches_leaf_scope(command, metavar, description, tmp_path, capsys):
+    assert too_main(["--root", str(tmp_path), *command.split(), "--help"]) == 0
     output = " ".join(strip_ansi(capsys.readouterr().out).split())
-    if len(words) > 1:
-        assert "<AGENT>" in output
-        assert "* AGENT" not in output
-        return
-    if command == "new":
-        assert "new [OPTIONS] <NAME>" in output
-        assert "* NAME New agent name" in output
-        assert "AGENT" not in output
-        return
-    elif command in {"start", "stop", "serve"}:
-        expected = "Agent name, ref, URL"
-    elif command in {"remove", "_serve", "chore"}:
-        expected = "Agent name"
-    else:
-        expected = "Agent name, path, ref, URL"
-    assert f"* AGENT {expected}" in output
-    if command != "new":
-        assert "placements:" not in output
+    assert f"{metavar} {description}" in output
+    assert "placements:" not in output
+    assert "(resident/visiting only)" not in output
 
 
 @pytest.mark.parametrize("kind", ["psyche", "skill", "service", "prompt"])
 @pytest.mark.parametrize("command", ["new", "list"])
-def test_cap_children_inherit_agent_usage_from_group(kind, command, tmp_path, capsys):
+def test_cap_children_own_their_agent_contract(kind, command, tmp_path, capsys):
     assert too_main(["--root", str(tmp_path), kind, command, "--help"]) == 0
     output = " ".join(strip_ansi(capsys.readouterr().out).split())
     assert f"[AGENT] {kind} {command}" in output
-    assert "AGENT Agent name" not in output
+    description = (
+        "resident agent name" if command == "new" else "agent name, path, ref or url"
+    )
+    assert f"AGENT {description}" in output
     assert too_main(["--root", str(tmp_path), kind, "--help"]) == 0
     group_help = " ".join(strip_ansi(capsys.readouterr().out).split())
-    assert "AGENT Agent name, path, ref, URL" in group_help
-    assert "placements:" not in group_help
+    assert "See subcommand help for accepted agent forms." in group_help
+    assert "Arguments:" not in group_help
 
 
 @pytest.mark.parametrize("command", ["caps", "models", "providers", "tools"])
 def test_inspection_help_describes_all_agent_targets(command, tmp_path, capsys):
     assert too_main(["--root", str(tmp_path), command, "--help"]) == 0
     output = " ".join(strip_ansi(capsys.readouterr().out).split())
-    assert "AGENT Agent name, path, ref, URL" in output
+    assert "AGENT agent name, path, ref or url" in output
 
 
 @pytest.mark.parametrize("kind", ["psyche", "skill", "service", "prompt"])
@@ -836,11 +827,11 @@ def test_prompt_help_uses_conventional_metavars(tmp_path, capsys, monkeypatch):
     ("arguments", "options"),
     [
         (
-            ["serve", "a"],
+            ["a", "serve"],
             ("--sandbox", "--allow", "--limit", "--default", "--compact-model"),
         ),
         (
-            ["start", "a"],
+            ["a", "start"],
             ("--sandbox", "--allow", "--limit", "--default", "--compact-model"),
         ),
         (
@@ -897,19 +888,15 @@ def test_error_usage_preserves_the_recommended_agent_position(
 
 
 @pytest.mark.parametrize("group", ["workspace", "chore"])
-def test_required_group_agent_is_documented(group, tmp_path: Path, capsys):
+def test_required_group_prefix_is_documented_without_a_duplicate_parameter(
+    group, tmp_path, capsys
+):
     assert too_main(["--root", str(tmp_path), "a", group, "--help"]) == 0
     output = strip_ansi(capsys.readouterr().out)
-    row = next(
-        (
-            line
-            for line in output.splitlines()
-            if line.startswith("  ") and "AGENT" in line.split()
-        ),
-        "",
-    )
-    assert "TEXT" not in row and row.lstrip().startswith("* AGENT")
-    assert "[required]" not in row
+    assert f"<AGENT> {group} [OPTIONS]" in output
+    assert "See subcommand help for accepted agent forms." in output
+    assert "Arguments:" not in output
+    assert "[required]" not in output
 
 
 class _Mode(str, Enum):

@@ -280,12 +280,12 @@ def test_agents_reconnect_through_hub_without_direct_backend_access(valkey, tmp_
 
     try:
         for name, listen_port in agents.items():
-            cli("start", name, "--sandbox", "host", "--port", str(listen_port))
+            cli(name, "start", "--sandbox", "host", "--port", str(listen_port))
         asyncio.run(scenario())
     finally:
         for name in agents:
             subprocess.run(
-                [*command, "stop", name, "--force"], capture_output=True, timeout=40
+                [*command, name, "stop", "--force"], capture_output=True, timeout=40
             )
         hub.stop(force=True)
 
@@ -507,7 +507,7 @@ def test_resident_shutdown_drains_or_bounds_backend_outage(
                 if pid is not None:
                     os.kill(pid, signal.SIGSTOP)
                 try:
-                    stopped = await asyncio.to_thread(cli, "stop", "alice")
+                    stopped = await asyncio.to_thread(cli, "alice", "stop")
                 finally:
                     if pid is not None:
                         os.kill(pid, signal.SIGCONT)
@@ -540,8 +540,8 @@ def test_resident_shutdown_drains_or_bounds_backend_outage(
             await driver.close()
 
     try:
-        started = cli("start", "alice", "--sandbox", "host", "--port", str(port))
+        started = cli("alice", "start", "--sandbox", "host", "--port", str(port))
         assert started.returncode == 0, started.stderr
         asyncio.run(scenario())
     finally:
-        cli("stop", "alice", "--force")
+        cli("alice", "stop", "--force")

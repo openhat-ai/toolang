@@ -775,7 +775,7 @@ def write_inspect_help(ctx: Context, formatter: HelpFormatter) -> None:
 
 def inspect_command(
     ctx: typer.Context,
-    agent: Annotated[str, AgentArgument("resident,visiting,roaming,before")],
+    agent: Annotated[str, AgentArgument("home")],
     subjects: Annotated[
         list[str],
         typer.Argument(

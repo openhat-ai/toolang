@@ -27,7 +27,7 @@ from toolang.up.types import AgentServerRef
         ["rerun"],
         ["rerun"],
         ["agent:sample", "chat"],
-        ["serve", "agent:sample"],
+        ["agent:sample", "serve"],
         ["agent:sample", "top"],
     ],
 )
