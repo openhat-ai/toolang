@@ -60,7 +60,7 @@ def add_workspace(
     path: Annotated[
         Path,
         typer.Argument(
-            metavar="PATH", click_type=PathType(), help="Existing directory path"
+            metavar="PATH", click_type=PathType(), help="existing directory path"
         ),
     ],
     name: Annotated[
@@ -141,7 +141,7 @@ def remove_workspace(
     agent: Annotated[str, AgentArgument("source", placements="resident,roaming")],
     name: Annotated[
         str,
-        typer.Argument(metavar="NAME", click_type=TextType(), help="Workspace name"),
+        typer.Argument(metavar="NAME", click_type=TextType(), help="workspace name"),
     ],
 ) -> None:
     layout = _editable_layout(ctx)

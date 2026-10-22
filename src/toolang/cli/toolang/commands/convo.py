@@ -27,7 +27,8 @@ class _RulesCommand(OptionalValueCommand, CliCommand):
 
 
 ConversationArgument = Annotated[
-    str, typer.Argument(help="Canonical dm_ or gc_ conversation ID")
+    str,
+    typer.Argument(metavar="CONVO", help="conversation ID starting with dm_ or gc_"),
 ]
 
 
@@ -89,7 +90,8 @@ def leave(ctx: typer.Context, conversation: ConversationArgument) -> None:
 def create(
     ctx: typer.Context,
     name: Annotated[
-        str | None, typer.Argument(help="Optional group name (1–128 characters)")
+        str | None,
+        typer.Argument(metavar="NAME", help="group name, 1–128 characters"),
     ] = None,
 ) -> None:
     """Create a group conversation"""
@@ -131,7 +133,7 @@ def rules(
         typer.Option(
             "--revision",
             metavar="REVISION",
-            help="Expected revision for --update",
+            help="Use the revision returned by rules; required with --update",
         ),
     ] = None,
 ) -> None:

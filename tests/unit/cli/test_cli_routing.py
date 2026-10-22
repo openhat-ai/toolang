@@ -367,9 +367,9 @@ def test_cli_exposes_plural_list_resources_and_removes_channels() -> None:
     (
         (
             ["clone"],
-            "Usage: toolang clone [OPTIONS] <SOURCE> [TARGET]",
-            "TARGET",
-            "[TARGET]",
+            "Usage: toolang clone [OPTIONS] <SOURCE> [NAME]",
+            "NAME",
+            "[NAME]",
         ),
         (
             ["chat"],
@@ -379,15 +379,15 @@ def test_cli_exposes_plural_list_resources_and_removes_channels() -> None:
         ),
         (
             ["parse"],
-            "Usage: toolang parse [OPTIONS] <SOURCE>",
-            "SOURCE",
-            "{SOURCE}",
+            "Usage: toolang parse [OPTIONS] <PATH>",
+            "PATH",
+            "{PATH}",
         ),
         (
             ["highlight"],
-            "Usage: toolang highlight [OPTIONS] <SOURCE>",
-            "SOURCE",
-            "{SOURCE}",
+            "Usage: toolang highlight [OPTIONS] <FILE>",
+            "FILE",
+            "{FILE}",
         ),
         (
             ["fmt"],
@@ -397,9 +397,9 @@ def test_cli_exposes_plural_list_resources_and_removes_channels() -> None:
         ),
         (
             ["inspect"],
-            "Usage: toolang <AGENT> inspect [OPTIONS] <SUBJECT>...",
-            "SUBJECT",
-            "SUBJECT...",
+            "Usage: toolang <AGENT> inspect [OPTIONS] <QUERY>...",
+            "QUERY",
+            "QUERY...",
         ),
         (
             ["rewind"],

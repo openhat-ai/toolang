@@ -16,7 +16,7 @@ too [OPTIONS] COMMAND [ARGUMENTS]
 
 Agent-scoped commands use the first form. Commands with optional agent scope also
 allow the second: `too top`, `too models`, or `too skill list` use root scope.
-Catalog commands such as `too new NAME`, `too clone SOURCE [TARGET]`, and
+Catalog commands such as `too new NAME`, `too clone SOURCE [NAME]`, and
 `too remove NAME` have ordinary Typer operands and no agent-prefix slot.
 There is no command-suffix agent form: use `too alice info`, not `too info alice`.
 Global options precede the agent or command.
@@ -101,7 +101,7 @@ wording rather than parenthesized tags. Root scope never means an implicit
 | --- | --- | --- |
 | `new`, `remove` | `resident agent name` | Create an unused resident name or remove that resident agent; ordinary command operands. |
 | `clone` | `agent name, ref or url` | Clone authored data into a new resident name; ordinary source/target operands. |
-| `workspace add/remove` | `local agent name or path` | Edit resident/project configuration; no visiting or decorated operands. |
+| `workspace add/remove` | `agent name or path` | Edit resident/project configuration; no visiting or decorated operands. |
 | `{psyche,skill,service,prompt} new/edit/delete/add/remove`, `chore new/edit/delete` | `resident agent name` | Edit resident authored data; omitted cap selection uses root scope. |
 | `chat` | `agent name, path, ref, url or address` | New local-source execution allocates a home; address/Thread execution stays bound. |
 | `start`, `serve` | `resident or visiting agent by name, ref, url or address` | Start the source or existing home; roaming hosting is unsupported. |

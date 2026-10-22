@@ -76,7 +76,7 @@ def steer_command(
         typer.Argument(
             metavar="RUN",
             click_type=TextType(),
-            help="Run ID or thread ID; a thread selects its active run",
+            help="run ID or thread ID; a thread selects its active run",
         ),
     ],
     message: Annotated[
@@ -84,7 +84,7 @@ def steer_command(
         typer.Argument(
             metavar="MESSAGE",
             click_type=TextType(),
-            help="Instruction to steer the run",
+            help="instruction to steer the run",
         ),
     ],
     instance: InstanceOption = None,
@@ -118,7 +118,7 @@ def cancel_command(
         typer.Argument(
             metavar="RUN",
             click_type=TextType(),
-            help="Run ID or thread ID; a thread selects its active run",
+            help="run ID or thread ID; a thread selects its active run",
         ),
     ],
     instance: InstanceOption = None,
@@ -150,7 +150,7 @@ def rerun_command(
         typer.Argument(
             metavar="RUN",
             click_type=TextType(),
-            help="Run ID or thread ID; a thread selects its latest visible root run",
+            help="run ID or thread ID; a thread selects its latest visible root run",
         ),
     ],
     model_catalog: ModelCatalogOption = None,
@@ -215,7 +215,7 @@ def rewind_command(
         typer.Argument(
             metavar="RUN",
             click_type=TextType(),
-            help="Run ID to rewind before; a thread ID selects its latest root run",
+            help="run ID to rewind before; a thread ID selects its latest root run",
         ),
     ],
     chat: Annotated[
@@ -266,7 +266,7 @@ def fork_command(
         typer.Argument(
             metavar="RUN",
             click_type=TextType(),
-            help="Run ID to fork through; a thread ID selects its latest root run",
+            help="run ID to fork through; a thread ID selects its latest root run",
         ),
     ],
     chat: Annotated[

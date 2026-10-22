@@ -37,14 +37,14 @@ def talk_command(
         str | None,
         typer.Argument(
             metavar="CONVO",
-            help="Conversation ID or shorthand",
+            help="conversation ID, agent name, comma-separated agent names, or all",
         ),
     ] = None,
     body: Annotated[
         list[str] | None,
         typer.Argument(
-            metavar="message",
-            help="Message to send; omit to open the conversation",
+            metavar="MESSAGE",
+            help="message to send; omit to open the conversation",
         ),
     ] = None,
 ) -> None:

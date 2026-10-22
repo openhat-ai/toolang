@@ -87,19 +87,19 @@ def create_cap_apps(
         ),
         CapCommandSpec(
             name="new",
-            help=lambda kind: f"Create a local {kind}",
+            help=lambda kind: f"Create a {kind}",
             factory=_make_new_cap_command,
             no_args_is_help=True,
         ),
         CapCommandSpec(
             name="edit",
-            help=lambda kind: f"Edit a local {kind}",
+            help=lambda kind: f"Edit a {kind}",
             factory=_make_edit_cap_command,
             no_args_is_help=True,
         ),
         CapCommandSpec(
             name="delete",
-            help=lambda kind: f"Delete a local {kind}",
+            help=lambda kind: f"Delete a {kind}",
             factory=_make_delete_cap_command,
             no_args_is_help=True,
         ),
@@ -263,7 +263,7 @@ def _make_new_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
         ctx: typer.Context,
         name: Annotated[
             str,
-            typer.Argument(metavar="NAME", click_type=TextType(), help=f"{title} name"),
+            typer.Argument(metavar="NAME", click_type=TextType(), help=f"{kind} name"),
         ],
         agent: Annotated[
             str | None, AgentArgument("source", placements="resident")
@@ -298,7 +298,7 @@ def _make_edit_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
         ctx: typer.Context,
         name: Annotated[
             str,
-            typer.Argument(metavar="NAME", click_type=TextType(), help=f"{title} name"),
+            typer.Argument(metavar="NAME", click_type=TextType(), help=f"{kind} name"),
         ],
         agent: Annotated[
             str | None, AgentArgument("source", placements="resident")
@@ -335,9 +335,9 @@ def _make_add_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
         ref: Annotated[
             str,
             typer.Argument(
-                metavar="SOURCE-REF",
+                metavar="SOURCE",
                 click_type=TextType(),
-                help=f"{title} source: ref or URL",
+                help=f"{kind} ref or url",
             ),
         ],
         agent: Annotated[
@@ -388,7 +388,7 @@ def _make_remove_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
         ctx: typer.Context,
         name: Annotated[
             str,
-            typer.Argument(metavar="NAME", click_type=TextType(), help=f"{title} name"),
+            typer.Argument(metavar="NAME", click_type=TextType(), help=f"{kind} name"),
         ],
         agent: Annotated[
             str | None, AgentArgument("source", placements="resident")
@@ -416,7 +416,7 @@ def _make_delete_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
         ctx: typer.Context,
         name: Annotated[
             str,
-            typer.Argument(metavar="NAME", click_type=TextType(), help=f"{title} name"),
+            typer.Argument(metavar="NAME", click_type=TextType(), help=f"{kind} name"),
         ],
         agent: Annotated[
             str | None, AgentArgument("source", placements="resident")

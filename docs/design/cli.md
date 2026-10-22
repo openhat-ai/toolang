@@ -21,7 +21,7 @@ agent. Root help links to the topic directory beside `too more`.
 
 | Input | Interpretation |
 | --- | --- |
-| `too new NAME`, `too clone SOURCE [TARGET]`, `too remove NAME`, `too list` | Agent catalog commands; ordinary command operands |
+| `too new NAME`, `too clone SOURCE [NAME]`, `too remove NAME`, `too list` | Agent catalog commands; ordinary command operands |
 | `too AGENT serve` | Foreground lifecycle for resident or visiting agents |
 | `too AGENT start`, `too AGENT stop` | Background lifecycle for resident or visiting agents |
 | `too AGENT info` | Resident, visiting, or roaming agent information |
@@ -65,6 +65,25 @@ names, remote refs, and placements.
 Global options, including `--root`/`-r`, precede the command or AGENT.
 `TOOLANG_ROOT` supplies the default resident root. Source-local scripts do not
 accept an explicit global root override.
+
+## Help vocabulary
+
+Use uppercase placeholders for user inputs, with lowercase noun phrases in
+built-in argument descriptions. Options use sentence case. Preserve authored
+descriptions, literal choices, and named-input keys. Put `AGENT` first in the
+argument panel, followed by business operands. Describe accepted forms and
+meaningful omission behavior; do not use `local` as an agent placement label.
+
+| Placeholder | Meaning |
+| --- | --- |
+| `AGENT` | Agent selector; its description states source/address forms, placement, and runtime requirements. |
+| `NAME` | Resource name, including a clone's new agent name. |
+| `FILE`, `DIR`, `PATH` | File, directory, or either; describe `-` when stdin is accepted. |
+| `SOURCE` | Authored source; describe whether it accepts an agent name, ref, or url. |
+| `RUN`, `THREAD`, `CHORE`, `CONVO` | Domain target; describe accepted names/IDs and what a thread ID selects. |
+| `QUERY` | Selection expression; distinguish TQ filters from inspection record queries in the description and examples. |
+| `RUNNABLE`, `ARGS`, `MESSAGE` | Agic/flow, its arguments, or message text. |
+| `PORT`, `SECONDS`, `SPACES` | Numeric input's purpose or unit, rather than its Python type. |
 
 ## Script selection and output
 
@@ -123,7 +142,7 @@ after `Status` while the agent is running. It reads existing runtime metadata
 and formats selections in `chat,talk,chore` order, with `none` for an empty set
 and `-` for unavailable metadata. Nonrunning agents omit the row.
 
-`too [TARGET] caps`, kind-specific cap lists, `tools`, `models`, and `providers`
+`too [AGENT] caps`, kind-specific cap lists, `tools`, `models`, and `providers`
 inspect the selected scope. No target means root configuration, not an implicit
 `default` agent. `--all`/`-a` changes visibility for that same scope and grants no
 runtime authority. `--json` emits inspection arrays; human output is the default.
@@ -180,7 +199,7 @@ the selected agent root; URLs and canonical refs keep their existing form.
 while JSON and query records retain `ref`. These lists have no `--long`; complete
 field values remain available through `--json`.
 
-`too TARGET chore list` keeps its column order: `CHORE`, `TITLE`, `STATUS`,
+`too AGENT chore list` keeps its column order: `CHORE`, `TITLE`, `STATUS`,
 `LAST RUN`, `NEXT RUN`, `SCHEDULE`, `ERROR`, `LOCATION`. It shrinks title, error,
 and location text in that order, then omits `TITLE` followed by `LAST RUN` when
 needed, refitting remaining fields after each omission. Every chore occupies one
@@ -194,20 +213,20 @@ complete inline line-number suffix. `LAST RUN` is the latest execution status;
 
 ## Historical inspection
 
-`too TARGET inspect SUBJECT... [PROJECTOR] [--human | --json]` reads durable
+`too AGENT inspect QUERY... [--human | --json]` reads durable
 history without starting a server or fetching a visiting source. Collections
 are unbounded; absent storage is an error. Empty existing collections print
 `0 threads`, `0 runs`, `0 steps`, or `0 controls` in human output, and `[]` with
 `--json`.
 
-| Subject | Selects |
+| Query | Selects |
 | --- | --- |
 | `threads`, `runs`, `controls` | Physical records, including rewound Runs |
 | `THREAD runs` | Logical history membership |
 | `RUN steps` | Direct physical Steps |
 | `STEP runs` | Direct accepted child Runs |
-| `LOOP_STEP steps` | Direct same-Run body Steps |
-| `POINTER` | One record or nested canonical field |
+| `STEP steps` | Direct same-Run body Steps of a loop Step |
+| `ID` | One record or nested canonical field |
 
 [Records](records.md) owns IDs, references, canonical JSON, and resolution.
 `--json` on a raw Pointer does not follow stored references. Field tables show

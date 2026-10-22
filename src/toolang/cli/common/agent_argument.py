@@ -91,7 +91,7 @@ class AgentContract:
         if self.placements == {"resident"}:
             return "resident agent name"
         if self.placements == {"resident", "roaming"}:
-            return "local agent name or path"
+            return "agent name or path"
         if self.role == "execute" and scope:
             return f"{scope} agent by {joined}"
         return f"agent {joined}"
@@ -281,6 +281,9 @@ def install_agent_parameter(command: Command) -> None:
         raise ValueError("AGENT belongs to executable leaves, not group callbacks")
     if agent.nargs != 1:
         raise ValueError("AGENT must be a single value")
+    # The prefix precedes business operands, regardless of Python defaults.
+    command.params.remove(agent)
+    command.params.insert(0, agent)
     # An inherited prefix can satisfy this leaf even when its native tail is empty.
     command.no_args_is_help = False
 

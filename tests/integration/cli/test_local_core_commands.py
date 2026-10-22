@@ -2417,17 +2417,17 @@ def test_inspect_display_modes_are_exclusive_and_removed_options_fail(
     assert removed.exit_code == 2
     assert "No such option: --limit" in strip_ansi(removed.stderr)
     assert help_code == 0
-    assert "POINTER" in help_text
+    assert "<ID>" in help_text
     assert "Inspect agent runs" in help_text
-    assert "Subject chain;" in help_text
-    assert "Subjects:" in help_text
+    assert "record ID or collection" in help_text
+    assert "Records:" in help_text
     assert "threads List threads" in compact_help
     assert "runs List runs" in compact_help
     assert "controls List controls" in compact_help
     assert "<THREAD> runs" in compact_help
     assert "<RUN> steps" in compact_help
     assert "<STEP> runs" in compact_help
-    assert "<LOOP_STEP> steps" in compact_help
+    assert "<STEP> steps" in compact_help
     assert "<STEP> call" in compact_help
     assert "<RUN> output" in compact_help
     assert "--markdown" not in help_text

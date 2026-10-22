@@ -737,7 +737,7 @@ def test_lifecycle_and_bootstrap_use_their_native_operand_forms(
 @pytest.mark.parametrize(
     "command,metavar,description",
     [
-        ("new", "NAME", "New agent name"),
+        ("new", "NAME", "new agent name"),
         ("remove", "NAME", "resident agent name"),
         ("_serve", "NAME", "agent name"),
         ("start", "AGENT", "resident or visiting agent by name, ref or url"),
@@ -812,7 +812,7 @@ def test_chat_help_uses_the_canonical_optional_thread_option(
     row = next(line for line in output.splitlines() if "[THREAD]" in line)
     assert "--thread" in row and "-t" in row
     assert "-t, --thread [THREAD]" in row
-    assert "Continue a thread instead of a new one" in " ".join(output.split())
+    assert "Continue a thread by ID" in " ".join(output.split())
     assert "[bare: latest thread]" in " ".join(output.split())
     assert "[bare: .]" in " ".join(output.split())
     assert "\0" not in output

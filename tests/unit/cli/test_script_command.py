@@ -547,7 +547,7 @@ agic demo(_: Part[]):
 
     assert result == 2
     assert "Usage:" in output.out
-    assert "* INPUT Primary input" in " ".join(strip_ansi(output.out).split())
+    assert "* INPUT primary input" in " ".join(strip_ansi(output.out).split())
     assert ("\x1b[" in output.out) is color
     assert "Arguments:" in strip_ansi(output.out)
     assert "requires primary input" not in output.err
@@ -857,7 +857,7 @@ def test_script_help_groups_signature_categories(
     positions = []
     for name, type_name, required in arguments:
         label = f"{name}=<{name.upper()}>"
-        row = f"{label} Named input ({type_name})"
+        row = f"{label} named input ({type_name})"
         assert row in panel
         assert (f"* {row}" in panel) is required
         positions.append(panel.index(label))
@@ -865,8 +865,8 @@ def test_script_help_groups_signature_categories(
     assert "Arguments may appear" not in panel
     if input_type:
         label = "INPUT"
-        assert f"{label} Primary input ({input_type});" in panel
-        positions.append(panel.index(f"{label} Primary input ({input_type});"))
+        assert f"{label} primary input ({input_type});" in panel
+        positions.append(panel.index(f"{label} primary input ({input_type});"))
         assert f"* {label}" in panel
         assert "reads stdin with - or when input is omitted" in panel
     else:
@@ -900,7 +900,7 @@ def test_unnamed_script_signature_help_uses_compact_entry_label(
     assert f"Run {kind} _" not in output
     assert "Usage: too run demo.too _ [OPTIONS] [ARGUMENTS]" in output
     assert "topic=<TOPIC>" in output
-    assert "Primary input (Text)" in output
+    assert "primary input (Text)" in output
 
 
 @pytest.mark.parametrize("kind", ["agic", "flow"])

@@ -61,7 +61,7 @@ def new_agent(
         typer.Argument(
             metavar="NAME",
             click_type=AgentNameType(),
-            help="New agent name",
+            help="new agent name",
         ),
     ],
 ) -> None:
@@ -89,9 +89,9 @@ def clone_agent(
     target: Annotated[
         str | None,
         typer.Argument(
-            metavar="TARGET",
+            metavar="NAME",
             click_type=AgentNameType(),
-            help="New agent name",
+            help="new agent name; required for resident agents",
         ),
     ] = None,
 ) -> None:
@@ -103,7 +103,7 @@ def clone_agent(
         selector = agent_sources.parse_agent_target(source)
         if selector.form == "name":
             if target is None:
-                raise ValueError("target name is required when cloning one local agent")
+                raise ValueError("a new name is required when cloning a resident agent")
             source_home = homes.get(selector.name or "")
             if source_home is None:
                 raise FileNotFoundError(source)

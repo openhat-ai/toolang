@@ -20,7 +20,9 @@ from .hub_status import HubSnapshot, render_hub_snapshot
 
 PortOption = Annotated[
     int | None,
-    typer.Option("--port", min=1, max=65535, help="Bind the hub API to this port"),
+    typer.Option(
+        "--port", metavar="PORT", min=1, max=65535, help="Bind the hub API to this port"
+    ),
 ]
 
 

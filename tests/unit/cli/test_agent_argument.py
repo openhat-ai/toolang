@@ -69,7 +69,7 @@ def test_source_contract_cannot_require_a_runtime():
             "resident,roaming",
             False,
             None,
-            "local agent name or path",
+            "agent name or path",
             "AGENT",
         ),
         (
@@ -440,6 +440,34 @@ def test_optional_prefix_does_not_mask_business_completion(supplied, tmp_path):
     assert ctx.get_parameter_source("agent") is (
         ParameterSource.COMMANDLINE if supplied else ParameterSource.DEFAULT
     )
+
+
+@pytest.mark.parametrize("supplied", [False, True])
+def test_agent_prefix_precedes_business_operands_in_help(supplied, tmp_path):
+    seen = []
+
+    def invoke(
+        value: Annotated[str, typer.Argument(metavar="NAME")],
+        agent: Annotated[str | None, AgentArgument("source")] = None,
+    ):
+        seen.append((agent, value))
+        return agent, value
+
+    command = _app(invoke)
+    prefix = ["alice"] if supplied else []
+    expected = "alice" if supplied else None
+    assert command.main(
+        ["--root", str(tmp_path), *prefix, "call", "task"], standalone_mode=False
+    ) == (expected, "task")
+    assert seen == [(expected, "task")]
+    child = command.commands["call"]
+    with Context(command, info_name="too") as parent:
+        with Context(child, info_name="call", parent=parent) as ctx:
+            arguments = (
+                ctx.get_help().split("Arguments:\n", 1)[1].split("Options:", 1)[0]
+            )
+    assert arguments.index("AGENT") < arguments.index("NAME")
+    assert seen == [(expected, "task")]
 
 
 @pytest.mark.parametrize("tail", [[], ["value"], ["--help"], ["--unknown"]])

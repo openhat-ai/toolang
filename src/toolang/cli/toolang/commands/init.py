@@ -15,7 +15,7 @@ def init_script(
     ctx: typer.Context,
     directory: Annotated[
         Path,
-        typer.Argument(metavar="DIR", help="Directory to set up for Toolang"),
+        typer.Argument(metavar="DIR", help="directory to set up for Toolang"),
     ],
 ) -> None:
     """Create the bundled script and its portable project configuration."""

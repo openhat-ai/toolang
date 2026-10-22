@@ -37,7 +37,7 @@ def chat_command(
             "--thread",
             "-t",
             click_type=TextType(),
-            help="Continue a thread instead of a new one",
+            help="Continue a thread by ID",
             metavar="[THREAD]",
         ),
     ] = None,
