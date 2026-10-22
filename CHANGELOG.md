@@ -216,14 +216,14 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   sections.
   ([#919](https://github.com/openhat-ai/toolang/pull/919))
 
-- `too AGENT info` identifies the Toolang root, place, and home, and emits
-  complete shell-quoted copy commands retaining `--root` and instance scope,
-  escaping command-colliding names as `agent:NAME`.
+- `too AGENT info` identifies the Toolang root, agent root, and home, and
+  emits complete shell-quoted copy commands retaining `--root` and instance
+  scope, escaping command-colliding names as `agent:NAME`.
   ([#919](https://github.com/openhat-ai/toolang/pull/919)) ([#922](https://github.com/openhat-ai/toolang/pull/922))
 
-- Root, place, and home now name the selected Toolang root, an agent
-  environment, and its `agents/NAME` directory across layouts, State/Setup
-  paths, sandbox interfaces, and CLI output.
+- Internal path names keep root, place, and home for the Toolang root, an
+  agent environment, and its `agents/NAME`, while public text says Toolang
+  root, agent root, and home.
   ([#922](https://github.com/openhat-ai/toolang/pull/922))
 
 - **Breaking:** Root codes derive from `place:v1` hashing and visiting
@@ -237,9 +237,10 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   `address`; follow the same stop-and-retain step before adopting it.
   ([#922](https://github.com/openhat-ai/toolang/pull/922))
 
-- **Breaking:** Docker configuration and sandbox interfaces rename `root` to
-  `place` without aliases, with `runtime_place` mapping `local_place` to
-  `hosted_place`; update Docker settings and sandbox implementations.
+- **Breaking:** Sandbox integrations implement `runtime_place` with
+  `local_place` and `hosted_place` instead of the former root-named
+  interface, while Docker configuration keeps `root` for the guest agent root
+  and rejects `place` as unknown.
   ([#922](https://github.com/openhat-ai/toolang/pull/922))
 
 ### Fixed
