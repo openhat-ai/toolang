@@ -202,6 +202,11 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   omits commands without agent scope.
   ([#919](https://github.com/openhat-ai/toolang/pull/919))
 
+- Help uses one `AGENT` placeholder, clearer input names and numeric units
+  (`SOURCE`, `NAME`, `QUERY`, `PORT`, `SECONDS`), and lowercase builtin
+  argument descriptions, with `AGENT` before business operands.
+  ([#919](https://github.com/openhat-ai/toolang/pull/919))
+
 ### Fixed
 
 - Failed preparation no longer leaves active registrations; runtime references
