@@ -314,10 +314,9 @@ def test_chat_thread_selection_requires_one_matching_home(
     assert select_roaming(source, toolang_root=root).place == second.place
 
 
-def test_info_copy_command_binds_the_offline_home_and_quotes_paths(
+def test_info_shows_the_offline_agent_root_without_a_command_footer(
     tmp_path, monkeypatch, capsys
 ):
-    import shlex
     from toolang.cli.toolang.commands import agent
     from toolang.up.identity import allocate_roaming
     from toolang.up.workload import fail_preparation
@@ -332,21 +331,11 @@ def test_info_copy_command_binds_the_offline_home_and_quotes_paths(
     )
     selector = f"{source}@{layout.place_code}"
     assert main(["--root", str(root), selector, "info"]) == 0
-    assert captured["Toolang root"] == str(root)
-    assert captured["Agent root"] == str(layout.place)
+    assert captured["Root"] == str(layout.place)
+    assert "Toolang root" not in captured
+    assert "Agent root" not in captured
     assert captured["Agent"] == layout.address
-    (command,) = [
-        line.removeprefix("Command: ")
-        for line in capsys.readouterr().out.splitlines()
-        if line.startswith("Command: ")
-    ]
-    assert shlex.split(command) == [
-        "too",
-        "--root",
-        str(root),
-        selector,
-        "info",
-    ]
+    assert capsys.readouterr().out == ""
 
 
 def test_record_home_lookup_reports_incompatible_history_without_changing_it(

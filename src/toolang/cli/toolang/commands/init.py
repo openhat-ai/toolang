@@ -2,7 +2,6 @@
 
 from pathlib import Path
 import os
-import shlex
 from typing import Annotated
 
 import typer
@@ -12,7 +11,6 @@ from toolang.catalog.templates import load_template
 
 
 def init_script(
-    ctx: typer.Context,
     directory: Annotated[
         Path,
         typer.Argument(metavar="DIR", help="Directory to set up for Toolang"),
@@ -49,8 +47,3 @@ def init_script(
         raise ClickException(str(exc)) from exc
     typer.echo("Created aid.too and toolang.toml.")
     typer.echo("Add .toolang/ to .gitignore.")
-    executable = ctx.find_root().info_name or "too"
-    command = shlex.join(
-        [executable, str(directory.expanduser() / "aid.too"), "--help"]
-    )
-    typer.echo(f"Try: {command}")

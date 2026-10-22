@@ -4,6 +4,7 @@ The `too` and `toolang` entry points use the same command router. This guide
 explains routing, inspection, and client orchestration for maintainers.
 `too --help` shows common commands; `too more` shows the additional groups.
 Script inputs/configuration belong to [Scripts](scripts.md), and HTTP to [API](api.md).
+Built-in commands do not append copy-command footers to successful results.
 
 `parse`, `fmt`, and `highlight` run offline without agent or runtime acquisition.
 Parsing constructs a validated [Program](program.md#parsing-and-validation) or

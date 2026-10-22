@@ -173,10 +173,8 @@ registration. A later runtime at that home reuses the address with a new generat
 
 `top` shows full resident names or `name@CODE` addresses. The address equals the
 active filename stem; a nonresident place basename supplies only the place code.
-`info` shows `Toolang root`, `Agent root`, `Home`, and `Agent`, plus runtime
-details when available. An unwrapped, shell-quoted `Command` line follows the
-table; it includes `--root ROOT` and a source-path address for roaming, remaining
-usable offline. Resident names that collide with commands use `agent:NAME`.
+`info` shows `Root` (the agent root), `Home`, and `Agent`, plus runtime details
+when available. The output ends with the table.
 Addresses copied from `top` require the same Toolang root in another command.
 
 Expanded `top`/`chore` scope, home-based `cd`, JSON binding metadata, and Toolang-root
