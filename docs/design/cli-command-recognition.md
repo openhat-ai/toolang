@@ -58,9 +58,10 @@ forms, defaults, and multiple agent parameters. Ordinary catalog operands may
 reuse lexical name/source types without accepting a prefix.
 
 A group carries the raw prefix into its selected subtree. It has no agent
-parameter or agent-resolving callback. Every executable leaf has its own native
-agent parameter and contract; group metadata summarizes its children. Thus
-`too a skill list` accepts source inspection while `too a skill edit x` accepts
+parameter or agent-resolving callback. Each agent-scoped leaf owns its native
+agent parameter and contract; group metadata summarizes its children. A leaf
+without an agent parameter rejects an inherited prefix before help or execution.
+Thus `too a skill list` accepts source inspection while `too a skill edit x` accepts
 resident authoring. Parent callbacks cannot prematurely restrict either leaf.
 
 `AgentParameter` sources the inherited prefix from invocation-local Context and
@@ -136,11 +137,13 @@ stdin, allocates execution records, or starts a runtime. Agent-command help with
 local path does not parse that file. Preserve native validation and operational
 exit codes; explicit help succeeds, malformed command parameters fail normally.
 
+Register Typer's shell completion backends when building the root command.
 Completion reads the same contracts. It may enumerate scoped resident/active
 entries or an explicitly supplied source path's retained roots, but never fetches
 sources, probes runtimes, or searches for offline roaming homes by short name.
 Root command completion stays registry-based; lexical selector suggestions use
-shared metadata. Help/completion never invoke command actions.
+shared metadata. Tail completion excludes the prefix parameter.
+Help/completion never invoke command actions.
 
 Remove public `--instance`/`-i`. Private bootstrap receives concrete root/home,
 placement, identity, and runtime-generation bindings. There are no old-syntax

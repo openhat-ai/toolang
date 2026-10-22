@@ -206,6 +206,10 @@ class _ToolangGroup(CliGroup):
     context_class = _ToolangHelpContext
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
+        from typer._completion_classes import completion_init
+
+        # Register protocol handlers while keeping installer options out of the CLI.
+        completion_init()
         commands = dict(kwargs.pop("commands", None) or {})
         commands.update(
             (name, factory()) for name, factory in _REGISTERED_COMMANDS.items()

@@ -1,4 +1,4 @@
-"""Native agent parameters with an optional position before their command."""
+"""Native leaf parameters for agent prefixes."""
 
 from __future__ import annotations
 
@@ -172,17 +172,34 @@ def complete_agent_names(ctx: Context, incomplete: str) -> list[CompletionItem]:
     requested_escape = incomplete.startswith("agent:")
     stem = incomplete.removeprefix("agent:") if requested_escape else incomplete
     commands = getattr(ctx.find_root().command, "commands", {})
+    try:
+        names = LocalAgents(root / "agents").list()
+    except OSError:
+        return []
     return [
         CompletionItem(
             f"agent:{name}" if requested_escape or name in commands else name
         )
-        for name in LocalAgents(root / "agents").list()
+        for name in names
         if name.startswith(stem)
     ]
 
 
 def prefix_supplied(ctx: Context) -> bool:
     return _PREFIX in ctx.meta
+
+
+def agent_prefix(ctx: Context) -> str | None:
+    """Return the prefix carried by this command's selected subtree."""
+    bound = ctx.meta.get(_PREFIX)
+    if bound is not None:
+        owner, raw = bound
+        current: Context | None = ctx
+        while current is not None:
+            if current.command is owner:
+                return raw
+            current = current.parent
+    return None
 
 
 def AgentArgument(
@@ -237,17 +254,6 @@ class AgentParameter(TyperArgument):
         assert isinstance(self.type, _AgentType)
         self.contract = self.type.contract
 
-    def _prefix(self, ctx: Context) -> str | None:
-        bound = ctx.meta.get(_PREFIX)
-        if bound is not None:
-            owner, raw = bound
-            current: Context | None = ctx
-            while current is not None:
-                if current.command is owner:
-                    return raw
-                current = current.parent
-        return None
-
     def add_to_parser(self, parser: Any, ctx: Context) -> None:
         # The argument is supplied only by the command header, never its tail.
         return None
@@ -255,7 +261,7 @@ class AgentParameter(TyperArgument):
     def consume_value(
         self, ctx: Context, opts: Mapping[str, Any]
     ) -> tuple[Any, ParameterSource]:
-        if (prefix := self._prefix(ctx)) is not None:
+        if (prefix := agent_prefix(ctx)) is not None:
             return prefix, ParameterSource.COMMANDLINE
         return super().consume_value(ctx, opts)
 

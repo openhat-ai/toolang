@@ -385,6 +385,106 @@ def test_native_completion_uses_prefix_contract_and_escapes_collisions(tmp_path)
     assert ctx.params["agent"] == "alice"
 
 
+def test_root_command_completion_survives_an_unreadable_agent_inventory(monkeypatch):
+    from toolang.catalog.agent import LocalAgents
+    from typer._click.shell_completion import _resolve_context
+
+    def unavailable(_):
+        raise PermissionError("agent inventory unavailable")
+
+    monkeypatch.setattr(LocalAgents, "list", unavailable)
+    command = typer.main.get_command(cli.app)
+    ctx = _resolve_context(command, {}, "too", [])
+    assert {"start", "stop"} <= {
+        item.value for item in command.shell_complete(ctx, "st")
+    }
+
+
+@pytest.mark.parametrize("tail", [["models"], ["info"], ["skill", "list"]])
+def test_native_completion_does_not_offer_agent_suffixes(tail, tmp_path, monkeypatch):
+    from toolang.catalog.agent import LocalAgents
+    from typer._click.shell_completion import _resolve_context, _resolve_incomplete
+
+    monkeypatch.setattr(LocalAgents, "list", lambda _: ("alice",))
+    command = typer.main.get_command(cli.app)
+    args = ["--root", str(tmp_path), *tail]
+    ctx = _resolve_context(command, {}, "too", args)
+    target, value = _resolve_incomplete(ctx, args, "al")
+    assert not isinstance(target, AgentParameter)
+    assert "alice" not in [item.value for item in target.shell_complete(ctx, value)]
+
+
+@pytest.mark.parametrize("supplied", [False, True])
+def test_optional_prefix_does_not_mask_business_completion(supplied, tmp_path):
+    from typer._click.shell_completion import _resolve_context, _resolve_incomplete
+
+    seen = []
+
+    def complete(ctx, args, incomplete):
+        seen.append(ctx.params["agent"])
+        return ["task"]
+
+    def invoke(
+        agent: Annotated[str | None, AgentArgument("source")] = None,
+        query: Annotated[str | None, typer.Argument(autocompletion=complete)] = None,
+    ):
+        pytest.fail("completion invoked the action")
+
+    command = _app(invoke)
+    args = ["--root", str(tmp_path), *(["alice"] if supplied else []), "call"]
+    ctx = _resolve_context(command, {}, "too", args)
+    target, value = _resolve_incomplete(ctx, args, "ta")
+    assert target.name == "query"
+    assert [item.value for item in target.shell_complete(ctx, value)] == ["task"]
+    assert seen == ["alice" if supplied else None]
+    assert ctx.get_parameter_source("agent") is (
+        ParameterSource.COMMANDLINE if supplied else ParameterSource.DEFAULT
+    )
+
+
+@pytest.mark.parametrize("tail", [[], ["value"], ["--help"], ["--unknown"]])
+@pytest.mark.parametrize("rendered", [False, True])
+def test_mixed_group_rejects_prefix_on_a_leaf_without_an_agent(
+    tail, rendered, tmp_path, capsys
+):
+    from toolang.common.typer.ui import run
+    from typer._click.shell_completion import _resolve_context
+
+    app = typer.Typer(cls=_Group, add_completion=False)
+
+    @app.callback()
+    def root(ctx: typer.Context):
+        ctx.obj = CliContext(tmp_path)
+
+    group = typer.Typer(cls=CliGroup)
+    calls = []
+
+    @group.command(cls=CliCommand)
+    def scoped(agent: Annotated[str, AgentArgument("source")]):
+        return agent
+
+    @group.command(cls=CliCommand, no_args_is_help=True)
+    def plain(value: str):
+        calls.append(value)
+
+    app.add_typer(group, name="group")
+    command = typer.main.get_command(app)
+    args = ["alice", "group", "plain", *tail]
+    if rendered:
+        assert run(app, args=args) == 2
+        assert "does not accept an agent prefix" in capsys.readouterr().err
+    else:
+        with pytest.raises(UsageError, match="does not accept an agent prefix"):
+            command.main(args, standalone_mode=False)
+    assert not calls
+    assert command.main(["alice", "group", "scoped"], standalone_mode=False) == "alice"
+    command.main(["group", "plain", "value"], standalone_mode=False)
+    assert calls == ["value"]
+    completion = _resolve_context(command, {}, "too", ["alice", "group", "plain"])
+    assert completion.command.name == "group"
+    assert calls == ["value"]
+
+
 @pytest.mark.parametrize("tail", [["--help"], ["research", "--help"], ["research"]])
 @pytest.mark.parametrize("explicit", [False, True])
 def test_script_reads_program_once_and_builds_only_selected_signature(

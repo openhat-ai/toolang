@@ -16,7 +16,12 @@ from typer._click.exceptions import ClickException, UsageError
 from typer.core import TyperArgument, TyperCommand, TyperGroup
 
 from toolang.common.typer.ui import HelpFormatter, argument_usage
-from .agent_argument import agent_parameters, install_agent_parameter
+from .agent_argument import (
+    AgentParameter,
+    agent_parameters,
+    agent_prefix,
+    install_agent_parameter,
+)
 from .help_sections import write_field_sections
 
 
@@ -61,6 +66,7 @@ class HelpContext(Context):
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
+        self._parameters_parsed = False
         if self.parent is None and kwargs.get("help_option_names") is None:
             self.help_option_names = ["-h", "--help"]
         if self.color is None:
@@ -101,6 +107,25 @@ class CliCommand(TyperCommand):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         install_agent_parameter(self)
+
+    def parse_args(self, ctx: Context, args: list[str]) -> list[str]:
+        if isinstance(ctx, HelpContext):
+            ctx._parameters_parsed = False
+        remaining = super().parse_args(ctx, args)
+        if isinstance(ctx, HelpContext):
+            ctx._parameters_parsed = True
+        return remaining
+
+    def get_params(self, ctx: Context) -> list[Parameter]:
+        params = super().get_params(ctx)
+        if (
+            ctx.resilient_parsing
+            and isinstance(ctx, HelpContext)
+            and ctx._parameters_parsed
+        ):
+            # Completion only consumes the command tail; the prefix has been parsed.
+            return [param for param in params if not isinstance(param, AgentParameter)]
+        return params
 
     def format_usage(self, ctx: Context, formatter: NativeHelpFormatter) -> None:
         write_usage(
@@ -153,7 +178,7 @@ class CliGroup(TyperGroup):
         self, ctx: Context, args: list[str]
     ) -> tuple[str | None, Command | None, list[str]]:
         try:
-            return super().resolve_command(ctx, args)
+            name, command, remaining = super().resolve_command(ctx, args)
         except UsageError as exc:
             # Resolution uses plain UsageError; parameter errors have their own types.
             if type(exc) is not UsageError:
@@ -167,6 +192,21 @@ class CliGroup(TyperGroup):
             error = ClickException(message)
             error.exit_code = exc.exit_code
             raise error from exc
+        if (
+            command is not None
+            and agent_prefix(ctx) is not None
+            and not agent_parameters(command)
+        ):
+            if ctx.resilient_parsing:
+                return None, None, args
+            from .lazy import LazyCommand
+
+            selected = command.load() if isinstance(command, LazyCommand) else command
+            with selected.context_class(selected, info_name=name, parent=ctx) as child:
+                raise UsageError(
+                    f"Command {name!r} does not accept an agent prefix.", child
+                )
+        return name, command, remaining
 
     def format_help(self, ctx: Context, formatter: NativeHelpFormatter) -> None:
         _format_help(ctx, formatter)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from importlib import import_module, metadata
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -95,6 +96,43 @@ def test_installed_console_scripts_execute(script: str, prefix: str) -> None:
 
     assert completed.returncode == 0, completed.stderr
     assert completed.stdout == f"{prefix}{displayed_toolang_version()}\n"
+
+
+@pytest.mark.parametrize("script", ["too", "toolang"])
+@pytest.mark.parametrize(
+    "tail,expected",
+    [
+        (("al",), {"alice"}),
+        (("models", "al"), set()),
+        (("skill", "list", "al"), set()),
+    ],
+)
+def test_installed_console_scripts_complete_agent_prefixes_only(
+    script, tail, expected, tmp_path
+):
+    from shlex import join
+    from toolang.catalog.agent import LocalAgents
+
+    LocalAgents(tmp_path / "agents").create("alice", content="flow main():\n  pass\n")
+    before = set(tmp_path.rglob("*"))
+    words = [script, "--root", str(tmp_path), *tail]
+    # A fresh process prevents other Typer apps from pre-registering the backends.
+    completed = subprocess.run(
+        [Path(sys.executable).with_name(script)],
+        env={
+            **os.environ,
+            f"_{script.upper()}_COMPLETE": "complete_bash",
+            "COMP_WORDS": join(words),
+            "COMP_CWORD": str(len(words) - 1),
+        },
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert set(completed.stdout.split()) == expected
+    assert not completed.stderr
+    assert set(tmp_path.rglob("*")) == before
 
 
 def test_toolang_version_does_not_load_runtime_command_modules() -> None:
