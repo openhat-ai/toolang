@@ -87,6 +87,11 @@ when invoking the command.
 | `RUNNABLE`, `ARGS`, `MESSAGE` | Agic/flow, its arguments, or message text. |
 | `PORT`, `SECONDS`, `SPACES` | Numeric input's purpose or unit, rather than its Python type. |
 
+`--allow`, `--limit`, and `--default` use `<KEY>=<VALUE>` and short descriptions
+pointing to `too help allow`, `too help limit`, and `too help default`. Model
+options point to `too help model`. Keep field tables and model parameter details
+out of command help; the topic command is a separate implementation.
+
 ## Script selection and output
 
 Omitting RUNNABLE selects the unnamed entry; without one, it shows file help.

@@ -165,7 +165,7 @@ def rerun_command(
         str | None,
         typer.Option(
             "--model",
-            help="Override the model; see Model parameters",
+            help="Override the model; see 'too help model'",
             metavar="MODEL",
         ),
     ] = None,

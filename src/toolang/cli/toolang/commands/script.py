@@ -454,7 +454,7 @@ def _runnable_command(
             typer.Option(
                 "--model",
                 metavar="MODEL",
-                help="Set the model; see Model parameters",
+                help="Set the model; see 'too help model'",
             ),
         ] = None,
         workspace: WorkspaceOptions = None,

@@ -26,7 +26,7 @@ from toolang.common.typer.ui import PLAIN, UV, _format_help, run
 @pytest.mark.parametrize("theme", [PLAIN, UV])
 @pytest.mark.parametrize("width", [44, 80, 120])
 @pytest.mark.parametrize("color_system", [None, "standard"])
-def test_script_root_and_runnable_share_field_sections(theme, width, color_system):
+def test_script_help_keeps_compact_policy_options(theme, width, color_system):
     from toolang.cli.toolang.commands.script import _program_command
     from toolang.lang.ast import Program
 
@@ -50,12 +50,17 @@ def test_script_root_and_runnable_share_field_sections(theme, width, color_syste
     for ctx in (parent, child):
         output = Text.from_ansi(_format_help(ctx, theme=theme, console=console))
         assert all(cell_len(line) <= width for line in output.plain.splitlines())
-        for section in ("Allow fields:", "Limit fields:", "Model parameters:"):
-            assert output.plain.count(section) == 1
-            assert output.get_style_at_offset(console, output.plain.index(section)) == (
-                output.get_style_at_offset(console, output.plain.index("Options:"))
-            )
-        assert "Default fields:" not in output.plain
+        for section in (
+            "Allow fields:",
+            "Limit fields:",
+            "Default fields:",
+            "Model parameters:",
+        ):
+            assert section not in output.plain
+        assert "<KEY>=<VALUE>" in output.plain
+        normalized = " ".join(output.plain.split())
+        for topic in ("allow", "limit", "model"):
+            assert f"'too help {topic}'" in normalized
         if ctx is child:
             assert "[ARGUMENTS]" in output.plain
             assert "* name=<NAME>" in output.plain
@@ -102,60 +107,69 @@ def test_examples_share_section_styles_and_wrap_descriptions(
 
 
 @pytest.mark.parametrize(
-    ("command", "sections"),
+    ("command", "topics"),
     [
         (
             "serve",
-            {"Allow fields", "Limit fields", "Default fields", "Model parameters"},
+            {"allow", "limit", "default", "model"},
         ),
         (
             "chat",
-            {"Allow fields", "Limit fields", "Default fields", "Model parameters"},
+            {"allow", "limit", "default", "model"},
         ),
-        ("rerun", {"Allow fields", "Limit fields", "Model parameters"}),
+        ("rerun", {"allow", "limit", "model"}),
         ("caps", set()),
         ("models", set()),
     ],
 )
-def test_field_sections_match_supported_options(
-    command, sections, tmp_path, capsys, monkeypatch
+def test_help_references_only_supported_option_topics(
+    command, topics, tmp_path, capsys, monkeypatch
 ):
     monkeypatch.setattr("toolang.up.logging.configure_logging", lambda **kwargs: None)
     assert too_main(["--root", str(tmp_path), command, "--help"]) == 0
     output = strip_ansi(capsys.readouterr().out)
-    known = {"Allow fields", "Limit fields", "Default fields", "Model parameters"}
-    assert {name for name in known if f"\n{name}:\n" in output} == sections
-    for name in sections:
-        assert output.count(f"\n{name}:\n") == 1
-        assert output.index("Options:") < output.index(f"\n{name}:\n")
-
-
-def test_field_tables_cover_parser_fields_and_repetition_rules(
-    tmp_path, capsys, monkeypatch
-):
-    monkeypatch.setattr("toolang.up.logging.configure_logging", lambda **kwargs: None)
-    from toolang.cli.common.policy import _ALLOW_FIELDS, _DEFAULT_FIELDS, _LIMIT_FIELDS
-
-    assert too_main(["--root", str(tmp_path), "serve", "--help"]) == 0
-    output = strip_ansi(capsys.readouterr().out)
-    for section, fields in (
-        ("Allow fields", _ALLOW_FIELDS),
-        ("Limit fields", _LIMIT_FIELDS),
-        (
-            "Default fields",
-            tuple(name for name in _DEFAULT_FIELDS if name != "runnable"),
-        ),
+    normalized = " ".join(output.split())
+    assert {
+        topic
+        for topic in ("allow", "limit", "default", "model")
+        if f"'too help {topic}'" in normalized
+    } == topics
+    for section in (
+        "Allow fields",
+        "Limit fields",
+        "Default fields",
+        "Model parameters",
     ):
-        rows = output.split(f"\n{section}:\n", 1)[1].split("\n\n", 1)[0]
-        assert tuple(line.split()[0] for line in rows.splitlines()) == fields
-    text = " ".join(output.split())
-    assert "Repeat a resource to combine queries by union" in text
-    assert "each field may appear once" in text
-    assert "Maximum model calls per agic" in text
-    assert "Total input and output tokens per run tree" in text
-    assert "Total cost in USD per run tree" in text
-    assert "Elapsed time in seconds per run tree" in text
-    assert "--compact-model requires an exact model for a new runtime" in text
+        assert f"\n{section}:\n" not in output
+
+
+def test_all_command_policy_options_share_key_value_and_topic_references():
+    expected = {
+        "--allow": ("<KEY>=<VALUE>", "Select allowed resources; see 'too help allow'"),
+        "--limit": ("<KEY>=<VALUE>", "Set run limits; see 'too help limit'"),
+        "--default": ("<KEY>=<VALUE>", "Set run defaults; see 'too help default'"),
+        "--model": ("MODEL", "Override the model; see 'too help model'"),
+        "--compact-model": ("MODEL", "Set the compaction model; see 'too help model'"),
+    }
+    found = set()
+
+    def check(command):
+        if isinstance(command, LazyCommand):
+            command = command.load()
+        for param in command.params:
+            if getattr(param, "hidden", False):
+                continue
+            for option in param.opts:
+                if option in expected:
+                    assert (param.metavar, param.help) == expected[option]
+                    found.add(option)
+        if isinstance(command, TyperGroup):
+            for name, child in command.commands.items():
+                if not name.startswith("_"):
+                    check(child)
+
+    check(typer.main.get_command(app))
+    assert found == expected.keys()
 
 
 @pytest.mark.parametrize("custom_context", [False, True])
@@ -198,7 +212,6 @@ def test_callers_compose_sections_and_preserve_footer_and_hidden_options(
     output = stdout.getvalue()
     sections = [
         "Options:",
-        "Limit fields:",
         "Custom fields:",
         "Examples:",
         "Ordinary footer.",
@@ -206,6 +219,7 @@ def test_callers_compose_sections_and_preserve_footer_and_hidden_options(
     positions = [output.index(section) for section in sections]
     assert positions == sorted(positions)
     assert "\n  A caller-owned paragraph.\n" in output
+    assert "Limit fields:" not in output
     assert "Default fields:" not in output and "--default" not in output
     if custom_context:
         assert output.rstrip().endswith("Custom footer.")
@@ -731,7 +745,8 @@ def test_lifecycle_and_bootstrap_use_their_native_operand_forms(
         assert output.startswith(description + ".\n")
         assert f"{metavar} {argument_help}" in " ".join(output.split())
         assert "Show this message and exit\n" in output
-        assert output.index("Options:") < output.index("Allow fields:")
+        assert "Allow fields:" not in output
+        assert "'too help allow'" in " ".join(output.split())
 
 
 @pytest.mark.parametrize(
@@ -859,9 +874,9 @@ def test_help_uses_semantic_configuration_metavars(
 ):
     metavars = {
         "--sandbox": "<SANDBOX>",
-        "--allow": "<RESOURCE>=<QUERY>",
-        "--limit": "<FIELD>=<VALUE>",
-        "--default": "<FIELD>=<VALUE>",
+        "--allow": "<KEY>=<VALUE>",
+        "--limit": "<KEY>=<VALUE>",
+        "--default": "<KEY>=<VALUE>",
         "--compact-model": "<MODEL>",
         "--model": "<MODEL>",
         "--log": "<LOG_SPEC>",

@@ -23,7 +23,6 @@ from .agent_argument import (
     agent_prefix,
     install_agent_parameter,
 )
-from .help_sections import write_field_sections
 
 
 def parameter_usage(param: Parameter, ctx: Context) -> list[str]:
@@ -134,8 +133,7 @@ class CliCommand(TyperCommand):
         )
 
     def write_help_sections(self, ctx: Context, formatter: HelpFormatter) -> None:
-        """Write option fields; subclasses can append caller-owned sections."""
-        write_field_sections(ctx, formatter)
+        """Let subclasses append caller-owned sections."""
 
     def format_help(self, ctx: Context, formatter: NativeHelpFormatter) -> None:
         _format_help(ctx, formatter)
@@ -153,8 +151,7 @@ class CliGroup(TyperGroup):
     context_class = HelpContext
 
     def write_help_sections(self, ctx: Context, formatter: HelpFormatter) -> None:
-        """Write option fields; subclasses can append caller-owned sections."""
-        write_field_sections(ctx, formatter)
+        """Explain agent propagation; subclasses can append caller-owned sections."""
         if ctx.parent is not None and agent_parameters(self):
             formatter.write_paragraph()
             formatter.write_text("See subcommand help for accepted agent forms.")

@@ -41,24 +41,24 @@ AllowOptions = Annotated[
     list[str] | None,
     typer.Option(
         "--allow",
-        metavar="<RESOURCE>=<QUERY>",
-        help="Select allowed resources; see Allow fields",
+        metavar="<KEY>=<VALUE>",
+        help="Select allowed resources; see 'too help allow'",
     ),
 ]
 LimitOptions = Annotated[
     list[str] | None,
     typer.Option(
         "--limit",
-        metavar="<FIELD>=<VALUE>",
-        help="Set run limits; see Limit fields",
+        metavar="<KEY>=<VALUE>",
+        help="Set run limits; see 'too help limit'",
     ),
 ]
 DefaultOptions = Annotated[
     list[str] | None,
     typer.Option(
         "--default",
-        metavar="<FIELD>=<VALUE>",
-        help="Set run defaults; see Default fields",
+        metavar="<KEY>=<VALUE>",
+        help="Set run defaults; see 'too help default'",
     ),
 ]
 CompactModelOption = Annotated[
@@ -66,7 +66,7 @@ CompactModelOption = Annotated[
     typer.Option(
         "--compact-model",
         metavar="MODEL",
-        help="Set the compaction model; see Model parameters",
+        help="Set the compaction model; see 'too help model'",
     ),
 ]
 
