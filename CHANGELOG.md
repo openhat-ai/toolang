@@ -179,18 +179,18 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   ([#919](https://github.com/openhat-ai/toolang/pull/919))
 
 - **Breaking:** `--instance/-i` is removed; select an existing home with
-  complete `name@h...`, `name@s...`, or `file.too@s...` operands, not IDs
+  complete `name@t...`, `name@s...`, or `file.too@s...` operands, not IDs
   alone. Short roaming `name@s...` needs the selected root's active registry,
   while `file.too@s...` works offline.
-  ([#919](https://github.com/openhat-ai/toolang/pull/919))
+  ([#919](https://github.com/openhat-ai/toolang/pull/919)) ([#922](https://github.com/openhat-ai/toolang/pull/922))
 
 - **Breaking:** Stop old workloads with the previous CLI and retain old roots
-  separately, then use `/tmp/toolang/<area_id>/<hotel_id>/agents/<name>/` and
-  `<source_dir>/.toolang/<area_id>/<site_id>/agents/<name>/`, where `area_id`
-  identifies the canonical Toolang root rather than being its path. Old v/r IDs
-  and layouts have no automatic migration, though existing resident history
-  remains.
-  ([#919](https://github.com/openhat-ai/toolang/pull/919))
+  separately, then use `/tmp/toolang/<root_code>/<place_code>/agents/<name>/`
+  and `<source_dir>/.toolang/<root_code>/<place_code>/agents/<name>/`, where
+  `root_code` identifies the canonical Toolang root rather than being its path.
+  Old v/r IDs and layouts have no automatic migration, though existing resident
+  history remains.
+  ([#919](https://github.com/openhat-ai/toolang/pull/919)) ([#922](https://github.com/openhat-ai/toolang/pull/922))
 
 - **Breaking:** Discovery moves from `<T>/.runtime/instances/` to
   `<T>/.runtime/active/` without old-format compatibility; after stopping
@@ -216,10 +216,31 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   sections.
   ([#919](https://github.com/openhat-ai/toolang/pull/919))
 
-- `too AGENT info` identifies the Toolang root, agent root, and home, and emits
-  a complete unwrapped shell-quoted copy command retaining `--root` and
-  instance scope; command-colliding resident names use `agent:NAME`.
-  ([#919](https://github.com/openhat-ai/toolang/pull/919))
+- `too AGENT info` identifies the Toolang root, place, and home, and emits
+  complete shell-quoted copy commands retaining `--root` and instance scope,
+  escaping command-colliding names as `agent:NAME`.
+  ([#919](https://github.com/openhat-ai/toolang/pull/919)) ([#922](https://github.com/openhat-ai/toolang/pull/922))
+
+- Root, place, and home now name the selected Toolang root, an agent
+  environment, and its `agents/NAME` directory across layouts, State/Setup
+  paths, sandbox interfaces, and CLI output.
+  ([#922](https://github.com/openhat-ai/toolang/pull/922))
+
+- **Breaking:** Root codes derive from `place:v1` hashing and visiting
+  `t`/roaming `s` place codes from `visiting:v1`/`roaming:v1`, selecting new
+  homes under `/tmp/toolang/` and `<source_dir>/.toolang/`; stop workloads and
+  retain old homes.
+  ([#922](https://github.com/openhat-ai/toolang/pull/922))
+
+- **Breaking:** Runtime format 5 replaces persisted `status.json` and
+  active-reference binding fields with `root`, `place`, `place_code`, and
+  `address`; follow the same stop-and-retain step before adopting it.
+  ([#922](https://github.com/openhat-ai/toolang/pull/922))
+
+- **Breaking:** Docker configuration and sandbox interfaces rename `root` to
+  `place` without aliases, with `runtime_place` mapping `local_place` to
+  `hosted_place`; update Docker settings and sandbox implementations.
+  ([#922](https://github.com/openhat-ai/toolang/pull/922))
 
 ### Fixed
 
@@ -368,6 +389,14 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 - `workspace list`, `add`, and `remove` reject visiting references and URLs
   before fetching.
   ([#919](https://github.com/openhat-ai/toolang/pull/919))
+
+- Root aliases normalize before workload ownership is recorded, fixing startup
+  failures for equivalent root paths.
+  ([#922](https://github.com/openhat-ai/toolang/pull/922))
+
+- Resident launches reject a `root`/`place` mismatch before changing runtime
+  status, instead of recording the mismatched binding.
+  ([#922](https://github.com/openhat-ai/toolang/pull/922))
 
 ### Security
 
