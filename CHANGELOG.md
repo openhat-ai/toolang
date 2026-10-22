@@ -198,6 +198,10 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   root completion escapes residents that collide with registered commands.
   ([#919](https://github.com/openhat-ai/toolang/pull/919))
 
+- Root help shows the optional agent prefix, and completion after a prefix
+  omits commands without agent scope.
+  ([#919](https://github.com/openhat-ai/toolang/pull/919))
+
 ### Fixed
 
 - Failed preparation no longer leaves active registrations; runtime references
@@ -333,6 +337,9 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 - Shell completion works for both CLI aliases, keeps agent selectors before
   commands, preserves business completion and tolerates unreadable
   inventories; unscoped group children reject prefixes.
+  ([#919](https://github.com/openhat-ai/toolang/pull/919))
+
+- Stop help no longer implies support for stopping roaming scripts.
   ([#919](https://github.com/openhat-ai/toolang/pull/919))
 
 ### Security
