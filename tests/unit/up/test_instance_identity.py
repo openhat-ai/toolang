@@ -405,7 +405,7 @@ def test_retained_selection_waits_for_initial_status_publication(
     from contextlib import contextmanager
     from threading import Event, current_thread
     from toolang.common import files
-    from toolang.up import allocation, workload
+    from toolang.up import allocation, instance
 
     source = tmp_path / "aid.too"
     root = tmp_path / "global"
@@ -413,7 +413,7 @@ def test_retained_selection_waits_for_initial_status_publication(
     preparing = Event()
     selector_reached_boundary = Event()
     finish_publication = Event()
-    original_write = workload.atomic_write_text
+    original_write = instance.atomic_write_text
     original_read = allocation.read_instance
     original_lock = files.file_write_lock
     original_select = allocation._select_retained_roaming
@@ -437,7 +437,7 @@ def test_retained_selection_waits_for_initial_status_publication(
         with original_lock(path, **kwargs):
             yield
 
-    monkeypatch.setattr(workload, "atomic_write_text", paused_write)
+    monkeypatch.setattr(instance, "atomic_write_text", paused_write)
     monkeypatch.setattr(allocation, "read_instance", observed_read)
     monkeypatch.setattr(files, "file_write_lock", observed_lock)
     with (

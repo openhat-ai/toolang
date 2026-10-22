@@ -6,7 +6,6 @@ from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager, nullcontext
 from contextvars import ContextVar
 import os
-import json
 from pathlib import Path
 import time
 from uuid import uuid4
@@ -14,11 +13,10 @@ from uuid import uuid4
 import psutil
 
 from toolang.common.layout import AgentLayout
-from toolang.common.files import atomic_write_text
 from .identity import identity_bindings, visiting_home_guard
 from .instance import (
-    RUNTIME_STATUS_FORMAT,
     control_owner,
+    initialize_instance,
     patch_workload,
     process_alive,
     read_instance,
@@ -37,22 +35,17 @@ def prepare_workload(
     owner: Mapping[str, int | float],
 ) -> None:
     """Initialize status only after allocation exclusively creates a new place."""
-    payload = {
-        "version": RUNTIME_STATUS_FORMAT,
-        "instances": {
-            "default": {
-                "launch_id": launch_id,
-                "control": identity_bindings(layout),
-                "workload": {
-                    "status": "preparing",
-                    "requested_at": requested_at,
-                    "pid": owner["pid"],
-                    "process_created": owner["created"],
-                },
-            }
+    initialize_instance(
+        layout.runtime_status,
+        launch_id=launch_id,
+        control=identity_bindings(layout),
+        workload={
+            "status": "preparing",
+            "requested_at": requested_at,
+            "pid": owner["pid"],
+            "process_created": owner["created"],
         },
-    }
-    atomic_write_text(layout.runtime_status, json.dumps(payload))
+    )
 
 
 def fail_workload(

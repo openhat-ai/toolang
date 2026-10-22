@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from contextlib import contextmanager
 import os
@@ -24,6 +24,27 @@ from toolang.common.files import (
 )
 
 RUNTIME_STATUS_FORMAT = 5
+
+
+def initialize_instance(
+    path: Path,
+    *,
+    launch_id: str,
+    control: Mapping[str, object],
+    workload: Mapping[str, object],
+) -> None:
+    """Write the first status document beneath an exclusively allocated new home."""
+    payload = {
+        "version": RUNTIME_STATUS_FORMAT,
+        "instances": {
+            "default": {
+                "launch_id": launch_id,
+                "control": dict(control),
+                "workload": dict(workload),
+            }
+        },
+    }
+    atomic_write_text(path, json.dumps(payload))
 
 
 def read_document(path: Path, *, location: str = "host") -> dict[str, Any] | None:
