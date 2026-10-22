@@ -2,7 +2,7 @@
 
 Move shared option-reference details into explicit CLI help topics. Success means
 ordinary `--help` keeps visible options concise, while `too help TOPIC`
-provides the corresponding keys, rules, and examples without runtime setup.
+provides the corresponding keys, values, and examples without runtime setup.
 
 Status: proposed; human confirmation is required before implementation.
 
@@ -62,8 +62,12 @@ pages, navigation/error cases, and representative affected command help.
 
   Use `<KEY>=<VALUE>` consistently for generic assignment options: KEY names a
   supported setting and VALUE follows that key's grammar. Label their topic
-  definition lists `Keys`. The `allow` topic explains resource-selection keys
-  and query values; these meanings do not need separate RESOURCE/QUERY metavars.
+  definition lists `Keys`. Use `Values` for value forms shared across keys, as
+  in `allow` and `limit`; keep key-specific values beside their keys, as in
+  `default`. Place repetition constraints under `Keys` and value restrictions
+  under `Values`; keep other notes beside their subject instead of collecting
+  them in a generic `Rules` section. The `allow` topic explains resource-selection
+  keys and query values; these meanings do not need separate RESOURCE/QUERY metavars.
   Keep placeholders uppercase and literal keys lowercase.
   This changes only display; `--allow tools=none` and other accepted inputs stay
   unchanged. Semantic operands such as `<MODEL>` and `[TOPIC]` keep their names.
@@ -76,7 +80,7 @@ pages, navigation/error cases, and representative affected command help.
   values, caller-owned sections, Examples, flow outlines, and epilogs.
 
 - [ ] Relocate reference content into the matching topic. Each page contains
-  option syntax, key/parameter rows, applicable value and repetition rules,
+  option syntax, key/value/parameter rows, applicable value and repetition rules,
   and one or two short examples. Preserve these details:
 
   | Topic | Required content |
@@ -118,7 +122,7 @@ pages, navigation/error cases, and representative affected command help.
   Give only topic leaves a CLI-owned `format_help` override for reference output;
   native subcommand parsing, eager help callbacks, and error usage stay intact.
   Reuse one style hierarchy: all section headings use `cli.heading`, topic and
-  example commands use `cli.command.name`, and key/parameter labels use
+  example commands use `cli.command.name`, and key/value/parameter labels use
   `cli.argument.name`. Definitions are bold cyan in UV and bold in PLAIN;
   explanations and important rules use normal foreground, not dim text.
   Pass authored `Text` spans from CLI writers; add no per-section colors,
@@ -177,7 +181,9 @@ pages, navigation/error cases, and representative affected command help.
   - The reserved-name cases select the intended command, agent, or runnable.
   - At 44/80/120 columns in PLAIN/UV themes and monochrome/color output, text
     remains complete, wraps within width, and uses shared heading styles.
-    Key labels and explanations have distinct emphasis; prose stays readable.
+    Key/value labels and explanations have distinct emphasis; prose stays readable.
+    Repetition constraints stay with keys and value restrictions with value
+    definitions; topic pages have no generic Rules section.
     Wrapped example commands retain valid shell argument boundaries. Assert
     content/layout/style properties rather than full-output snapshots.
 

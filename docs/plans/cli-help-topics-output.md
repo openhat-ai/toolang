@@ -10,8 +10,8 @@ exact spacing follows terminal width. The examples assume an installed
 ## Output and style contract
 
 - All headings share `cli.heading`; Topics is a directory of topic commands.
-- Topic names and example commands use `cli.command.name`; assignment keys and
-  parameters use `cli.argument.name`. Both are bold cyan in UV and bold in PLAIN.
+- Topic names and example commands use `cli.command.name`; keys, value forms,
+  and parameters use `cli.argument.name`. Both are bold cyan in UV and bold in PLAIN.
 - Syntax uses existing option/usage styles. Explanations and rules use normal
   foreground text; only optional metadata is dimmed. No per-section palette.
 - Plain output retains headings, indentation, columns, and blank lines.
@@ -23,8 +23,11 @@ exact spacing follows terminal width. The examples assume an installed
 - Successful topic output is reference content only: declarations describe
   the target options. Omit helper-command Usage, Options, and self-help rows.
   Native invocation errors may still show the helper command usage.
-- Generic assignments use `<KEY>=<VALUE>` and a `Keys:` section. Literal key
-  names stay lowercase; model-specific operands and parameter names remain.
+- Generic assignments use `<KEY>=<VALUE>`. `Keys:` defines supported keys
+  and repetition; `Values:` defines shared value forms and restrictions.
+  Key-specific value forms stay beside their keys, as in `default`. Keep
+  notes with their subject instead of using a generic `Rules:` section.
+  Literal keys stay lowercase; model-specific operands and parameters remain.
 - `toolang` supports the same forms; usage/footer spellings follow the invoked
   executable. Shared option pointers and examples use the `too` alias.
 - Success uses stdout and exit 0. Invalid topics/options/operands use stderr
@@ -81,10 +84,14 @@ Keys:
   services  Service queries
   prompts   Prompt queries
 
-Rules:
-  VALUE accepts a TQ query, all, or none.
-  Repeat a key to combine queries by union.
-  Do not combine queries with all or none.
+  Repeat a key to combine TQ queries by union.
+
+Values:
+  QUERY  Match resources with a TQ query
+  all    Select all resources
+  none   Select no resources
+
+  With all or none, that key may appear only once.
   Quote values containing spaces.
   Existing policy restrictions still apply.
 
@@ -112,10 +119,12 @@ Keys:
   cost              Total cost in USD per run tree
   time              Elapsed time in seconds per run tree
 
-Rules:
-  VALUE is a non-negative integer; cost also accepts a decimal.
-  Use none to unset a limit.
   Each key may appear once.
+
+Values:
+  INTEGER  Non-negative integer
+  DECIMAL  Non-negative decimal; cost only
+  none     Unset the limit
 
 Examples:
   Limit tokens and cost
@@ -136,17 +145,16 @@ stdout; exit 0.
 Set runtime or Chat session defaults.
 
 Keys:
-  model     Default model and parameters
-  runnable  Chat session entry ref; Chat only
+  model     Model value; see 'too help model'
+  runnable  Entry ref, or none for automatic entry selection; Chat only
+
+  Each key may appear once. Quote values containing spaces.
 
 Applies to:
   serve, start   model; applies to the runtime instance
   chat           model and runnable; apply to the current session
   Script, rerun  Use --model for one run
 
-Rules:
-  Each key may appear once. Quote values containing spaces.
-  runnable=none returns to automatic Chat entry selection.
   Chat defaults do not reconfigure the runtime or other sessions.
 
 Configuration:
@@ -184,22 +192,23 @@ Model body:
   [ref=]MODEL [effort=VALUE] [max_output=VALUE]
   An exact model ref may be bare or use ref=. Put a bare ref first.
   Omit the ref to change parameters on an effective model.
+  Quote multi-token values. Duplicate refs or parameters are rejected.
+  --compact-model requires an exact ref; it rejects default, unset, and
+  parameter-only values.
 
 Parameters:
   effort      Reasoning level, non-negative token budget, or auto
   max_output  Positive output token count, or auto
 
+  auto clears that parameter.
+  Supported reasoning levels depend on the selected model.
+
 Selection values:
   default  Use the inherited model or session baseline
   unset    Clear selection; startup entry fallback still applies
 
-Rules:
   In Chat and per-run overrides, unset selects model-free execution.
-  none is not a model selection value. auto clears that parameter.
-  --compact-model requires an exact ref; it rejects default, unset, and
-  parameter-only values.
-  Quote multi-token values. Duplicate refs or parameters are rejected.
-  Supported reasoning levels depend on the selected model.
+  none is not a model selection value.
 
 Examples:
   Set a model with reasoning
@@ -538,8 +547,12 @@ Use 'too COMMAND --help' for command-specific options.
 - Removed the helper-command description/Usage/Options wrapper from successful
   topic pages. Single-option pages begin with the option declaration; the
   model page begins with its topic title and the relevant option forms.
-- Corrected undefined table-label styling: keys/parameters and descriptions
+- Corrected undefined table-label styling: definitions and descriptions
   now have separate semantic styles, reusing the existing CLI palette.
+- Replaced generic Rules sections with subject-specific organization: key
+  repetition under Keys, shared value forms under Values, and model notes
+  beside model grammar, parameters, or selection values. Default values are
+  key-specific and remain beside their keys rather than repeating a table.
 - Corrected long example commands wrapping inside two-column tables: topic
   examples now use full-width, explicitly continued shell commands.
 - Preserved the lifetime distinction: `default` explains runtime/session
