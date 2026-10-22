@@ -72,6 +72,7 @@ def acquire_agent_server(
     attach_only: bool = False,
     expected_launch_id: str | None = None,
     attachment_requirements: Mapping[str, object] | None = None,
+    bound: bool = False,
 ) -> Iterator[AgentServerRef | None]:
     """Acquire an executor using the placement's reuse and ownership policy."""
 
@@ -105,6 +106,8 @@ def acquire_agent_server(
                     required_driver=required_driver,
                     attach_only=attach_only,
                     attachment_requirements=attachment_requirements,
+                    bound=bound,
+                    expected_launch_id=expected_launch_id,
                 )
                 try:
                     selected_server = (
@@ -305,11 +308,13 @@ def _prepare_agent_server(
     required_driver: DriverName | None = None,
     attach_only: bool = False,
     attachment_requirements: Mapping[str, object] | None = None,
+    bound: bool = False,
+    expected_launch_id: str | None = None,
 ) -> AgentServerRef | sandbox_runtime.SandboxHandle | None:
     policy = placement_policy(layout.placement)
     entry = read_instance(layout.runtime_status, layout.instance) or {}
     managed = _managed_lifecycle(layout, entry.get("workload", {}))
-    if not policy.reuse_executor and not attach_only:
+    if not policy.reuse_executor and not attach_only and not bound:
         if not owns_preparation(layout, entry):
             raise AgentServerAcquisitionError(
                 "roaming execution requires a fresh instance owned by this caller; controls may attach to its live owner"
@@ -337,6 +342,11 @@ def _prepare_agent_server(
         from toolang.up.identity import verify_identity
 
         entry = read_instance(layout.runtime_status, layout.instance) or {}
+        if (
+            expected_launch_id is not None
+            and entry.get("launch_id") != expected_launch_id
+        ):
+            raise AgentServerAcquisitionError("selected execution owner was replaced")
         verify_identity(layout, entry.get("control", {}))
         attached = _attached_server(layout, status, requested=sandbox)
         from toolang.up.contract import bound_drivers, require_compatible
@@ -369,7 +379,23 @@ def _prepare_agent_server(
             "run has no healthy live execution owner; no server was started"
         )
 
-    layout = _prepare_source(layout, progress)
+    if bound:
+        current = read_instance(layout.runtime_status, layout.instance) or {}
+        if (
+            expected_launch_id is not None
+            and current.get("launch_id") != expected_launch_id
+        ):
+            raise AgentServerAcquisitionError("selected execution owner was replaced")
+        if not entry or status is None or status.status not in {"stopped", "failed"}:
+            raise AgentServerAcquisitionError(
+                "selected instance has no conclusively stopped owner"
+            )
+        if not layout.program.is_file():
+            raise AgentServerAcquisitionError(
+                "selected instance is missing its program; no replacement source was fetched"
+            )
+    else:
+        layout = _prepare_source(layout, progress)
 
     effective_drivers: ExecutionDrivers = (
         drivers

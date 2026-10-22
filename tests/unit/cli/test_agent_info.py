@@ -78,6 +78,7 @@ def test_running_info_uses_runtime_resources_without_loading_local_sources(
 ):
 
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("TOOLANG_ROOT", str(tmp_path))
     selector = "alice"
     global_args = ["--root", str(tmp_path)]
     layout = AgentLayout.resident(tmp_path, "alice")
@@ -94,9 +95,11 @@ def test_running_info_uses_runtime_resources_without_loading_local_sources(
         )
     elif placement == "visiting":
         selector, global_args = "gh:acme/alice", []
-        layout = AgentLayout(
-            root=tmp_path / "visiting", name="alice", placement="visiting"
-        )
+        layout = agent_sources.visiting_layout(selector, toolang_root=tmp_path)
+        from toolang.up.identity import visiting_home_guard
+
+        with visiting_home_guard(layout):
+            pass
         monkeypatch.setattr(
             agent_sources, "visiting_layout", lambda _, **kwargs: layout
         )
@@ -155,7 +158,7 @@ def test_running_info_uses_runtime_resources_without_loading_local_sources(
     assert "guest" in output.out
     assert "Drivers: chat,talk,chore" in output.out
     assert set(calls) == set(payloads)
-    assert not (layout.home / ".state").exists()
+    assert not layout.agent_state.exists()
 
     calls.clear()
     assert main([*arguments, "--catalog", "other.json"]) == 1

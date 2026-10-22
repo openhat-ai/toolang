@@ -1124,7 +1124,7 @@ def test_agent_scope_isolates_discovery_but_preserves_its_own_failures(
             target.write_text("not json")
             stack.callback(target.write_bytes, original)
         elif fault == "registry":
-            (tmp_path / ".runtime" / "instances" / "broken.json").write_text("invalid")
+            (tmp_path / ".runtime" / "active" / "broken.json").write_text("invalid")
         elif fault == "own_reference":
             reference = json.loads(own_registration.path.read_text())
             reference["status"] = str(bob.runtime_status)

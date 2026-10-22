@@ -32,7 +32,7 @@ def usage(period=3600):
 
 
 def binding(tmp_path, *, registered=False):
-    registration = tmp_path / ".runtime" / "instances" / "alice.json"
+    registration = tmp_path / ".runtime" / "active" / "alice.json"
     if registered:
         registration.parent.mkdir(parents=True, exist_ok=True)
         registration.write_text(

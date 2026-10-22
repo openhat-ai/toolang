@@ -159,15 +159,15 @@ def test_local_script_saves_only_to_an_explicit_destination(
     assert output.out == expected_stdout
     from toolang.up.instance import read_document
 
-    layout = select_roaming(source)
+    layout = select_roaming(source, toolang_root=toolang_root)
     runtime = read_document(layout.runtime_status)
     assert runtime is not None
     assert all(
         record["control"]["toolang_root"] == str(toolang_root)
         for record in runtime["instances"].values()
     )
-    assert not tuple((toolang_root / ".runtime" / "instances").glob("*.json"))
-    assert not (layout.root / ".runtime" / "instances").exists()
+    assert not tuple((toolang_root / ".runtime" / "active").glob("*.json"))
+    assert not (layout.root / ".runtime" / "active").exists()
     if save_mode == "missing-parent":
         assert "result destination parent does not exist" in output.err
         assert "▪︎ run_" in output.err

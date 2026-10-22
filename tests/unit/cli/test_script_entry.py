@@ -115,7 +115,7 @@ def test_init_without_directory_only_shows_help(
     assert f"Usage: {executable} init [OPTIONS] <DIR>" in output
     assert "* DIR" in output
     assert "[default: .]" not in output
-    assert "directory to set up for Toolang" in output
+    assert "Directory to set up for Toolang" in output
     assert output.endswith("Show this message and exit")
 
 
@@ -544,10 +544,10 @@ def test_static_run_help(executable, arguments, monkeypatch, capsys):
     output = " ".join(capsys.readouterr().out.split())
     assert f"{executable} run [OPTIONS] <FILE> [RUNNABLE] [ARGS...]" in output
     assert "* FILE" in output
-    assert "path to a .too file" in output
+    assert "Path to a .too file" in output
     assert "RUNNABLE" in output
     assert "Execute a .too file." in output
-    assert "ARGS arguments for the selected agic or flow" in output
+    assert "ARGS Arguments for the selected agic or flow" in output
     assert "script" not in output.lower()
     assert "NAME=VALUE" not in output
     assert "local" not in output.lower()

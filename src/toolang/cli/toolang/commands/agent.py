@@ -14,7 +14,6 @@ import typer
 from toolang.cli.common.agent_argument import AgentArgument, AgentNameType
 from typer._click.exceptions import ClickException
 
-from toolang.cli.common.parameters import InstanceOption
 from toolang.cli.common.parameters import TextType
 
 from toolang.catalog.chore import AuthoredChores
@@ -61,7 +60,7 @@ def new_agent(
         typer.Argument(
             metavar="NAME",
             click_type=AgentNameType(),
-            help="new agent name",
+            help="New agent name",
         ),
     ],
 ) -> None:
@@ -83,7 +82,7 @@ def clone_agent(
         typer.Argument(
             metavar="SOURCE",
             click_type=TextType(),
-            help="agent name, ref or url",
+            help="Agent name, ref or URL",
         ),
     ],
     target: Annotated[
@@ -91,7 +90,7 @@ def clone_agent(
         typer.Argument(
             metavar="NAME",
             click_type=AgentNameType(),
-            help="new agent name; required for resident agents",
+            help="New agent name; required for resident agents",
         ),
     ] = None,
 ) -> None:
@@ -136,9 +135,7 @@ def remove_agent(
     ctx: typer.Context,
     agent: Annotated[
         str,
-        typer.Argument(
-            metavar="NAME", click_type=AgentNameType(), help="resident agent name"
-        ),
+        typer.Argument(metavar="NAME", click_type=AgentNameType(), help="Agent name"),
     ],
 ) -> None:
     from toolang.up import sandbox as sandbox_runtime
@@ -184,7 +181,6 @@ def info_agent(
     ctx: typer.Context,
     agent: Annotated[str, AgentArgument("home")],
     model_catalog: ModelCatalogOption = None,
-    instance: InstanceOption = None,
 ) -> None:
     agent_name = require_runtime_agent(ctx, agent)
     layout = select_agent_instance(ctx)
@@ -231,8 +227,30 @@ def info_agent(
     message = runtime_value(status.message)
     if status.status not in {"running", "stopped"} and message != "-":
         status_value = f"{status_value}: {message}"
+    import shlex
+
+    selector = (
+        f"{layout.source_path}@{layout.instance_id}"
+        if layout.placement == "roaming"
+        else layout.instance_name
+    )
     rows = [
+        ("Toolang root", str(context_root(ctx).expanduser().resolve())),
+        ("Agent root", str(layout.root)),
         ("Home", shorten_home_path(layout.home)),
+        ("Agent", layout.instance_name),
+        (
+            "Command",
+            shlex.join(
+                [
+                    "too",
+                    "--root",
+                    str(context_root(ctx).expanduser().resolve()),
+                    selector,
+                    "info",
+                ]
+            ),
+        ),
         *resources,
         ("Status", status_value),
     ]

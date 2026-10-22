@@ -66,11 +66,12 @@ def test_visiting_layout_is_stable_and_root_and_source_specific(
 
     assert first == repeated
     assert first.placement == "visiting"
-    assert first.root.parent == isolated_visiting_root
-    assert first.source_id is not None and len(first.source_id) == 16
-    assert first.root.name == f"researcher@v{first.source_id}"
+    assert first.root.parent.parent == isolated_visiting_root
+    assert first.source_id is not None and len(first.source_id) == 10
+    assert first.root.name == f"h{first.source_id}"
     assert first.root != other.root
     assert first.root != other_root.root
+    assert first.instance_id == other_root.instance_id
 
 
 @pytest.mark.parametrize("name_length", [1, 64])
@@ -85,8 +86,9 @@ def test_visiting_root_preserves_bounded_agent_names(
     (tmp_path / layout.root.name).mkdir()
 
     assert layout.name == name
-    assert layout.root.name.endswith(f"@v{layout.source_id}")
-    assert layout.source_id is not None and len(layout.source_id) == 16
+    assert layout.root.name == f"h{layout.source_id}"
+    assert layout.home.name == name
+    assert layout.source_id is not None and len(layout.source_id) == 10
 
 
 def test_roaming_layout_is_local_to_source(tmp_path: Path) -> None:

@@ -28,7 +28,7 @@ def fmt(
         typer.Argument(
             metavar="PATH",
             click_type=PathType(),
-            help="file or directory paths to format",
+            help="File or directory paths to format",
         ),
     ] = None,
     check: Annotated[
@@ -290,7 +290,7 @@ def parse_program(
         typer.Argument(
             metavar="PATH",
             click_type=PathType(),
-            help=".too file or - for stdin; --check also accepts files and directories",
+            help="Path to a .too file or - for stdin; --check also accepts directories",
         ),
     ],
     check: Annotated[
@@ -386,7 +386,7 @@ def highlight_source(
         typer.Argument(
             metavar="FILE",
             click_type=PathType(),
-            help="path to a .too file, or - for stdin",
+            help="Path to a .too file, or - for stdin",
         ),
     ],
     color: ColorOption = None,

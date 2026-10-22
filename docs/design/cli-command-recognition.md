@@ -1,7 +1,8 @@
 # CLI command recognition and agent parameters
 
-The grammar and native leaf declarations are implemented. Decorated addresses,
-expanded home lookup, and bound execution remain the next increment.
+The grammar, native leaf declarations, instance selectors, area layout, and bound
+execution are implemented. Expanded `top`/`chore` scope and home-based `cd` remain
+separate follow-up surfaces.
 [CLI](cli.md) describes current behavior;
 [agent addresses](agent-addresses.md) defines home lookup and runtime ownership.
 
@@ -45,13 +46,13 @@ Extend the existing `AgentContract`, `AgentArgument`, `AgentParameter`, and
 | Property | Meaning |
 | --- | --- |
 | Role | `source`, `home`, or `execute`; determines lookup. |
-| Forms | Accepted `name`, `path`, `ref`, `url`, and explicit `address` forms. |
+| Forms | Accepted name, path, ref, URL, and explicit instance forms. |
 | Placements | Accepted resident, visiting, and roaming targets. |
 | Requiredness | Whether omitted selection uses root scope; represented by the native parameter default/required value. |
 | Runtime requirement | Whether the action requires a live owner and a particular driver. |
 
-All agent-prefix parameters use `AGENT`; descriptions explain accepted forms,
-address semantics, and runtime requirements. Generate parameter types, concise
+All agent-prefix parameters use `AGENT`; descriptions list accepted input forms
+and indicate live targets with `Running`. Generate parameter types, concise
 descriptions, completion eligibility, and lazy routing metadata from the same
 declaration. Command callbacks declare their native argument through
 `AgentArgument`; declaration checks reject inconsistent roles,
@@ -93,32 +94,39 @@ too AGENT chore run [OPTIONS] CHORE
 
 ## Command contracts and descriptions
 
-The parameter description is a short phrase. Scope/state qualifiers become normal
-wording rather than parenthesized tags. Root scope never means an implicit
-`default` agent. Record binding and address aliases follow the address design.
+The parameter description is a short sentence-case phrase. Use `instance` for the
+user-facing home selection; keep placement names, internal address terminology,
+and driver requirements in validation rather than help. Root scope never means an
+implicit `default` agent. Record binding follows the address design.
 
 | Commands | Agent parameter description | Effect |
 | --- | --- | --- |
-| `new`, `remove` | `resident agent name` | Create an unused resident name or remove that resident agent; ordinary command operands. |
-| `clone` | `agent name, ref or url` | Clone authored data into a new resident name; ordinary source/target operands. |
-| `workspace add/remove` | `agent name or path` | Edit resident/project configuration; no visiting or decorated operands. |
-| `{psyche,skill,service,prompt} new/edit/delete/add/remove`, `chore new/edit/delete` | `resident agent name` | Edit resident authored data; omitted cap selection uses root scope. |
-| `chat` | `agent name, path, ref, url or address` | New local-source execution allocates a home; address/Thread execution stays bound. |
-| `start`, `serve` | `resident or visiting agent by name, ref, url or address` | Start the source or existing home; roaming hosting is unsupported. |
-| `stop` | `resident or visiting agent address` | Stop the hosted runtime. |
-| `info`, `inspect`, `top`, `cd` | `agent address` | Read/observe/open existing storage; omitted `top`/`cd` selection uses root scope. |
-| `steer`, `cancel` | `running agent address` | Control an active Run; keep runtime lifetime with its owner. |
-| `rerun`, `fork`, `rewind` | `agent address` | Continue/edit records in that home; `--chat` preserves the binding. |
-| `models`, `providers`, `tools`, `caps`, cap-kind `list`, `workspace list` | `agent name, path, ref or url` | Inspect configured sources; reject decorated addresses. Omission uses root configuration except `workspace list`, which requires selection. |
-| `chore list` | `agent address` | Read saved definitions/history; live scheduling data is unavailable offline. |
-| `chore run/cancel` | `running agent address with the chore driver` | Control its scheduler without enabling a missing driver. |
+| `new` | `New agent name` | Create an unused resident name; ordinary command operand. |
+| `remove` | `Agent name` | Remove a resident agent; ordinary command operand. |
+| `clone` | `Agent name, ref or URL` | Clone authored data into a new resident name; ordinary source/target operands. |
+| `workspace list/add/remove` | `Agent name or path` | Inspect/edit resident or project configuration; reject visiting and decorated operands. |
+| `{psyche,skill,service,prompt} new/edit/delete/add/remove`, `chore new/edit/delete` | `Agent name` | Edit resident authored data; omitted cap selection uses root scope. |
+| `chat` | `Agent name, path, ref, URL or instance` | Source-only roaming execution allocates a home; instance/Thread execution stays bound. |
+| `start`, `serve` | `Agent name, ref, URL or instance` | Start resident/visiting sources or their existing homes; reject roaming. |
+| `stop` | `Agent name, ref, URL or instance` | Stop the resident/visiting runtime; reject roaming instances. |
+| `info`, `inspect` | `Agent name, path, ref, URL or instance` | Read existing storage without source preparation. |
+| `top` | `Agent name` | Observe active runtimes; omission uses root scope. |
+| `cd` | `Agent name, path, ref or URL` | Open the source environment; omission uses root scope. |
+| `steer`, `cancel` | `Running agent name, path, ref, URL or instance` | Control an active Run; keep runtime lifetime with its owner. |
+| `rerun`, `fork`, `rewind` | `Agent name, path, ref, URL or instance` | Continue/edit records in that home; `--chat` preserves the binding. |
+| `models`, `providers`, `tools`, `caps`, cap-kind `list` | `Agent name, path, ref or URL` | Inspect configured sources; reject decorated addresses. Omission uses root configuration. |
+| `chore list` | `Agent name` | Read resident definitions and scheduling state. |
+| `chore run/cancel` | `Running agent name` | Control a live resident chore driver without enabling a missing driver. |
+
+Expanded `top`/`chore` scope and home-based `cd` remain follow-ups. Instance
+selection is part of `AGENT`; no instance flag remains.
 
 In resource commands, `name` refers to configuration even when its resident agent
 is running. Source queries may prepare inputs/caches but never allocate a retained
 roaming root. `info` supplies live resource summaries or retained offline data;
 missing offline fields are unavailable, without rebuilding from current sources.
 
-`run FILE` uses `path to a .too file`. `init`, `fmt`, `parse`, and `highlight`
+`run FILE` uses `Path to a .too file`. `init`, `fmt`, `parse`, and `highlight`
 retain directory/file/stdin operands. `list`, plugin inventories, `hub`, `talk`,
 and `convo` have no agent selector; conversation shorthands belong to hub messaging.
 

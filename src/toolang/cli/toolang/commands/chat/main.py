@@ -39,6 +39,7 @@ from toolang.execution.types import (
 from toolang.cli.common.execution_progress.formatting import output_parts
 from toolang.up.types import AgentServerRef
 from toolang.cli.common.context import (
+    cli_context,
     context_layout,
     load_runtime_environ,
     resolve_model_catalog_option,
@@ -200,6 +201,11 @@ def _chat_runtime(
 
     drivers = user_call(parse_drivers, driver) if driver is not None else None
     layout = context_layout(ctx)
+    bound_options: dict[str, Any] = (
+        {"bound": True, "expected_launch_id": cli_context(ctx).launch_id}
+        if cli_context(ctx).instance_selected
+        else {}
+    )
     workspaces = user_call(
         resolve_workspaces,
         layout,
@@ -222,6 +228,7 @@ def _chat_runtime(
                 model_catalog=resolve_model_catalog_option(model_catalog),
                 ui_base_url=ui_base_url(),
                 compact_override=compact_override,
+                **bound_options,
                 **(
                     {"workspace_additions": workspaces.additions}
                     if workspaces.additions
@@ -668,6 +675,11 @@ def _target_thread_id(ctx: typer.Context, target: str | None) -> str | None:
         if run is None:
             raise ClickException(f"run not found: {target}")
         return run.thread_id
+    with open_execution(ctx, required=True) as resources:
+        if resources is None:  # pragma: no cover
+            raise RuntimeError("execution resources were not opened")
+        if resources.store.get_thread(thread_id=target) is None:
+            raise ClickException(f"thread not found in selected instance: {target}")
     return target
 
 

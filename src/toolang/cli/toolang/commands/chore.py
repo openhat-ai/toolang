@@ -38,13 +38,13 @@ from toolang.driver.chore.schemas import ChoreInfo
 ChoreRef = Annotated[
     str,
     typer.Argument(
-        click_type=TextType(), help="chore name, ref, or ID", metavar="CHORE"
+        click_type=TextType(), help="Chore name, ref, or ID", metavar="CHORE"
     ),
 ]
 ChoreName = Annotated[
     str | None,
     typer.Argument(
-        metavar="NAME", help="chore filename without .md; generated when omitted"
+        metavar="NAME", help="Chore filename without .md; generated when omitted"
     ),
 ]
 

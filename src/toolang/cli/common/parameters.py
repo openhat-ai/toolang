@@ -78,26 +78,3 @@ DriverOption = Annotated[
         help="Enable only these drivers, replacing defaults: chat,talk,chore or none",
     ),
 ]
-
-
-def _selected_instance(ctx: typer.Context, value: str | None) -> str | None:
-    if value is not None:
-        from toolang.common.instance_ids import decode_instance_id
-
-        try:
-            decode_instance_id(value)
-        except ValueError as exc:
-            raise typer.BadParameter(str(exc)) from exc
-    return value
-
-
-InstanceOption = Annotated[
-    str | None,
-    typer.Option(
-        "--instance",
-        "-i",
-        metavar="INSTANCE",
-        callback=_selected_instance,
-        help="Select a retained instance ID; default: latest startup",
-    ),
-]

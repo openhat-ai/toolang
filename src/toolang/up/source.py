@@ -92,9 +92,7 @@ def parse_agent_target(text: str) -> AgentTarget:
             text=source.render(), source=source, declared_ref=text.strip()
         )
     _require_too_path(source.path, text)
-    identity = (
-        source.render() if text.strip().startswith(("gh:", "github:")) else text.strip()
-    )
+    identity = source.render() if isinstance(source, GitHubRef) else text.strip()
     return AgentTarget(text=identity, source=source, declared_ref=text.strip())
 
 

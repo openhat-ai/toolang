@@ -343,7 +343,7 @@ def test_foreground_serve_is_one_process_and_kill_preserves_restart_settings(
             assert entry["workload"]["pid"] == workload.pid
             assert not psutil.Process(workload.pid).children()
             assert not layout.previous_sandbox_state.exists()
-            reference = next((layout.root / ".runtime" / "instances").glob("*.json"))
+            reference = next((layout.root / ".runtime" / "active").glob("*.json"))
             assert set(json.loads(reference.read_text())) == {
                 "version",
                 "status",

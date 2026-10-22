@@ -136,6 +136,28 @@ def test_nonresident_cap_mutations_remain_rejected(
     assert not (tmp_path / "toolang.toml").exists()
 
 
+@pytest.mark.parametrize("selector", ["gh:example/lex", "https://example.com/lex.too"])
+@pytest.mark.parametrize("operation", ["list", "add", "remove"])
+def test_visiting_workspace_commands_reject_before_preparation(
+    selector, operation, tmp_path, monkeypatch, capsys
+):
+    monkeypatch.setenv("TOOLANG_ROOT", str(tmp_path / "root"))
+    monkeypatch.setattr(
+        agent_sources,
+        "resolve_visiting_layout",
+        lambda *_args, **_kwargs: pytest.fail("must not fetch a visiting source"),
+    )
+    arguments = {
+        "list": [],
+        "add": [str(tmp_path)],
+        "remove": ["example"],
+    }[operation]
+
+    assert _call_main([selector, "workspace", operation, *arguments]) == 2
+    assert "remote agents are not supported" in capsys.readouterr().err
+    assert not tuple(tmp_path.iterdir())
+
+
 def test_lazy_command_completes_options_using_typer_parameters() -> None:
     group = typer.main.get_command(cli.app)
     assert isinstance(group, TyperGroup)
@@ -976,13 +998,9 @@ def test_visiting_serve_prepares_with_the_acquired_source_receipt(
 
 
 @pytest.mark.parametrize("placement", ["visiting", "roaming"])
-@pytest.mark.parametrize("option", ["-i", "--instance"])
-def test_instance_selector_takes_the_complete_id_while_top_displays_its_name(
-    tmp_path, placement, option
-):
+def test_instance_selector_and_top_use_the_same_complete_name(tmp_path, placement):
+    from toolang.up.addresses import parse_address
     from toolang.up.identity import allocate_roaming
-    from toolang.cli.common.parameters import _selected_instance
-    from typer._click.exceptions import BadParameter
     from toolang.cli.common.top_view import instance_name
     from toolang.up.schemas import SourceActivity
 
@@ -992,9 +1010,9 @@ def test_instance_selector_takes_the_complete_id_while_top_displays_its_name(
         else allocate_roaming(tmp_path / "alice.too", toolang_root=tmp_path)
     )
     assert layout.instance_id is not None
-    assert len(layout.instance_id) == 17 and layout.instance_id[0] == placement[0]
-    ctx = typer.Context(typer.main.get_command(cli.app))
-    assert _selected_instance(ctx, layout.instance_id) == layout.instance_id
+    assert len(layout.instance_id) == (11 if placement == "visiting" else 18)
+    address = parse_address(layout.instance_name)
+    assert address is not None and address.instance_id == layout.instance_id
     assert (
         instance_name(
             SourceActivity(
@@ -1005,10 +1023,6 @@ def test_instance_selector_takes_the_complete_id_while_top_displays_its_name(
         )
         == layout.instance_name
     )
-    for invalid in (
-        layout.instance_name,
-        layout.instance_id[1:],
-        layout.instance_id.upper(),
-    ):
-        with pytest.raises(BadParameter):
-            _selected_instance(ctx, invalid)
+    for invalid in (layout.instance_id[1:], layout.instance_id.upper()):
+        with pytest.raises(ValueError):
+            parse_address(f"{layout.name}@{invalid}")

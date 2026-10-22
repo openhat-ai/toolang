@@ -242,7 +242,7 @@ def test_docker_foreground_nonresident_uses_selected_root_and_cleans_reference(
             assert entry is not None and entry["control"]["placement"] == placement
             assert entry["control"]["toolang_root"] == str(root)
             assert entry["control"]["source_id"] == layout.source_id
-            references = tuple((root / ".runtime" / "instances").glob("*.json"))
+            references = tuple((root / ".runtime" / "active").glob("*.json"))
             assert len(references) == 1
             assert references[0].name == f"{layout.instance_name}.json"
             assert json.loads(references[0].read_text())["status"] == str(
@@ -260,7 +260,7 @@ def test_docker_foreground_nonresident_uses_selected_root_and_cleans_reference(
             worker.send_signal(signal.SIGINT)
             assert worker.wait(timeout=30) == 130
             assert SandboxState.load(layout.runtime_status) is None
-            assert not tuple((root / ".runtime" / "instances").glob("*.json"))
+            assert not tuple((root / ".runtime" / "active").glob("*.json"))
             assert not (layout.root_runtime / "instances").exists()
             assert not layout.previous_sandbox_state.exists()
             assert layout.runtime_status.exists() and layout.run_store.exists()

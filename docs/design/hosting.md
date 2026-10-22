@@ -30,7 +30,7 @@ The CLI preserves the interpreter's process name and command-line arguments.
 Terminal conversation titles continue to use OSC independently of process names.
 
 Server discovery uses lightweight references under the Toolang root's
-`.runtime/instances/`, pointing to the agent's authoritative
+`.runtime/active/`, pointing to the agent's authoritative
 `agents/<agent>/.runtime/status.json`. Host references validate PID and creation time;
 container references use adapter-owned instance IDs. `info` shows the referenced
 PID or instance even during startup and ignores status reports from another

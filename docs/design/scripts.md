@@ -37,9 +37,11 @@ then the bundled catalog. Within a layer, `plugin.model_catalog.models_dev.path`
 precedes `toolang.catalog.json`. A project file named `catalog.json` is ignored.
 Resident agents retain their root/home `catalog.json` convention.
 
-Each invocation owns `<srcdir>/.toolang/<agent>@<instance_id>/`; agent home is
+Each new invocation owns `<srcdir>/.toolang/<area_id>/<site_id>/`; agent home is
 `<agent_root>/agents/<agent>`. Status, stores, State, logs, and tool rooms are
 isolated. Published roots survive exit/failure; runtime cleanup never deletes them.
+The area identifies the selected Toolang root; its `root.json` retains the full
+root identity. Explicit instance or Thread continuation reuses its existing home.
 Roaming scripts use process/container environment variables; they do not load
 project `.env` files or resident-root dotenv files. Source-owned edit guards remain shared.
 

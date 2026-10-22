@@ -68,18 +68,20 @@ accept an explicit global root override.
 
 ## Help vocabulary
 
-Use uppercase placeholders for user inputs, with lowercase noun phrases in
-built-in argument descriptions. Options use sentence case. Preserve authored
-descriptions, literal choices, and named-input keys. Put `AGENT` first in the
-argument panel, followed by business operands. Describe accepted forms and
-meaningful omission behavior; do not use `local` as an agent placement label.
+Use uppercase placeholders and sentence case for built-in argument and option
+descriptions. Short phrases omit a final period; acronyms such as URL and ID stay
+uppercase. Preserve authored descriptions, literal choices, and named-input keys.
+Put `AGENT` first in the argument panel, followed by business operands. List input
+forms and meaningful omission behavior; keep placement names, the internal address
+term, and driver requirements out of argument descriptions. Validate those limits
+when invoking the command.
 
 | Placeholder | Meaning |
 | --- | --- |
-| `AGENT` | Agent selector; its description states source/address forms, placement, and runtime requirements. |
+| `AGENT` | Agent name, path, ref, URL, or instance, as accepted by the command; `Running` indicates a live target. |
 | `NAME` | Resource name, including a clone's new agent name. |
 | `FILE`, `DIR`, `PATH` | File, directory, or either; describe `-` when stdin is accepted. |
-| `SOURCE` | Authored source; describe whether it accepts an agent name, ref, or url. |
+| `SOURCE` | Authored source; describe whether it accepts an agent name, ref, or URL. |
 | `RUN`, `THREAD`, `CHORE`, `CONVO` | Domain target; describe accepted names/IDs and what a thread ID selects. |
 | `QUERY` | Selection expression; distinguish TQ filters from inspection record queries in the description and examples. |
 | `RUNNABLE`, `ARGS`, `MESSAGE` | Agic/flow, its arguments, or message text. |
@@ -109,7 +111,8 @@ requests a file or `-` for stdout. Quiet mode suppresses preparation/execution
 progress. Non-TTY progress is plain append-only text. [Execution presentation](execution-presentation.md)
 owns rendering and [Scripts](scripts.md) owns temporary grants and path origins.
 
-Each roaming script or Chat launch creates a fresh root/executor. Roaming does
+Each source-only roaming script or Chat launch creates a fresh root/executor.
+Instance and Thread continuation reuse the selected home. Roaming does
 not support `serve`, `start`, or `stop`. Host scripts expose the shared Agent API
 on the workload's event loop; guest workloads
 use existing sandbox serving. Resources close when the owning foreground caller
@@ -117,22 +120,24 @@ exits. [Hosting](hosting.md) owns startup compatibility and recovery.
 
 ### Instance selection
 
-The native operand grammar is implemented. The new decorated addresses and
-area layout in [agent addresses](agent-addresses.md) are the next increment;
-the following instance behavior remains current until that increment lands.
+Use `name@h...`, `name@s...`, or `file.too@s...` as `AGENT`; require complete IDs.
+Remote schemes retain their own revisions and URL `@` characters. Source-only
+resource commands reject instance operands. There is no `--instance`/`-i` option.
 
-- Existing targets accept `--instance` / `-i` on history/control commands.
-- `-i I` / `--instance I` takes the complete 17-character ID, including `v`/`r`.
-  Top displays `A@I`; selectors reject `A@I`, markerless bodies and noncanonical
-  spellings. Residents need no extra ID.
-- Default roaming selection is the latest startup request, including failure/exit,
-  derived from retained local metadata. Completion time and mtime never reorder it.
+- Resident names and visiting instances resolve by path in the selected Toolang
+  root. Short roaming names use only that root's active registry; source-path
+  selectors work offline without source contents.
+- A bare roaming path selects its last-created retained home. Completion time,
+  restart time, and mtime never reorder it. Each Toolang root has its own area.
 - `info`/`inspect` calculate agent roots without global references or preparation;
   `info` uses saved resource summaries/State. Source contents may be unavailable.
 - A command pins its root/identity/generation once; controls attach only to that
   live owner. Offline fork/rewind edit history under verified stopped ownership.
-- Roaming rerun and explicit Chat continuation snapshot into fresh instances;
-  `-i` cannot revive a retained root. See [Execution](execution.md#isolated-replay).
+- Instance and Thread/Run selection bind the home for Chat, rerun, fork, rewind,
+  and `--chat`. Multiple matching homes require an explicit instance. Live owners
+  attach under compatibility checks; stopped owners restart in the same home.
+
+[agent addresses](agent-addresses.md) defines identity, layout, and ownership.
 
 
 ## Resource and plugin inspection

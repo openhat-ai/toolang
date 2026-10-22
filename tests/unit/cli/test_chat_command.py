@@ -27,7 +27,9 @@ from toolang.base.types.model import (
     Reasoning,
 )
 from toolang.base.types.policy import RunPolicy
-from toolang.cli.common.context import context_layout
+from toolang.cli.common.context import CliContext, context_layout
+from typer import Context
+from typer.core import TyperCommand
 from toolang.cli.common.terminal_surfaces import TerminalSurfaces
 from toolang.cli.toolang.commands.chat import main as chat
 from toolang.cli.toolang.commands.chat.base import (
@@ -62,6 +64,15 @@ def chat_layout(tmp_path: Path) -> AgentLayout:
     layout.home.mkdir(parents=True)
     (layout.home / "agent.too").write_text("agic chat:\n  Reply directly.\n")
     return layout
+
+
+def _runtime_context(layout: AgentLayout) -> Context:
+    return Context(
+        TyperCommand("chat"),
+        obj=CliContext(
+            layout.toolang_root or layout.root, agent=layout.name, layout=layout
+        ),
+    )
 
 
 def _chat_history(layout: AgentLayout) -> None:
@@ -212,6 +223,10 @@ def test_chat_latest_uses_selected_history_for_agent_sessions(
     elif placement == "visiting":
         selector = "gh:owner/alice"
         layout = agent_sources.visiting_layout(selector, toolang_root=chat_layout.root)
+        from toolang.up.identity import visiting_home_guard
+
+        with visiting_home_guard(layout):
+            pass
         monkeypatch.setattr(
             agent_sources, "resolve_visiting_layout", lambda *_args, **_kwargs: layout
         )
@@ -233,13 +248,7 @@ def test_chat_latest_uses_selected_history_for_agent_sessions(
 
     @contextmanager
     def acquire(selected, **_kwargs):
-        if placement == "roaming":
-            assert (
-                selected.root != layout.root
-                and selected.source_path == source.resolve()
-            )
-        else:
-            assert selected == layout
+        assert selected == layout
         yield AgentServerRef(sandbox="host", endpoint="http://localhost:7001")
 
     def open_tui(ctx, **kwargs):
@@ -257,7 +266,7 @@ def test_chat_latest_uses_selected_history_for_agent_sessions(
     assert too_main([*prefix, selector, "chat", "--thread"]) == 0
     assert captured == {
         "target": "http://localhost:7001",
-        "layout": captured["layout"] if placement == "roaming" else layout,
+        "layout": layout,
         "thread": "chat_existing",
         "closed": True,
     }
@@ -974,7 +983,7 @@ def test_chat_runtime_uses_remote_execution_without_local_environment(
         ),
     )
     with chat._chat_runtime(
-        object(),  # type: ignore[arg-type]
+        _runtime_context(layout),
         sandbox="docker",
     ) as client:
         assert isinstance(client, Session)
@@ -1012,7 +1021,7 @@ def test_chat_runtime_does_not_fall_back_after_remote_health_failure(
 
     with pytest.raises(ClickException, match="health failed"):
         with chat._chat_runtime(
-            object(),  # type: ignore[arg-type]
+            _runtime_context(layout),
             sandbox=None,
         ):
             raise AssertionError("failed remote must not open Chat")
@@ -1043,7 +1052,7 @@ def test_chat_lease_loss_reports_the_accepted_run_after_client_cleanup(
     monkeypatch.setattr(chat, "acquire_agent_server", acquire)
     monkeypatch.setattr(chat, "RemoteChatSession", Session)
     with pytest.raises(ClickException, match="inspect accepted run run_accepted"):
-        with chat._chat_runtime(object(), sandbox=None):  # type: ignore[arg-type]
+        with chat._chat_runtime(_runtime_context(layout), sandbox=None):
             pass
     assert closed == [True]
 
@@ -1126,7 +1135,7 @@ def test_chat_runtime_forwards_dev_when_acquiring_a_guest(
     monkeypatch.setattr(chat, "RemoteChatSession", Session)
 
     with chat._chat_runtime(
-        object(),  # type: ignore[arg-type]
+        _runtime_context(layout),
         sandbox="docker",
         dev=development,
     ) as client:
@@ -1166,7 +1175,7 @@ def test_chat_runtime_exits_acquisition_context_after_initialization_failure(
 
     with pytest.raises(ClickException, match="initialization failed"):
         with chat._chat_runtime(
-            object(),  # type: ignore[arg-type]
+            _runtime_context(layout),
             sandbox="docker",
         ):
             raise AssertionError("failed remote must not open Chat")

@@ -72,7 +72,7 @@ def test_full_visiting_id_collision_fails_before_cached_program_or_history_chang
     tmp_path, monkeypatch
 ):
     monkeypatch.setattr(
-        "toolang.common.layout.visiting_instance_id", lambda *_: "v" + "0" * 16
+        "toolang.common.layout.visiting_instance_id", lambda *_: "h" + "0" * 10
     )
     first = materialize_visiting_program(
         HttpRef("https://one.example/alice.too"), "original", toolang_root=tmp_path
@@ -146,7 +146,7 @@ def test_visiting_paths_reject_symlinks_without_touching_the_target(
     if component == "parent":
         isolated_visiting_root.symlink_to(peer, target_is_directory=True)
     elif component == "root":
-        isolated_visiting_root.mkdir(mode=0o700)
+        layout.root.parent.mkdir(mode=0o700, parents=True)
         layout.root.symlink_to(peer, target_is_directory=True)
     else:
         with visiting_home_guard(layout):

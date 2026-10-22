@@ -88,7 +88,7 @@ def runnable_usage(parameters: Iterable[CliParameter]) -> list[str]:
 def _argument(parameter: Parameter, *, input_help: str | None = None) -> TyperArgument:
     primary = parameter.name == "_"
     doc = (parameter.doc or "").strip()
-    role = "primary" if primary else "named"
+    role = "Primary" if primary else "Named"
     help_text = doc or f"{role} input ({parameter.type_name or 'Part[]'})"
     if primary and input_help:
         separator = " " if doc else "; "

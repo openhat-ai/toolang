@@ -21,10 +21,10 @@ Deliver in independently reviewable increments:
 Each implementation PR names its increment and completed acceptance scenarios;
 subsequent increments follow the same target contract without temporary aliases.
 
-Increment 1 implements prefix-only grammar, native leaf declarations, group
-propagation, generated descriptions, and lexical completion. Existing instance
-flags and lookup behavior remain until increment 2; `cd` retains source preparation,
-and `top`/`chore` retain resident scope until their home bindings are expanded.
+Native grammar, leaf declarations, descriptions, instance identities/layout,
+active lookup, and bound continuation are implemented. Instance selection uses
+`AGENT` with no `--instance/-i` compatibility. `cd` retains source preparation,
+and `top`/`chore` retain resident scope pending their expanded home views.
 
 ## Typical cases
 
@@ -78,6 +78,11 @@ Acceptance scenarios and pass conditions:
 - Source inspection: resource commands reject decorated addresses and keep their
   configuration view while running. Source inspection/workspace edits do not
   advance home selection; unavailable offline data is not presented as live state.
+- Workspace scope: list/add/remove accept resident and project sources; visiting
+  refs and URLs fail before acquisition or configuration changes.
+- Help wording: built-in argument descriptions use sentence case and uppercase
+  URL/ID, list accepted input forms, and keep placement/driver constraints in
+  validation. Authored descriptions remain unchanged.
 
 Definition checks: verify links, examples, field calculations, and `git diff --check`.
 Implementation checks: default repository verification, acceptance tests, and a

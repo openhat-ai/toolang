@@ -54,24 +54,22 @@ unsupported schemas remain unchanged. Writable opens still reject adjacent legac
 schema 63. See [terminal usage and cost records](#terminal-usage-and-cost-records)
 for captured Report fields.
 
-## Isolated replay
+## Bound continuation
 
-- Roaming rerun seeds a fresh instance through a complete SQLite backup, preserving
-  typed/content references, thread views, allocator high-water marks, and immutable
-  State. Run/thread selectors and control heads resolve within the sealed snapshot.
-  Current project inputs/grants govern new execution.
+- Chat, rerun, and `fork/rewind --chat` keep the selected home. A roaming Thread/Run
+  reference searches only its source's retained roots within the selected Toolang
+  root; ambiguous records require an explicit instance selector.
 - Imported Runs retain original ownership across repeated replay. They remain
   inspectable, but supply no destination live activity, controls, events, usage,
   completions, or archive totals. Mutable workspaces/tools and `stats.db` are not copied.
   New owners discard copied chore checkpoints; imported Talk receipts cannot
   drive message handling or advance Hub cursors.
-- Replay provenance and accepted destination Run are linked atomically by request ID.
-  Incomplete seeds cannot execute or seed another instance; failure retains source
-  and destination roots for inspection.
+- Historical imports retain replay provenance and request IDs. Incomplete seeds
+  cannot execute; continuation does not create another snapshot or home.
 - Offline fork/rewind uses guarded `ThreadManager` transactions after native/sandbox
   death checks; missing global registration alone is insufficient.
-- `fork --chat` / `rewind --chat` commits the edit before fresh roaming continuation;
-  Chat failure cannot undo it. Resident/visiting retain stable homes.
+- `fork --chat` / `rewind --chat` commits the edit before Chat in that home;
+  Chat failure cannot undo it. [Hosting](hosting.md) owns executor lifetimes.
 
 
 

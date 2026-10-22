@@ -31,10 +31,11 @@ def open_execution(
     *,
     required: bool = False,
     writable: bool = False,
+    record: str | None = None,
 ) -> Iterator[ExecutionResources | None]:
     """Open one agent's execution store in the requested access mode."""
 
-    layout = select_agent_instance(ctx)
+    layout = select_agent_instance(ctx, record=record)
     if not layout.run_store.is_file():
         if required:
             raise ClickException(f"execution history not found: {layout.name}")

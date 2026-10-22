@@ -28,7 +28,7 @@ class _RulesCommand(OptionalValueCommand, CliCommand):
 
 ConversationArgument = Annotated[
     str,
-    typer.Argument(metavar="CONVO", help="conversation ID starting with dm_ or gc_"),
+    typer.Argument(metavar="CONVO", help="Conversation ID starting with dm_ or gc_"),
 ]
 
 
@@ -91,7 +91,7 @@ def create(
     ctx: typer.Context,
     name: Annotated[
         str | None,
-        typer.Argument(metavar="NAME", help="group name, 1–128 characters"),
+        typer.Argument(metavar="NAME", help="Group name, 1–128 characters"),
     ] = None,
 ) -> None:
     """Create a group conversation"""

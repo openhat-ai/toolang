@@ -18,7 +18,6 @@ from toolang.cli.common.agent_argument import AgentArgument
 from typer._click import Context
 from typer._click.exceptions import ClickException, UsageError
 
-from toolang.cli.common.parameters import InstanceOption
 from toolang.cli.common.parameters import TextType
 from toolang.common.typer.ui import HelpFormatter
 
@@ -783,7 +782,7 @@ def inspect_command(
         typer.Argument(
             click_type=TextType(),
             metavar="QUERY",
-            help="record ID or collection, with optional relations and a view",
+            help="Record ID or collection, with optional relations and a view",
         ),
     ],
     human: Annotated[
@@ -793,14 +792,23 @@ def inspect_command(
     json_view: Annotated[
         bool, typer.Option("--json", help="Output JSON (resolved value for run output)")
     ] = False,
-    instance: InstanceOption = None,
 ) -> None:
     """Inspect execution subjects."""
 
     if human and json_view:
         raise UsageError("--human and --json are mutually exclusive")
     query = _parse_inspect_query(subjects)
-    with open_execution(ctx, required=True) as resources:
+    pointer = query.root_pointer.record_ref() if query.root_pointer else None
+    record = (
+        pointer.id
+        if isinstance(pointer, ThreadRef | RunRef)
+        else pointer.run.id
+        if isinstance(pointer, StepRef)
+        else pointer.target.id
+        if isinstance(pointer, ControlRef)
+        else None
+    )
+    with open_execution(ctx, required=True, record=record) as resources:
         if resources is None:  # pragma: no cover - required=True guarantees this
             raise RuntimeError("execution resources were not opened")
         try:

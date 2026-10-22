@@ -71,30 +71,14 @@ class AgentContract:
 
     @property
     def description(self) -> str:
-        ordered = [
-            placement
-            for placement in ("resident", "visiting", "roaming")
-            if placement in self.placements
-        ]
-        scope = " or ".join(ordered) if self.placements != _PLACEMENTS else ""
-        if self.role == "home":
-            label = " ".join(part for part in (scope, "agent address") if part)
-            if self.requires_live:
-                label = f"running {label}"
-            if self.required_driver is not None:
-                label += f" with the {self.required_driver} driver"
-            return label
-        forms = self.forms
+        forms = tuple("URL" if form == "url" else form for form in self.forms)
+        if self.role in {"home", "execute"} and self.placements != {"resident"}:
+            forms += ("instance",)
         joined = (
             forms[0] if len(forms) == 1 else f"{', '.join(forms[:-1])} or {forms[-1]}"
         )
-        if self.placements == {"resident"}:
-            return "resident agent name"
-        if self.placements == {"resident", "roaming"}:
-            return "agent name or path"
-        if self.role == "execute" and scope:
-            return f"{scope} agent by {joined}"
-        return f"agent {joined}"
+        label = "Running agent" if self.requires_live else "Agent"
+        return f"{label} {joined}"
 
 
 class AgentNameType(StringParamType):
@@ -135,13 +119,25 @@ class _AgentType(StringParamType):
             selected = target_context(cli_context(ctx).root, parse_target(text))
         except (OSError, RuntimeError, ValueError) as exc:
             self.fail(str(exc), param, ctx)
-        placement = selected.layout.placement if selected.layout else "resident"
+        if selected.address is not None and self.contract.role == "source":
+            self.fail("instances are not supported", param, ctx)
+        placement = (
+            selected.address.placement
+            if selected.address is not None
+            else selected.layout.placement
+            if selected.layout
+            else "resident"
+        )
         if placement not in self.contract.placements:
-            label = {
-                "resident": "agent names",
-                "visiting": "remote agents",
-                "roaming": "paths",
-            }[placement]
+            label = (
+                f"{placement} instances"
+                if selected.address is not None
+                else {
+                    "resident": "agent names",
+                    "visiting": "remote agents",
+                    "roaming": "paths",
+                }[placement]
+            )
             self.fail(f"{label} are not supported", param, ctx)
         ctx.obj = selected
         return (selected.agent or text) if placement == "resident" else text

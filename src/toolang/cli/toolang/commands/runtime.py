@@ -27,7 +27,6 @@ from toolang.cli.common.agent_argument import AgentArgument, AgentNameType
 from typer._click.core import ParameterSource
 from typer._click.exceptions import ClickException
 
-from toolang.cli.common.parameters import InstanceOption
 from toolang.cli.common.parameters import (
     AllowOptions,
     CompactModelOption,
@@ -61,6 +60,7 @@ from ...common.startup import resolve_attachment_requirements, resolve_runtime_l
 from ...common.context import (
     ModelCatalogOption,
     cli_context,
+    context_layout,
     context_root,
     require_runtime_agent,
     select_agent_instance,
@@ -123,6 +123,8 @@ def run(
     from ...common.progress import make_cli_progress
 
     selector = require_runtime_agent(ctx, agent)
+    if cli_context(ctx).address is not None:
+        context_layout(ctx)
     progress = make_cli_progress(preparation=True)
     cleanup_progress = make_cli_progress(leading_gap=True)
     launch: LaunchSpec | None = None
@@ -165,10 +167,14 @@ def run(
                 workspace_options=workspace,
                 workdir=single_workdir(workdir),
             )
-            prepared = agent_sources.prepare_visiting_layout(
-                target,
-                toolang_root=context_root(ctx),
-                progress=progress.sink,
+            prepared = (
+                target
+                if cli_context(ctx).instance_selected
+                else agent_sources.prepare_visiting_layout(
+                    target,
+                    toolang_root=context_root(ctx),
+                    progress=progress.sink,
+                )
             )
             if prepared is not target:
                 launch = replace(launch, serve=replace(launch.serve, layout=prepared))
@@ -290,6 +296,8 @@ def start(
     from toolang.up import sandbox as sandbox_runtime
 
     selector = require_runtime_agent(ctx, agent)
+    if cli_context(ctx).address is not None:
+        context_layout(ctx)
     progress = make_cli_progress(preparation=True)
     launch: LaunchSpec | None = None
     launch_started = False
@@ -328,11 +336,15 @@ def start(
                 ),
             ):
                 return
-            target = agent_sources.prepare_visiting_layout(
-                target,
-                toolang_root=context_root(ctx),
-                source_ref=selector,
-                progress=progress.sink,
+            target = (
+                target
+                if cli_context(ctx).instance_selected
+                else agent_sources.prepare_visiting_layout(
+                    target,
+                    toolang_root=context_root(ctx),
+                    source_ref=selector,
+                    progress=progress.sink,
+                )
             )
             launch = resolve_startup(
                 target,
@@ -460,7 +472,6 @@ def stop(
         bool,
         typer.Option(help="Force-stop when graceful shutdown does not complete"),
     ] = False,
-    instance: InstanceOption = None,
 ) -> None:
     from ...common.progress import make_cli_progress
 
@@ -502,7 +513,7 @@ def serve(
     ctx: typer.Context,
     agent: Annotated[
         str,
-        typer.Argument(metavar="NAME", click_type=AgentNameType(), help="agent name"),
+        typer.Argument(metavar="NAME", click_type=AgentNameType(), help="Agent name"),
     ],
     allows: AllowOptions = None,
     limits: LimitOptions = None,

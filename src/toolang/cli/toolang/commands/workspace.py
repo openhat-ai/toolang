@@ -60,7 +60,7 @@ def add_workspace(
     path: Annotated[
         Path,
         typer.Argument(
-            metavar="PATH", click_type=PathType(), help="existing directory path"
+            metavar="PATH", click_type=PathType(), help="Existing directory path"
         ),
     ],
     name: Annotated[
@@ -82,12 +82,10 @@ def add_workspace(
 
 def list_workspaces(
     ctx: typer.Context,
-    agent: Annotated[str, AgentArgument("source")],
+    agent: Annotated[str, AgentArgument("source", placements="resident,roaming")],
 ) -> None:
     require_prefix_agent(ctx)
     layout = context_layout(ctx)
-    if layout.placement == "visiting":
-        layout = prepare_agent(ctx)
     if layout.placement == "roaming":
         source = cli_context(ctx).source
         assert source is not None
@@ -141,7 +139,7 @@ def remove_workspace(
     agent: Annotated[str, AgentArgument("source", placements="resident,roaming")],
     name: Annotated[
         str,
-        typer.Argument(metavar="NAME", click_type=TextType(), help="workspace name"),
+        typer.Argument(metavar="NAME", click_type=TextType(), help="Workspace name"),
     ],
 ) -> None:
     layout = _editable_layout(ctx)

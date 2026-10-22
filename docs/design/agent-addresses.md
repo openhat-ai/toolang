@@ -1,7 +1,8 @@
 # agent addresses
 
-Target contract for the next revision. Implementation follows approval of this
-definition. [Layout](layout.md) and [Hosting](hosting.md) describe current behavior;
+Identity, area layout, instance selection, and bound continuation are implemented.
+Expanded `top`/`chore` scope, home-based `cd`, and JSON binding metadata remain
+follow-up surfaces. [Layout](layout.md) and [Hosting](hosting.md) describe current behavior;
 [CLI command recognition](cli-command-recognition.md) defines command parameters.
 
 ## Vocabulary and identity
@@ -158,7 +159,7 @@ equals the active filename stem; the agent-root basename supplies only the ID.
 `info` separates Toolang root, agent root, home, address, source, and runtime.
 Its shell-quoted copy command includes `--root T` and a source-path address for
 roaming, remaining usable offline. JSON separates `toolang_root`, `address`,
-`agent_root`, `agent_home`, and `launch_id`.
+`agent_root`, `agent_home`, and `launch_id` when that follow-up surface lands.
 
 Toolang root also scopes hub backend namespaces. Only that requirement is defined
 here; backend namespace formats are deferred. Old flags, IDs, paths, and registry

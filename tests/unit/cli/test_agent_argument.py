@@ -63,13 +63,14 @@ def test_source_contract_cannot_require_a_runtime():
 @pytest.mark.parametrize(
     "role,placements,live,driver,description,metavar",
     [
-        ("source", "resident", False, None, "resident agent name", "AGENT"),
+        ("source", "resident", False, None, "Agent name", "AGENT"),
+        ("home", "resident", False, None, "Agent name", "AGENT"),
         (
             "source",
             "resident,roaming",
             False,
             None,
-            "agent name or path",
+            "Agent name or path",
             "AGENT",
         ),
         (
@@ -77,16 +78,23 @@ def test_source_contract_cannot_require_a_runtime():
             "resident,visiting,roaming",
             False,
             None,
-            "agent name, path, ref or url",
+            "Agent name, path, ref or URL",
             "AGENT",
         ),
-        ("home", "resident,visiting,roaming", False, None, "agent address", "AGENT"),
+        (
+            "home",
+            "resident,visiting,roaming",
+            False,
+            None,
+            "Agent name, path, ref, URL or instance",
+            "AGENT",
+        ),
         (
             "home",
             "resident,visiting",
             False,
             None,
-            "resident or visiting agent address",
+            "Agent name, ref, URL or instance",
             "AGENT",
         ),
         (
@@ -94,7 +102,7 @@ def test_source_contract_cannot_require_a_runtime():
             "resident,visiting,roaming",
             True,
             None,
-            "running agent address",
+            "Running agent name, path, ref, URL or instance",
             "AGENT",
         ),
         (
@@ -102,7 +110,7 @@ def test_source_contract_cannot_require_a_runtime():
             "resident",
             True,
             "chore",
-            "running resident agent address with the chore driver",
+            "Running agent name",
             "AGENT",
         ),
         (
@@ -110,7 +118,7 @@ def test_source_contract_cannot_require_a_runtime():
             "resident,visiting",
             False,
             None,
-            "resident or visiting agent by name, ref or url",
+            "Agent name, ref, URL or instance",
             "AGENT",
         ),
     ],

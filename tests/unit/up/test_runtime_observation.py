@@ -19,8 +19,8 @@ from toolang.up.observation import (
 )
 
 
-def _roaming(source):
-    return allocate_roaming(source, toolang_root=source.parent)
+def _roaming(source, *, toolang_root=None):
+    return allocate_roaming(source, toolang_root=toolang_root or source.parent)
 
 
 @pytest.mark.parametrize("state", ["current", "removed", "replaced"])
@@ -78,7 +78,7 @@ def test_reference_names_use_stable_host_source_identity(tmp_path):
 
     assert instance_filename(resident) == "gus.json"
     assert instance_filename(visiting) == f"lex@{visiting.instance_id}.json"
-    assert visiting.root.name == f"lex@{visiting.instance_id}"
+    assert visiting.root.name == visiting.instance_id
     assert visiting.instance_id is not None
     assert visiting.source_id == visiting.instance_id[1:]
     assert instance_filename(roaming) == f"aid@{roaming.instance_id}.json"
@@ -88,7 +88,7 @@ def test_reference_names_use_stable_host_source_identity(tmp_path):
     ) != instance_filename(roaming)
     assert instance_filename(
         AgentLayout.visiting(source, "lex", toolang_root=root / "other")
-    ) != instance_filename(visiting)
+    ) == instance_filename(visiting)
     assert instance_filename(
         AgentLayout.visiting("https://other.example/lex.too", "lex", toolang_root=root)
     ) != instance_filename(visiting)
@@ -103,7 +103,9 @@ def test_source_path_aliases_preserve_reference_identity(tmp_path):
     alias.symlink_to(source)
     original = _roaming(source)
     assert instance_filename(
-        AgentLayout.roaming(alias, instance_id=original.instance_id)
+        AgentLayout.roaming(
+            alias, instance_id=original.instance_id, toolang_root=original.toolang_root
+        )
     ) == instance_filename(original)
     root_alias = tmp_path / "root-alias"
     root_alias.symlink_to(project, target_is_directory=True)
@@ -190,7 +192,7 @@ def test_discovery_rejects_noncurrent_formats_without_mutation(
     tmp_path, owner, version
 ):
     root = tmp_path / "toolang"
-    layout = _roaming(tmp_path / "aid.too")
+    layout = _roaming(tmp_path / "aid.too", toolang_root=root)
     with ForegroundWorkload(
         layout, toolang_root=root, drivers=frozenset()
     ) as registration:
@@ -356,7 +358,7 @@ def test_short_lived_scripts_keep_local_status_and_share_registry_lock(tmp_path)
     from toolang.up.instance import read_instance
 
     scope = tmp_path / "toolang"
-    directory = scope / ".runtime" / "instances"
+    directory = scope / ".runtime" / "active"
     for _ in range(20):
         layout = allocate_roaming(tmp_path / "echo.too", toolang_root=scope)
         with ForegroundWorkload(
@@ -399,7 +401,7 @@ def test_cleanup_creates_register_guard_for_an_existing_reference(
 def test_missing_reference_cleanup_does_not_create_discovery_directories(tmp_path):
     from toolang.up.observation import _remove_reference
 
-    path = tmp_path / ".runtime" / "instances" / "gus.json"
+    path = tmp_path / ".runtime" / "active" / "gus.json"
     _remove_reference(path, "finished", tmp_path / "status.json")
     assert not path.parent.exists()
 
@@ -448,7 +450,7 @@ def test_placement_free_workload_cleans_the_reference_using_control_bindings(
             "https://example.com/alice.too", "alice", toolang_root=tmp_path / "toolang"
         )
         if placement == "visiting"
-        else _roaming(tmp_path / "alice.too")
+        else _roaming(tmp_path / "alice.too", toolang_root=tmp_path / "toolang")
     )
     with ForegroundWorkload(
         layout, toolang_root=tmp_path / "toolang", drivers=frozenset()
@@ -516,7 +518,7 @@ def test_runtime_snapshot_lists_residents_and_registered_placements_once(tmp_pat
     visiting = AgentLayout.visiting(
         "https://example.com/alice.too", "alice", toolang_root=root
     )
-    roaming = _roaming(tmp_path / "alice.too")
+    roaming = _roaming(tmp_path / "alice.too", toolang_root=root)
 
     with (
         ForegroundWorkload(
@@ -939,7 +941,7 @@ def test_foreign_root_references_cannot_supply_a_fallback_home_or_hub_member(tmp
     with ForegroundWorkload(
         layout, toolang_root=root, drivers=frozenset()
     ) as registration:
-        copied = foreign / ".runtime" / "instances" / registration.path.name
+        copied = foreign / ".runtime" / "active" / registration.path.name
         copied.parent.mkdir(parents=True)
         copied.write_bytes(registration.path.read_bytes())
         before = layout.runtime_status.read_bytes()

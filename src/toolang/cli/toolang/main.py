@@ -125,16 +125,16 @@ class _ScriptEntryCommand(CliCommand):
 
 
 def script_entry(
-    file: Annotated[str, typer.Argument(metavar="FILE", help="path to a .too file")],
+    file: Annotated[str, typer.Argument(metavar="FILE", help="Path to a .too file")],
     runnable: Annotated[
         str | None,
         typer.Argument(
-            metavar="RUNNABLE", help="agic or flow to run", show_default=False
+            metavar="RUNNABLE", help="Agic or flow to run", show_default=False
         ),
     ] = None,
     arguments: Annotated[
         list[str] | None,
-        typer.Argument(metavar="ARGS", help="arguments for the selected agic or flow"),
+        typer.Argument(metavar="ARGS", help="Arguments for the selected agic or flow"),
     ] = None,
 ) -> None:
     """Describe static entry help; the command resolves FILE before invocation."""

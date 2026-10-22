@@ -947,7 +947,7 @@ def test_catalog_help_describes_optional_agent_without_loading(
     assert result == 0
     assert ("\x1b[" in output.out) is colored
     assert f"[AGENT] {command} [OPTIONS]" in stdout
-    assert "agent name, path, ref or url" in (" ".join(stdout.split()))
+    assert "Agent name, path, ref or URL" in (" ".join(stdout.split()))
     assert "--catalog" in stdout
     assert ("--query" in stdout) is (command == "models")
     assert "--all" in stdout

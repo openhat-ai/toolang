@@ -11,8 +11,13 @@ from typer._click.exceptions import ClickException
 from toolang.cli.common.agent_argument import AgentArgument
 
 from toolang.cli.common.parameters import DEVELOPMENT_WHEEL_HELP
-from toolang.cli.common.context import ModelCatalogOption, cli_context, user_call
-from toolang.common.typer.options import BARE_VALUE
+from toolang.cli.common.context import (
+    ModelCatalogOption,
+    cli_context,
+    context_layout,
+    select_agent_instance,
+    user_call,
+)
 from toolang.cli.common.workspaces import (
     WorkspaceOptions,
     WorkdirOption,
@@ -93,38 +98,27 @@ def chat_command(
 def _prepare_roaming_chat(ctx: typer.Context, thread: str | None) -> bool:
     """Allocate or continue a roaming owner after native parsing has completed."""
     state = cli_context(ctx)
+    if state.address is not None:
+        context_layout(ctx)
+        return False
     if state.source is None or state.prepared or state.instance_selected:
         return False
-    from toolang.up.identity import allocate_roaming, select_roaming
+    from toolang.up.identity import allocate_roaming
     from toolang.up.source import materialize_roaming_program
 
+    if thread is not None:
+        state.layout = select_agent_instance(ctx)
+        state.prepared = True
+        return False
     if not state.source.is_file():
         raise ClickException(f"agent program not found: {state.source}")
-    continuation = None
-    if thread is not None:
-        try:
-            continuation = select_roaming(state.source)
-        except FileNotFoundError:
-            pass
-    if continuation is not None and continuation.run_store.is_file():
-        from toolang.up.replay import prepare_continuation
+    state.layout = user_call(allocate_roaming, state.source, toolang_root=state.root)
+    try:
+        user_call(materialize_roaming_program, state.source, layout=state.layout)
+    except BaseException:
+        from toolang.up.workload import finish_preparation
 
-        state.layout = user_call(
-            prepare_continuation,
-            continuation,
-            toolang_root=state.root,
-            source_thread="latest" if thread == BARE_VALUE else thread,
-        )
-    else:
-        state.layout = user_call(
-            allocate_roaming, state.source, toolang_root=state.root
-        )
-        try:
-            user_call(materialize_roaming_program, state.source, layout=state.layout)
-        except BaseException:
-            from toolang.up.workload import finish_preparation
-
-            finish_preparation(state.layout, "Chat source preparation failed")
-            raise
+        finish_preparation(state.layout, "Chat source preparation failed")
+        raise
     state.prepared = True
     return True

@@ -104,10 +104,11 @@ runtime assembly. The control boundary passes concrete inputs to `_serve`,
 which makes no placement decisions. Placement does not define one run's semantics.
 
 Inspection commands (`info`, `models`, `providers`, `tools`, `caps`,
-`psyche list`, `skill list`, `service list`, `prompt list`, `workspace list`,
-and `inspect`) use the selected placement. Cap mutations target root scope when
-no agent is selected, or the selected resident agent's home. Visiting and roaming
-caps are read-only through these commands; clone a shared agent to modify its caps.
+`psyche list`, `skill list`, `service list`, `prompt list`, and `inspect`) use
+the selected placement. Workspace commands accept resident or project sources.
+Cap mutations target root scope when no agent is selected, or the selected
+resident agent's home. Visiting and roaming caps are read-only through these
+commands; clone a shared agent to modify its caps.
 
 
 ## Agent Sandbox

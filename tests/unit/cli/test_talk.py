@@ -168,7 +168,7 @@ def test_talk_without_target_shows_help_without_reading_settings(
     assert "Usage: too talk [OPTIONS] [CONVO] [MESSAGE...]" in output
     arguments = output.split("Arguments:\n", 1)[1].split("Options:\n", 1)[0]
     assert (
-        "conversation ID, agent name, comma-separated agent names, or all" in arguments
+        "Conversation ID, agent name, comma-separated agent names, or all" in arguments
     )
     assert "convo list" not in arguments
     examples = output.split("Examples:\n", 1)[1]

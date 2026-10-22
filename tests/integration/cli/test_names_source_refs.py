@@ -157,7 +157,7 @@ def test_script_entry_points_keep_the_filename_and_share_the_normalized_home(
     assert source.is_file()
     from toolang.up.identity import select_roaming
 
-    layout = select_roaming(source)
+    layout = select_roaming(source, toolang_root=tmp_path / "registry")
     assert layout.name == "daily_report_v2"
     assert layout.program.resolve() == source.resolve()
-    assert layout.root.name == layout.instance_name
+    assert layout.root.name == layout.instance_id

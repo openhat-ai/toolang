@@ -263,7 +263,9 @@ def _make_new_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
         ctx: typer.Context,
         name: Annotated[
             str,
-            typer.Argument(metavar="NAME", click_type=TextType(), help=f"{kind} name"),
+            typer.Argument(
+                metavar="NAME", click_type=TextType(), help=f"{kind.title()} name"
+            ),
         ],
         agent: Annotated[
             str | None, AgentArgument("source", placements="resident")
@@ -298,7 +300,9 @@ def _make_edit_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
         ctx: typer.Context,
         name: Annotated[
             str,
-            typer.Argument(metavar="NAME", click_type=TextType(), help=f"{kind} name"),
+            typer.Argument(
+                metavar="NAME", click_type=TextType(), help=f"{kind.title()} name"
+            ),
         ],
         agent: Annotated[
             str | None, AgentArgument("source", placements="resident")
@@ -337,7 +341,7 @@ def _make_add_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
             typer.Argument(
                 metavar="SOURCE",
                 click_type=TextType(),
-                help=f"{kind} ref or url",
+                help=f"{kind.title()} ref or URL",
             ),
         ],
         agent: Annotated[
@@ -388,7 +392,9 @@ def _make_remove_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
         ctx: typer.Context,
         name: Annotated[
             str,
-            typer.Argument(metavar="NAME", click_type=TextType(), help=f"{kind} name"),
+            typer.Argument(
+                metavar="NAME", click_type=TextType(), help=f"{kind.title()} name"
+            ),
         ],
         agent: Annotated[
             str | None, AgentArgument("source", placements="resident")
@@ -416,7 +422,9 @@ def _make_delete_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
         ctx: typer.Context,
         name: Annotated[
             str,
-            typer.Argument(metavar="NAME", click_type=TextType(), help=f"{kind} name"),
+            typer.Argument(
+                metavar="NAME", click_type=TextType(), help=f"{kind.title()} name"
+            ),
         ],
         agent: Annotated[
             str | None, AgentArgument("source", placements="resident")

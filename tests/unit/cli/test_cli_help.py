@@ -697,14 +697,14 @@ def test_agent_usage_keeps_recommended_position_and_normal_weight(
             "serve",
             "Run an agent in the foreground",
             "AGENT",
-            "resident or visiting agent by name, ref or url",
+            "Agent name, ref, URL or instance",
             "too <AGENT> serve [OPTIONS]",
         ),
         (
             "_serve",
             "Run an agent server",
             "NAME",
-            "agent name",
+            "Agent name",
             "too _serve [OPTIONS] <NAME>",
         ),
     ],
@@ -737,26 +737,26 @@ def test_lifecycle_and_bootstrap_use_their_native_operand_forms(
 @pytest.mark.parametrize(
     "command,metavar,description",
     [
-        ("new", "NAME", "new agent name"),
-        ("remove", "NAME", "resident agent name"),
-        ("_serve", "NAME", "agent name"),
-        ("start", "AGENT", "resident or visiting agent by name, ref or url"),
-        ("serve", "AGENT", "resident or visiting agent by name, ref or url"),
-        ("stop", "AGENT", "resident or visiting agent address"),
-        ("info", "AGENT", "agent address"),
-        ("chat", "AGENT", "agent name, path, ref or url"),
-        ("inspect", "AGENT", "agent address"),
-        ("steer", "AGENT", "running agent address"),
-        ("cancel", "AGENT", "running agent address"),
-        ("rerun", "AGENT", "agent address"),
-        ("fork", "AGENT", "agent address"),
-        ("rewind", "AGENT", "agent address"),
-        ("workspace list", "AGENT", "agent name, path, ref or url"),
-        ("chore list", "AGENT", "resident agent address"),
+        ("new", "NAME", "New agent name"),
+        ("remove", "NAME", "Agent name"),
+        ("_serve", "NAME", "Agent name"),
+        ("start", "AGENT", "Agent name, ref, URL or instance"),
+        ("serve", "AGENT", "Agent name, ref, URL or instance"),
+        ("stop", "AGENT", "Agent name, ref, URL or instance"),
+        ("info", "AGENT", "Agent name, path, ref, URL or instance"),
+        ("chat", "AGENT", "Agent name, path, ref, URL or instance"),
+        ("inspect", "AGENT", "Agent name, path, ref, URL or instance"),
+        ("steer", "AGENT", "Running agent name, path, ref, URL or instance"),
+        ("cancel", "AGENT", "Running agent name, path, ref, URL or instance"),
+        ("rerun", "AGENT", "Agent name, path, ref, URL or instance"),
+        ("fork", "AGENT", "Agent name, path, ref, URL or instance"),
+        ("rewind", "AGENT", "Agent name, path, ref, URL or instance"),
+        ("workspace list", "AGENT", "Agent name or path"),
+        ("chore list", "AGENT", "Agent name"),
         (
             "chore run",
             "AGENT",
-            "running resident agent address with the chore driver",
+            "Running agent name",
         ),
     ],
 )
@@ -774,9 +774,7 @@ def test_cap_children_own_their_agent_contract(kind, command, tmp_path, capsys):
     assert too_main(["--root", str(tmp_path), kind, command, "--help"]) == 0
     output = " ".join(strip_ansi(capsys.readouterr().out).split())
     assert f"[AGENT] {kind} {command}" in output
-    description = (
-        "resident agent name" if command == "new" else "agent name, path, ref or url"
-    )
+    description = "Agent name" if command == "new" else "Agent name, path, ref or URL"
     assert f"AGENT {description}" in output
     assert too_main(["--root", str(tmp_path), kind, "--help"]) == 0
     group_help = " ".join(strip_ansi(capsys.readouterr().out).split())
@@ -788,7 +786,7 @@ def test_cap_children_own_their_agent_contract(kind, command, tmp_path, capsys):
 def test_inspection_help_describes_all_agent_targets(command, tmp_path, capsys):
     assert too_main(["--root", str(tmp_path), command, "--help"]) == 0
     output = " ".join(strip_ansi(capsys.readouterr().out).split())
-    assert "AGENT agent name, path, ref or url" in output
+    assert "AGENT Agent name, path, ref or URL" in output
 
 
 @pytest.mark.parametrize("kind", ["psyche", "skill", "service", "prompt"])

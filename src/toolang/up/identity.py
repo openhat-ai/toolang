@@ -13,6 +13,7 @@ import psutil
 
 from toolang.common.files import EditLock, atomic_write_text
 from toolang.common.instance_ids import (
+    area_id,
     decode_instance_id,
     roaming_instance_id,
     roaming_timestamp_ms,
@@ -20,7 +21,7 @@ from toolang.common.instance_ids import (
 from toolang.common import layout as paths
 from toolang.common.layout import AgentLayout, derive_agent_name
 from .instance import AGENT_INSTANCE_FORMAT, read_instance, update_instance
-from .private_paths import visiting_paths
+from .private_paths import verify_area, verify_home_paths, visiting_paths
 
 
 def identity_bindings(layout: AgentLayout) -> dict:
@@ -71,7 +72,8 @@ def layout_from_control(control: dict) -> AgentLayout:
         if not isinstance(source, str) or not source:
             raise ValueError("visiting identity has no source URL")
         layout = AgentLayout.visiting(source, name, toolang_root=root)
-        if layout.root != paths.VISITING_ROOT / layout.instance_name:
+        assert layout.instance_id is not None
+        if layout.root != paths.VISITING_ROOT / area_id(str(root)) / layout.instance_id:
             raise ValueError("visiting instance identity follows an invalid root link")
     elif placement == "roaming":
         source_path = _canonical_path(control.get("source_path"))
@@ -80,10 +82,8 @@ def layout_from_control(control: dict) -> AgentLayout:
             raise ValueError("roaming identity requires an instance ID")
         if roaming_instance_id(str(source_path), roaming_timestamp_ms(token)) != token:
             raise ValueError("roaming instance identity does not match its source path")
-        layout = replace(
-            AgentLayout.roaming(source_path, instance_id=token), toolang_root=root
-        )
-        if layout.root != source_path.parent / ".toolang" / layout.instance_name:
+        layout = AgentLayout.roaming(source_path, instance_id=token, toolang_root=root)
+        if layout.root != source_path.parent / ".toolang" / area_id(str(root)) / token:
             raise ValueError("roaming instance identity follows an invalid root link")
     else:
         raise ValueError("invalid instance identity placement")
@@ -97,13 +97,19 @@ def layout_from_control(control: dict) -> AgentLayout:
         managed_membership=control.get("managed_membership"),
     )
     expected = identity_bindings(layout)
-    if any(
-        key not in control
-        or type(control[key]) is not type(value)
-        or control[key] != value
+    inconsistent = [
+        key
         for key, value in expected.items()
-    ):
-        raise ValueError("inconsistent instance identity bindings")
+        if (
+            key not in control
+            or type(control[key]) is not type(value)
+            or control[key] != value
+        )
+    ]
+    if inconsistent:
+        raise ValueError(
+            f"inconsistent instance identity bindings: {', '.join(inconsistent)}"
+        )
     return layout
 
 
@@ -143,39 +149,74 @@ def visiting_home_guard(layout: AgentLayout) -> Iterator[None]:
             yield
 
 
-def _retained_layout(root: Path) -> AgentLayout:
-    name, _, token = root.name.partition("@")
-    entry = read_instance(root / "agents" / name / ".runtime" / "status.json")
+def _retained_layout(root: Path, name: str) -> AgentLayout:
+    if root.is_symlink():
+        raise ValueError(f"invalid retained instance root: {root}")
+    decode_instance_id(root.name, marker="s")
+    statuses = list((root / "agents").glob("*/.runtime/status.json"))
+    if len(statuses) > 1:
+        raise ValueError(f"invalid retained instance identity: {root}")
+    status = (
+        statuses[0] if statuses else root / "agents" / name / ".runtime/status.json"
+    )
+    entry = read_instance(status)
     if entry is None:
         raise ValueError(
             f"invalid retained instance identity: {root}"
-        ) from FileNotFoundError(root / "agents" / name / ".runtime" / "status.json")
-    decode_instance_id(token, marker="r")
+        ) from FileNotFoundError(status)
     layout = layout_from_control(entry["control"])
     if layout.placement != "roaming" or layout.root != root:
         raise ValueError(f"inconsistent retained instance identity: {root}")
+    verify_home_paths(root, layout.name)
+    assert layout.toolang_root is not None
+    verify_area(root.parent, layout.toolang_root)
     return layout
 
 
-def select_roaming(source: Path, instance_id: str | None = None) -> AgentLayout:
+def select_roaming(
+    source: Path, instance_id: str | None = None, *, toolang_root: Path
+) -> AgentLayout:
     """Resolve retained identity without materialization or global discovery."""
     source = source.expanduser().resolve()
     if instance_id is not None:
-        decode_instance_id(instance_id, marker="r")
+        decode_instance_id(instance_id, marker="s")
     guard = EditLock(source.parent / ".toolang" / ".state" / "launch.lock")
-    return guard.read(lambda: _select_retained_roaming(source, instance_id))
-
-
-def _select_retained_roaming(source: Path, instance_id: str | None) -> AgentLayout:
-    name = derive_agent_name(source.stem)
-    cache = source.parent / ".toolang"
-    roots = (
-        [cache / f"{name}@{instance_id}"]
-        if instance_id is not None
-        else sorted(cache.glob(f"{name}@r*"), reverse=True)
+    return guard.read(
+        lambda: _select_retained_roaming(source, instance_id, toolang_root)
     )
-    for root in roots:
-        layout = _retained_layout(root)
+
+
+def retained_roaming(source: Path, *, toolang_root: Path) -> tuple[AgentLayout, ...]:
+    source = source.expanduser().resolve()
+    cache = (
+        source.parent / ".toolang" / area_id(str(toolang_root.expanduser().resolve()))
+    )
+    if not cache.exists():
+        return ()
+    verify_area(cache, toolang_root)
+    prefix = roaming_instance_id(str(source), 0)[:8]
+    layouts = tuple(
+        _retained_layout(root, derive_agent_name(source.stem))
+        for root in sorted(cache.glob(prefix + "*"), reverse=True)
+        if not (root.is_dir() and not root.is_symlink() and not any(root.iterdir()))
+    )
+    return tuple(layout for layout in layouts if layout.source_path == source)
+
+
+def _select_retained_roaming(
+    source: Path, instance_id: str | None, toolang_root: Path
+) -> AgentLayout:
+    cache = (
+        source.parent / ".toolang" / area_id(str(toolang_root.expanduser().resolve()))
+    )
+    if instance_id is not None:
+        verify_area(cache, toolang_root)
+    roots = (
+        [_retained_layout(cache / instance_id, derive_agent_name(source.stem))]
+        if instance_id is not None
+        else retained_roaming(source, toolang_root=toolang_root)
+    )
+    for layout in roots:
         if layout.source_path != source:
             if instance_id is not None:
                 raise ValueError("instance belongs to a different source")
@@ -192,18 +233,24 @@ def allocate_roaming(source: Path, *, toolang_root: Path) -> AgentLayout:
     toolang_root = toolang_root.expanduser().resolve()
     if source.suffix != ".too":
         raise ValueError(f"agent program must be a .too file: {source}")
-    cache = source.parent / ".toolang"
-    with EditLock(cache / ".state" / "launch.lock").write():
+    cache = source.parent / ".toolang" / area_id(str(toolang_root))
+    with EditLock(source.parent / ".toolang" / ".state" / "launch.lock").write():
+        verify_area(cache, toolang_root, create=True)
         highest = -1
-        for root in cache.glob("*@r*"):
-            previous = _retained_layout(root)
-            if previous.source_path == source:
-                assert previous.instance_id is not None
-                highest = max(highest, roaming_timestamp_ms(previous.instance_id))
+        for previous in retained_roaming(source, toolang_root=toolang_root):
+            assert previous.instance_id is not None
+            highest = max(highest, roaming_timestamp_ms(previous.instance_id))
         timestamp_ms = max(time.time_ns() // 1_000_000, highest + 1)
         token = roaming_instance_id(str(source), timestamp_ms)
-        layout = replace(
-            AgentLayout.roaming(source, instance_id=token), toolang_root=toolang_root
+        while (
+            (cache / token).is_dir()
+            and not (cache / token).is_symlink()
+            and not any((cache / token).iterdir())
+        ):
+            timestamp_ms += 1
+            token = roaming_instance_id(str(source), timestamp_ms)
+        layout = AgentLayout.roaming(
+            source, instance_id=token, toolang_root=toolang_root
         )
         with registration_lock(toolang_root):
             if layout.root.exists() or layout.root.is_symlink():
