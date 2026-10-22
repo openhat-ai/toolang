@@ -134,6 +134,14 @@ class ValkeyBackend:
             "EVAL", script, len(keys) + 1, *keys, self.keys.root, *args, self._root
         )
 
+    async def _read(self, command: str, key: str, *args: object) -> Any:
+        """Read data in the same atomic operation as its root ownership check."""
+        return await self._eval(
+            "return redis.call(ARGV[1],KEYS[1],unpack(ARGV,2))",
+            [key],
+            [command, *args],
+        )
+
     async def _fenced_eval(
         self, agent: str, script: str, keys: list[str], args: list[object]
     ) -> Any:
@@ -144,7 +152,7 @@ class ValkeyBackend:
         """
         target(agent, kind="agent")
         for attempt in range(SNAPSHOT_RETRIES):
-            raw = await self._call("HGET", self.keys.team_members, agent)
+            raw = await self._read("HGET", self.keys.team_members, agent)
             try:
                 if raw is not None:
                     TeamRecord.decode(agent, raw)
@@ -311,7 +319,7 @@ class ValkeyBackend:
         if updated is not None:
             RosterRecord.model_validate(updated)
         # Retain the stored bytes for CAS; JSON object ordering has no semantics.
-        raw = await self._call("HGET", self.keys.roster, agent)
+        raw = await self._read("HGET", self.keys.roster, agent)
         try:
             current = (
                 RosterRecord.model_validate_json(raw).model_dump()
@@ -339,7 +347,7 @@ class ValkeyBackend:
 
     async def known_participant(self, member: str) -> bool:
         participant(member)
-        return bool(await self._call("HEXISTS", self.keys.team_members, member))
+        return bool(await self._read("HEXISTS", self.keys.team_members, member))
 
     async def team_event_position(self) -> tuple[str, str]:
         epoch, tail = await self._operation(scripts.READ, {"action": "metadata"})
@@ -398,7 +406,7 @@ class ValkeyBackend:
         )
 
     async def system_conversation(self) -> str:
-        existing = await self._call("HGET", self.keys.system, "all")
+        existing = await self._read("HGET", self.keys.system, "all")
         if existing:
             return conversation_id(existing)
         return await self.create_gc(None, name="all", system=True)
@@ -511,7 +519,7 @@ class ValkeyBackend:
     async def named(self, name: str) -> list[str]:
         conversation_name(name)
         await self._operation(scripts.READ, {})
-        return sorted(await self._call("SMEMBERS", self.keys.name_key(name)))
+        return sorted(await self._read("SMEMBERS", self.keys.name_key(name)))
 
     async def create_dm(
         self,

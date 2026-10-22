@@ -53,6 +53,8 @@ class ValkeyEvents:
 
     async def _command(self, command: str, *args: Any) -> Any:
         try:
+            if command != "XREAD":
+                return await self.backend._read(command, *args)
             return await self.backend._call(command, *args)
         except MessagingError as exc:
             from ...errors import BackendUnavailable
@@ -116,7 +118,7 @@ class ValkeyEvents:
         size = 0
         while True:
             cursor, page = await self._command("HSCAN", key, cursor, "COUNT", 128)
-            for name, value in page.items():
+            for name, value in _hash(page).items():
                 if name not in result:
                     size += len(name.encode()) + len(value.encode())
                 if size > MAX_BYTES or len(result) > MAX_ENTITIES:

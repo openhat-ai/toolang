@@ -149,6 +149,53 @@ def test_colliding_root_codes_fail_without_adopting_or_mutating(monkeypatch):
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("read", ["participant", "projection"])
+def test_reads_recheck_ownership_atomically_when_the_dataset_changes(monkeypatch, read):
+    async def scenario():
+        server = FakeServer(server_type="valkey")
+        config = BackendConfig("redis://shared", root="/one")
+        async with client(server, config) as human:
+            raw = human.backend._client
+            other = FakeAsyncValkey(server=server, decode_responses=True)
+            key = (
+                human.backend.keys.team_members
+                if read == "participant"
+                else human.backend.keys.generation_key("agent:alice", "generation")
+            )
+            execute = raw.execute_command
+            changed = False
+
+            async def replace_before_read(command, *args, **kwargs):
+                nonlocal changed
+                if key in args and not changed:
+                    changed = True
+                    await other.set(human.backend.keys.root, "/two")
+                    if read == "projection":
+                        await other.execute_command(
+                            "HSET",
+                            key,
+                            "sample",
+                            json.dumps({"v": HUB_API_VERSION, "thread": "two"}),
+                        )
+                return await execute(command, *args, **kwargs)
+
+            monkeypatch.setattr(raw, "execute_command", replace_before_read)
+            try:
+                if read == "participant":
+                    with pytest.raises(StorageIntegrityError, match="ownership"):
+                        await human.backend.known_participant(human.actor)
+                else:
+                    with pytest.raises(EventProtocolError):
+                        await human.backend.events.projection(
+                            "agent:alice", "generation"
+                        )
+                assert changed
+            finally:
+                await other.aclose()
+
+    asyncio.run(scenario())
+
+
 @pytest.mark.parametrize("damage", ["missing", "different", "wrong_type"])
 def test_root_ownership_damage_fails_before_messaging_or_event_writes(damage):
     async def scenario():

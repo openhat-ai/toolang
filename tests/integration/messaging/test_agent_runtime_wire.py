@@ -206,13 +206,23 @@ def test_inflight_message_survives_hub_restart_and_scoped_fanout(
                     ).get("token") != client.token:
                         await asyncio.sleep(0.05)
                 gate.release()
+                expected_status = "failed" if fault == "backend_switch" else "succeeded"
                 async with asyncio.timeout(15):
                     while True:
                         completed = harness.store.get_run(run_id=active.id)
-                        if completed is not None and completed.status == "succeeded":
+                        if (
+                            completed is not None
+                            and completed.status == expected_status
+                        ):
                             break
                         await asyncio.sleep(0.05)
                 if fault == "backend_switch":
+                    # The admitted batch retains its old backend identity, so its
+                    # reply must fail rather than write into the replacement store.
+                    assert completed.error is not None
+                    assert "Hub identity changed" in harness.store.resolve_error(
+                        completed.error
+                    )
                     async with asyncio.timeout(15):
                         while (
                             loop.identity != running_hub.connection().identity
@@ -267,7 +277,9 @@ def test_inflight_message_survives_hub_restart_and_scoped_fanout(
                 await lifecycle.stop_messages()
                 # A confirmed own reply must not trigger another turn.
                 await loop.poll()
-                assert len(harness.adapter.invocations) == 2
+                assert len(harness.adapter.invocations) == (
+                    1 if fault == "backend_switch" else 2
+                )
             finally:
                 gate.release()
                 await lifecycle.stop_messages()
