@@ -1,4 +1,4 @@
-"""Host-owned discovery references to authoritative agent runtime status."""
+"""Observe agent runtime status through authoritative files and discovery references."""
 
 from __future__ import annotations
 

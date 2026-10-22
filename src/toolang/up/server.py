@@ -828,7 +828,7 @@ def resolve_runtime_port(
         layout.root or layout.place,
         exclude_agent=layout.address,
     )
-    # Reassign pre-upgrade agent records on the default Hub port.
+    # Reassign agents that previously used the default Hub port.
     if (
         preferred is not None
         and preferred != 7001

@@ -320,8 +320,6 @@ def write_runtime_state(
     entry = read_instance(path, layout.instance, location=location)
     identity = launch_id or (entry or {}).get("launch_id")
     if not identity:
-        from uuid import uuid4
-
         identity = uuid4().hex
         update_instance(
             path,

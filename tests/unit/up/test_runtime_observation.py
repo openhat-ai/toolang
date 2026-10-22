@@ -128,8 +128,8 @@ def test_relaunch_reuses_reference_name_and_preserves_new_registration(
     with old, current:
         assert old.path == current.path
         assert old.token != current.token
-        record = read_instance(layout.runtime_status)
-        assert record is not None and record["control"]["source_id"] == layout.source_id
+        entry = read_instance(layout.runtime_status)
+        assert entry is not None and entry["control"]["source_id"] == layout.source_id
         old.close()
         assert running_instances(tmp_path)[0]["source_id"] == layout.source_id
         assert current.path.exists()

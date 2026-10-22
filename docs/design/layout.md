@@ -108,7 +108,7 @@ Visiting preparation and management claim full source ownership under the home
 write guard before changing caches or history. An existing unbound home is an
 error. `/tmp/toolang` is either current-user-owned `0700` or an administrator's
 root-owned `01777` parent; new parents and places are private `0700`.
-Instance records are `0600`. Directory-relative, no-follow access rejects links,
+Instance status files are `0600`. Directory-relative, no-follow access rejects links,
 unsafe owners/modes and path replacement without adopting or repairing them.
 Predictable names can still be pre-created to deny a launch. IDs are public names,
 not authorization secrets or content signatures.
@@ -221,8 +221,10 @@ contains namespace-local PID/creation time, readiness, timestamps, and errors.
 Host and guest merge their owned fields through one short shared-file claim,
 validating the launch ID before atomic replacement. Management ownership lives
 in the status document; no lock is held across startup, execution, or shutdown.
-`up.instance` owns file reads and atomic updates; `up.workload` owns preparation,
-running/stopped/failed transitions, and management-operation ownership.
+`up.instance` owns status-file initialization, reads, and atomic updates;
+`up.workload` owns preparation, running/stopped/failed transitions, and
+management-operation ownership. Initial roaming status is written only after
+exclusive place creation under both the source and registry guards.
 
 Stop, exit, and failure retain every published place, agent home, status, and
 history. Only process/container/bootstrap resources and matching global references
@@ -285,7 +287,7 @@ Other locks remain beside their protected objects:
 | --- | --- |
 | `<database-name>.init.lock` | SQLite initialization |
 | `<thread-id>.compact.lock` | Thread compaction across model calls |
-| `status.json.lock` | Transient shared host/guest writer claim for the authoritative record |
+| `status.json.lock` | Transient shared host/guest writer claim for the authoritative status file |
 | `.runtime/active/register.lock` | Discovery publication/removal within one Toolang root |
 | `hub/hub.lock` | One hub process per root for its lifetime |
 
