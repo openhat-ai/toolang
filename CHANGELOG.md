@@ -260,6 +260,9 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 - Talk sends progress, dispatches independent work, then reports the worker's
   accepted admission without awaiting completion.
 
+- `too AGENT info` labels one Root as the agent root, beside the home.
+  ([#928](https://github.com/openhat-ai/toolang/pull/928))
+
 ### Fixed
 
 - Failed preparation no longer leaves active registrations; runtime references
@@ -426,6 +429,10 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 - Ctrl+Q after a successful Chat run no longer closes HTTP under a pending
   detail fetch or prints a spurious `ReadError`.
   ([#926](https://github.com/openhat-ai/toolang/pull/926))
+
+- Successful `info` and `init` results no longer append `Command` or `Try`
+  invocation examples.
+  ([#928](https://github.com/openhat-ai/toolang/pull/928))
 
 ### Security
 
