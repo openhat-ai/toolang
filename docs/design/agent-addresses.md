@@ -1,8 +1,7 @@
 # agent addresses
 
 Identity, area layout, instance selection, and bound continuation are implemented.
-Expanded `top`/`chore` scope, home-based `cd`, and JSON binding metadata remain
-follow-up surfaces. [Layout](layout.md) and [Hosting](hosting.md) describe current behavior;
+[Layout](layout.md) and [Hosting](hosting.md) describe their storage and execution;
 [CLI command recognition](cli-command-recognition.md) defines command parameters.
 
 ## Vocabulary and identity
@@ -51,8 +50,9 @@ IDs; equal addresses may exist under different Toolang roots.
 
 For new local execution, hold the source/Toolang-root creation guard and choose
 `timestamp = max(clock_ms, highest_retained_timestamp + 1)`. Create exclusively;
-occupied candidates advance the timestamp. Publish complete ownership before
-selection. Restarting a retained home preserves its ID and creation order.
+empty unpublished candidates advance the timestamp; conflicting ownership fails.
+Publish complete ownership before selection. Restarting a retained home preserves
+its ID and creation order.
 Validate full source/root/home bindings on every access; hash collisions cannot
 overwrite or select another owner.
 
@@ -91,7 +91,7 @@ existing ownership/link validation.
 | `path/to/file.too@s...` | Derive the roaming root from the canonical source path; works offline. |
 
 Require complete IDs; ellipses above are notation. An ID alone is not an address.
-Root directory names contain only IDs; addresses add name/path. `agent:name` and
+Nonresident root directory names contain only IDs; addresses add name/path. `agent:name` and
 `agent:name@ID` escape command-name collisions. Explicit remote schemes parse
 before suffixes, so Git revisions and URL `@` retain their source meaning.
 
@@ -104,7 +104,7 @@ Retained inspection needs ownership metadata/store, not source contents.
 
 The command contract determines whether an undecorated input denotes a source or
 an existing home. Home commands accept these shortcuts without preparing sources:
-resident name selects its fixed home, ref/url derives its visiting home, and a bare
+resident name selects its fixed home, ref/URL derives its visiting home, and a bare
 local path selects its last-created matching roaming home. Missing homes fail.
 Source inspection/workspace edits never allocate retained roaming roots or change
 that default. New source-only local execution allocates a fresh root.
@@ -139,9 +139,10 @@ and Thread locks govern concurrency; one home has at most one executor owner.
 
 `start/serve/stop` cover resident/visiting only. Roaming foreground shutdown belongs
 to its owner through Ctrl-C/signals/kill. `steer/cancel` control a live Run, including
-roaming, and never start/stop its executor. Chore controls require a live chore
-driver. Offline `chore list` shows saved definitions/history and marks live schedule
-fields unavailable.
+roaming, and never start/stop its executor. Chore commands currently accept
+resident names only; controls require a live chore driver. `chore list` combines
+authored definitions, saved scheduler checkpoints, and recorded Runs without
+requiring a running server.
 
 `fork/rewind` edit an idle Thread using existing guarded offline transactions when
 stopped. Fork includes its anchor; rewind removes the anchor and suffix. `--chat`
@@ -154,13 +155,14 @@ by `launch_id`. They may describe startup/shutdown and do not prove liveness.
 Remove them on exit; preserve roots/history. Known-path lookup is independent of
 registration. A later runtime at that home reuses the address with a new generation.
 
-`top` shows full resident names or `name@ID` addresses and identifies T. Address
-equals the active filename stem; the agent-root basename supplies only the ID.
-`info` separates Toolang root, agent root, home, address, source, and runtime.
-Its shell-quoted copy command includes `--root T` and a source-path address for
-roaming, remaining usable offline. JSON separates `toolang_root`, `address`,
-`agent_root`, `agent_home`, and `launch_id` when that follow-up surface lands.
+`top` shows full resident names or `name@ID` addresses. The address equals the
+active filename stem; a nonresident agent-root basename supplies only the ID.
+`info` shows `Toolang root`, `Agent root`, `Home`, `Agent`, and `Command`, plus
+runtime details when available. Its shell-quoted copy command includes `--root T`
+and a source-path address for roaming, remaining usable offline. Addresses copied
+from `top` still require the same Toolang root when used in another command.
 
-Toolang root also scopes hub backend namespaces. Only that requirement is defined
-here; backend namespace formats are deferred. Old flags, IDs, paths, and registry
-formats have no compatibility readers or migration behavior.
+Expanded `top`/`chore` scope, home-based `cd`, JSON binding metadata, and Toolang-root
+scoping of hub backend namespaces remain follow-ups; namespace formats are not
+defined here. Old instance flags, IDs, paths, and registry formats have no
+compatibility readers or migration behavior.

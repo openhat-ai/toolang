@@ -63,7 +63,7 @@ for captured Report fields.
   inspectable, but supply no destination live activity, controls, events, usage,
   completions, or archive totals. Mutable workspaces/tools and `stats.db` are not copied.
   New owners discard copied chore checkpoints; imported Talk receipts cannot
-  drive message handling or advance Hub cursors.
+  drive message handling or advance hub cursors.
 - Historical imports retain replay provenance and request IDs. Incomplete seeds
   cannot execute; continuation does not create another snapshot or home.
 - Offline fork/rewind uses guarded `ThreadManager` transactions after native/sandbox
@@ -222,7 +222,7 @@ run/thread identity without adopting background progress.
 ## Run Events
 
 [Events](events.md) owns value-only subscriber payloads, post-commit delivery,
-stream cursors, structural replacement, and HTTP/Hub reconnection. Execution
+stream cursors, structural replacement, and HTTP/hub reconnection. Execution
 never consumes subscriber payloads to decide persistence or control effects.
 Full calls and durable provenance remain in [Records](records.md).
 

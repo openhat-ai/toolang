@@ -1,22 +1,17 @@
 # Hosting
 
-| Command | Resident name | Local `.too` | Remote Source Ref |
-| --- | --- | --- | --- |
-| `too serve` | yes | no | yes |
-| `too start` | yes | no | yes |
-| `too stop` | yes | no | yes |
-
-Behavior:
-
 | Command | Behavior |
 | --- | --- |
-| `toolang serve` | Runs a local agent, or fetches one remote agent program into a stable visiting root and runs it in the foreground |
-| `toolang clone` | Clones one local agent, or fetches one remote agent program into a new local managed agent |
-| `too start` | Starts a persistent resident/visiting server, promotes an automatic one in place, or reuses a compatible persistent one |
-| `too stop` | Stops the selected generation, including active work, without fetching its source |
+| `too AGENT serve` | Run a resident/visiting server in the foreground. |
+| `too AGENT start` | Start a persistent resident/visiting server, promote an automatic one in place, or reuse a compatible persistent one. |
+| `too AGENT stop` | Stop the selected resident/visiting generation, including active work, without fetching its source. |
 
-`too serve` and `too start` resolve concrete startup inputs at the control
-boundary. Host `serve` executes in the foreground command's process; host
+AGENT accepts an agent name, ref, URL, or visiting instance. Source refs/URLs may
+prepare the stable visiting root; explicit instances reuse their existing home
+without fetching. Roaming does not support `serve`, `start`, or `stop`.
+
+`serve` and `start` resolve concrete startup inputs at the control boundary.
+Host `serve` executes in the foreground command's process; host
 `start` launches a detached child. Docker runs one guest workload and its host
 controller. Detached and guest workloads use hidden `too _serve`, receiving
 explicit agent paths, placement, instance ID, source policy, sandbox, location,
@@ -24,7 +19,6 @@ launch ID, and required store schema; guests do not recompute host identities. T
 
 Embedded host scripts expose the full Agent API, including activity and Stats,
 through that script's executor and event loop. The caller owns its shutdown.
-Roaming does not support `serve`, `start`, or `stop`.
 
 The CLI preserves the interpreter's process name and command-line arguments.
 Terminal conversation titles continue to use OSC independently of process names.
@@ -57,21 +51,23 @@ modes, not additional placement implementations.
 
 - [Startup](../../src/toolang/cli/common/startup.py) resolves a concrete `LaunchSpec`
   for new launches and only explicit requirements for attachment.
-- [Placement policy](../../src/toolang/up/config.py) centralizes executor reuse,
-  hosted/client driver defaults, and implicit lifetime. History continuation uses
-  the same reuse boundary; controls may attach to existing owners in every placement.
+- [Placement policy](../../src/toolang/up/config.py) centralizes source-only executor
+  reuse, hosted/client driver defaults, and implicit lifetime. Explicit instance
+  and record continuation stay in the selected home in every placement; controls
+  attach only to existing owners. [agent addresses](agent-addresses.md#binding-and-execution)
+  owns those bindings.
 - [Workloads](../../src/toolang/up/workload.py) initialize generation bindings and
-  own preparation/finalization. Nonreusable execution requires a caller-owned,
-  unstarted identity; retained state never qualifies. Discovery publication does
-  not own execution state.
+  own preparation/finalization. Source-only roaming execution begins with a newly
+  allocated identity; bound continuation validates the retained home instead.
+  Discovery publication does not own execution state.
 - [Application assembly](../../src/toolang/up/application.py) supplies the complete
   Agent API and Stats to both embedded and hosted `AgentCore` instances. Each
   execution host starts/closes those services within its existing resource scope.
 
 ## Startup policy
 
-Both commands accept repeatable `--allow RESOURCE=QUERY`,
-`--limit LIMIT=VALUE`, and `--default SETTING=VALUE` options. The CLI parses these
+Both commands accept repeatable `--allow KEY=VALUE`,
+`--limit KEY=VALUE`, and `--default KEY=VALUE` options. The CLI parses these
 with `TOOLANG_ALLOW_*`, `TOOLANG_DEFAULT_*`, and `TOOLANG_LIMIT_*` into frozen
 field overrides passed to `SetupWatcher`.
 
@@ -85,7 +81,7 @@ Chat initializes its own multi-run session. Default/limit fields occur once;
 repeated allow values accumulate within the CLI layer. Driver handler selection
 belongs to [Drivers](drivers.md#handler-selection).
 
-Resident/visiting attachment retains the running executor's settings when options
+Attachment retains the running executor's settings when options
 are omitted. It checks identity, API compatibility, required drivers, and explicit
 requirements without resolving a new launch or preparing/fetching source. Caller
 environment and current local startup configuration do not constrain attachment.
@@ -127,7 +123,7 @@ incompatible selector without executing or restarting the server.
 `chat --dev [PATH]` installs a local Toolang wheel in a new non-host runtime;
 bare `--dev` searches the working directory. It is rejected for host execution.
 Attachment accepts an explicit wheel only when its path and content match the
-running selection. Use `too <agent-or-ref> stop` to stop a retained server explicitly.
+running selection. Use `too AGENT stop` to stop a resident/visiting server explicitly.
 
 For execution commands, `--catalog` and `--compact-model` configure new runtimes.
 On attachment, explicit values must match saved settings; omitted values retain
@@ -234,8 +230,8 @@ Agent entrypoints also share one logging policy resolver:
 
 | Entrypoint | Log destination |
 | --- | --- |
-| `toolang serve` | `stderr` |
-| `toolang start` | `agent_log` under the agent `.runtime` directory |
+| `too AGENT serve` | `stderr` |
+| `too AGENT start` | `agent_log` under the agent `.runtime` directory |
 | embedded host `.too` script run | `run_log` under the agent `.runtime` directory when `PY_LOG` is set, otherwise `none` |
 | attached or temporary `.too` script run | AgentServer output remains in its `agent_log`; Script progress and result output retain their stderr/stdout split |
 
@@ -250,7 +246,7 @@ the final 2000 Docker log lines and streamed without buffering them in memory.
 Diagnostic write failures do not prevent container cleanup. Foreground
 interruption, ready-reporting errors, and wait failures stop and release the
 workload; cleanup failures preserve `SandboxState` for a later forced stop.
-`SandboxState` reads the `control` section of agent instance format 3 `status.json`; host and
+`SandboxState` reads the `control` section of agent instance format 4 `status.json`; host and
 guest update that shared file with generation checks and owned-field merges.
 Docker mounts the agent home read-write, including status, database sidecars,
 and logs; required inputs/workspaces and read-only bootstrap materials are added
@@ -258,7 +254,8 @@ separately. Entire roots and discovery references are not mounted. Guest field
 ownership is cooperative, not filesystem isolation. Independent sandbox state
 is removed. Legacy `.sandbox/<agent>/state.json` and `.runtime/sandbox.json`
 block launch, stop, and removal: stop old workloads with the previous version
-before upgrading. Stopped legacy status reports migrate; history is preserved.
+before upgrading. Older status formats are rejected without migration; preserve
+required history separately before removing obsolete runtime metadata.
 Likewise, per-launch staging without a matching control reference is preserved
 and blocks relaunch or removal until any associated workload is removed and the
 staging directory is cleaned manually.
@@ -290,12 +287,12 @@ cleanup. The referenced file is removed with the sandbox resources.
 
 ## Runtime identity and ports
 
-An active `toolang info` uses the sandbox reference's structured workload
+An active `too AGENT info` uses the sandbox reference's structured workload
 identity. Host workloads show `PID`; Docker workloads show `Container` with the
 generated name and a 12-character hexadecimal ID, while recovery retains the
 full immutable container ID. Other sandbox kinds show `Runtime KIND:ID` without
-assuming their identifiers can be shortened. Older version-1 references without
-identity fields remain readable as generic workloads.
+assuming their identifiers can be shortened. References without structured
+identity fields display as generic workloads.
 
 Automatic host-facing ports:
 
@@ -303,7 +300,7 @@ Automatic host-facing ports:
 | --- | --- |
 | Resident | Last successful available port, otherwise `7002–7999` |
 | Visiting | Last successful available port, otherwise OS-assigned |
-| Roaming | Fresh OS-assigned port for each instance |
+| Roaming | OS-assigned on each new executor |
 
 Only active global registrations reserve peer ports. Hold host listener sockets
 through serving; sandbox adapters publish actual endpoints. Automatic bind
@@ -321,16 +318,18 @@ Terminal Chat shares a compatible AgentServer for the same agent, Toolang root,
 and source identity, retaining its startup settings. Resident implicit servers
 remain running; visiting implicit servers exit once no client leases or accepted
 work remain.
-Fresh implicit resident/visiting servers enable chat only. Fresh start/serve
-keep placement defaults: resident chat,talk,chore; visiting chat,talk. Roaming
-Chat owns a fresh server and stops it on exit. Standalone scripts use embedded
-host execution or stop the guest server they created when the command exits.
+Fresh implicit servers enable chat only. Fresh start/serve keep placement
+defaults: resident chat,talk,chore; visiting chat,talk. Source-only roaming Chat
+allocates a fresh home; instance/Thread continuation reuses its bound home.
+A roaming client stops the server it created on exit; attachment retains the
+existing lifetime owner. Standalone scripts use embedded host execution or stop
+the guest server they created when the command exits.
 
-Use `too <agent-or-ref> start` for unattended availability. It promotes an
+Use `too AGENT start` for unattended availability. It promotes an
 automatic visiting server in place or reuses a persistent server, reports actual
 drivers, and never adds drivers implicitly. To change a running server's drivers
 or startup configuration, stop and restart it with the desired options.
-`too <agent-or-ref> stop` explicitly ends the current generation and active work;
+`too AGENT stop` explicitly ends the current generation and active work;
 clients do not relaunch it. Start cannot detach foreground serve.
 
 The server owns idle exit, with no supervisor process. Automatic clients renew
@@ -345,10 +344,10 @@ remain on host mounts. Host staging cleanup may wait for a later management call
 
 Generation checks reject delayed requests to replacement servers. Steer/cancel
 attach only to a healthy live owner and pin the target invocation; stale history
-cannot start a replacement or redirect a control to another invocation. Fork/rewind --chat
-retains one acquisition for resident/visiting; roaming commits the edit before
-continuing in a fresh instance. Stop/restart legacy owners to establish verifiable
-startup contracts and use lifecycle promotion and guarded controls.
+cannot start a replacement or redirect a control to another invocation.
+Fork/rewind `--chat` continues in the edited home for every placement. A committed
+edit survives a subsequent Chat failure. Stop/restart legacy owners to establish
+verifiable startup contracts and use lifecycle promotion and guarded controls.
 
 Chat checks health/profile before use. It retains session defaults locally and
 uses HTTP for runtime/model/runnable inspection, thread creation, and result

@@ -103,8 +103,8 @@ foreground server. A stale generation or closing server rejects upsert/promotion
 with HTTP 409. Upgrade the CLI and agent servers together.
 
 Mutating requests may carry `X-Toolang-Launch-ID` to reject a replaced execution
-owner before writes. Resident/visiting CLI clients send it automatically. Lease
-renewal is independent of SSE; readers do not retain automatic servers. See
+owner before writes. CLI Run clients send it for managed owners in every placement.
+Lease renewal is independent of SSE; readers do not retain automatic servers. See
 [Hosting](hosting.md#server-lifetime-and-client-leases) for timing,
 shutdown eligibility, and failure handling.
 
@@ -396,8 +396,8 @@ or JSON null; it is not implicitly converted to a Parts array.
 `steer` and `cancel` operate on active (`pending` or `running`) runs. Steer
 accepts a user message whose parts may be empty. Both accept optional
 `expected_control` (`<run_id>@<control_index>`). The server checks live ownership
-and this invocation before writing; mismatch returns HTTP 409. Resident/visiting
-CLI controls always pin the invocation, preventing a delayed command from
+and this invocation before writing; mismatch returns HTTP 409. CLI controls in
+every placement pin the invocation, preventing a delayed command from
 reaching another invocation. Existing callers may omit the field.
 `rerun` accepts a terminal root run and starts a new root from its source
 invocation, replacing the source in the visible thread projection. The

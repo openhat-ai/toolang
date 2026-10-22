@@ -39,7 +39,7 @@ organized by responsibility. Read the system overview before the relevant chapte
 - [Execution](design/execution.md): Run/Thread lifecycle, admission, controls, limits, State capture, and history compaction.
 - [Executor](design/executor.md): engine structure, task ownership, terminalization, and LiveTree.
 - [Records](design/records.md): durable facts, values, references, and historical inspection.
-- [Events](design/events.md): post-commit notifications, subscribers, SSE, replay/replacement, and Hub delivery.
+- [Events](design/events.md): post-commit notifications, subscribers, SSE, replay/replacement, and hub delivery.
 - [Drivers](design/drivers.md): Chat/Talk/Chore activation, handler selection, scheduling, and recovery.
 - [Chores](design/chores.md): named work definitions, identity, checkpoints, and manual occurrences.
 - [IDs](design/ids.md): allocation and deterministic identity codecs.
@@ -52,15 +52,15 @@ organized by responsibility. Read the system overview before the relevant chapte
 ## Clients and interaction
 
 - [CLI](design/cli.md): command routing, inspection, server acquisition, and terminal metadata.
-- [CLI command recognition](design/cli-command-recognition.md): target grammar, native agent parameters, Script selection, and concise help.
-- [agent addresses](design/agent-addresses.md): target home identities, namespace layout, lookup, active discovery, and bound execution.
+- [CLI command recognition](design/cli-command-recognition.md): prefix grammar, native agent parameters, Script selection, and concise help.
+- [agent addresses](design/agent-addresses.md): home identities, namespace layout, lookup, active discovery, and bound execution.
 - [Scripts](design/scripts.md): source-local projects, invocation/help, and file-input origins.
 - [Chat](design/chat.md): session commands, queued request snapshots, steering, recovery, and control/status UI.
 - [Terminal UI](design/terminal-ui.md): shared terminal ownership, geometry, Markdown, palettes, and scrollback.
 
 ## Collaboration and integration
 
-- [Messaging](design/messaging.md): Hub, conversations/rules, Talk consumption, and backend coordination.
+- [Messaging](design/messaging.md): hub, conversations/rules, Talk consumption, and backend coordination.
 - [HTTP API](design/api.md): application composition, request/response boundaries, and driver-gated routes.
 - [Plugins](design/plugins.md): extension families, factories, loading, and plugin-facing contracts.
 

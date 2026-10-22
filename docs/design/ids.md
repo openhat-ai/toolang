@@ -1,7 +1,9 @@
 # ID Rules
 
-Generated suffixes use eight lowercase Base32 characters:
+Run, Thread, Chore, and conversation suffixes use eight lowercase Base32 characters:
 `0123456789abcdefghjkmnpqrstvwxyz`. External/provider IDs remain opaque.
+[agent addresses](agent-addresses.md#vocabulary-and-identity) defines the separate
+area and instance ID widths and composition.
 
 Thread IDs require one of `chat_`, `talk_`, `chore_`, `work_`, or `exec_` and a
 nonempty suffix. `ThreadKind` is derived from this prefix on references, records,
@@ -31,19 +33,19 @@ and read schemas; classification is not stored separately. Creation selects
 ## Allocation and conversations
 
 - Epoch: `2026-01-01T00:00:00Z`; ticks are hours. Local/run permit 1,048,576
-  IDs/hour per agent; GC permits 524,288 reservations/hour per backend.
-- Each agent's `runs.db` keeps separate `local`/`run` sequence rows.
+  IDs/hour per home; GC permits 524,288 reservations/hour per backend.
+- Each agent home's `runs.db` keeps separate `local`/`run` sequence rows.
   `BEGIN IMMEDIATE` serializes reservations; commit before returning the ID.
   Keep ticks monotonic through clock rollback. Exhaustion fails without wrapping
   or resetting. Participating runtime processes share the database.
 - DM uses the sorted exact typed participant pair; a stored mismatch fails as a
   collision. DM/GC suffix domains are disjoint. GC reservations use atomic backend
   time and sequence state. Agent-keyed IDs reduce cross-agent collisions, without
-  a global uniqueness guarantee; references must still identify the agent.
+  a global uniqueness guarantee; references must still identify the owning home.
 - Talk uses `talk_thread_id` and persists one binding per backend/conversation
   in the agent's `runs.db`. Reuse it across batches/restarts; reject an occupied
   ID with another or no binding. The codec itself creates no thread.
-  Hub/clients use hub store schema 4. Add no compatibility codec or migration.
+  hub/clients use hub store schema 4. Add no compatibility codec or migration.
 
 Shared primitives live in `common/id_codec.py`; allocation in `common/ids.py`;
 chore rules in `catalog/chore_ids.py`; conversation rules in `teaming/ids.py`.

@@ -25,7 +25,7 @@ agent. Root help links to the topic directory beside `too more`.
 | `too AGENT serve` | Foreground lifecycle for resident or visiting agents |
 | `too AGENT start`, `too AGENT stop` | Background lifecycle for resident or visiting agents |
 | `too AGENT info` | Resident, visiting, or roaming agent information |
-| `too cd`, `too AGENT cd` | Interactive shell in the Toolang root or selected agent home; `exit` returns to the calling shell |
+| `too cd`, `too AGENT cd` | Interactive shell in the Toolang root or prepared source home; `exit` returns to the calling shell |
 | `too AGENT chat`, `too AGENT chore list`, `too AGENT inspect runs` | Agent work, authoring, and history |
 | `too run FILE [RUNNABLE]`, `too FILE [RUNNABLE]` | Two entry forms of the same local script command |
 | `too init DIR` | Create executable `aid.too` and comment-only `toolang.toml` without overwriting |
@@ -40,8 +40,9 @@ Each executable leaf declares one native `AgentArgument`: `source` for authored
 configuration, `home` for retained state or control, and `execute` for execution.
 The declaration generates its type, metavar, concise description, and completion.
 Groups only carry the raw prefix; their selected leaf validates it and owns the
-argument row. Every role displays `AGENT`; its description explains accepted
-forms, address semantics, and runtime requirements.
+argument row. Every role displays `AGENT`; its description lists accepted input
+forms and uses `Running` when a live target is required. Placement and driver
+constraints are validated when the command runs.
 Native Typer owns defaults, requiredness, conversion, callbacks, and eager help.
 Agent leaves disable automatic empty-tail help so a prefix can satisfy the
 argument without synthetic argv tokens. Selection stays in invocation Context;
@@ -63,7 +64,7 @@ before selector conversion or source preparation.
 names, remote refs, and placements.
 
 Global options, including `--root`/`-r`, precede the command or AGENT.
-`TOOLANG_ROOT` supplies the default resident root. Source-local scripts do not
+`TOOLANG_ROOT` supplies the default Toolang root. Source-local scripts do not
 accept an explicit global root override.
 
 ## Help vocabulary
@@ -90,7 +91,7 @@ when invoking the command.
 `--allow`, `--limit`, and `--default` use `<KEY>=<VALUE>` and short descriptions
 pointing to `too help allow`, `too help limit`, and `too help default`. Model
 options point to `too help model`. Keep field tables and model parameter details
-out of command help; the topic command is a separate implementation.
+out of command help. `too help TOPIC` is not implemented yet.
 
 ## Script selection and output
 
@@ -117,7 +118,7 @@ progress. Non-TTY progress is plain append-only text. [Execution presentation](e
 owns rendering and [Scripts](scripts.md) owns temporary grants and path origins.
 
 Each source-only roaming script or Chat launch creates a fresh root/executor.
-Instance and Thread continuation reuse the selected home. Roaming does
+Instance and Thread/Run continuation reuse the selected home. Roaming does
 not support `serve`, `start`, or `stop`. Host scripts expose the shared Agent API
 on the workload's event loop; guest workloads
 use existing sandbox serving. Resources close when the owning foreground caller
@@ -132,10 +133,13 @@ resource commands reject instance operands. There is no `--instance`/`-i` option
 - Resident names and visiting instances resolve by path in the selected Toolang
   root. Short roaming names use only that root's active registry; source-path
   selectors work offline without source contents.
-- A bare roaming path selects its last-created retained home. Completion time,
-  restart time, and mtime never reorder it. Each Toolang root has its own area.
-- `info`/`inspect` calculate agent roots without global references or preparation;
-  `info` uses saved resource summaries/State. Source contents may be unavailable.
+- For home commands, a bare roaming path selects its last-created retained home.
+  Completion time, restart time, and mtime never reorder it. Each Toolang root has
+  its own area.
+- `info`/`inspect` do not prepare sources. Known paths/refs locate homes directly;
+  short roaming names require active registration. `info` uses live resource
+  summaries when available, otherwise saved summaries/State. Source contents may
+  be unavailable.
 - A command pins its root/identity/generation once; controls attach only to that
   live owner. Offline fork/rewind edit history under verified stopped ownership.
 - Instance and Thread/Run selection bind the home for Chat, rerun, fork, rewind,
@@ -254,20 +258,23 @@ inspects the stored edge.
 
 ## Runtime acquisition and controls
 
-Chat, rerun, and fork/rewind acquire a compatible shared server and use its API.
-Inspection stays offline. Resident/visiting steer and cancel attach to a healthy
-live owner without starting a replacement; invocation guards prevent delayed
-requests from reaching a different Run incarnation.
+Chat and rerun acquire a compatible server in the bound home and use its API.
+Fork/rewind use guarded offline transactions when stopped, or the live owner's
+API; `--chat` continues in the edited home. Historical inspection stays offline.
+Steer and cancel support all placements and attach to a healthy live owner without
+starting a replacement; invocation guards prevent delayed requests from reaching
+a different Run incarnation.
 
 A Run ID selects its Thread; a Thread ID selects its active Run for steering/
-cancellation or its latest terminal root for rerun/fork/rewind. Rerun accepts a
-new root from the source invocation. Fork includes its anchor; rewind removes
+cancellation or its latest visible root for rerun/fork/rewind, which then validate
+the anchor's state. Rerun creates a new root from the source invocation.
+Fork includes its anchor; rewind removes
 its anchor and the visible suffix. All Thread kinds use the same branch state checks.
 [Execution](execution.md) owns admission and durable effects;
 [Hosting](hosting.md#server-lifetime-and-client-leases) owns server retention,
 and [Chat](chat.md) owns session snapshots and queue behavior.
 
-The Hub runs independently of an agent; bare `too hub` shows its instance status.
+The hub runs independently of an agent; bare `too hub` shows its instance status.
 [Messaging](messaging.md) owns Talk/Convo and shared rules. [Top](top.md) owns
 current and recent observation.
 ## Terminal titles and pane marks
@@ -320,7 +327,7 @@ In tmux, foreground commands also publish pane-local string options:
 | --- | --- |
 | `@toolang_kind` | `chat`, `talk`, `top`, `serve`, `run`, or `rerun` |
 | `@toolang_root` | Agent root for agent commands; Toolang root for commands without an agent |
-| `@toolang_agent` | Bare agent name; empty for Talk, team Top, and Hub Serve |
+| `@toolang_agent` | Bare agent name; empty for Talk, team Top, and hub serve |
 | `@toolang_thread` | Chat thread ID, once created |
 | `@toolang_run` | Actual executing run ID, once allocated or accepted |
 | `@toolang_convo` | Canonical Talk conversation ID |

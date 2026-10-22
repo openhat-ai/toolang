@@ -5,7 +5,7 @@ This document defines the current local filesystem layout.
 
 ## Toolang Root
 
-`TOOLANG_ROOT` selects the Toolang root for resident agents, Hub data, and
+`TOOLANG_ROOT` selects the Toolang root for resident agents, hub data, and
 runtime discovery. Each agent also has an internally resolved agent root for
 its own authored, prepared, and execution data. The two roots coincide for a
 resident agent.
@@ -56,9 +56,9 @@ ${TOOLANG_ROOT}/
 ```
 
 
-## Hub Files
+## hub files
 
-The root Hub stores its process record, lock, and log at:
+The root hub stores its process record, lock, and log at:
 
 - `${TOOLANG_ROOT}/hub/hub.json`
 - `${TOOLANG_ROOT}/hub/hub.lock`
@@ -86,16 +86,15 @@ Agent names are bounded to 64 ASCII characters. Visiting IDs use `h` plus a
 for encoding and canonicalization.
 
 Repeated visiting launches reuse their root. Each new source-only roaming launch
-allocates a root; explicit instance and Thread continuation reuse the selected
+allocates a root; explicit instance and Thread/Run continuation reuse the selected
 home. Different Toolang roots have separate areas even for the same source and ID.
 Previous layouts and registry directories remain untouched and are not searched.
 Temporary directory cleanup can remove its state and remembered settings. The cached
 remote `agent.too` is refetched after one hour. Its source-owned
 `agent.source.json` cache receipt records the acquired ref and byte digest;
-State captures the same Program and provenance. Each roaming execution gets a
-fresh root below the source file's sibling `.toolang`, with independent State and
-history. Host scripts serve the shared Agent API beside their foreground workload
-on one event loop; neither executor nor history is shared with another launch.
+State captures the same Program and provenance. Distinct roaming homes have
+independent State and history. Host scripts serve the shared Agent API beside
+their foreground workload on one event loop.
 Visiting idle shutdown stops its server and automatic Docker container, preserving
 this root and its history. Host control/stage files can be cleaned by the next
 management call.
@@ -149,7 +148,7 @@ materialization, and lifetime. No `.setup/` model-cache directory is created or
 mounted; existing legacy `.setup/models` is ignored.
 
 
-## Runtime Room
+## Runtime state and discovery
 
 Discovery references live under `${TOOLANG_ROOT}/.runtime/active/`:
 
@@ -160,7 +159,7 @@ Discovery references live under `${TOOLANG_ROOT}/.runtime/active/`:
 | Roaming | `aid@<instance_id>.json` |
 
 - Instance encoding and area isolation follow [agent addresses](agent-addresses.md).
-  Roots contain only the ID; registry filename stems add the agent name.
+  Nonresident roots contain only the ID; registry filename stems add the agent name.
 - Under the source cache's `.state/launch.lock`, allocate a timestamp after every
   retained launch of the same source within that Toolang root. Completion and
   restart times do not change creation order.
@@ -272,7 +271,7 @@ Other locks remain beside their protected objects:
 | `<thread-id>.compact.lock` | Thread compaction across model calls |
 | `status.json.lock` | Transient shared host/guest writer claim for the authoritative record |
 | `.runtime/active/register.lock` | Discovery publication/removal within one Toolang root |
-| `hub/hub.lock` | One Hub process per root for its lifetime |
+| `hub/hub.lock` | One hub process per root for its lifetime |
 
 Visiting preparation briefly holds `/tmp/toolang/.<area_id>.lock` to publish
 area ownership, then uses `/tmp/toolang/<area_id>/.<hotel_id>.lock` to claim its

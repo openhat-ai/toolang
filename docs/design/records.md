@@ -247,7 +247,7 @@ messages, and toolsets are content-addressed; provider request bodies and
 credentials are not stored. Model `report` records `usage: TokenUsage`, `cost: ModelCost`, `invoked`, and
 continuation (`cont`). Tool `report` contains `summary` and `invoked`. All durable
 statistics live inside Report; no snapshot nodes or parallel statistics indexes
-are persisted. Schema 62 requires fresh storage without old-record decoding.
+are persisted.
 
 For a Repeat Step, `spec.until_index` counts preceding body statements; null or
 an absent historical field means a trailing condition. Body statements are
@@ -333,5 +333,5 @@ All other reference-bearing columns store the complete canonical Ref string.
 `BEGIN IMMEDIATE` serializes local index allocation and related mutations.
 
 See [Durable Truth](execution.md#durable-truth) for the current schema.
-Both read-only and writable opens reject incompatible stores without migration
-or reset. Reference syntax remains strict; older spellings have no alias.
+Unsupported store schemas are rejected without mutation or reset. Reference
+syntax remains strict; older spellings have no alias.

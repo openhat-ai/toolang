@@ -28,7 +28,7 @@ and `top`/`chore` retain resident scope pending their expanded home views.
 
 ## Typical cases
 
-Proposed interface; shell variables contain complete IDs. Assume valid source,
+Implemented interface; shell variables contain complete IDs. Assume valid source,
 home, and record bindings; `alice` is initially unused.
 
 | Command | Result |
@@ -50,9 +50,9 @@ home, and record bindings; `alice` is initially unused.
 
 ## Touchpoints and acceptance
 
-Likely files under `src/toolang`: `cli/common/{agent_argument,context,help,lazy}.py`,
+Implementation under `src/toolang`: `cli/common/{agent_argument,context,execution,help,lazy}.py`,
 CLI routing/command factories, `common/{layout,instance_ids}.py`,
-`up/{identity,source,private_paths,observation,workload,config,replay}.py`,
+`up/{addresses,identity,source,private_paths,observation,workload,config}.py`,
 Chat/thread continuation, `top` presentation/schemas, and source/workspace inspection.
 Update current CLI/layout/hosting/execution docs with the implemented increment.
 

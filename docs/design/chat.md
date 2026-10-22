@@ -14,6 +14,11 @@ the thread. Startup `--thread`/`-t` accepts an explicit Thread or Run ID; bare
 `--thread` selects the most recently updated recorded thread and fails when none
 exists. Omission starts a new session. An empty explicit value is invalid.
 
+Source-only roaming Chat allocates a fresh home. An instance or explicit Thread/Run
+selects an existing home; bare `-t` uses the latest Thread in the selected home,
+without falling back to older homes. [agent addresses](agent-addresses.md#binding-and-execution)
+defines lookup and same-home attachment/restart behavior.
+
 The client keeps model parameters, runnable selection, workdir, resource ceilings,
 and limits as session defaults. Every submission snapshots them with its input-
 local overrides into one self-contained RunRequest. Queued requests retain their
@@ -111,14 +116,15 @@ Receipt/event reordering cannot change completed transcript history.
 
 ## Server acquisition and recovery
 
-An active server is reused with its current settings; caller environment and local
-startup defaults are not compared. Required drivers and explicit requirements,
-including sandbox and workspace bindings, must match it. Without a server, hosting
-resolves CLI, configuration, remembered selector, then host. Concurrent starters
-converge on one generation. Fresh implicit resident/visiting Chat servers enable
-chat only: residents persist,
-visiting servers automatically reclaim after leases and accepted work finish.
-Explicit start retains either placement. See [Hosting](hosting.md) and
+An active server in the selected home is reused with its current settings; caller
+environment and local startup defaults are not compared. Required drivers and
+explicit requirements, including sandbox and workspace bindings, must match it.
+Without a server, hosting resolves CLI, configuration, remembered selector, then
+host. Concurrent starters for the same home converge on one generation. Fresh
+implicit Chat servers enable chat only: residents persist, visiting servers
+automatically reclaim after leases and accepted work finish, and roaming servers
+stop with their creating client.
+Explicit start retains resident/visiting availability. See [Hosting](hosting.md) and
 [server lifetime](hosting.md#server-lifetime-and-client-leases) for concrete timing and cleanup.
 
 RemoteRunClient records the accepted Run ID and observes its canonical root
@@ -149,7 +155,7 @@ records for explicit inspection. All Thread kinds can fork/rewind under the
 same state checks; those operations do not start follow-up execution.
 
 Input recall history belongs to the runtime layout, separate from execution
-records and model context; [Layout](layout.md#runtime-room) owns its paths.
+records and model context; [Layout](layout.md#runtime-state-and-discovery) owns its paths.
 Unsent drafts remain in memory; no legacy history or drafts are imported.
 Terminal titles and pane metadata are specified in [CLI](cli.md#terminal-titles-and-pane-marks).
 They are display/navigation hints and do not establish liveness.

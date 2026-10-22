@@ -10,7 +10,7 @@ The language expresses agent loops with fine-grained control using a constrained
 
 ## Install
 
-Toolang runs on **macOS** and **Linux** with **Python 3.11+**. **Windows** has not been tested yet.
+Toolang runs on **macOS** and **Linux** with **Python 3.11+**. **Windows** is not supported yet.
 
 Install Toolang with `uv` or `pip`; the main command is `toolang`, with `too` as a shorter alias:
 
@@ -127,14 +127,14 @@ Below are some common commands. Run `too --help` for usage details, or `too more
 
 ```bash
 too new NAME                 # Create an agent
-too clone SOURCE [TARGET]    # Clone an agent
+too clone SOURCE [NAME]      # Clone an agent
 too AGENT info               # Show agent information
 too AGENT cd                 # Enter an agent home
 too AGENT start              # Start an agent in the background
 too AGENT stop               # Stop an agent
 too AGENT chat               # Chat directly with an agent
 
-too init PROJECT_DIR         # Initialize Toolang in a directory
+too init DIR                 # Initialize Toolang in a directory
 too run FILE.too [RUNNABLE]  # Execute a .too file
 
 too hub start                # Start the hub in the background

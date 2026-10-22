@@ -1,7 +1,8 @@
 # Scoped and ordered instance IDs
 
-Status: approved in PR #899. This definition builds on merged PR #897.
-Existing formats and layouts are not supported.
+Historical definition, approved in PR #899 on top of merged PR #897. Selectors,
+ID encoding, and layout below were superseded by [agent addresses](../design/agent-addresses.md).
+They do not describe current behavior.
 
 ## Goal and scope
 
