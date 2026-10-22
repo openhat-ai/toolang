@@ -168,12 +168,12 @@ class _TalkCommand(CliCommand):
         with formatter.section("Examples"):
             formatter.write_dl(
                 [
-                    (f"{ctx.find_root().info_name} convo list", "List conversations"),
-                    (f"{prefix} alice", "Open a conversation with an agent"),
-                    (f"{prefix} all", "Open the system group"),
-                    (f"{prefix} alice,bob", "View a conversation between agents"),
                     (f"{prefix} gc_abcd1234", "Open a conversation by ID"),
-                    (f'{prefix} alice "Hello"', "Send a message and exit"),
+                    (f'{prefix} gc_abcd1234 "Hello"', "Send a message and exit"),
+                    (f"{prefix} alice", "Open a conversation with an agent"),
+                    (f"{prefix} all", "Open the conversation with all agents"),
+                    (f"{prefix} alice,bob", "View a conversation between agents"),
+                    (f"{ctx.find_root().info_name} convo list", "List conversations"),
                 ],
                 col_max=formatter.width,
             )

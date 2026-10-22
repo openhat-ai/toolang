@@ -37,8 +37,8 @@ def talk_command(
     target: Annotated[
         str | None,
         typer.Argument(
-            metavar="conversation",
-            help="Conversation ID or shorthand; use 'too convo list' to list conversations",
+            metavar="CONVO",
+            help="Conversation ID or shorthand",
         ),
     ] = None,
     body: Annotated[

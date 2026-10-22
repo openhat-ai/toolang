@@ -158,19 +158,30 @@ def test_talk_without_target_shows_help_without_reading_settings(
         pytest.fail("Talk help must not read settings or contact Hub")
 
     (tmp_path / "config.toml").write_text("invalid TOML [")
+    monkeypatch.setattr("sys.argv", ["too"])
     monkeypatch.setattr(talk, "settings", reject_settings)
     monkeypatch.setattr(talk, "HubClient", reject_settings)
 
     assert cli.main(["--root", str(tmp_path), "talk"]) == 0
 
     output = capsys.readouterr().out
-    assert "Usage:" in output
-    assert "too convo list" in output
-    assert "CONVO" not in output
-    listing_example = next(
-        line for line in output.splitlines() if "List conversations" in line
-    )
-    assert "convo list" in listing_example
+    assert "Usage: too talk [OPTIONS] [CONVO] [MESSAGE...]" in output
+    arguments = output.split("Arguments:\n", 1)[1].split("Options:\n", 1)[0]
+    assert "Conversation ID or shorthand" in arguments
+    assert "convo list" not in arguments
+    examples = output.split("Examples:\n", 1)[1]
+    assert [
+        line.strip().split("  ", 1)[0] for line in examples.splitlines() if line.strip()
+    ] == [
+        "too talk gc_abcd1234",
+        'too talk gc_abcd1234 "Hello"',
+        "too talk alice",
+        "too talk all",
+        "too talk alice,bob",
+        "too convo list",
+    ]
+    assert "Open the conversation with all agents" in examples
+    assert "system group" not in examples
 
 
 def test_system_shortcut_and_id_share_history_and_terminal_identity(
