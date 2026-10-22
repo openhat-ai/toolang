@@ -233,7 +233,9 @@ def test_cli_no_args_still_shows_root_help(
     stdout = strip_ansi(output.out)
 
     assert result == 0
-    assert "Usage: toolang [OPTIONS] <COMMAND> [ARGUMENTS]" in stdout.splitlines()
+    assert (
+        "Usage: toolang [OPTIONS] [AGENT] <COMMAND> [ARGUMENTS]" in stdout.splitlines()
+    )
     assert "Toolang — a language and runtime for agents and humans." in stdout
     assert output.err == ""
 

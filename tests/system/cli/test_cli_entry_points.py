@@ -135,6 +135,35 @@ def test_installed_console_scripts_complete_agent_prefixes_only(
     assert set(tmp_path.rglob("*")) == before
 
 
+@pytest.mark.parametrize("script", ["too", "toolang"])
+def test_installed_console_scripts_complete_only_agent_scoped_commands(
+    script, tmp_path
+):
+    from shlex import join
+
+    words = [script, "--root", str(tmp_path), "alice", ""]
+    completed = subprocess.run(
+        [Path(sys.executable).with_name(script)],
+        env={
+            **os.environ,
+            f"_{script.upper()}_COMPLETE": "complete_bash",
+            "COMP_WORDS": join(words),
+            "COMP_CWORD": str(len(words) - 1),
+        },
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert completed.returncode == 0, completed.stderr
+    candidates = set(completed.stdout.split())
+    assert {"info", "chat", "skill", "workspace"} <= candidates
+    assert candidates.isdisjoint(
+        {"new", "clone", "remove", "list", "hub", "talk", "convo", "init", "run"}
+    )
+    assert not completed.stderr
+    assert not tuple(tmp_path.iterdir())
+
+
 def test_toolang_version_does_not_load_runtime_command_modules() -> None:
     probe = """
 import json

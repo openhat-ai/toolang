@@ -214,6 +214,8 @@ class _ToolangGroup(CliGroup):
         commands.update(
             (name, factory()) for name, factory in _REGISTERED_COMMANDS.items()
         )
+        if kwargs.get("subcommand_metavar") is None:
+            kwargs["subcommand_metavar"] = "[AGENT] <COMMAND> [ARGUMENTS]"
         super().__init__(*args, commands=commands, **kwargs)
 
     def resolve_command(self, ctx: Context, args: list[str]):

@@ -409,8 +409,19 @@ def test_unknown_option_during_command_resolution_keeps_usage(capsys, monkeypatc
     assert too_main(["--", "--missing"]) == 2
     output = strip_ansi(capsys.readouterr().err)
     assert output.startswith("Error: No such option: --missing")
-    assert "\n\nUsage: too [OPTIONS] <COMMAND> [ARGUMENTS]\n" in output
+    assert "\n\nUsage: too [OPTIONS] [AGENT] <COMMAND> [ARGUMENTS]\n" in output
     assert "Try '" not in output
+
+
+def test_root_help_shows_the_agent_prefix_without_loading_commands(capsys, monkeypatch):
+    monkeypatch.setattr("sys.argv", ["too"])
+    monkeypatch.setattr(
+        LazyCommand, "load", lambda _: pytest.fail("root help loaded a command")
+    )
+    assert too_main(["--help"]) == 0
+    captured = capsys.readouterr()
+    assert "Usage: too [OPTIONS] [AGENT] <COMMAND> [ARGUMENTS]" in captured.out
+    assert not captured.err
 
 
 @pytest.mark.parametrize("command", ["rerun", "inspect", "chat"])

@@ -13,6 +13,7 @@ from typer._click import (
     HelpFormatter as NativeHelpFormatter,
 )
 from typer._click.exceptions import ClickException, UsageError
+from typer._click.shell_completion import CompletionItem
 from typer.core import TyperArgument, TyperCommand, TyperGroup
 
 from toolang.common.typer.ui import HelpFormatter, argument_usage
@@ -173,6 +174,17 @@ class CliGroup(TyperGroup):
         write_usage(
             formatter, _usage_path(ctx), " ".join(self.collect_usage_pieces(ctx))
         )
+
+    def shell_complete(self, ctx: Context, incomplete: str) -> list[CompletionItem]:
+        items = super().shell_complete(ctx, incomplete)
+        if agent_prefix(ctx) is not None:
+            items = [
+                item
+                for item in items
+                if item.value not in self.commands
+                or agent_parameters(self.commands[item.value])
+            ]
+        return items
 
     def resolve_command(
         self, ctx: Context, args: list[str]

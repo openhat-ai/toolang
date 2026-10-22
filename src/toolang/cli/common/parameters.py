@@ -98,6 +98,6 @@ InstanceOption = Annotated[
         "-i",
         metavar="INSTANCE",
         callback=_selected_instance,
-        help="Select a retained v… or r… instance; default: latest startup",
+        help="Select a retained instance ID; default: latest startup",
     ),
 ]

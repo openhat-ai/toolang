@@ -482,6 +482,9 @@ def test_mixed_group_rejects_prefix_on_a_leaf_without_an_agent(
     assert calls == ["value"]
     completion = _resolve_context(command, {}, "too", ["alice", "group", "plain"])
     assert completion.command.name == "group"
+    assert [
+        item.value for item in completion.command.shell_complete(completion, "")
+    ] == ["scoped"]
     assert calls == ["value"]
 
 
