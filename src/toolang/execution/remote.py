@@ -145,6 +145,7 @@ class RemoteRunClient:
         self._owns_http = client is None
         self._readers: set[asyncio.Task[None]] = set()
         self._details: set[asyncio.Task[RunDetail]] = set()
+        self._connection_lock = asyncio.Lock()
         self._connected = False
 
     @property
@@ -158,14 +159,15 @@ class RemoteRunClient:
         return self._endpoint
 
     async def connect(self) -> None:
-        if self._connected:
-            self._require_connected()
-            return
-        if self._owns_http:
-            self._http = httpx.AsyncClient()
-        elif self._http is None or self._http.is_closed:
-            raise RemoteRunClientError("remote run HTTP client is closed")
-        self._connected = True
+        async with self._connection_lock:
+            if self._connected:
+                self._require_connected()
+                return
+            if self._owns_http:
+                self._http = httpx.AsyncClient()
+            elif self._http is None or self._http.is_closed:
+                raise RemoteRunClientError("remote run HTTP client is closed")
+            self._connected = True
 
     async def live_trees(self, *, root_run_id: str | None = None) -> LiveSnapshot:
         self._require_connected()
@@ -340,16 +342,17 @@ class RemoteRunClient:
         )
 
     async def disconnect(self) -> None:
-        if not self._connected:
-            return
-        self._connected = False
-        pending = (*self._readers, *self._details)
-        for task in pending:
-            task.cancel()
-        if pending:
-            await asyncio.gather(*pending, return_exceptions=True)
-        if self._owns_http and self._http is not None:
-            await self._http.aclose()
+        async with self._connection_lock:
+            if not self._connected:
+                return
+            self._connected = False
+            pending = (*self._readers, *self._details)
+            for task in pending:
+                task.cancel()
+            if pending:
+                await asyncio.gather(*pending, return_exceptions=True)
+            if self._owns_http and self._http is not None:
+                await self._http.aclose()
 
     async def fork_thread(self, thread_id: str, *, run_id: str) -> ThreadInfo:
         """Fork through a recorded run using the owning agent."""

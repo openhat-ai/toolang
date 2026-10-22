@@ -1208,6 +1208,77 @@ def test_remote_client_canceling_detail_wait_preserves_other_waiters() -> None:
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("operation", ["disconnect", "connect"])
+def test_remote_client_lifecycle_waits_for_detail_cancellation_cleanup(
+    operation: str,
+) -> None:
+    async def scenario() -> None:
+        entered = asyncio.Event()
+        cleanup_entered = asyncio.Event()
+        cleanup_release = asyncio.Event()
+        following_entered = asyncio.Event()
+        active = False
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal active
+            if request.method == "POST":
+                return _stream_response(_begin(), _end())
+            active = True
+            entered.set()
+            try:
+                await asyncio.Event().wait()
+                raise AssertionError("detail request must be canceled")
+            finally:
+                cleanup_entered.set()
+                await cleanup_release.wait()
+                active = False
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+            client = RemoteRunClient("http://runtime.test", client=http)
+            await client.connect()
+            handle = await client.run(_request())
+            pending = asyncio.create_task(handle.wait())
+            closing: asyncio.Task[None] | None = None
+            following: asyncio.Task[None] | None = None
+
+            async def follow() -> None:
+                following_entered.set()
+                if operation == "disconnect":
+                    await client.disconnect()
+                else:
+                    await client.connect()
+
+            try:
+                await asyncio.wait_for(entered.wait(), timeout=5)
+                closing = asyncio.create_task(client.disconnect())
+                await asyncio.wait_for(cleanup_entered.wait(), timeout=5)
+                following = asyncio.create_task(follow())
+                await asyncio.wait_for(following_entered.wait(), timeout=5)
+                assert active
+                assert not closing.done()
+                assert not following.done()
+                cleanup_release.set()
+                await asyncio.wait_for(closing, timeout=5)
+                await asyncio.wait_for(following, timeout=5)
+                assert not active
+                assert client.connected is (operation == "connect")
+                with pytest.raises(RemoteRunClientError, match="disconnected"):
+                    await pending
+            finally:
+                cleanup_release.set()
+                await asyncio.gather(
+                    *(
+                        task
+                        for task in (pending, closing, following)
+                        if task is not None
+                    ),
+                    return_exceptions=True,
+                )
+                await client.disconnect()
+
+    asyncio.run(scenario())
+
+
 def test_remote_client_disconnect_settles_pre_acceptance_run(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
