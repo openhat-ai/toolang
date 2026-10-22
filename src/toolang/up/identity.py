@@ -75,7 +75,9 @@ def layout_from_control(control: dict) -> AgentLayout:
             layout.place
             != paths.VISITING_BASE / root_code(str(root)) / layout.place_code
         ):
-            raise ValueError("visiting instance identity follows an invalid place link")
+            raise ValueError(
+                "visiting instance identity follows an invalid agent root link"
+            )
     elif placement == "roaming":
         source_path = _canonical_path(control.get("source_path"))
         token = control.get("place_code")
@@ -88,7 +90,9 @@ def layout_from_control(control: dict) -> AgentLayout:
             layout.place
             != source_path.parent / ".toolang" / root_code(str(root)) / token
         ):
-            raise ValueError("roaming instance identity follows an invalid place link")
+            raise ValueError(
+                "roaming instance identity follows an invalid agent root link"
+            )
     else:
         raise ValueError("invalid instance identity placement")
     runtime_instance = control.get("runtime_instance")
@@ -170,7 +174,7 @@ def visiting_home_guard(layout: AgentLayout) -> Iterator[None]:
 
 def _retained_layout(place: Path, name: str) -> AgentLayout:
     if place.is_symlink():
-        raise ValueError(f"invalid retained place: {place}")
+        raise ValueError(f"invalid retained agent root: {place}")
     decode_place_code(place.name, marker="s")
     statuses = list((place / "agents").glob("*/.runtime/status.json"))
     if len(statuses) > 1:

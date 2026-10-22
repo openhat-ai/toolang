@@ -6,8 +6,9 @@ This document defines the current local filesystem layout.
 ## Root, place, and home
 
 `TOOLANG_ROOT` selects the root for configuration, resident agents, hub files,
-and runtime discovery. A place contains an agent environment; a home is always
-`PLACE/agents/NAME`. Root, place, and home are paths. For resident agents,
+and runtime discovery. The internal path name PLACE denotes the agent root;
+see [agent addresses](agent-addresses.md#vocabulary) for public wording.
+A home is always `PLACE/agents/NAME`. Root, place, and home are paths. For resident agents,
 `PLACE = ROOT`; visiting and roaming places are grouped by a short root code.
 
 Authored scopes keep the labels `root` and `home`: root-scope inputs come from

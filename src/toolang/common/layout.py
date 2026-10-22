@@ -141,7 +141,9 @@ class AgentLayout:
         place = source.parent / ".toolang"
         if place_code is not None:
             if root is None:
-                raise ValueError("a retained roaming place requires its root")
+                raise ValueError(
+                    "a retained roaming agent root requires its Toolang root"
+                )
             place = place / root_code(str(root.expanduser().resolve())) / place_code
         return cls(
             place=place,

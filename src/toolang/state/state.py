@@ -1015,7 +1015,7 @@ def entry_source(entry: StateCap, *, agent_name: str, place: Path | None) -> str
     if form in {"referenced", "configured"}:
         return cap_source.source_location(entry.ref, shape=entry.shape)
     if place is None:
-        raise ValueError("local cap locations require the place")
+        raise ValueError("local cap locations require the agent root")
     source_path = place / entry_definition_file(entry)
     if form == "authored" and entry.kind == "skill" and source_path.name != "SKILL.md":
         source_path /= "SKILL.md"

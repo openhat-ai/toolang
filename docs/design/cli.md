@@ -121,7 +121,7 @@ requests a file or `-` for stdout. Quiet mode suppresses preparation/execution
 progress. Non-TTY progress is plain append-only text. [Execution presentation](execution-presentation.md)
 owns rendering and [Scripts](scripts.md) owns temporary grants and path origins.
 
-Each source-only roaming script or Chat launch creates a fresh place and executor.
+Each source-only roaming script or Chat launch creates a fresh agent root and executor.
 Instance and Thread/Run continuation reuse the selected home. Roaming does
 not support `serve`, `start`, or `stop`. Host scripts expose the shared Agent API
 on the workload's event loop; guest workloads
@@ -212,7 +212,7 @@ Cap and tool lists keep each resource on one line and follow this width policy,
 with a 120-cell fallback when geometry is unavailable. Only descriptions
 and locations shrink; identities and statuses remain complete. Long cells use `…`; source
 locations preserve their beginning and end. Local cap locations are relative to
-the selected place; URLs and canonical refs keep their existing form.
+the selected agent root; URLs and canonical refs keep their existing form.
 `STATUS` shows only `ready` or `not_allowed`; all tags remain in JSON and queries. The tool identity heading is `TOOL`,
 while JSON and query records retain `ref`. These lists have no `--long`; complete
 field values remain available through `--json`.

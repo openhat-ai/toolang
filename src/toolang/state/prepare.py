@@ -746,7 +746,7 @@ def _observe_scope_source(
 
 def _require_place(layout: AgentLayout) -> None:
     if not layout.place.is_dir():
-        raise FileNotFoundError(f"place not found: {layout.place}")
+        raise FileNotFoundError(f"agent root not found: {layout.place}")
 
 
 def _require_agent_home(layout: AgentLayout) -> None:

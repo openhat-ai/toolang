@@ -35,7 +35,7 @@ class SignatureType(StringParamType):
 
 RootOption = Annotated[
     Path | None,
-    typer.Option("--root", "-r", metavar="PATH", help="Use a custom root"),
+    typer.Option("--root", "-r", metavar="PATH", help="Use a custom Toolang root"),
 ]
 AllowOptions = Annotated[
     list[str] | None,

@@ -94,7 +94,7 @@ def test_cd_announces_destination_once_before_launching(
     )
     monkeypatch.setattr(cd_command.sys.stdin, "isatty", lambda: True)
     monkeypatch.setattr(cd_command.sys.stdout, "isatty", lambda: True)
-    destination = "gus's home" if placement else "the root"
+    destination = "gus's home" if placement else "the Toolang root"
     expected = (
         f"Opening a shell in {destination}: {display_path}\nType exit to return.\n"
     )
@@ -228,8 +228,9 @@ def test_cd_help_describes_optional_agent(
 
     output = strip_ansi(capsys.readouterr().out)
     assert "Usage: too [AGENT] cd [OPTIONS]" in output
-    assert "Enter an agent home, or the root if no agent is specified." in " ".join(
-        output.split()
+    assert (
+        "Enter an agent home, or the Toolang root if no agent is specified."
+        in " ".join(output.split())
     )
     assert "Agent name, path, ref or URL" in output
     assert "* AGENT" not in output

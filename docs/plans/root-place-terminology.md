@@ -5,10 +5,15 @@ fallback lookup, or migration are included. hub namespaces are a separate PR.
 
 ## Goal and scope
 
-Use one vocabulary in code, persisted bindings, CLI help/output, and current
-documentation. `root`, `place`, and `home` name paths; `root_code` and `place_code`
+Internally, `root`, `place`, and `home` name paths; `root_code` and `place_code`
 name short codes. `placement` is resident, visiting, or roaming; host/guest
 `location` is independent. Keep runtime generation fencing separate.
+
+Public wording uses Toolang root, agent root, and agent home. `place` is the
+internal name for an agent root. `info` labels paths `Toolang root`, `Agent root`,
+and `Home`. Global `--root`/`TOOLANG_ROOT` selects the Toolang root; Docker's
+`root` setting and agent prompt environment `root` denote the agent root.
+Persisted bindings and sandbox interfaces retain the internal vocabulary.
 
 For every placement, `HOME = PLACE/agents/NAME`:
 
@@ -42,8 +47,9 @@ Acceptance scenarios:
   full ownership still rejects collisions and mismatched roots/sources.
 - Host/guest startup and discovery use place paths and new binding names while
   retaining the selected root and runtime-generation fences.
-- Help and copyable output use the new vocabulary; current docs/examples match
-  code and contain no superseded identity terms.
+- Help, path errors, and output use public wording; Docker and prompt `root`
+  values identify the agent root, while global root selection stays distinct.
+- Current docs/examples match code and define the internal/public vocabulary.
 
 Run focused acceptance tests, default repository checks, and `git diff --check`.
 Risk: existing pre-release addresses, retained homes, and status records become

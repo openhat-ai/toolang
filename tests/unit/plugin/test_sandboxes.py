@@ -548,7 +548,7 @@ def test_docker_sandbox_prepares_and_launches(
         "OPENAI_API_KEY": "provider-secret",
     }
     guest_env_source = guest_env_mount.local_path.read_text(encoding="utf-8")
-    assert guest_env_source.startswith("# Place and home dotenv values\n")
+    assert guest_env_source.startswith("# Agent root and home dotenv values\n")
     assert "\n# Filtered host process values\n" in guest_env_source
     assert guest_env_source.count("OPENAI_API_KEY=") == 2
     assert "UNRELATED_HOST_SECRET" not in guest_env_source
@@ -1170,13 +1170,13 @@ def test_docker_sandbox_uses_configured_default_image(tmp_path: Path) -> None:
     assert plan.sandbox == "docker:python:3.14"
 
 
-def test_docker_sandbox_owns_its_guest_place_configuration(tmp_path: Path) -> None:
-    sandbox = create_sandbox("docker", config={"place": "/workspace/toolang"})
+def test_docker_sandbox_maps_public_root_to_its_guest_place(tmp_path: Path) -> None:
+    sandbox = create_sandbox("docker", config={"root": "/workspace/toolang"})
 
     assert sandbox.runtime_place(tmp_path) == Path("/workspace/toolang")
 
 
-@pytest.mark.parametrize("name", ["root", "unknown"])
+@pytest.mark.parametrize("name", ["place", "unknown"])
 def test_docker_sandbox_rejects_unknown_path_settings(name):
     with pytest.raises(ValueError, match="unknown docker settings"):
         create_sandbox("docker", config={name: "/workspace/toolang"})

@@ -7,7 +7,7 @@
 | `too AGENT stop` | Stop the selected resident/visiting generation, including active work, without fetching its source. |
 
 AGENT accepts an agent name, ref, URL, or visiting instance. Source refs/URLs may
-prepare the stable visiting place; explicit instances reuse their existing home
+prepare the stable visiting agent root; explicit instances reuse their existing home
 without fetching. Roaming does not support `serve`, `start`, or `stop`.
 
 `serve` and `start` resolve concrete startup inputs at the control boundary.
@@ -173,13 +173,13 @@ driver = "docker"
 target = "python:3.13-slim"
 
 [plugin.sandbox.docker]
-place = "/root/.toolang"
+root = "/root/.toolang"
 ```
 
 Root and agent plugin tables are merged before the selected sandbox factory is
 created. Status, stop, and interrupted-launch recovery re-read this current
 configuration; `SandboxState` stores only the sandbox selector and runtime
-reference. Each plugin owns its runtime-place configuration and reports whether
+reference. Each plugin owns its agent root configuration and reports whether
 the workload runs on the host or in a guest environment; orchestration does not
 interpret plugin-specific path settings.
 
@@ -201,7 +201,7 @@ A host-process value overrides those layers only when its name matches the
 pattern.
 
 Docker writes the selected mapping to one mode-`0600` staged dotenv file. Its
-comments separate merged place/home dotenv values from filtered host-process
+comments separate merged agent root/home dotenv values from filtered host-process
 values, with the process section last to preserve precedence. The file is
 bind-mounted read-only over `HOME/.env`; `PLACE/.env` is not mounted, and the
 original home `.env` remains hidden behind the nested file

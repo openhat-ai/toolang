@@ -58,7 +58,7 @@ def begin_workload(
     ):
         raise ValueError("instance belongs to a different Toolang root")
     if layout.placement == "resident" and layout.place != root:
-        raise ValueError("resident place does not match its root")
+        raise ValueError("resident agent root does not match its Toolang root")
 
     def begin(entry):
         entry["launch_id"] = launch_id

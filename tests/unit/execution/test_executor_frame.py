@@ -386,6 +386,13 @@ def test_build_agic_frame_builds_one_complete_model_input(
     assert prepared.adapter is adapter
     assert tuple(prepared.tools) == ("shell__execute",)
     assert prepared.services == ()
+    environment = cast(
+        dict[str, object], prepared.inputs.template_values["environment"]
+    )
+    assert environment["root"] == "/root/.toolang"
+    assert environment["root"] != str(root)
+    assert environment["home"] == "/root/.toolang/agents/alice"
+    assert "place" not in environment
     assert "You are the alice Toolang agent." in prepared.instructions
     assert "toolang_version:" not in prepared.instructions
     assert "sandbox: docker:python:3.13-slim" not in prepared.instructions

@@ -4042,8 +4042,8 @@ def test_agent_info_fields_follow_the_compact_layout(
 
     assert result.exit_code == 0, result.stderr
     expected = [
-        "Root",
-        "Place",
+        "Toolang root",
+        "Agent root",
         "Home",
         "Agent",
         "Tools",

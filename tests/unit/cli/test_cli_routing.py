@@ -350,7 +350,7 @@ def test_cli_exposes_plural_list_resources_and_removes_channels() -> None:
     group = typer.main.get_command(cli.app)
     expected_help = {
         "inspect": "Inspect agent runs",
-        "cd": "Enter an agent home, or the root if no agent is specified",
+        "cd": "Enter an agent home, or the Toolang root if no agent is specified",
         "caps": "List available caps",
         "models": "List available models",
         "providers": "List available model providers",

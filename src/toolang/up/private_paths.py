@@ -140,10 +140,10 @@ def visiting_paths(layout: AgentLayout) -> Iterator[VisitingPaths]:
     """Pin every untrusted directory with O_NOFOLLOW and directory-relative I/O."""
     parent = paths.VISITING_BASE
     if layout.root is None or layout.place_code is None:
-        raise ValueError("visiting place requires its Toolang root")
+        raise ValueError("visiting agent root requires its Toolang root")
     namespace = parent / root_code(str(layout.root))
     if layout.place != namespace / layout.place_code:
-        raise ValueError("visiting place does not match its instance identity")
+        raise ValueError("visiting agent root does not match its instance identity")
     descriptors: list[tuple[Path, int]] = []
     flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
 

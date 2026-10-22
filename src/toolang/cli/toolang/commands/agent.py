@@ -241,8 +241,8 @@ def info_agent(
     toolang_root = str(context_root(ctx).expanduser().resolve())
     command = shlex.join(["too", "--root", toolang_root, selector, "info"])
     rows = [
-        ("Root", toolang_root),
-        ("Place", str(layout.place)),
+        ("Toolang root", toolang_root),
+        ("Agent root", str(layout.place)),
         ("Home", shorten_home_path(layout.home)),
         ("Agent", layout.address),
         *resources,

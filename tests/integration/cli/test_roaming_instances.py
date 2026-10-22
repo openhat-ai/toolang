@@ -332,8 +332,8 @@ def test_info_copy_command_binds_the_offline_home_and_quotes_paths(
     )
     selector = f"{source}@{layout.place_code}"
     assert main(["--root", str(root), selector, "info"]) == 0
-    assert captured["Root"] == str(root)
-    assert captured["Place"] == str(layout.place)
+    assert captured["Toolang root"] == str(root)
+    assert captured["Agent root"] == str(layout.place)
     assert captured["Agent"] == layout.address
     (command,) = [
         line.removeprefix("Command: ")

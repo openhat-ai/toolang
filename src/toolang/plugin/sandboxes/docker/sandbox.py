@@ -201,7 +201,7 @@ class DockerSandbox:
     )
 
     def __post_init__(self) -> None:
-        unknown = self.config.keys() - {"image", "place", "environment_allow_pattern"}
+        unknown = self.config.keys() - {"image", "root", "environment_allow_pattern"}
         if unknown:
             raise ValueError(f"unknown docker settings: {', '.join(sorted(unknown))}")
         raw_image = self.config.get("image")
@@ -211,15 +211,15 @@ class DockerSandbox:
             self._default_image = raw_image.strip()
         else:
             raise TypeError("docker image must be a non-empty string")
-        raw_place = self.config.get("place")
+        raw_place = self.config.get("root")
         if raw_place is None:
             self._runtime_place = Path("/root/.toolang")
         elif isinstance(raw_place, str) and raw_place.strip():
             self._runtime_place = Path(raw_place.strip())
         else:
-            raise TypeError("docker place must be a non-empty string")
+            raise TypeError("docker agent root must be a non-empty string")
         if not self._runtime_place.is_absolute():
-            raise ValueError("docker place must be an absolute guest path")
+            raise ValueError("docker agent root must be an absolute guest path")
         raw_pattern = self.config.get(
             "environment_allow_pattern",
             DEFAULT_ENVIRONMENT_ALLOW_PATTERN,

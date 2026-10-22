@@ -103,7 +103,12 @@ def test_model_summary_counts_effective_setup_resources(
 def test_running_info_uses_runtime_resources_without_loading_local_sources(
     tmp_path, monkeypatch, capsys, sandbox, placement
 ):
+    from rich.console import Console
+    from toolang.cli.common import output as cli_output
 
+    monkeypatch.setattr(
+        cli_output, "_INFO_CONSOLE", Console(width=3000, color_system=None)
+    )
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("TOOLANG_ROOT", str(tmp_path))
     selector = "alice"
@@ -184,6 +189,10 @@ def test_running_info_uses_runtime_resources_without_loading_local_sources(
     assert "1 chore" in output.out
     assert "guest" in output.out
     assert "Drivers: chat,talk,chore" in output.out
+    normalized = " ".join(output.out.split())
+    assert f"Toolang root: {tmp_path.resolve()}" in normalized
+    assert f"Agent root: {layout.place}" in normalized
+    assert "Place:" not in output.out
     assert set(calls) == set(payloads)
     assert not layout.agent_state.exists()
 

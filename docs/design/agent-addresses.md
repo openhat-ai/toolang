@@ -8,7 +8,7 @@
 | Term | Meaning |
 | --- | --- |
 | root | Selected Toolang root path, defaulting to `~/.toolang`; owns configuration, resident agents, active registrations, and hub discovery. |
-| place | Agent environment path; contains configuration, prepared data, and agent homes. |
+| place | Internal name for the agent root path; contains configuration, prepared data, and agent homes. |
 | home | `PLACE/agents/NAME`; owns one agent's Threads, Runs, and history. |
 | placement | How an agent is placed: resident, visiting, or roaming. |
 | `root_code` | Short code derived from the canonical root path; groups its nonresident places. |
@@ -18,6 +18,11 @@
 | `launch_id` | Private runtime-generation fence; changes independently of the home/address. |
 
 `ROOT`, `PLACE`, `HOME`, and `DIR` are paths; codes are directory-safe strings.
+User-facing wording uses Toolang root, agent root, and agent home. Global
+`--root`/`TOOLANG_ROOT` selects the Toolang root. Docker's `root` setting and
+agent prompt environment `root` denote the agent root. Internal bindings use
+`root` for the Toolang root and `place` for the agent root.
+
 For every placement, `HOME = PLACE/agents/NAME`:
 
 | Placement | PLACE | Named address |
@@ -168,7 +173,7 @@ registration. A later runtime at that home reuses the address with a new generat
 
 `top` shows full resident names or `name@CODE` addresses. The address equals the
 active filename stem; a nonresident place basename supplies only the place code.
-`info` shows `Root`, `Place`, `Home`, and `Agent`, plus runtime
+`info` shows `Toolang root`, `Agent root`, `Home`, and `Agent`, plus runtime
 details when available. An unwrapped, shell-quoted `Command` line follows the
 table; it includes `--root ROOT` and a source-path address for roaming, remaining
 usable offline. Resident names that collide with commands use `agent:NAME`.

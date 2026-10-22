@@ -225,7 +225,7 @@ Every plugin uses the same canonical TOML shape:
 max_chars = 20000
 
 [plugin.sandbox.docker]
-place = "/root/.toolang"
+root = "/root/.toolang"
 environment_allow_pattern = '^(?:COMPANY_CATALOG_TOKEN|HTTPS?_PROXY)$'
 
 [plugin.model_catalog.ollama]
@@ -254,7 +254,7 @@ Core selection remains separate from plugin-owned configuration. For example,
 `[plugin.sandbox.<driver>]` configures the selected implementation. Sandbox
 lifecycle recovery re-reads the current root and agent plugin tables instead
 of persisting plugin configuration or secrets in runtime state.
-Docker's `place` maps the agent environment inside the guest; it does not change the
+Docker's `root` maps the agent root inside the guest; it does not change the
 selected `TOOLANG_ROOT` or mount its discovery directory.
 
 Authored plugin configuration is intended for non-sensitive values and secret
