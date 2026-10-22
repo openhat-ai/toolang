@@ -54,7 +54,7 @@ def test_cli_command_registry_matches_the_typer_surface() -> None:
 def test_caps_inspects_the_selected_agent_layout(
     tmp_path, monkeypatch, capsys, target, options, command
 ):
-    from toolang.cli.caps import commands
+    from toolang.state import prepare as state_prepare
 
     source = tmp_path / "lex.too"
     source.write_text(
@@ -78,14 +78,14 @@ def test_caps_inspects_the_selected_agent_layout(
             agent_sources, "resolve_visiting_layout", lambda *_args, **_kwargs: layout
         )
 
-    inspect_caps = commands.inspect_agent_caps
+    inspect_caps = state_prepare.inspect_agent_caps
     prepared = []
 
     def inspect(selected, **kwargs):
         prepared.append(selected)
         return inspect_caps(selected, **kwargs)
 
-    monkeypatch.setattr(commands, "inspect_agent_caps", inspect)
+    monkeypatch.setattr(state_prepare, "inspect_agent_caps", inspect)
     args = [selector, *command, *options]
     if target != "source":
         args = ["--root", str(root), *args]

@@ -46,6 +46,22 @@ CLI_COMMANDS = tuple(
 )
 
 
+def _help_arguments(app: typer.Typer, path: tuple[str, ...]) -> list[str]:
+    arguments = list(path)
+    if len(path) > 1:
+        root = typer.main.get_command(app)
+        assert isinstance(root, TyperGroup)
+        owner = root.commands[path[0]]
+        if isinstance(owner, LazyCommand):
+            owner = owner.load()
+        agent = agent_parameter(owner)
+        if agent is not None and agent.required:
+            arguments.insert(
+                0 if agent.contract.recommended == "before" else 1, "agent:example"
+            )
+    return [*arguments, "--help"]
+
+
 def _project_scripts() -> dict[str, str]:
     document = tomllib.loads((PROJECT_ROOT / "pyproject.toml").read_text())
     return document["project"]["scripts"]
@@ -129,6 +145,47 @@ raise SystemExit(status)
 
     assert completed.returncode == 0, completed.stderr
     assert completed.stdout == f"{displayed_toolang_version()}\n"
+    assert json.loads(completed.stderr) == []
+
+
+@pytest.mark.parametrize(
+    "path",
+    [(), *(path for _name, _app, path in CLI_COMMANDS)],
+    ids=["root", *(" ".join(path) for _name, _app, path in CLI_COMMANDS)],
+)
+def test_cli_help_does_not_load_execution_dependencies(path: tuple[str, ...]) -> None:
+    probe = """
+import json
+import sys
+from toolang.cli.toolang.main import main
+
+status = main(sys.argv[1:])
+prefixes = (
+    "fastapi", "prompt_toolkit", "toolang.execution.executor", "toolang.api.schemas",
+    "toolang.up.server", "toolang.up.core",
+    "toolang.state.prepare", "toolang.state.watcher",
+    "toolang.cli.common.script_progress",
+    "toolang.cli.common.execution_progress.projector",
+)
+loaded = sorted(
+    name for name in sys.modules
+    if any(name == prefix or name.startswith(prefix + ".") for prefix in prefixes)
+)
+print(json.dumps(loaded), file=sys.stderr)
+raise SystemExit(status)
+"""
+    completed = subprocess.run(
+        [sys.executable, "-c", probe, *_help_arguments(toolang_app, path)],
+        cwd=PROJECT_ROOT,
+        stdin=subprocess.DEVNULL,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert "Usage:" in completed.stdout or path == ("more",)
     assert json.loads(completed.stderr) == []
 
 
@@ -265,19 +322,7 @@ def test_inspect_help_is_concise_and_consistent() -> None:
 def test_every_cli_command_renders_help(
     name: str, app: typer.Typer, path: tuple[str, ...]
 ) -> None:
-    arguments = list(path)
-    if len(path) > 1:
-        root = typer.main.get_command(app)
-        assert isinstance(root, TyperGroup)
-        owner = root.commands[path[0]]
-        if isinstance(owner, LazyCommand):
-            owner = owner.load()
-        agent = agent_parameter(owner)
-        if agent is not None and agent.required:
-            arguments.insert(
-                0 if agent.contract.recommended == "before" else 1, "agent:example"
-            )
-    result = CliRunner().invoke(app, [*arguments, "--help"], prog_name=name)
+    result = CliRunner().invoke(app, _help_arguments(app, path), prog_name=name)
 
     assert result.exit_code == 0, result.output
     if name == "toolang" and path == ("more",):

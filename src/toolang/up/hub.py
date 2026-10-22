@@ -16,7 +16,6 @@ import psutil
 import uvicorn
 
 from toolang.common.version import toolang_version
-from toolang.teaming.api import create_app
 from toolang.teaming.config import TeamingRootConfig
 from toolang.teaming.errors import TeamingError
 from toolang.teaming.messaging import MessagingClient
@@ -151,6 +150,8 @@ class HubProcess:
 
 def serve(root: Path, config: TeamingRootConfig, *, port: int) -> int:
     """Serve one root with a lifetime lock and an explicitly bound socket."""
+    from toolang.teaming.api import create_app
+
     hub = HubProcess(root)
     hub.lock.parent.mkdir(parents=True, exist_ok=True)
     with hub.lock.open("a+b") as lock:

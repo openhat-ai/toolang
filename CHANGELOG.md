@@ -30,6 +30,10 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Changed
 
+- `too talk` help labels its argument `CONVO`, lists conversation-ID open and
+  send forms first, and describes `all` as the conversation with all agents.
+  ([#917](https://github.com/openhat-ai/toolang/pull/917))
+
 - `too AGENT chore list` fits terminal width by shortening text and omitting
   TITLE then LAST RUN, while retaining scheduling, status, errors, and source
   locations.
@@ -159,6 +163,10 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 - Known residents and explicit refs alone report `Missing command`;
   unsupported agent positions show native command help and usage with exit 2.
   ([#916](https://github.com/openhat-ai/toolang/pull/916))
+
+- `too COMMAND --help` starts without loading server applications, state
+  preparation, API schemas, or interactive UI, reducing measured startup time.
+  ([#918](https://github.com/openhat-ai/toolang/pull/918))
 
 ### Fixed
 
