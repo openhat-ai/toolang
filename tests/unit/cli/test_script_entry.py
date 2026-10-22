@@ -547,7 +547,7 @@ def test_static_run_help(executable, arguments, monkeypatch, capsys):
     assert "Path to a .too file" in output
     assert "RUNNABLE" in output
     assert "Execute a .too file." in output
-    assert "ARGS Runnable arguments" in output
+    assert "ARGS Arguments for the selected agic or flow" in output
     assert "script" not in output.lower()
     assert "NAME=VALUE" not in output
     assert "local" not in output.lower()
@@ -635,7 +635,8 @@ def test_script_and_hosting_help_use_consistent_usage_and_fit_the_terminal(
     )
     assert cli.main(page) == 0
     output = strip_ansi(capsys.readouterr().out)
-    assert f"Usage: {executable} {page[0]}" in output
+    prefix = "<AGENT> " if page[0] == "serve" else ""
+    assert f"Usage: {executable} {prefix}{page[0]}" in output
     assert all(cell_len(line) <= width for line in output.splitlines())
     if page == ["run", "demo.too", "--help"]:
         assert "agic: <entry:1>" in " ".join(output.split())

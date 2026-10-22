@@ -21,20 +21,32 @@ agent. Root help links to the topic directory beside `too more`.
 
 | Input | Interpretation |
 | --- | --- |
-| `too new NAME`, `too clone SOURCE [TARGET]`, `too remove AGENT`, `too list` | Agent catalog commands; command first |
-| `too serve AGENT` | Foreground lifecycle for resident or visiting agents; command first |
-| `too start AGENT`, `too stop AGENT` | Background lifecycle for resident or visiting agents; AGENT may also precede the command |
-| `too info AGENT`, `too AGENT info` | Resident, visiting, or roaming agent information |
-| `too cd`, `too AGENT cd`, `too cd AGENT` | Interactive shell in the Toolang root or selected agent home; `exit` returns to the calling shell |
+| `too new NAME`, `too clone SOURCE [NAME]`, `too remove NAME`, `too list` | Agent catalog commands; ordinary command operands |
+| `too AGENT serve` | Foreground lifecycle for resident or visiting agents |
+| `too AGENT start`, `too AGENT stop` | Background lifecycle for resident or visiting agents |
+| `too AGENT info` | Resident, visiting, or roaming agent information |
+| `too cd`, `too AGENT cd` | Interactive shell in the Toolang root or prepared source home; `exit` returns to the calling shell |
 | `too AGENT chat`, `too AGENT chore list`, `too AGENT inspect runs` | Agent work, authoring, and history |
 | `too run FILE [RUNNABLE]`, `too FILE [RUNNABLE]` | Two entry forms of the same local script command |
 | `too init DIR` | Create executable `aid.too` and comment-only `toolang.toml` without overwriting |
 
 The root Typer group recognizes the command, then its native parameter contract
-binds AGENT from the permitted position. [Command recognition](cli-command-recognition.md)
+binds AGENT exclusively from the prefix. [Command recognition](cli-command-recognition.md)
 owns precedence, declarations, usage, diagnostics, and completion. Commands are
 registered once; each invocation keeps selection in Context. Executable leaf
 callbacks own source preparation after native argument validation.
+
+Each executable leaf declares one native `AgentArgument`: `source` for authored
+configuration, `home` for retained state or control, and `execute` for execution.
+The declaration generates its type, metavar, concise description, and completion.
+Groups only carry the raw prefix; their selected leaf validates it and owns the
+argument row. Every role displays `AGENT`; its description lists accepted input
+forms and uses `Running` when a live target is required. Placement and driver
+constraints are validated when the command runs.
+Native Typer owns defaults, requiredness, conversion, callbacks, and eager help.
+Agent leaves disable automatic empty-tail help so a prefix can satisfy the
+argument without synthetic argv tokens. Selection stays in invocation Context;
+cached commands and parameters are never modified during invocation.
 
 A registered command wins a name collision; `agent:NAME` explicitly selects a
 resident. Following a `.too` operand with a registered command selects that
@@ -43,15 +55,43 @@ command, even if it rejects AGENT. Use `run FILE RUNNABLE`, `agic:NAME`,
 operands are never rerouted. A local `.too` suffix selects script syntax even if
 the file is absent; explicit source schemes take precedence over that suffix.
 
-A known resident or explicit agent selector alone reports a missing command;
-adding `--help` displays root help. A bare unknown name reports an unknown
-command. Allowed command forms use native eager help before selector conversion
-or source preparation. [Architecture](architecture.md#agent-sources) owns agent
+A bare word reports a native unknown-command error, whether or not a matching
+resident exists. An explicit selector such as `agent:alice` alone reports a
+missing command; adding `--help` displays root help. Recognition never reads
+homes to choose an interpretation. Allowed command forms use native eager help
+before selector conversion or source preparation.
+[Architecture](architecture.md#agent-sources) owns agent
 names, remote refs, and placements.
 
 Global options, including `--root`/`-r`, precede the command or AGENT.
-`TOOLANG_ROOT` supplies the default resident root. Source-local scripts do not
+`TOOLANG_ROOT` supplies the default Toolang root. Source-local scripts do not
 accept an explicit global root override.
+
+## Help vocabulary
+
+Use uppercase placeholders and sentence case for built-in argument and option
+descriptions. Short phrases omit a final period; acronyms such as URL and ID stay
+uppercase. Preserve authored descriptions, literal choices, and named-input keys.
+Put `AGENT` first in the argument panel, followed by business operands. List input
+forms and meaningful omission behavior; keep placement names, the internal address
+term, and driver requirements out of argument descriptions. Validate those limits
+when invoking the command.
+
+| Placeholder | Meaning |
+| --- | --- |
+| `AGENT` | Agent name, path, ref, URL, or instance, as accepted by the command; `Running` indicates a live target. |
+| `NAME` | Resource name, including a clone's new agent name. |
+| `FILE`, `DIR`, `PATH` | File, directory, or either; describe `-` when stdin is accepted. |
+| `SOURCE` | Authored source; describe whether it accepts an agent name, ref, or URL. |
+| `RUN`, `THREAD`, `CHORE`, `CONVO` | Domain target; describe accepted names/IDs and what a thread ID selects. |
+| `QUERY` | Selection expression; distinguish TQ filters from inspection record queries in the description and examples. |
+| `RUNNABLE`, `ARGS`, `MESSAGE` | Agic/flow, its arguments, or message text. |
+| `PORT`, `SECONDS`, `SPACES` | Numeric input's purpose or unit, rather than its Python type. |
+
+`--allow`, `--limit`, and `--default` use `<KEY>=<VALUE>` and short descriptions
+pointing to `too help allow`, `too help limit`, and `too help default`. Model
+options point to `too help model`. Keep field tables and model parameter details
+out of command help; the standalone topics above provide those references.
 
 ## Script selection and output
 
@@ -77,7 +117,8 @@ requests a file or `-` for stdout. Quiet mode suppresses preparation/execution
 progress. Non-TTY progress is plain append-only text. [Execution presentation](execution-presentation.md)
 owns rendering and [Scripts](scripts.md) owns temporary grants and path origins.
 
-Each roaming script or Chat launch creates a fresh root/executor. Roaming does
+Each source-only roaming script or Chat launch creates a fresh root/executor.
+Instance and Thread/Run continuation reuse the selected home. Roaming does
 not support `serve`, `start`, or `stop`. Host scripts expose the shared Agent API
 on the workload's event loop; guest workloads
 use existing sandbox serving. Resources close when the owning foreground caller
@@ -85,28 +126,37 @@ exits. [Hosting](hosting.md) owns startup compatibility and recovery.
 
 ### Instance selection
 
-- Existing targets accept `--instance` / `-i` on history/control commands.
-- `-i I` / `--instance I` takes the complete 17-character ID, including `v`/`r`.
-  Top displays `A@I`; selectors reject `A@I`, markerless bodies and noncanonical
-  spellings. Residents need no extra ID.
-- Default roaming selection is the latest startup request, including failure/exit,
-  derived from retained local metadata. Completion time and mtime never reorder it.
-- `info`/`inspect` calculate agent roots without global references or preparation;
-  `info` uses saved resource summaries/State. Source contents may be unavailable.
+Use `name@h...`, `name@s...`, or `file.too@s...` as `AGENT`; require complete IDs.
+Remote schemes retain their own revisions and URL `@` characters. Source-only
+resource commands reject instance operands. There is no `--instance`/`-i` option.
+
+- Resident names and visiting instances resolve by path in the selected Toolang
+  root. Short roaming names use only that root's active registry; source-path
+  selectors work offline without source contents.
+- For home commands, a bare roaming path selects its last-created retained home.
+  Completion time, restart time, and mtime never reorder it. Each Toolang root has
+  its own area.
+- `info`/`inspect` do not prepare sources. Known paths/refs locate homes directly;
+  short roaming names require active registration. `info` uses live resource
+  summaries when available, otherwise saved summaries/State. Source contents may
+  be unavailable.
 - A command pins its root/identity/generation once; controls attach only to that
   live owner. Offline fork/rewind edit history under verified stopped ownership.
-- Roaming rerun and explicit Chat continuation snapshot into fresh instances;
-  `-i` cannot revive a retained root. See [Execution](execution.md#isolated-replay).
+- Instance and Thread/Run selection bind the home for Chat, rerun, fork, rewind,
+  and `--chat`. Multiple matching homes require an explicit instance. Live owners
+  attach under compatibility checks; stopped owners restart in the same home.
+
+[agent addresses](agent-addresses.md) defines identity, layout, and ownership.
 
 
 ## Resource and plugin inspection
 
-`too info AGENT` shows enabled `Drivers` immediately
+`too AGENT info` shows enabled `Drivers` immediately
 after `Status` while the agent is running. It reads existing runtime metadata
 and formats selections in `chat,talk,chore` order, with `none` for an empty set
 and `-` for unavailable metadata. Nonrunning agents omit the row.
 
-`too [TARGET] caps`, kind-specific cap lists, `tools`, `models`, and `providers`
+`too [AGENT] caps`, kind-specific cap lists, `tools`, `models`, and `providers`
 inspect the selected scope. No target means root configuration, not an implicit
 `default` agent. `--all`/`-a` changes visibility for that same scope and grants no
 runtime authority. `--json` emits inspection arrays; human output is the default.
@@ -163,7 +213,7 @@ the selected agent root; URLs and canonical refs keep their existing form.
 while JSON and query records retain `ref`. These lists have no `--long`; complete
 field values remain available through `--json`.
 
-`too TARGET chore list` keeps its column order: `CHORE`, `TITLE`, `STATUS`,
+`too AGENT chore list` keeps its column order: `CHORE`, `TITLE`, `STATUS`,
 `LAST RUN`, `NEXT RUN`, `SCHEDULE`, `ERROR`, `LOCATION`. It shrinks title, error,
 and location text in that order, then omits `TITLE` followed by `LAST RUN` when
 needed, refitting remaining fields after each omission. Every chore occupies one
@@ -177,20 +227,20 @@ complete inline line-number suffix. `LAST RUN` is the latest execution status;
 
 ## Historical inspection
 
-`too TARGET inspect SUBJECT... [PROJECTOR] [--human | --json]` reads durable
+`too AGENT inspect QUERY... [--human | --json]` reads durable
 history without starting a server or fetching a visiting source. Collections
 are unbounded; absent storage is an error. Empty existing collections print
 `0 threads`, `0 runs`, `0 steps`, or `0 controls` in human output, and `[]` with
 `--json`.
 
-| Subject | Selects |
+| Query | Selects |
 | --- | --- |
 | `threads`, `runs`, `controls` | Physical records, including rewound Runs |
 | `THREAD runs` | Logical history membership |
 | `RUN steps` | Direct physical Steps |
 | `STEP runs` | Direct accepted child Runs |
-| `LOOP_STEP steps` | Direct same-Run body Steps |
-| `POINTER` | One record or nested canonical field |
+| `STEP steps` | Direct same-Run body Steps of a loop Step |
+| `ID` | One record or nested canonical field |
 
 [Records](records.md) owns IDs, references, canonical JSON, and resolution.
 `--json` on a raw Pointer does not follow stored references. Field tables show
@@ -208,20 +258,23 @@ inspects the stored edge.
 
 ## Runtime acquisition and controls
 
-Chat, rerun, and fork/rewind acquire a compatible shared server and use its API.
-Inspection stays offline. Resident/visiting steer and cancel attach to a healthy
-live owner without starting a replacement; invocation guards prevent delayed
-requests from reaching a different Run incarnation.
+Chat and rerun acquire a compatible server in the bound home and use its API.
+Fork/rewind use guarded offline transactions when stopped, or the live owner's
+API; `--chat` continues in the edited home. Historical inspection stays offline.
+Steer and cancel support all placements and attach to a healthy live owner without
+starting a replacement; invocation guards prevent delayed requests from reaching
+a different Run incarnation.
 
 A Run ID selects its Thread; a Thread ID selects its active Run for steering/
-cancellation or its latest terminal root for rerun/fork/rewind. Rerun accepts a
-new root from the source invocation. Fork includes its anchor; rewind removes
+cancellation or its latest visible root for rerun/fork/rewind, which then validate
+the anchor's state. Rerun creates a new root from the source invocation.
+Fork includes its anchor; rewind removes
 its anchor and the visible suffix. All Thread kinds use the same branch state checks.
 [Execution](execution.md) owns admission and durable effects;
 [Hosting](hosting.md#server-lifetime-and-client-leases) owns server retention,
 and [Chat](chat.md) owns session snapshots and queue behavior.
 
-The Hub runs independently of an agent; bare `too hub` shows its instance status.
+The hub runs independently of an agent; bare `too hub` shows its instance status.
 [Messaging](messaging.md) owns Talk/Convo and shared rules. [Top](top.md) owns
 current and recent observation.
 ## Terminal titles and pane marks
@@ -274,7 +327,7 @@ In tmux, foreground commands also publish pane-local string options:
 | --- | --- |
 | `@toolang_kind` | `chat`, `talk`, `top`, `serve`, `run`, or `rerun` |
 | `@toolang_root` | Agent root for agent commands; Toolang root for commands without an agent |
-| `@toolang_agent` | Bare agent name; empty for Talk, team Top, and Hub Serve |
+| `@toolang_agent` | Bare agent name; empty for Talk, team Top, and hub serve |
 | `@toolang_thread` | Chat thread ID, once created |
 | `@toolang_run` | Actual executing run ID, once allocated or accepted |
 | `@toolang_convo` | Canonical Talk conversation ID |

@@ -200,12 +200,14 @@ def test_resource_lists_offer_json_and_human_output(app, command) -> None:
     assert "mutually exclusive" in result.stderr
 
 
-def test_allow_help_uses_resource_query_vocabulary() -> None:
+def test_allow_help_uses_key_value_and_topic_reference() -> None:
     result = runner.invoke(toolang_app, ["serve", "--help"])
 
     assert result.exit_code == 0, result.stderr
     output = strip_ansi(result.stdout)
-    assert "<RESOURCE>=<QUERY>" in output
+    assert "<KEY>=<VALUE>" in output
+    assert "'too help allow'" in " ".join(output.split())
+    assert "Allow fields:" not in output
     assert "SELECTORS" not in output
 
 

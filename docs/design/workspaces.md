@@ -66,5 +66,8 @@ and [client HTTP capture](api.md#client-file-inputs).
 
 Configured inspection reads authored grants without preparing execution or
 starting a server. It excludes implicit `lab`, temporary grants, and workdir.
+`workspace list/add/remove` accept an agent name or source path and manage resident
+home or project configuration. Visiting agents use invocation grants and reject
+these commands before source acquisition.
 Runtime inspection reports usable captured grants in that environment.
 The two views answer different questions; neither changes authority.

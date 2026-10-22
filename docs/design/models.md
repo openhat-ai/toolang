@@ -137,7 +137,7 @@ are budgets for that mechanism, not a guarantee that required input will fit.
 
 Fields inherit independently: agent config, root config, built-in defaults.
 Override only the model with `TOOLANG_COMPACT_MODEL='openai/gpt-5 effort=low'`
-or `too start alice --compact-model 'openai/gpt-5 effort=low'`. Model precedence is
+or `too alice start --compact-model 'openai/gpt-5 effort=low'`. Model precedence is
 CLI, environment, agent config, root config, then the thread model.
 `--compact-model` also applies to `serve` and `chat` when starting a runtime;
 it cannot reconfigure an already running agent. Accepted Runs retain their

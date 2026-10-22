@@ -16,7 +16,7 @@ maps the implementation for maintainers; focused guides own the detailed contrac
 | `state` | Parsed source layers, immutable revisions, effective modules/caps/workspaces, and publication |
 | `execution` | Admission, Run/Step lifecycle, model/tool execution, controls, records, history, and observation |
 | `driver` | Talk consumption and Chore activation/scheduling over the executor |
-| `teaming` | Hub protocol, membership, conversations/rules, presence, and event transport |
+| `teaming` | hub protocol, membership, conversations/rules, presence, and event transport |
 | `stats` | Derived usage cache, archival, and time/scope queries |
 | `up` | AgentCore/AgentServer composition, sandbox processes, lifecycle, discovery, and Top observation |
 | `api` | HTTP validation, request conversion, dependencies, and SSE transport |
@@ -88,8 +88,11 @@ with the previous version before changing their names or paths.
 ## Agent Placement
 
 Agent placement resolves an agent root from its source and the user-selected
-Toolang root. Resident roots coincide; visiting roots depend on Toolang root
-and source; roaming roots depend on the source directory.
+Toolang root. A resident agent uses that Toolang root. Visiting roots are stable
+per Toolang root and requested Source Ref. Roaming roots live beside the source,
+grouped by Toolang root and allocated per source-only launch; bound continuation
+reuses its existing root. [agent addresses](agent-addresses.md) owns their identity
+and lookup rules.
 
 Current placements are:
 
@@ -104,10 +107,11 @@ runtime assembly. The control boundary passes concrete inputs to `_serve`,
 which makes no placement decisions. Placement does not define one run's semantics.
 
 Inspection commands (`info`, `models`, `providers`, `tools`, `caps`,
-`psyche list`, `skill list`, `service list`, `prompt list`, `workspace list`,
-and `inspect`) use the selected placement. Cap mutations target root scope when
-no agent is selected, or the selected resident agent's home. Visiting and roaming
-caps are read-only through these commands; clone a shared agent to modify its caps.
+`psyche list`, `skill list`, `service list`, `prompt list`, and `inspect`) use
+the selected placement. Workspace commands accept resident or project sources.
+Cap mutations target root scope when no agent is selected, or the selected
+resident agent's home. Visiting and roaming caps are read-only through these
+commands; clone a shared agent to modify its caps.
 
 
 ## Agent Sandbox

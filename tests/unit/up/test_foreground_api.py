@@ -44,7 +44,8 @@ def test_shared_foreground_api_observes_and_cancels_the_owning_executor(
         source = tmp_path / "alice.too"
         layout = allocate_roaming(source, toolang_root=tmp_path)
         target = [str(source)]
-    instance = ["-i", layout.instance_id] if layout.instance_id else []
+    if layout.instance_id is not None:
+        target = ["--root", str(tmp_path), layout.instance_name]
     harness = ExecutionHarness.create(
         layout.root,
         source="agic work():\n  Do work.\n",
@@ -111,7 +112,6 @@ def test_shared_foreground_api_observes_and_cancels_the_owning_executor(
                                 [
                                     *target,
                                     "steer",
-                                    *instance,
                                     handle.run_id,
                                     "Continue carefully",
                                 ],
@@ -124,7 +124,6 @@ def test_shared_foreground_api_observes_and_cancels_the_owning_executor(
                                 [
                                     *target,
                                     "cancel",
-                                    *instance,
                                     handle.run_id,
                                 ],
                             )
@@ -148,4 +147,4 @@ def test_shared_foreground_api_observes_and_cancels_the_owning_executor(
 
     asyncio.run(scenario())
     assert layout.run_store.exists()
-    assert not list((tmp_path / ".runtime" / "instances").glob("*.json"))
+    assert not list((tmp_path / ".runtime" / "active").glob("*.json"))

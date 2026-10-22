@@ -26,7 +26,7 @@ from toolang.common.typer.ui import PLAIN, UV, _format_help, run
 @pytest.mark.parametrize("theme", [PLAIN, UV])
 @pytest.mark.parametrize("width", [44, 80, 120])
 @pytest.mark.parametrize("color_system", [None, "standard"])
-def test_script_root_and_runnable_share_field_sections(theme, width, color_system):
+def test_script_help_keeps_compact_policy_options(theme, width, color_system):
     from toolang.cli.toolang.commands.script import _program_command
     from toolang.lang.ast import Program
 
@@ -50,12 +50,17 @@ def test_script_root_and_runnable_share_field_sections(theme, width, color_syste
     for ctx in (parent, child):
         output = Text.from_ansi(_format_help(ctx, theme=theme, console=console))
         assert all(cell_len(line) <= width for line in output.plain.splitlines())
-        for section in ("Allow fields:", "Limit fields:", "Model parameters:"):
-            assert output.plain.count(section) == 1
-            assert output.get_style_at_offset(console, output.plain.index(section)) == (
-                output.get_style_at_offset(console, output.plain.index("Options:"))
-            )
-        assert "Default fields:" not in output.plain
+        for section in (
+            "Allow fields:",
+            "Limit fields:",
+            "Default fields:",
+            "Model parameters:",
+        ):
+            assert section not in output.plain
+        assert "<KEY>=<VALUE>" in output.plain
+        normalized = " ".join(output.plain.split())
+        for topic in ("allow", "limit", "model"):
+            assert f"'too help {topic}'" in normalized
         if ctx is child:
             assert "[ARGUMENTS]" in output.plain
             assert "* name=<NAME>" in output.plain
@@ -102,60 +107,69 @@ def test_examples_share_section_styles_and_wrap_descriptions(
 
 
 @pytest.mark.parametrize(
-    ("command", "sections"),
+    ("command", "topics"),
     [
         (
             "serve",
-            {"Allow fields", "Limit fields", "Default fields", "Model parameters"},
+            {"allow", "limit", "default", "model"},
         ),
         (
             "chat",
-            {"Allow fields", "Limit fields", "Default fields", "Model parameters"},
+            {"allow", "limit", "default", "model"},
         ),
-        ("rerun", {"Allow fields", "Limit fields", "Model parameters"}),
+        ("rerun", {"allow", "limit", "model"}),
         ("caps", set()),
         ("models", set()),
     ],
 )
-def test_field_sections_match_supported_options(
-    command, sections, tmp_path, capsys, monkeypatch
+def test_help_references_only_supported_option_topics(
+    command, topics, tmp_path, capsys, monkeypatch
 ):
     monkeypatch.setattr("toolang.up.logging.configure_logging", lambda **kwargs: None)
     assert too_main(["--root", str(tmp_path), command, "--help"]) == 0
     output = strip_ansi(capsys.readouterr().out)
-    known = {"Allow fields", "Limit fields", "Default fields", "Model parameters"}
-    assert {name for name in known if f"\n{name}:\n" in output} == sections
-    for name in sections:
-        assert output.count(f"\n{name}:\n") == 1
-        assert output.index("Options:") < output.index(f"\n{name}:\n")
-
-
-def test_field_tables_cover_parser_fields_and_repetition_rules(
-    tmp_path, capsys, monkeypatch
-):
-    monkeypatch.setattr("toolang.up.logging.configure_logging", lambda **kwargs: None)
-    from toolang.cli.common.policy import _ALLOW_FIELDS, _DEFAULT_FIELDS, _LIMIT_FIELDS
-
-    assert too_main(["--root", str(tmp_path), "serve", "--help"]) == 0
-    output = strip_ansi(capsys.readouterr().out)
-    for section, fields in (
-        ("Allow fields", _ALLOW_FIELDS),
-        ("Limit fields", _LIMIT_FIELDS),
-        (
-            "Default fields",
-            tuple(name for name in _DEFAULT_FIELDS if name != "runnable"),
-        ),
+    normalized = " ".join(output.split())
+    assert {
+        topic
+        for topic in ("allow", "limit", "default", "model")
+        if f"'too help {topic}'" in normalized
+    } == topics
+    for section in (
+        "Allow fields",
+        "Limit fields",
+        "Default fields",
+        "Model parameters",
     ):
-        rows = output.split(f"\n{section}:\n", 1)[1].split("\n\n", 1)[0]
-        assert tuple(line.split()[0] for line in rows.splitlines()) == fields
-    text = " ".join(output.split())
-    assert "Repeat a resource to combine queries by union" in text
-    assert "each field may appear once" in text
-    assert "Maximum model calls per agic" in text
-    assert "Total input and output tokens per run tree" in text
-    assert "Total cost in USD per run tree" in text
-    assert "Elapsed time in seconds per run tree" in text
-    assert "--compact-model requires an exact model for a new runtime" in text
+        assert f"\n{section}:\n" not in output
+
+
+def test_all_command_policy_options_share_key_value_and_topic_references():
+    expected = {
+        "--allow": ("<KEY>=<VALUE>", "Select allowed resources; see 'too help allow'"),
+        "--limit": ("<KEY>=<VALUE>", "Set run limits; see 'too help limit'"),
+        "--default": ("<KEY>=<VALUE>", "Set run defaults; see 'too help default'"),
+        "--model": ("MODEL", "Override the model; see 'too help model'"),
+        "--compact-model": ("MODEL", "Set the compaction model; see 'too help model'"),
+    }
+    found = set()
+
+    def check(command):
+        if isinstance(command, LazyCommand):
+            command = command.load()
+        for param in command.params:
+            if getattr(param, "hidden", False):
+                continue
+            for option in param.opts:
+                if option in expected:
+                    assert (param.metavar, param.help) == expected[option]
+                    found.add(option)
+        if isinstance(command, TyperGroup):
+            for name, child in command.commands.items():
+                if not name.startswith("_"):
+                    check(child)
+
+    check(typer.main.get_command(app))
+    assert found == expected.keys()
 
 
 @pytest.mark.parametrize("custom_context", [False, True])
@@ -198,7 +212,6 @@ def test_callers_compose_sections_and_preserve_footer_and_hidden_options(
     output = stdout.getvalue()
     sections = [
         "Options:",
-        "Limit fields:",
         "Custom fields:",
         "Examples:",
         "Ordinary footer.",
@@ -206,6 +219,7 @@ def test_callers_compose_sections_and_preserve_footer_and_hidden_options(
     positions = [output.index(section) for section in sections]
     assert positions == sorted(positions)
     assert "\n  A caller-owned paragraph.\n" in output
+    assert "Limit fields:" not in output
     assert "Default fields:" not in output and "--default" not in output
     if custom_context:
         assert output.rstrip().endswith("Custom footer.")
@@ -244,7 +258,7 @@ def test_root_help_shows_the_source_version_in_dim_parentheses(
         (["--help"], 0),
         (["prompt", "--help"], 0),
         (["prompt", "new", "--help"], 0),
-        (["prompt", "new"], 0),
+        (["prompt", "new"], 2),
         (["serve", "--port", "1234"], 2),
         (["workspace", "list"], 2),
         (["prompt", "new", "--unknown"], 2),
@@ -409,8 +423,19 @@ def test_unknown_option_during_command_resolution_keeps_usage(capsys, monkeypatc
     assert too_main(["--", "--missing"]) == 2
     output = strip_ansi(capsys.readouterr().err)
     assert output.startswith("Error: No such option: --missing")
-    assert "\n\nUsage: too [OPTIONS] <COMMAND> [ARGUMENTS]\n" in output
+    assert "\n\nUsage: too [OPTIONS] [AGENT] <COMMAND> [ARGUMENTS]\n" in output
     assert "Try '" not in output
+
+
+def test_root_help_shows_the_agent_prefix_without_loading_commands(capsys, monkeypatch):
+    monkeypatch.setattr("sys.argv", ["too"])
+    monkeypatch.setattr(
+        LazyCommand, "load", lambda _: pytest.fail("root help loaded a command")
+    )
+    assert too_main(["--help"]) == 0
+    captured = capsys.readouterr()
+    assert "Usage: too [OPTIONS] [AGENT] <COMMAND> [ARGUMENTS]" in captured.out
+    assert not captured.err
 
 
 @pytest.mark.parametrize("command", ["rerun", "inspect", "chat"])
@@ -650,7 +675,7 @@ def test_chore_clone_command_is_removed(target, tmp_path, capsys):
         (["a", "chat"], "too <AGENT> chat [OPTIONS]"),
         (["a", "prompt", "new"], "too [AGENT] prompt new [OPTIONS] <NAME>"),
         (["a", "workspace"], "too <AGENT> workspace [OPTIONS] <COMMAND> [ARGUMENTS]"),
-        (["serve"], "too serve [OPTIONS] <AGENT>"),
+        (["serve"], "too <AGENT> serve [OPTIONS]"),
     ],
 )
 def test_agent_usage_keeps_recommended_position_and_normal_weight(
@@ -680,113 +705,103 @@ def test_agent_usage_keeps_recommended_position_and_normal_weight(
 
 
 @pytest.mark.parametrize(
-    ("command", "description", "argument_help"),
+    "command,description,metavar,argument_help,usage",
     [
         (
             "serve",
             "Run an agent in the foreground",
-            "Agent name, ref, URL",
+            "AGENT",
+            "Agent name, ref, URL or instance",
+            "too <AGENT> serve [OPTIONS]",
         ),
-        ("_serve", "Run an agent server", "Agent name"),
+        (
+            "_serve",
+            "Run an agent server",
+            "NAME",
+            "Agent name",
+            "too _serve [OPTIONS] <NAME>",
+        ),
     ],
 )
 @pytest.mark.parametrize("args", [[], ["--help"], ["-h"], ["--unknown"]])
-def test_after_agent_arguments_share_usage(
-    command, description, argument_help, args, tmp_path, capsys, monkeypatch
+def test_lifecycle_and_bootstrap_use_their_native_operand_forms(
+    command,
+    description,
+    metavar,
+    argument_help,
+    usage,
+    args,
+    tmp_path,
+    capsys,
+    monkeypatch,
 ):
     monkeypatch.setattr("sys.argv", ["too"])
-    status = 2 if "--unknown" in args else 0
+    status = 2 if "--unknown" in args or (command == "serve" and not args) else 0
     assert too_main(["--root", str(tmp_path), command, *args]) == status
     captured = capsys.readouterr()
     output = strip_ansi(captured.err if status else captured.out)
-    assert f"Usage: too {command} [OPTIONS] <AGENT>" in output.splitlines()
+    assert f"Usage: {usage}" in output.splitlines()
     if status == 0:
         assert output.startswith(description + ".\n")
-        assert any(
-            line.startswith(f"* AGENT {argument_help}")
-            for line in [" ".join(line.split()) for line in output.splitlines()]
-        )
+        assert f"{metavar} {argument_help}" in " ".join(output.split())
         assert "Show this message and exit\n" in output
-        assert output.index("Options:") < output.index("Allow fields:")
+        assert "Allow fields:" not in output
+        assert "'too help allow'" in " ".join(output.split())
 
 
 @pytest.mark.parametrize(
-    "command",
+    "command,metavar,description",
     [
-        "new",
-        "remove",
-        "start",
-        "stop",
-        "_serve",
-        "serve",
-        "info",
-        "chat",
-        "inspect",
-        "steer",
-        "cancel",
-        "rerun",
-        "rerun",
-        "fork",
-        "rewind",
-        "workspace",
-        "workspace list",
-        "chore",
-        "chore list",
+        ("new", "NAME", "New agent name"),
+        ("remove", "NAME", "Agent name"),
+        ("_serve", "NAME", "Agent name"),
+        ("start", "AGENT", "Agent name, ref, URL or instance"),
+        ("serve", "AGENT", "Agent name, ref, URL or instance"),
+        ("stop", "AGENT", "Agent name, ref, URL or instance"),
+        ("info", "AGENT", "Agent name, path, ref, URL or instance"),
+        ("chat", "AGENT", "Agent name, path, ref, URL or instance"),
+        ("inspect", "AGENT", "Agent name, path, ref, URL or instance"),
+        ("steer", "AGENT", "Running agent name, path, ref, URL or instance"),
+        ("cancel", "AGENT", "Running agent name, path, ref, URL or instance"),
+        ("rerun", "AGENT", "Agent name, path, ref, URL or instance"),
+        ("fork", "AGENT", "Agent name, path, ref, URL or instance"),
+        ("rewind", "AGENT", "Agent name, path, ref, URL or instance"),
+        ("workspace list", "AGENT", "Agent name or path"),
+        ("chore list", "AGENT", "Agent name"),
+        (
+            "chore run",
+            "AGENT",
+            "Running agent name",
+        ),
     ],
 )
-def test_agent_help_matches_target_scope(command, tmp_path, capsys):
-    words = command.split()
-    assert (
-        too_main(
-            [
-                "--root",
-                str(tmp_path),
-                *(["a"] if len(words) > 1 else []),
-                *words,
-                "--help",
-            ]
-        )
-        == 0
-    )
+def test_agent_help_matches_leaf_scope(command, metavar, description, tmp_path, capsys):
+    assert too_main(["--root", str(tmp_path), *command.split(), "--help"]) == 0
     output = " ".join(strip_ansi(capsys.readouterr().out).split())
-    if len(words) > 1:
-        assert "<AGENT>" in output
-        assert "* AGENT" not in output
-        return
-    if command == "new":
-        assert "new [OPTIONS] <NAME>" in output
-        assert "* NAME New agent name" in output
-        assert "AGENT" not in output
-        return
-    elif command in {"start", "stop", "serve"}:
-        expected = "Agent name, ref, URL"
-    elif command in {"remove", "_serve", "chore"}:
-        expected = "Agent name"
-    else:
-        expected = "Agent name, path, ref, URL"
-    assert f"* AGENT {expected}" in output
-    if command != "new":
-        assert "placements:" not in output
+    assert f"{metavar} {description}" in output
+    assert "placements:" not in output
+    assert "(resident/visiting only)" not in output
 
 
 @pytest.mark.parametrize("kind", ["psyche", "skill", "service", "prompt"])
 @pytest.mark.parametrize("command", ["new", "list"])
-def test_cap_children_inherit_agent_usage_from_group(kind, command, tmp_path, capsys):
+def test_cap_children_own_their_agent_contract(kind, command, tmp_path, capsys):
     assert too_main(["--root", str(tmp_path), kind, command, "--help"]) == 0
     output = " ".join(strip_ansi(capsys.readouterr().out).split())
     assert f"[AGENT] {kind} {command}" in output
-    assert "AGENT Agent name" not in output
+    description = "Agent name" if command == "new" else "Agent name, path, ref or URL"
+    assert f"AGENT {description}" in output
     assert too_main(["--root", str(tmp_path), kind, "--help"]) == 0
     group_help = " ".join(strip_ansi(capsys.readouterr().out).split())
-    assert "AGENT Agent name, path, ref, URL" in group_help
-    assert "placements:" not in group_help
+    assert "See subcommand help for accepted agent forms." in group_help
+    assert "Arguments:" not in group_help
 
 
 @pytest.mark.parametrize("command", ["caps", "models", "providers", "tools"])
 def test_inspection_help_describes_all_agent_targets(command, tmp_path, capsys):
     assert too_main(["--root", str(tmp_path), command, "--help"]) == 0
     output = " ".join(strip_ansi(capsys.readouterr().out).split())
-    assert "AGENT Agent name, path, ref, URL" in output
+    assert "AGENT Agent name, path, ref or URL" in output
 
 
 @pytest.mark.parametrize("kind", ["psyche", "skill", "service", "prompt"])
@@ -810,7 +825,7 @@ def test_chat_help_uses_the_canonical_optional_thread_option(
     row = next(line for line in output.splitlines() if "[THREAD]" in line)
     assert "--thread" in row and "-t" in row
     assert "-t, --thread [THREAD]" in row
-    assert "Continue a thread instead of a new one" in " ".join(output.split())
+    assert "Continue a thread by ID" in " ".join(output.split())
     assert "[bare: latest thread]" in " ".join(output.split())
     assert "[bare: .]" in " ".join(output.split())
     assert "\0" not in output
@@ -836,11 +851,11 @@ def test_prompt_help_uses_conventional_metavars(tmp_path, capsys, monkeypatch):
     ("arguments", "options"),
     [
         (
-            ["serve", "a"],
+            ["a", "serve"],
             ("--sandbox", "--allow", "--limit", "--default", "--compact-model"),
         ),
         (
-            ["start", "a"],
+            ["a", "start"],
             ("--sandbox", "--allow", "--limit", "--default", "--compact-model"),
         ),
         (
@@ -859,9 +874,9 @@ def test_help_uses_semantic_configuration_metavars(
 ):
     metavars = {
         "--sandbox": "<SANDBOX>",
-        "--allow": "<RESOURCE>=<QUERY>",
-        "--limit": "<FIELD>=<VALUE>",
-        "--default": "<FIELD>=<VALUE>",
+        "--allow": "<KEY>=<VALUE>",
+        "--limit": "<KEY>=<VALUE>",
+        "--default": "<KEY>=<VALUE>",
         "--compact-model": "<MODEL>",
         "--model": "<MODEL>",
         "--log": "<LOG_SPEC>",
@@ -897,19 +912,15 @@ def test_error_usage_preserves_the_recommended_agent_position(
 
 
 @pytest.mark.parametrize("group", ["workspace", "chore"])
-def test_required_group_agent_is_documented(group, tmp_path: Path, capsys):
+def test_required_group_prefix_is_documented_without_a_duplicate_parameter(
+    group, tmp_path, capsys
+):
     assert too_main(["--root", str(tmp_path), "a", group, "--help"]) == 0
     output = strip_ansi(capsys.readouterr().out)
-    row = next(
-        (
-            line
-            for line in output.splitlines()
-            if line.startswith("  ") and "AGENT" in line.split()
-        ),
-        "",
-    )
-    assert "TEXT" not in row and row.lstrip().startswith("* AGENT")
-    assert "[required]" not in row
+    assert f"<AGENT> {group} [OPTIONS]" in output
+    assert "See subcommand help for accepted agent forms." in output
+    assert "Arguments:" not in output
+    assert "[required]" not in output
 
 
 class _Mode(str, Enum):

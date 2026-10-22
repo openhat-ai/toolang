@@ -125,14 +125,37 @@ def test_nonresident_cap_mutations_remain_rejected(
         "resolve_remote_ref",
         lambda *_args, **_kwargs: pytest.fail("must not fetch a cap"),
     )
-    assert _call_main([selectors[target], kind, operation, "example"]) == 1
+    assert _call_main([selectors[target], kind, operation, "example"]) == 2
     assert (
-        "cap changes require a resident agent; clone the source first"
-        in capsys.readouterr().err
-    )
+        "paths are not supported"
+        if target == "source"
+        else "remote agents are not supported"
+    ) in capsys.readouterr().err
     assert source.read_text() == "agic:\n  Reply directly.\n"
     assert not layout.root.exists()
     assert not (tmp_path / "toolang.toml").exists()
+
+
+@pytest.mark.parametrize("selector", ["gh:example/lex", "https://example.com/lex.too"])
+@pytest.mark.parametrize("operation", ["list", "add", "remove"])
+def test_visiting_workspace_commands_reject_before_preparation(
+    selector, operation, tmp_path, monkeypatch, capsys
+):
+    monkeypatch.setenv("TOOLANG_ROOT", str(tmp_path / "root"))
+    monkeypatch.setattr(
+        agent_sources,
+        "resolve_visiting_layout",
+        lambda *_args, **_kwargs: pytest.fail("must not fetch a visiting source"),
+    )
+    arguments = {
+        "list": [],
+        "add": [str(tmp_path)],
+        "remove": ["example"],
+    }[operation]
+
+    assert _call_main([selector, "workspace", operation, *arguments]) == 2
+    assert "remote agents are not supported" in capsys.readouterr().err
+    assert not tuple(tmp_path.iterdir())
 
 
 def test_lazy_command_completes_options_using_typer_parameters() -> None:
@@ -217,10 +240,10 @@ def test_cli_rejected_prefix_shows_native_help_without_a_panel(
     lines = stderr.splitlines()
 
     assert result == 2
-    assert lines[0] == "Run an agent server."
+    assert lines[0] == "Error: Command '_serve' does not accept an agent prefix."
     assert lines[-1].strip()
     assert "╭" not in stderr
-    assert "Usage: toolang _serve [OPTIONS] <AGENT>" in stderr
+    assert "Usage: toolang _serve [OPTIONS] <NAME>" in stderr
     assert "AGENT must follow" not in stderr
 
 
@@ -232,7 +255,9 @@ def test_cli_no_args_still_shows_root_help(
     stdout = strip_ansi(output.out)
 
     assert result == 0
-    assert "Usage: toolang [OPTIONS] <COMMAND> [ARGUMENTS]" in stdout.splitlines()
+    assert (
+        "Usage: toolang [OPTIONS] [AGENT] <COMMAND> [ARGUMENTS]" in stdout.splitlines()
+    )
     assert "Toolang — a language and runtime for agents and humans." in stdout
     assert output.err == ""
 
@@ -364,9 +389,9 @@ def test_cli_exposes_plural_list_resources_and_removes_channels() -> None:
     (
         (
             ["clone"],
-            "Usage: toolang clone [OPTIONS] <SOURCE> [TARGET]",
-            "TARGET",
-            "[TARGET]",
+            "Usage: toolang clone [OPTIONS] <SOURCE> [NAME]",
+            "NAME",
+            "[NAME]",
         ),
         (
             ["chat"],
@@ -376,15 +401,15 @@ def test_cli_exposes_plural_list_resources_and_removes_channels() -> None:
         ),
         (
             ["parse"],
-            "Usage: toolang parse [OPTIONS] <SOURCE>",
-            "SOURCE",
-            "{SOURCE}",
+            "Usage: toolang parse [OPTIONS] <PATH>",
+            "PATH",
+            "{PATH}",
         ),
         (
             ["highlight"],
-            "Usage: toolang highlight [OPTIONS] <SOURCE>",
-            "SOURCE",
-            "{SOURCE}",
+            "Usage: toolang highlight [OPTIONS] <FILE>",
+            "FILE",
+            "{FILE}",
         ),
         (
             ["fmt"],
@@ -394,9 +419,9 @@ def test_cli_exposes_plural_list_resources_and_removes_channels() -> None:
         ),
         (
             ["inspect"],
-            "Usage: toolang <AGENT> inspect [OPTIONS] <SUBJECT>...",
-            "SUBJECT",
-            "SUBJECT...",
+            "Usage: toolang <AGENT> inspect [OPTIONS] <QUERY>...",
+            "QUERY",
+            "QUERY...",
         ),
         (
             ["rewind"],
@@ -475,19 +500,13 @@ def test_cli_complete_command_validates_the_resident_target(
     assert "Agent alice not found" in output.err
 
 
-def test_cli_bare_resident_requires_a_command_and_help_is_root_help(
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
+def test_cli_bare_words_do_not_trigger_resident_lookup(tmp_path, capsys):
     program = tmp_path / "agents" / "alice" / "agent.too"
     program.parent.mkdir(parents=True)
     program.write_text("agic:\n  Reply directly.\n", encoding="utf-8")
-    assert _call_main(["--root", str(tmp_path), "alice"]) == 2
-    output = capsys.readouterr()
-    assert not output.out
-    assert "Missing command" in output.err
-    assert _call_main(["--root", str(tmp_path), "alice", "--help"]) == 0
-    assert "Agent commands:" in capsys.readouterr().out
+    for tail in ([], ["--help"]):
+        assert _call_main(["--root", str(tmp_path), "alice", *tail]) == 2
+        assert "No such command 'alice'" in capsys.readouterr().err
 
 
 def test_cli_explicit_resident_without_command_reports_missing_command(
@@ -912,11 +931,8 @@ def test_cli_dev_states_reach_each_lazy_command(
             [
                 "--root",
                 str(tmp_path),
-                *(
-                    [command, "alice"]
-                    if command in {"serve", "start"}
-                    else ["alice", command]
-                ),
+                "alice",
+                command,
                 *operands,
                 *options,
             ]
@@ -935,11 +951,8 @@ def test_cli_bare_dev_keeps_unknown_option_errors(command, tmp_path, capsys):
             [
                 "--root",
                 str(tmp_path),
-                *(
-                    [command, "alice"]
-                    if command in {"serve", "start"}
-                    else ["alice", command]
-                ),
+                "alice",
+                command,
                 "--dev",
                 "--unknown",
             ]
@@ -958,7 +971,7 @@ def test_remote_agent_parse_failure_is_reported_before_runtime_execution(
         lambda *_args, **_kwargs: pytest.fail("runtime ran before agent parsed"),
     )
     result = cli.main(
-        ["--root", str(tmp_path), "serve", "https://example.test/broken.too"]
+        ["--root", str(tmp_path), "https://example.test/broken.too", "serve"]
     )
     assert result == 1
     assert "Failed to parse agent" in capsys.readouterr().err
@@ -977,7 +990,7 @@ def test_visiting_serve_prepares_with_the_acquired_source_receipt(
     )
     monkeypatch.setattr("toolang.up.server.serve", lambda *_args, **_kwargs: 0)
     assert (
-        cli.main(["--root", str(tmp_path), "serve", "https://example.test/receipt.too"])
+        cli.main(["--root", str(tmp_path), "https://example.test/receipt.too", "serve"])
         == 0
     )
     assert len(acquired) == 1 and acquired[0] is not None
@@ -985,13 +998,9 @@ def test_visiting_serve_prepares_with_the_acquired_source_receipt(
 
 
 @pytest.mark.parametrize("placement", ["visiting", "roaming"])
-@pytest.mark.parametrize("option", ["-i", "--instance"])
-def test_instance_selector_takes_the_complete_id_while_top_displays_its_name(
-    tmp_path, placement, option
-):
+def test_instance_selector_and_top_use_the_same_complete_name(tmp_path, placement):
+    from toolang.up.addresses import parse_address
     from toolang.up.identity import allocate_roaming
-    from toolang.cli.common.parameters import _selected_instance
-    from typer._click.exceptions import BadParameter
     from toolang.cli.common.top_view import instance_name
     from toolang.up.schemas import SourceActivity
 
@@ -1001,9 +1010,9 @@ def test_instance_selector_takes_the_complete_id_while_top_displays_its_name(
         else allocate_roaming(tmp_path / "alice.too", toolang_root=tmp_path)
     )
     assert layout.instance_id is not None
-    assert len(layout.instance_id) == 17 and layout.instance_id[0] == placement[0]
-    ctx = typer.Context(typer.main.get_command(cli.app))
-    assert _selected_instance(ctx, layout.instance_id) == layout.instance_id
+    assert len(layout.instance_id) == (11 if placement == "visiting" else 18)
+    address = parse_address(layout.instance_name)
+    assert address is not None and address.instance_id == layout.instance_id
     assert (
         instance_name(
             SourceActivity(
@@ -1014,10 +1023,6 @@ def test_instance_selector_takes_the_complete_id_while_top_displays_its_name(
         )
         == layout.instance_name
     )
-    for invalid in (
-        layout.instance_name,
-        layout.instance_id[1:],
-        layout.instance_id.upper(),
-    ):
-        with pytest.raises(BadParameter):
-            _selected_instance(ctx, invalid)
+    for invalid in (layout.instance_id[1:], layout.instance_id.upper()):
+        with pytest.raises(ValueError):
+            parse_address(f"{layout.name}@{invalid}")

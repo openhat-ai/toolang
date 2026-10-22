@@ -39,7 +39,7 @@ def fmt(
         int,
         typer.Option(
             "--tab-size",
-            metavar="INTEGER",
+            metavar="SPACES",
             help="Number of spaces per indentation level",
         ),
     ] = 2,
@@ -288,9 +288,9 @@ def parse_program(
     source: Annotated[
         list[Path],
         typer.Argument(
-            metavar="SOURCE",
+            metavar="PATH",
             click_type=PathType(),
-            help="Toolang file or stdin; --check also accepts files and directories",
+            help="Path to a .too file or - for stdin; --check also accepts directories",
         ),
     ],
     check: Annotated[
@@ -384,9 +384,9 @@ def highlight_source(
     source: Annotated[
         Path,
         typer.Argument(
-            metavar="SOURCE",
+            metavar="FILE",
             click_type=PathType(),
-            help="Toolang file to highlight, or '-' for stdin",
+            help="Path to a .too file, or - for stdin",
         ),
     ],
     color: ColorOption = None,

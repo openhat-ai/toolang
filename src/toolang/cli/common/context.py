@@ -22,6 +22,7 @@ from ...catalog.errors import CatalogError
 from .help import show_help
 
 if TYPE_CHECKING:
+    from toolang.up.addresses import AgentAddress
     from toolang.common.progress import ProgressSink
     from toolang.up.source import AgentTarget
 
@@ -36,25 +37,16 @@ class CliContext:
     selector: str | None = None
     prepared: bool = False
     instance_selected: bool = False
+    address: AgentAddress | None = None
 
 
-def parse_target(text: str) -> AgentTarget | Path:
-    """Delegate selector syntax to its owner without reading or fetching a source."""
-    from toolang.up.source import parse_agent_target
-
-    if ":" not in text.split("/", 1)[0] and (
-        text.endswith(".too") or text.startswith(("./", "../", "/", "~/"))
-    ):
-        path = Path(text).expanduser().resolve()
-        if path.suffix != ".too":
-            raise ValueError(f"agent program must point to a .too file: {text}")
-        return path
-    return parse_agent_target(text)
-
-
-def target_context(root: Path, target: AgentTarget | Path) -> CliContext:
+def target_context(root: Path, target: AgentTarget | Path | AgentAddress) -> CliContext:
     """Create invocation-local binding data; source preparation belongs to execution."""
     from toolang.up.source import visiting_layout
+    from toolang.up.addresses import AgentAddress
+
+    if isinstance(target, AgentAddress):
+        return CliContext(root, agent=target.name, source=target.source, address=target)
 
     if isinstance(target, Path):
         layout = replace(AgentLayout.roaming(target), toolang_root=root)
@@ -95,6 +87,7 @@ def context_agent(ctx: Context) -> str | None:
     if (
         agent is not None
         and state.layout is None
+        and state.address is None
         and LocalAgents(state.root / "agents").get(agent) is None
     ):
         raise ClickException(f"Agent {agent} not found")
@@ -111,6 +104,14 @@ def context_layout(ctx: Context) -> AgentLayout:
     """Return the explicitly selected layout or one resident layout."""
 
     state = cli_context(ctx)
+    if state.address is not None and not state.instance_selected:
+        from toolang.up.addresses import resolve_address
+
+        layout, launch_id = user_call(resolve_address, state.root, state.address)
+        state.layout = layout
+        state.source = layout.source_path
+        state.launch_id = launch_id
+        state.prepared = state.instance_selected = True
     if state.layout is not None:
         return state.layout
     return AgentLayout.resident(state.root, state.agent or require_prefix_agent(ctx))
@@ -121,39 +122,6 @@ def require_runtime_agent(ctx: Context, agent: str | None) -> str:
     if selected:
         return selected
     show_help(ctx)
-
-
-def select_agent_instance(ctx: Context) -> AgentLayout:
-    """Resolve an existing retained instance when an executable callback needs it."""
-    state = cli_context(ctx)
-    layout = context_layout(ctx)
-    if state.instance_selected:
-        return layout
-    if layout.placement == "resident" and not layout.home.is_dir():
-        raise ClickException(f"Agent {layout.name} not found")
-    instance = ctx.params.get("instance")
-    # The native option callback has already checked canonical ID syntax.
-    if instance is not None and not (
-        instance.startswith("r")
-        if state.source is not None
-        else instance == layout.instance_id
-    ):
-        raise typer.BadParameter(
-            "instance does not match the selected target",
-            param_hint="--instance",
-            ctx=ctx,
-        )
-    if state.source is not None:
-        from toolang.up.identity import select_roaming
-
-        layout = user_call(select_roaming, state.source, instance)
-    from toolang.up.instance import read_instance
-
-    entry = read_instance(layout.runtime_status)
-    state.layout = layout
-    state.launch_id = entry["launch_id"] if entry else None
-    state.instance_selected = True
-    return layout
 
 
 def prepare_agent(ctx: Context, *, progress: ProgressSink | None = None) -> AgentLayout:
@@ -195,9 +163,13 @@ def resolve_root(
     environ: Mapping[str, str] | None = None,
 ) -> Path:
     if explicit is not None:
-        return explicit
+        return explicit.expanduser().resolve()
     values = os.environ if environ is None else environ
-    return Path(values.get("TOOLANG_ROOT", str(Path.home() / ".toolang")))
+    return (
+        Path(values.get("TOOLANG_ROOT", str(Path.home() / ".toolang")))
+        .expanduser()
+        .resolve()
+    )
 
 
 def ui_base_url(*, environ: Mapping[str, str] | None = None) -> str:
@@ -245,8 +217,7 @@ def user_call(function: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
         return function(*args, **kwargs)
     except (
         CatalogError,
-        FileExistsError,
-        FileNotFoundError,
+        OSError,
         ToolangError,
         ValueError,
     ) as exc:

@@ -605,7 +605,9 @@ def test_guest_roaming_mounts_the_shared_project_edit_guard(monkeypatch, tmp_pat
     from toolang.common.instance_ids import roaming_instance_id
 
     layout = AgentLayout.roaming(
-        source, instance_id=roaming_instance_id(str(source), 1)
+        source,
+        instance_id=roaming_instance_id(str(source), 1),
+        toolang_root=tmp_path / "global",
     )
     layout.home.mkdir(parents=True)
     spec = _launch_spec(tmp_path / "global")
@@ -1458,9 +1460,7 @@ def test_local_prepare_failure_never_creates_a_workload_and_allows_retry(
     )
     failure = next(e for e in events if e.subject == "state" and e.status == "failed")
     assert failure.label == "Failed to prepare agent state"
-    assert not (
-        spec.serve.layout.root / ".runtime" / "instances" / "alice.json"
-    ).exists()
+    assert not (spec.serve.layout.root / ".runtime" / "active" / "alice.json").exists()
     monkeypatch.setattr(state_prepare, "prepare_agent_state", original)
 
     async def ready(*_args, **_kwargs):
@@ -1499,9 +1499,7 @@ def test_failed_workload_stays_registered_until_its_resources_are_released(
         handle.state.launch_id,
         {"status": "failed", "pid": None},
     )
-    reference = (
-        tmp_path / ".runtime" / "instances" / instance_filename(spec.serve.layout)
-    )
+    reference = tmp_path / ".runtime" / "active" / instance_filename(spec.serve.layout)
     inventory = runtime_inventory(tmp_path)
     assert reference.exists()
     assert inventory.snapshot.instances[0].state == "unknown"

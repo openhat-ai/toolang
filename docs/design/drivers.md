@@ -7,20 +7,19 @@ with a captured State/Setup snapshot.
 | Driver | Trigger | Thread |
 | --- | --- | --- |
 | `chat` | Interactive FastAPI requests from TUI/WebUI | `chat_` per conversation |
-| `talk` | Incoming Hub message batches | One bound `talk_` per agent/backend/conversation |
+| `talk` | Incoming hub message batches | One bound `talk_` per agent/backend/conversation |
 | `chore` | One-off, scheduled, or manual work | `chore_<8-character ID>` |
 
 Fresh resident start/serve enable all three by default; visiting start/serve
-enable chat/talk. Implicit resident/visiting Chat, rerun, and fork/rewind
-servers enable chat only. Roaming and standalone script defaults remain none.
+enable chat/talk. New servers for Chat, rerun, and `fork/rewind --chat` enable
+chat only in every placement. Standalone scripts default to none; offline
+fork/rewind starts no server.
 `--enable chat,talk,chore` replaces the defaults; `--enable none` disables all
 drivers. Only `serve`, `start`, and
-`chat` expose this option. `talk` sends Hub messages; script execution owns its
+`chat` expose this option. `talk` sends hub messages; script execution owns its
 run lifecycle. Neither accepts a driver option.
 
-Chat rejects a selection without chat before starting; roaming Chat still requires
-an explicit selection containing chat. `fork --chat` and `rewind --chat` select
-chat for their new continuation executor. For an existing runtime,
+Chat rejects a selection without chat before starting. For an existing runtime,
 an omitted selection preserves its drivers; an explicit selection must match.
 A mismatch or disabled chat fails with restart guidance without changing the
 running agent. Runtime profile, status, and startup logs report enabled drivers.

@@ -209,7 +209,7 @@ def test_cli_enable_option_is_command_specific(tmp_path, capsys):
     assert "--enable" not in capsys.readouterr().out
     assert main(["talk", "--enable", "chat"]) != 0
     capsys.readouterr()
-    assert main(["--root", str(tmp_path), "start", "alice", "--driver", "chat"]) != 0
+    assert main(["--root", str(tmp_path), "alice", "start", "--driver", "chat"]) != 0
     capsys.readouterr()
     assert main(["--root", str(tmp_path), "alice", "chore", "--help"]) == 0
     output = capsys.readouterr().out

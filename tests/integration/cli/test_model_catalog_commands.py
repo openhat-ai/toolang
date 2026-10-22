@@ -242,8 +242,8 @@ def test_model_catalog_override_is_scoped_to_consuming_commands() -> None:
         ["info", "--help"],
         ["serve", "--help"],
         ["start", "--help"],
-        ["chat", "alice", "--help"],
-        ["rerun", "alice", "--help"],
+        ["alice", "chat", "--help"],
+        ["alice", "rerun", "--help"],
         ["models", "--help"],
         ["providers", "--help"],
         ["_serve", "--help"],
@@ -947,7 +947,7 @@ def test_catalog_help_describes_optional_agent_without_loading(
     assert result == 0
     assert ("\x1b[" in output.out) is colored
     assert f"[AGENT] {command} [OPTIONS]" in stdout
-    assert "Agent name, path, ref, URL" in (" ".join(stdout.split()))
+    assert "Agent name, path, ref or URL" in (" ".join(stdout.split()))
     assert "--catalog" in stdout
     assert ("--query" in stdout) is (command == "models")
     assert "--all" in stdout

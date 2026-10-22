@@ -9,7 +9,7 @@ presentation facts, not persistence commands or copies of execution records.
 Execution writes records, content, control effects, and cursors directly through
 RunStore. A successful commit publishes staged notifications to the canonical
 memory stream. Failed transactions publish nothing. Independent subscribers
-forward events to tracers, HTTP clients, and optionally the Hub. Tracer delivery
+forward events to tracers, HTTP clients, and optionally the hub. Tracer delivery
 is serialized on the owning loop; subscriber failures do not fail the Run.
 
 Event construction uses already available values. The encoder serializes the
@@ -100,13 +100,14 @@ completion/usage summaries. `preceded_by` application facts and terminal `contro
 identify controls by `{run, index}`; `RunBegin.control` is its own Run binding control index.
 External subscribers must upgrade and reconnect for this schema.
 Step Begin/End fields use `spec`/`report`. History cursors use agent API v0;
-Hub publications use hub API v0 and persisted projections use hub store schema 4.
+hub publications use hub API v0 and persisted projections use hub store schema 4.
 Upgrade publishers and subscribers together. Model completion
 summaries expose four token fields under `report.usage`; USD `report.cost` and
 `report.cost_approximate` are siblings. They contain no full cost evidence.
 Stored model Report now uses `usage`, `cost`, `invoked`, `cont`, with no
-`accounting` envelope; Run records add terminal `report`. Schema 62 requires fresh
-storage without compatibility reads. See [terminal records](execution.md#terminal-usage-and-cost-records)
+`accounting` envelope; Run records add terminal `report`.
+[Durable Truth](execution.md#durable-truth) defines store compatibility.
+See [terminal records](execution.md#terminal-usage-and-cost-records)
 and [Run Events](execution.md#run-events).
 
 Every payload retains its canonical `type` discriminator. A `part_begin`
@@ -131,17 +132,17 @@ Run control acceptance and status are durable `ControlRecord` truth. A thread
 stream may additionally carry `thread_created`, `thread_forked`, and `thread_rewound`, and aggregates live run
 events belonging to that thread.
 
-## Hub subscriptions
+## hub subscriptions
 
 An enabled agent exports its canonical stream independently of execution and
-messaging. The Hub endpoint is `GET /events/stream`, with optional
+messaging. The hub endpoint is `GET /events/stream`, with optional
 `agent=agent:alice`, and either `thread=ID` or `run=ID` when an agent is selected.
-No filter observes the team. `after` accepts only a Hub cursor
+No filter observes the team. `after` accepts only a hub cursor
 (`h1.<epoch>.<stream-id>`); local agent cursors are separate. Root subscriptions
 close after the complete tree and queued events; other scopes stay open.
 
 Execution frames preserve their event name/data and add `agent`, `source_cursor`,
-and Hub `cursor`. SSE IDs acknowledge Hub positions. Structural context has
+and hub `cursor`. SSE IDs acknowledge hub positions. Structural context has
 `context: true` and no SSE ID. Ignore inherited SSE IDs on context,
 `stream_prefill`, and `stream_status` frames. `stream_prefill` carries `{cursor, scope, replace}`:
 `replace: null` resets the selected view; otherwise each `{agent, roots}` replaces
@@ -156,7 +157,7 @@ backend/schema failures `503`, with `code`/`detail` JSON. Once streaming starts,
 `scope_unavailable`, or `protocol_error`, then closes. Backend outages never
 cancel local runs.
 
-### Hub retention and recovery
+### hub retention and recovery
 
 The shared execution feed retains at most 10,000 entries and 64 MiB of accounted
 stream data. One delivered event has a 1 MiB budget, including its envelope.

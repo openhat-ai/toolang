@@ -176,7 +176,7 @@ and resource directives use the same TQ syntax. The allow fields are `models`,
 bindings accept an exact model reference.
 
 ```sh
-too serve alice \
+too alice serve \
   --allow 'models=*[tool_call]' \
   --allow 'tools=fs/*' \
   --allow 'skills=skill/reviewer'

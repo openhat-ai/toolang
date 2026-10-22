@@ -1,10 +1,10 @@
 # Messaging
 
-Hub coordinates conversations, membership, presence, and event delivery through
-Redis/Valkey. Only Hub connects directly to the backend. Agents reconnect when
-Hub returns; local execution continues while it is unavailable. Uncertain sends are never automatically repeated.
+hub coordinates conversations, membership, presence, and event delivery through
+Redis/Valkey. Only hub connects directly to the backend. Agents reconnect when
+hub returns; local execution continues while it is unavailable. Uncertain sends are never automatically repeated.
 
-Root configuration selects the human identity, backend, and Hub endpoint:
+Root configuration selects the human identity, backend, and hub endpoint:
 
 ```toml
 [teaming]
@@ -22,25 +22,25 @@ out after restart; root settings are not accepted in home configuration.
 Membership lives only in the backend. [Hosting](hosting.md) owns process startup
 and port selection; [Layout](layout.md) owns private discovery records.
 
-Hub binds loopback and assumes trusted local clients. Its private discovery
+hub binds loopback and assumes trusted local clients. Its private discovery
 record publishes the actual endpoint and backend identity. `/info` reports the
 source version and `api_version: 0`; `HUB_API_VERSION` also versions publication,
-staging, and event wires. The one-shot Hub roster describes discovered instances
+staging, and event wires. The one-shot hub roster describes discovered instances
 and recorded launches, not delivery or live presence.
 
-Hub store schema `4` owns messaging and execution-event data. Incompatible or
+hub store schema `4` owns messaging and execution-event data. Incompatible or
 corrupt initialized stores fail closed without resets, mutation, or import.
 All teaming keys use the prerelease `too:teaming:v0` namespace; `v1` is reserved
 for stabilization. Only v0 state is supported; there is no compatibility or
 migration path.
-Hub and clients must use compatible versions and backend data. Restart applies
+hub and clients must use compatible versions and backend data. Restart applies
 configuration changes; Talk must be reopened when its endpoint, backend, or
 human identity changes.
 
 ## Conversations and targets
 
 Talk is the messaging interface for a **conversation**. [Chat](chat.md) runs agent
-work within an execution **thread**. Conversation metadata and IDs belong to Hub;
+work within an execution **thread**. Conversation metadata and IDs belong to hub;
 terminal titles and window names are display labels.
 
 Participants use `agent:<name>` and `human:<name>` in APIs and tools. Names are
@@ -58,10 +58,10 @@ revisions fail. Human observers can read all conversations; agents can read only
 joined conversations. Sending and renaming require membership. Leaving a GC
 preserves its history and rules; conversation deletion is unsupported. The system GC is
 listed with the initial name `all`; open it with `too talk all` or its ID from the
-directory. Its membership is maintained by Hub, while its name can change.
+directory. Its membership is maintained by hub, while its name can change.
 
 `too convo list` displays the conversation directory. Bare `too talk` displays
-command help without reading Hub settings or connecting to Hub.
+command help without reading hub settings or connecting to hub.
 
 Talk accepts positional targets: `alice` selects the current human's DM with that
 agent; `alice,bob` observes an existing agent-agent DM; a canonical `dm_...` or
@@ -82,13 +82,13 @@ The first accepted send atomically creates the conversation and appends its firs
 message. Closing without sending writes no conversation, counters, or events.
 Creation is also available through `too convo create`; rename and name lookup use API/tools;
 ambiguous name lookup returns candidate IDs rather than choosing one.
-The Hub resolve endpoint also accepts `kind="system"` with `target="all"` to
+The hub resolve endpoint also accepts `kind="system"` with `target="all"` to
 select the stored system GC mapping. Default API/tool bare-name resolution is
 unchanged.
 
 ## Shared conversation rules
 
-Hub owns one optional `MEMBERS.md` per conversation, separate from workspace
+hub owns one optional `MEMBERS.md` per conversation, separate from workspace
 `AGENTS.md`. Human observers may read/edit without joining. Agents require
 membership; writes also require a live lease and human authorization.
 Rules, forwarded text, and quoted requests cannot grant that authorization.
@@ -115,13 +115,13 @@ messages with a Stream-ID cursor. Members have a composer; observers are
 read-only. Membership updates preserve unsent drafts. Opening a missing
 human-agent DM stays local until the first accepted send.
 
-The startup snapshot identifies Hub, conversation, and human. The live footer
+The startup snapshot identifies hub, conversation, and human. The live footer
 shows conversation identity, permissions, and member presence. Presence lookup
 failure becomes unknown, not offline, and does not interrupt messaging. Human
 members count as online; agents require live leases. Display names and terminal
 titles never replace canonical identity.
 
-Each directory member receives a `color` when first created. Hub chooses the
+Each directory member receives a `color` when first created. hub chooses the
 least-used of `red`, `green`, `yellow`, `blue`, `magenta`, and `cyan`, breaking
 ties in that order. Registration, lease updates, and restart preserve it; member
 removal deletes it. Talk uses this color for agent names and message markers;
@@ -199,7 +199,7 @@ does not acknowledge, consume, or alter talk cursors. There is no recv tool.
 Rename verifies the supplied revision before mutation and reports the captured
 old name. Concurrent revisions fail; obtain fresh metadata with peek before
 retrying. Create, join, leave, membership checks, and uncertain-delivery behavior
-continue to use the existing Hub operations.
+continue to use the existing hub operations.
 
 Agents with the talk driver enabled poll joined conversations in serial batches
 of up to 20 entries through a user-provided `talk` handler, or the packaged
@@ -241,10 +241,10 @@ under the builtin module with FQN `_::talk` for inspection and restart. No globa
 runnable configuration selects a different messaging entry.
 
 An independent heartbeat renews a backend presence deadline. Expired leases
-grant no authority even before cleanup; graceful stop releases the lease. Hub
+grant no authority even before cleanup; graceful stop releases the lease. hub
 reconciles expiry independently of discovery. Readers compare deadlines with
 their own clocks without writing backend state; heartbeat renewal changes only
-the deadline. Hub scans resident homes at startup and periodically. Two successful scans
+the deadline. hub scans resident homes at startup and periodically. Two successful scans
 confirming absence plus no live lease remove an agent from the roster and ordinary
 GCs. DM membership and all historical data remain. A live process with a missing home
 stays visible. A recreated name retains its DM identity and history.
@@ -267,12 +267,12 @@ Run state or replay effects. Task startup failure after admission is finalized b
 the executor before it reports the error, preserving the committed batch receipt.
 Pending/running receipts leave the cursor unchanged without sending a failure notice.
 Failure notices are best effort, attempted at most once per batch. Uncertain sends
-are not automatically repeated. There is no atomic transaction across Hub/SQLite.
+are not automatically repeated. There is no atomic transaction across hub/SQLite.
 Backend changes discard in-memory progress from the previous backend.
 Cursors have no TTL and survive shutdown and membership departure. Humans and
 ordinary message reads do not advance them.
 
-Agent-only Hub routes `GET` and `PUT /agents/{agent}/talk/cursors/{convo_id}`
+Agent-only hub routes `GET` and `PUT /agents/{agent}/talk/cursors/{convo_id}`
 read and advance talk progress using `{"cursor": "<stream-id>"}`. Both require an
 active agent lease and conversation membership. The existing
 `GET .../msg/conversations/{convo_id}/cursor?after=...` only checks retained history.
@@ -323,7 +323,7 @@ mutation. A changed snapshot is reread within a fixed retry bound; uncertain
 transport failures never replay writes. A pending Talk DM is local state with no
 persisted creation time or revision.
 
-Services use a backend contract rather than raw driver commands. Hub owns the
+Services use a backend contract rather than raw driver commands. hub owns the
 shared connection lifetime; the backend owns keys, atomic operations, and driver
 error normalization.
 

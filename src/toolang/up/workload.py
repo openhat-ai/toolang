@@ -69,15 +69,12 @@ def begin_workload(
             entry["control"]["owner"] = control_owner()
         entry["workload"] = dict(workload)
 
+    if layout.instance_id is not None and layout.toolang_root != toolang_root.resolve():
+        raise ValueError("instance belongs to a different Toolang root")
     guard = (
         visiting_home_guard(layout) if layout.placement == "visiting" else nullcontext()
     )
     with guard:
-        if (
-            layout.placement == "visiting"
-            and layout.toolang_root != toolang_root.resolve()
-        ):
-            raise ValueError("visiting identity belongs to a different Toolang root")
         update_instance(layout.runtime_status, begin, instance=layout.instance)
 
 

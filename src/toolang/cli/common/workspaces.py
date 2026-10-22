@@ -38,7 +38,7 @@ WorkdirOption = Annotated[
         "--workdir",
         "-d",
         metavar="[NAME=]<DIR>|<URI>",
-        help="Set workdir; a path also adds a workspace",
+        help="Set workdir to a directory or workspace URI; a directory also adds a workspace",
     ),
 ]
 _URI = re.compile(r"^[^/=]+://")

@@ -64,6 +64,7 @@ from ...common.terminal_session import prepare_terminal
 from ...common.runnable_parameters import runnable_parameters, runnable_usage
 
 if TYPE_CHECKING:
+    from toolang.cli.common.agent_argument import AgentParameter
     import httpx
 
     from toolang.common.ids import IdIssuer
@@ -285,6 +286,10 @@ class _RunnableStub(LazyCommand):
         short_help = _runnable_short_help(runnable, name, identity)
         super().__init__(name, help=short_help, short_help=short_help, **kwargs)
 
+    def agent_parameters(self) -> tuple[AgentParameter, ...]:
+        """Runnable signatures have no Toolang agent-prefix parameter."""
+        return ()
+
 
 def _entry_command_name(group: TyperGroup) -> str | None:
     return "_" if "_" in group.commands else None
@@ -449,7 +454,7 @@ def _runnable_command(
             typer.Option(
                 "--model",
                 metavar="MODEL",
-                help="Set the model; see Model parameters",
+                help="Set the model; see 'too help model'",
             ),
         ] = None,
         workspace: WorkspaceOptions = None,

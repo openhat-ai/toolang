@@ -1,5 +1,8 @@
 # Unified agent instances
 
+Historical definition: identity, layout, selectors, and continuation below were
+superseded by [agent addresses](../design/agent-addresses.md).
+
 - Approved in [#883](https://github.com/openhat-ai/toolang/pull/883). Replaces [draft #882](https://github.com/openhat-ai/toolang/pull/882).
 - Goal: one global registry, uniform layouts, isolated roaming execution, correct Top activity, retained offline history.
 

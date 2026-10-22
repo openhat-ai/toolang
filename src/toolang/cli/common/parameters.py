@@ -41,24 +41,24 @@ AllowOptions = Annotated[
     list[str] | None,
     typer.Option(
         "--allow",
-        metavar="<RESOURCE>=<QUERY>",
-        help="Select allowed resources; see Allow fields",
+        metavar="<KEY>=<VALUE>",
+        help="Select allowed resources; see 'too help allow'",
     ),
 ]
 LimitOptions = Annotated[
     list[str] | None,
     typer.Option(
         "--limit",
-        metavar="<FIELD>=<VALUE>",
-        help="Set run limits; see Limit fields",
+        metavar="<KEY>=<VALUE>",
+        help="Set run limits; see 'too help limit'",
     ),
 ]
 DefaultOptions = Annotated[
     list[str] | None,
     typer.Option(
         "--default",
-        metavar="<FIELD>=<VALUE>",
-        help="Set run defaults; see Default fields",
+        metavar="<KEY>=<VALUE>",
+        help="Set run defaults; see 'too help default'",
     ),
 ]
 CompactModelOption = Annotated[
@@ -66,7 +66,7 @@ CompactModelOption = Annotated[
     typer.Option(
         "--compact-model",
         metavar="MODEL",
-        help="Set the compaction model; see Model parameters",
+        help="Set the compaction model; see 'too help model'",
     ),
 ]
 
@@ -76,28 +76,5 @@ DriverOption = Annotated[
         "--enable",
         metavar="DRIVERS",
         help="Enable only these drivers, replacing defaults: chat,talk,chore or none",
-    ),
-]
-
-
-def _selected_instance(ctx: typer.Context, value: str | None) -> str | None:
-    if value is not None:
-        from toolang.common.instance_ids import decode_instance_id
-
-        try:
-            decode_instance_id(value)
-        except ValueError as exc:
-            raise typer.BadParameter(str(exc)) from exc
-    return value
-
-
-InstanceOption = Annotated[
-    str | None,
-    typer.Option(
-        "--instance",
-        "-i",
-        metavar="INSTANCE",
-        callback=_selected_instance,
-        help="Select a retained v… or r… instance; default: latest startup",
     ),
 ]

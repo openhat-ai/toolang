@@ -95,7 +95,7 @@ def test_inspect_help_is_derived_from_registered_transitions(
 
     for transition in inspect_commands.INSPECT_SUBJECT_TRANSITIONS:
         assert transition.name in help_text
-    projections = help_text.split("Projections:\n", 1)[1].split("\n\n", 1)[0]
+    projections = help_text.split("Views:\n", 1)[1].split("\n\n", 1)[0]
     assert [" ".join(row.split()[:2]) for row in projections.splitlines()] == [
         f"<{projector.source.upper()}> {projector.name}" for projector in projectors
     ]

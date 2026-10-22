@@ -624,8 +624,8 @@ def test_script_uses_typer_help_and_authored_docs(
     assert "Input:" not in stdout
     assert "<str>" not in stdout
     for option, metavar in (
-        ("--allow", "<RESOURCE>=<QUERY>"),
-        ("--limit", "<FIELD>=<VALUE>"),
+        ("--allow", "<KEY>=<VALUE>"),
+        ("--limit", "<KEY>=<VALUE>"),
         ("--model", "<MODEL>"),
         ("--sandbox", "<SANDBOX>"),
         ("--out", "<FILE>"),

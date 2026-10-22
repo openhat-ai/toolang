@@ -2417,17 +2417,17 @@ def test_inspect_display_modes_are_exclusive_and_removed_options_fail(
     assert removed.exit_code == 2
     assert "No such option: --limit" in strip_ansi(removed.stderr)
     assert help_code == 0
-    assert "POINTER" in help_text
+    assert "<ID>" in help_text
     assert "Inspect agent runs" in help_text
-    assert "Subject chain;" in help_text
-    assert "Subjects:" in help_text
+    assert "Record ID or collection" in help_text
+    assert "Records:" in help_text
     assert "threads List threads" in compact_help
     assert "runs List runs" in compact_help
     assert "controls List controls" in compact_help
     assert "<THREAD> runs" in compact_help
     assert "<RUN> steps" in compact_help
     assert "<STEP> runs" in compact_help
-    assert "<LOOP_STEP> steps" in compact_help
+    assert "<STEP> steps" in compact_help
     assert "<STEP> call" in compact_help
     assert "<RUN> output" in compact_help
     assert "--markdown" not in help_text
@@ -2629,7 +2629,9 @@ def test_inspect_step_path_does_not_cross_run_boundaries(tmp_path: Path) -> None
 def test_roaming_source_reads_inspect_collections_and_records(
     tmp_path: Path,
     capsys,
+    monkeypatch,
 ) -> None:
+    monkeypatch.setenv("TOOLANG_ROOT", str(tmp_path))
     source = tmp_path / "demo.too"
     source.write_text("agic demo:\n  Reply directly.\n", encoding="utf-8")
     from toolang.up.identity import allocate_roaming
@@ -2691,12 +2693,13 @@ def test_visiting_selector_reads_inspection_without_fetching(
     monkeypatch,
     capsys,
 ) -> None:
+    monkeypatch.setenv("TOOLANG_ROOT", str(tmp_path))
     selector = "gh:brice/researcher"
-    layout = AgentLayout(
-        root=tmp_path / "visiting",
-        name="researcher",
-        placement="visiting",
-    )
+    layout = agent_sources.visiting_layout(selector, toolang_root=tmp_path)
+    from toolang.up.identity import visiting_home_guard
+
+    with visiting_home_guard(layout):
+        pass
     store = RunStore(layout.run_store)
     try:
         run = project_run_start(
@@ -3917,7 +3920,7 @@ def test_agent_info_builds_state_and_setup_without_server(
 
     monkeypatch.setattr("toolang.setup.SetupWatcher", _SetupWatcher)
 
-    result = _invoke(root, "info", "alice")
+    result = _invoke(root, "alice", "info")
 
     assert result.exit_code == 0
     assert "ALICE" in result.stdout
@@ -3927,13 +3930,14 @@ def test_agent_info_builds_state_and_setup_without_server(
     assert "not running" in result.stdout
 
 
-@pytest.mark.parametrize("target_first", [False])
 @pytest.mark.parametrize(
     "status", ["stopped", "preparing", "starting", "running", "failed", "unknown"]
 )
 def test_agent_info_fields_follow_the_compact_layout(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, target_first: bool, status: str
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, status: str
 ) -> None:
+    import shlex
+
     from toolang.base.types.model import Model, ModelToolang, Provider
     from toolang.plugin.models import query
 
@@ -4034,16 +4038,33 @@ def test_agent_info_fields_follow_the_compact_layout(
         agent_commands, "echo_pairs_table", lambda rows, **kwargs: captured.extend(rows)
     )
 
-    args = ("info", "alice") if target_first else ("info", "alice")
-    result = _invoke(root, *args)
+    result = _invoke(root, "alice", "info")
 
     assert result.exit_code == 0, result.stderr
-    expected = ["Home", "Tools", "Models", "Caps", "Chores", "Workspaces", "Status"]
+    expected = [
+        "Toolang root",
+        "Agent root",
+        "Home",
+        "Agent",
+        "Tools",
+        "Models",
+        "Caps",
+        "Chores",
+        "Workspaces",
+        "Status",
+    ]
     if status == "running":
         expected.append("Drivers")
     if status != "stopped":
         expected += ["Sandbox", "PID", "API", "WebUI"]
     assert [key for key, _value in captured] == expected
+    assert shlex.split(result.stdout.removeprefix("Command: ").strip()) == [
+        "too",
+        "--root",
+        str(root),
+        "alice",
+        "info",
+    ]
     rows = dict(captured)
     assert rows["Models"] == "2 models, 1 provider"
     workspace_names = ["lab"]
@@ -4100,7 +4121,7 @@ def test_agent_info_reports_only_state_published_caps(
     from toolang.state.prepare import prepare_agent_state
 
     prepare_agent_state(AgentLayout.resident(root, "alice"))
-    result = _invoke(root, "info", "alice")
+    result = _invoke(root, "alice", "info")
 
     assert result.exit_code == 0
     assert "1 prompt" in strip_ansi(result.stdout)
@@ -4111,6 +4132,7 @@ def test_roaming_agent_info_uses_the_source_layout(
     monkeypatch,
     capsys,
 ) -> None:
+    monkeypatch.setenv("TOOLANG_ROOT", str(tmp_path))
     source = tmp_path / "demo.too"
     source.write_text(
         templates.load_template("agent").raw_text,
@@ -4150,7 +4172,7 @@ def test_roaming_agent_info_uses_the_source_layout(
         ),
     )
 
-    result = cli.main(["info", str(source)])
+    result = cli.main([str(source), "info"])
     capsys.readouterr()
 
     assert result == 0
@@ -4166,13 +4188,14 @@ def test_visiting_agent_info_uses_the_materialized_layout(
     monkeypatch,
     capsys,
 ) -> None:
+    monkeypatch.setenv("TOOLANG_ROOT", str(tmp_path))
     selector = "gh:brice/researcher"
-    layout = AgentLayout(
-        root=tmp_path / "visiting",
-        name="researcher",
-        placement="visiting",
-    )
-    layout.home.mkdir(parents=True)
+    layout = agent_sources.visiting_layout(selector, toolang_root=tmp_path)
+    from toolang.up.identity import visiting_home_guard
+
+    with visiting_home_guard(layout):
+        pass
+    layout.home.mkdir(parents=True, exist_ok=True)
     layout.program.write_text(
         templates.load_template("agent").raw_text,
         encoding="utf-8",
@@ -4195,7 +4218,7 @@ def test_visiting_agent_info_uses_the_materialized_layout(
         lambda *_args, **_kwargs: layout,
     )
 
-    result = cli.main(["info", selector])
+    result = cli.main([selector, "info"])
     capsys.readouterr()
 
     assert result == 0
@@ -4325,7 +4348,7 @@ def test_tools_help_and_missing_agent_need_no_setup(
     help_result = runner.invoke(cli.app, ["--root", str(tmp_path), "tools", "--help"])
     assert help_result.exit_code == 0
     assert "[AGENT] tools" in strip_ansi(help_result.stdout)
-    assert "Agent name, path, ref, URL" in strip_ansi(help_result.stdout)
+    assert "Agent name, path, ref or URL" in strip_ansi(help_result.stdout)
     missing = _invoke(tmp_path, "missing", "tools")
     assert missing.exit_code != 0
     assert "Agent missing not found" in missing.stderr
@@ -4395,9 +4418,7 @@ def test_non_execution_commands_reject_workspace_options(
     monkeypatch.setattr("toolang.setup.SetupWatcher", _EmptySetupWatcher)
 
     value = () if option == "--no-auto-workspace" else (str(tmp_path),)
-    args = (
-        (*command, "alice") if command[0] in {"info", "start"} else ("alice", *command)
-    )
+    args = ("alice", *command)
     result = _invoke(tmp_path, *args, option, *value)
 
     assert result.exit_code == 2
@@ -4407,6 +4428,7 @@ def test_non_execution_commands_reject_workspace_options(
 def test_running_roaming_inspection_preserves_runtime_workspaces(
     tmp_path, monkeypatch, capsys
 ):
+    monkeypatch.setenv("TOOLANG_ROOT", str(tmp_path))
     from toolang.cli.common.client import RuntimeClient
 
     source = tmp_path / "demo.too"
@@ -4445,7 +4467,7 @@ def test_running_roaming_inspection_preserves_runtime_workspaces(
         }
 
     monkeypatch.setattr(RuntimeClient, "get", get)
-    result = cli.main(["info", str(source)])
+    result = cli.main([str(source), "info"])
     output = capsys.readouterr()
 
     assert result == 0, output.err

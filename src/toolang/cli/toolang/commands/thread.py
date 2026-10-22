@@ -15,7 +15,6 @@ import typer
 from toolang.cli.common.agent_argument import AgentArgument
 from typer._click.exceptions import ClickException
 
-from toolang.cli.common.parameters import InstanceOption
 from toolang.cli.common.parameters import (
     AllowOptions,
     LimitOptions,
@@ -52,7 +51,6 @@ from ...common.context import (
     cli_context,
     ModelCatalogOption,
     context_layout,
-    select_agent_instance,
     load_runtime_environ,
     resolve_model_catalog_option,
     user_call,
@@ -70,7 +68,7 @@ from ...common.terminal_surfaces import resolve_terminal_surfaces
 
 def steer_command(
     ctx: typer.Context,
-    agent: Annotated[str, AgentArgument("resident,visiting,roaming,before")],
+    agent: Annotated[str, AgentArgument("home", requires_live=True)],
     run: Annotated[
         str,
         typer.Argument(
@@ -87,11 +85,10 @@ def steer_command(
             help="Instruction to steer the run",
         ),
     ],
-    instance: InstanceOption = None,
 ) -> None:
     """Persist one next-step steer control."""
 
-    with open_execution(ctx, required=True) as resources:
+    with open_execution(ctx, required=True, record=run) as resources:
         if resources is None:  # pragma: no cover
             raise RuntimeError("execution resources were not opened")
         run_id = _active_run_id(RunHistory(resources.store), run)
@@ -112,7 +109,7 @@ def steer_command(
 
 def cancel_command(
     ctx: typer.Context,
-    agent: Annotated[str, AgentArgument("resident,visiting,roaming,before")],
+    agent: Annotated[str, AgentArgument("home", requires_live=True)],
     run: Annotated[
         str,
         typer.Argument(
@@ -121,11 +118,10 @@ def cancel_command(
             help="Run ID or thread ID; a thread selects its active run",
         ),
     ],
-    instance: InstanceOption = None,
 ) -> None:
     """Persist one immediate cancel control."""
 
-    with open_execution(ctx, required=True) as resources:
+    with open_execution(ctx, required=True, record=run) as resources:
         if resources is None:  # pragma: no cover
             raise RuntimeError("execution resources were not opened")
         run_id = _active_run_id(RunHistory(resources.store), run)
@@ -144,7 +140,7 @@ def cancel_command(
 
 def rerun_command(
     ctx: typer.Context,
-    agent: Annotated[str, AgentArgument("resident,visiting,roaming,before")],
+    agent: Annotated[str, AgentArgument("home")],
     run: Annotated[
         str,
         typer.Argument(
@@ -168,11 +164,10 @@ def rerun_command(
         str | None,
         typer.Option(
             "--model",
-            help="Override the model; see Model parameters",
+            help="Override the model; see 'too help model'",
             metavar="MODEL",
         ),
     ] = None,
-    instance: InstanceOption = None,
     dev: Annotated[
         Path | None,
         typer.Option("--dev", metavar="[PATH]", help=DEVELOPMENT_WHEEL_HELP),
@@ -180,15 +175,14 @@ def rerun_command(
 ) -> None:
     """Start a new root run from one terminal source invocation."""
 
-    layout = select_agent_instance(ctx)
     show_progress = sys.stderr.isatty()
     model_override = user_call(_rerun_model_override, model_body=model)
     commands = user_call(_restart_commands, allow_options=allows, limit_options=limit)
     selected_catalog = resolve_model_catalog_option(model_catalog)
-    layout = _continue_instance(ctx, source_run=run)
-    with open_execution(ctx, required=True) as resources:
+    with open_execution(ctx, required=True, record=run) as resources:
         if resources is None:  # pragma: no cover
             raise RuntimeError("execution resources were not opened")
+        layout = context_layout(ctx)
         _thread_id, source = _anchor(RunHistory(resources.store), run)
     result = _run_rerun(
         layout=layout,
@@ -199,6 +193,7 @@ def rerun_command(
         model_override=model_override,
         show_progress=show_progress,
         model_catalog=selected_catalog,
+        expected_launch_id=cli_context(ctx).launch_id,
     )
     status = _display_status(result.status)
     if not show_progress:
@@ -209,7 +204,7 @@ def rerun_command(
 
 def rewind_command(
     ctx: typer.Context,
-    agent: Annotated[str, AgentArgument("resident,visiting,roaming,before")],
+    agent: Annotated[str, AgentArgument("home")],
     point: Annotated[
         str,
         typer.Argument(
@@ -221,11 +216,10 @@ def rewind_command(
     chat: Annotated[
         bool, typer.Option("--chat", help="Open chat on the rewound thread")
     ] = False,
-    instance: InstanceOption = None,
 ) -> None:
     """Rewind one idle thread before a terminal anchor run."""
 
-    with open_execution(ctx, required=True) as resources:
+    with open_execution(ctx, required=True, record=point) as resources:
         if resources is None:  # pragma: no cover
             raise RuntimeError("execution resources were not opened")
         history = RunHistory(resources.store)
@@ -260,7 +254,7 @@ def rewind_command(
 
 def fork_command(
     ctx: typer.Context,
-    agent: Annotated[str, AgentArgument("resident,visiting,roaming,before")],
+    agent: Annotated[str, AgentArgument("home")],
     point: Annotated[
         str,
         typer.Argument(
@@ -272,11 +266,10 @@ def fork_command(
     chat: Annotated[
         bool, typer.Option("--chat", help="Open chat on the forked thread")
     ] = False,
-    instance: InstanceOption = None,
 ) -> None:
     """Fork one thread through a terminal anchor run."""
 
-    with open_execution(ctx, required=True) as resources:
+    with open_execution(ctx, required=True, record=point) as resources:
         if resources is None:  # pragma: no cover
             raise RuntimeError("execution resources were not opened")
         history = RunHistory(resources.store)
@@ -382,22 +375,7 @@ def _open_chat(
     from .chat import chat_command
 
     if server is None:
-        previous = context_layout(ctx)
-        continued = _continue_instance(ctx, thread_id=thread_id)
-        try:
-            chat_command(
-                ctx,
-                agent=cli_context(ctx).selector or context_layout(ctx).name,
-                thread=thread_id,
-                driver="chat" if continued is not previous else None,
-            )
-        finally:
-            if continued is not previous:
-                from toolang.up.workload import finish_preparation
-
-                finish_preparation(
-                    context_layout(ctx), "Chat ended before runtime startup"
-                )
+        chat_command(ctx, agent=context_layout(ctx).name, thread=thread_id)
     else:
         from .chat.main import chat_command as continue_chat
 
@@ -414,6 +392,7 @@ def _run_rerun(
     model_override: ModelOverride | None,
     show_progress: bool,
     model_catalog: Path | None = None,
+    expected_launch_id: str | None = None,
 ) -> RunDetail:
     try:
         with (
@@ -430,6 +409,8 @@ def _run_rerun(
                 dev=dev,
                 model_catalog=model_catalog,
                 show_progress=show_progress,
+                bound=True,
+                expected_launch_id=expected_launch_id,
             ) as server,
         ):
             if server is None:
@@ -449,11 +430,6 @@ def _run_rerun(
         raise ClickException(str(exc)) from exc
     except (OSError, ToolangError, ValueError, RuntimeError) as exc:
         raise ClickException(str(exc)) from exc
-    finally:
-        if not placement_policy(layout.placement).reuse_executor:
-            from toolang.up.workload import finish_preparation
-
-            finish_preparation(layout, "rerun ended before runtime startup")
 
 
 def _restart_commands(
@@ -611,22 +587,3 @@ def _offline_edit(ctx: typer.Context, edit):
             return True, edit(manager)
         finally:
             store.close()
-
-
-def _continue_instance(
-    ctx: typer.Context, *, source_run: str | None = None, thread_id: str | None = None
-) -> AgentLayout:
-    source = context_layout(ctx)
-    if placement_policy(source.placement).reuse_executor:
-        return source
-    from toolang.up.replay import prepare_continuation
-
-    destination = prepare_continuation(
-        source,
-        toolang_root=cli_context(ctx).root,
-        source_run=source_run,
-        source_thread=thread_id,
-    )
-    cli_context(ctx).layout = destination
-    typer.echo(f"instance {destination.instance_id}")
-    return destination

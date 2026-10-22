@@ -31,7 +31,7 @@ def list_tools(
     ctx: typer.Context,
     agent: Annotated[
         str | None,
-        AgentArgument("resident,visiting,roaming,before"),
+        AgentArgument("source"),
     ] = None,
     query: Annotated[
         list[str] | None,

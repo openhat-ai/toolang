@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from importlib import import_module, metadata
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -16,7 +17,6 @@ from typer.core import TyperGroup
 from typer.testing import CliRunner
 
 from toolang.cli.common.lazy import LazyCommand
-from toolang.cli.common.agent_argument import agent_parameter
 from toolang.cli.toolang.main import app as toolang_app
 from toolang.common.version import displayed_toolang_version
 from tests import PROJECT_ROOT
@@ -44,22 +44,6 @@ CLI_COMMANDS = tuple(
     for name, app in (("toolang", toolang_app),)
     for path in _command_paths(app)
 )
-
-
-def _help_arguments(app: typer.Typer, path: tuple[str, ...]) -> list[str]:
-    arguments = list(path)
-    if len(path) > 1:
-        root = typer.main.get_command(app)
-        assert isinstance(root, TyperGroup)
-        owner = root.commands[path[0]]
-        if isinstance(owner, LazyCommand):
-            owner = owner.load()
-        agent = agent_parameter(owner)
-        if agent is not None and agent.required:
-            arguments.insert(
-                0 if agent.contract.recommended == "before" else 1, "agent:example"
-            )
-    return [*arguments, "--help"]
 
 
 def _project_scripts() -> dict[str, str]:
@@ -112,6 +96,72 @@ def test_installed_console_scripts_execute(script: str, prefix: str) -> None:
 
     assert completed.returncode == 0, completed.stderr
     assert completed.stdout == f"{prefix}{displayed_toolang_version()}\n"
+
+
+@pytest.mark.parametrize("script", ["too", "toolang"])
+@pytest.mark.parametrize(
+    "tail,expected",
+    [
+        (("al",), {"alice"}),
+        (("models", "al"), set()),
+        (("skill", "list", "al"), set()),
+    ],
+)
+def test_installed_console_scripts_complete_agent_prefixes_only(
+    script, tail, expected, tmp_path
+):
+    from shlex import join
+    from toolang.catalog.agent import LocalAgents
+
+    LocalAgents(tmp_path / "agents").create("alice", content="flow main():\n  pass\n")
+    before = set(tmp_path.rglob("*"))
+    words = [script, "--root", str(tmp_path), *tail]
+    # A fresh process prevents other Typer apps from pre-registering the backends.
+    completed = subprocess.run(
+        [Path(sys.executable).with_name(script)],
+        env={
+            **os.environ,
+            f"_{script.upper()}_COMPLETE": "complete_bash",
+            "COMP_WORDS": join(words),
+            "COMP_CWORD": str(len(words) - 1),
+        },
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert set(completed.stdout.split()) == expected
+    assert not completed.stderr
+    assert set(tmp_path.rglob("*")) == before
+
+
+@pytest.mark.parametrize("script", ["too", "toolang"])
+def test_installed_console_scripts_complete_only_agent_scoped_commands(
+    script, tmp_path
+):
+    from shlex import join
+
+    words = [script, "--root", str(tmp_path), "alice", ""]
+    completed = subprocess.run(
+        [Path(sys.executable).with_name(script)],
+        env={
+            **os.environ,
+            f"_{script.upper()}_COMPLETE": "complete_bash",
+            "COMP_WORDS": join(words),
+            "COMP_CWORD": str(len(words) - 1),
+        },
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert completed.returncode == 0, completed.stderr
+    candidates = set(completed.stdout.split())
+    assert {"info", "chat", "skill", "workspace"} <= candidates
+    assert candidates.isdisjoint(
+        {"new", "clone", "remove", "list", "hub", "talk", "convo", "init", "run"}
+    )
+    assert not completed.stderr
+    assert not tuple(tmp_path.iterdir())
 
 
 def test_toolang_version_does_not_load_runtime_command_modules() -> None:
@@ -175,7 +225,7 @@ print(json.dumps(loaded), file=sys.stderr)
 raise SystemExit(status)
 """
     completed = subprocess.run(
-        [sys.executable, "-c", probe, *_help_arguments(toolang_app, path)],
+        [sys.executable, "-c", probe, *path, "--help"],
         cwd=PROJECT_ROOT,
         stdin=subprocess.DEVNULL,
         check=False,
@@ -323,7 +373,7 @@ def test_inspect_help_is_concise_and_consistent() -> None:
 def test_every_cli_command_renders_help(
     name: str, app: typer.Typer, path: tuple[str, ...]
 ) -> None:
-    result = CliRunner().invoke(app, _help_arguments(app, path), prog_name=name)
+    result = CliRunner().invoke(app, [*path, "--help"], prog_name=name)
 
     assert result.exit_code == 0, result.output
     reference = len(path) == 2 and path[0] == "help"

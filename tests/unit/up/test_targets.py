@@ -443,7 +443,7 @@ def test_roaming_queries_reject_normalized_home_owned_by_another_source(
     for source in (original, other):
         source.write_text("flow main():\n  pass\n")
     layout = agent_sources.materialize_roaming_program(original)
-    args = ["info", str(other)] if command[0] == "info" else [str(other), *command]
+    args = [str(other), *command]
     result = cli.main(args)
     assert result == 1
     assert (

@@ -128,11 +128,13 @@ def script_entry(
     file: Annotated[str, typer.Argument(metavar="FILE", help="Path to a .too file")],
     runnable: Annotated[
         str | None,
-        typer.Argument(metavar="RUNNABLE", help="Runnable name", show_default=False),
+        typer.Argument(
+            metavar="RUNNABLE", help="Agic or flow to run", show_default=False
+        ),
     ] = None,
     arguments: Annotated[
         list[str] | None,
-        typer.Argument(metavar="ARGS", help="Runnable arguments"),
+        typer.Argument(metavar="ARGS", help="Arguments for the selected agic or flow"),
     ] = None,
 ) -> None:
     """Describe static entry help; the command resolves FILE before invocation."""
@@ -206,14 +208,28 @@ class _ToolangGroup(CliGroup):
     context_class = _ToolangHelpContext
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
+        from typer._completion_classes import completion_init
+
+        # Register protocol handlers while keeping installer options out of the CLI.
+        completion_init()
         commands = dict(kwargs.pop("commands", None) or {})
         commands.update(
             (name, factory()) for name, factory in _REGISTERED_COMMANDS.items()
         )
+        if kwargs.get("subcommand_metavar") is None:
+            kwargs["subcommand_metavar"] = "[AGENT] <COMMAND> [ARGUMENTS]"
         super().__init__(*args, commands=commands, **kwargs)
 
     def resolve_command(self, ctx: Context, args: list[str]):
         return routing.resolve_command(self, ctx, args)
+
+    def shell_complete(self, ctx: Context, incomplete: str):
+        from ..common.agent_argument import complete_agent_names, prefix_supplied
+
+        items = super().shell_complete(ctx, incomplete)
+        if not incomplete.startswith("-") and not prefix_supplied(ctx):
+            items.extend(complete_agent_names(ctx, incomplete))
+        return items
 
     def list_commands(self, ctx: Context) -> list[str]:
         names = TyperGroup.list_commands(self, ctx)

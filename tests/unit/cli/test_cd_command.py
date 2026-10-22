@@ -57,15 +57,15 @@ def _context(root: Path, agent: str | None = "alice") -> Any:
         ),
         (
             "visiting",
-            "/tmp/toolang/gus@v0123456789abcdef",
-            "v0123456789abcdef",
-            "/tmp/toolang/gus@v0123456789abcdef/agents/gus",
+            "/tmp/toolang/0000000/h0123456789",
+            "h0123456789",
+            "/tmp/toolang/0000000/h0123456789/agents/gus",
         ),
         (
             "roaming",
-            "/toolang-project/.toolang/gus@r0123456789abcdef",
-            "r0123456789abcdef",
-            "/toolang-project/.toolang/gus@r0123456789abcdef/agents/gus",
+            "/toolang-project/.toolang/0000000/s01234560000000001",
+            "s01234560000000001",
+            "/toolang-project/.toolang/0000000/s01234560000000001/agents/gus",
         ),
     ],
 )
@@ -232,7 +232,7 @@ def test_cd_help_describes_optional_agent(
         "Enter an agent home, or the Toolang root if no agent is specified."
         in " ".join(output.split())
     )
-    assert "Agent name, path, ref, URL" in output
+    assert "Agent name, path, ref or URL" in output
     assert "* AGENT" not in output
     assert "omit for the Toolang root" not in output
     assert "Examples:" not in output
@@ -242,10 +242,10 @@ def test_cd_help_describes_optional_agent(
 @pytest.mark.parametrize(
     "arguments",
     [
-        ["cd", "alice"],
+        ["alice", "cd"],
         ["agent:missing", "cd"],
         ["./agent.too", "cd"],
-        ["cd", "https://example.com/agent.too"],
+        ["https://example.com/agent.too", "cd"],
     ],
 )
 def test_cd_rejects_unsupported_targets_without_launching(

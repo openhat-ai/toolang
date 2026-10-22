@@ -1326,7 +1326,7 @@ def _begin_launch(spec: LaunchSpec) -> None:
     begin_workload(
         layout,
         launch_id=spec.serve.launch_id,
-        toolang_root=spec.serve.toolang_root or layout.root,
+        toolang_root=spec.serve.toolang_root or layout.toolang_root or layout.root,
         sandbox=spec.sandbox,
         endpoint=spec.serve.endpoint,
         drivers=spec.serve.drivers,
@@ -1335,7 +1335,7 @@ def _begin_launch(spec: LaunchSpec) -> None:
     )
     RuntimeRegistration(
         layout,
-        toolang_root=spec.serve.toolang_root or layout.root,
+        toolang_root=spec.serve.toolang_root or layout.toolang_root or layout.root,
         launch_id=spec.serve.launch_id,
     ).__enter__()
 

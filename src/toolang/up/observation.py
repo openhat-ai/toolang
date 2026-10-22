@@ -14,6 +14,7 @@ from typing import Any, TypeGuard, cast
 from toolang.common.files import atomic_write_text, file_write_lock
 from toolang.common import layout as paths
 from toolang.common.layout import AgentLayout
+from toolang.common.instance_ids import area_id
 from toolang.up.identity import layout_from_control, verify_identity
 from toolang.up.instance import (
     AGENT_INSTANCE_FORMAT,
@@ -79,7 +80,7 @@ def _register_lock(path: Path) -> Path:
 @contextmanager
 def registration_lock(toolang_root: Path):
     """Serialize candidate checks and publication across source-local allocators."""
-    with file_write_lock(toolang_root / ".runtime" / "instances" / "register.lock"):
+    with file_write_lock(toolang_root / ".runtime" / "active" / "register.lock"):
         yield
 
 
@@ -87,7 +88,7 @@ def verify_registration(
     layout: AgentLayout, *, toolang_root: Path, require_absent: bool = False
 ) -> None:
     """Reject an occupied name before attempting this caller's publication."""
-    path = toolang_root / ".runtime" / "instances" / instance_filename(layout)
+    path = toolang_root / ".runtime" / "active" / instance_filename(layout)
     reference = _read_reference(path)
     if reference is not None and (
         require_absent or reference["status"] != str(layout.runtime_status)
@@ -111,7 +112,7 @@ class RuntimeRegistration:
         self.toolang_root = toolang_root.expanduser().resolve()
         self.layout = replace(layout, toolang_root=self.toolang_root)
         self.path = (
-            self.toolang_root / ".runtime" / "instances" / instance_filename(layout)
+            self.toolang_root / ".runtime" / "active" / instance_filename(layout)
         )
         self.payload = {
             "version": AGENT_INSTANCE_FORMAT,
@@ -167,7 +168,7 @@ def remove_registration(layout: AgentLayout, launch_id: str) -> None:
         _remove_reference(
             Path(root)
             / ".runtime"
-            / "instances"
+            / "active"
             / instance_filename(layout_from_control(entry["control"])),
             launch_id,
             layout.runtime_status,
@@ -181,7 +182,7 @@ def running_instances(root: Path) -> tuple[dict, ...]:
     root = root.expanduser().resolve()
     candidates = []
     records: dict[Path, dict] = {}
-    for path in sorted((root / ".runtime" / "instances").glob("*.json")):
+    for path in sorted((root / ".runtime" / "active").glob("*.json")):
         try:
             reference = _read_reference(path)
             if reference is None:
@@ -261,6 +262,30 @@ def running_instances(root: Path) -> tuple[dict, ...]:
     return tuple(instances)
 
 
+def active_layout(root: Path, address: str) -> tuple[AgentLayout, str]:
+    """Resolve one exact active address without a historical or cross-root scan."""
+    root = root.expanduser().resolve()
+    path = root / ".runtime" / "active" / f"{address}.json"
+    reference = _read_reference(path)
+    if reference is None:
+        raise FileNotFoundError(
+            f"active instance not found: {address}; use a source path for offline access"
+        )
+    status_path = Path(reference["status"])
+    entry = read_instance(status_path)
+    if entry is None or entry["launch_id"] != reference["launch_id"]:
+        raise ValueError("selected execution owner was replaced")
+    layout = _runtime_layout(entry["control"], status_path, root)
+    if layout.instance_name != address:
+        raise ValueError("active instance does not match the selected agent")
+    if layout.placement != "resident":
+        from .private_paths import verify_area, verify_home_paths
+
+        verify_area(layout.root.parent, root)
+        verify_home_paths(layout.root, layout.name)
+    return layout, entry["launch_id"]
+
+
 @dataclass(frozen=True, slots=True)
 class RuntimeSource:
     """Validated local source and optional running control endpoint."""
@@ -304,7 +329,7 @@ class _SnapshotCandidate:
 
 
 _REFERENCE_NAME = re.compile(
-    r"(?P<name>[a-z][a-z0-9_]{0,63})(?:@(?P<instance>[vr][0-9abcdefghjkmnpqrstvwxyz]{16}))?\.json\Z"
+    r"(?P<name>[a-z][a-z0-9_]{0,63})(?:@(?P<instance>h[0-9abcdefghjkmnpqrstvwxyz]{10}|s[0-9abcdefghjkmnpqrstvwxyz]{17}))?\.json\Z"
 )
 
 
@@ -329,7 +354,7 @@ def _fallback_layout(
         "resident"
         if instance_id is None
         else "visiting"
-        if instance_id.startswith("v")
+        if instance_id.startswith("h")
         else "roaming"
     )
     layout = AgentLayout(
@@ -341,14 +366,14 @@ def _fallback_layout(
     )
     if placement == "resident" and layout.root != toolang_root:
         return None
-    if (
-        placement == "visiting"
-        and layout.root != paths.VISITING_ROOT / layout.instance_name
-    ):
+    if placement == "visiting" and layout.root != paths.VISITING_ROOT / area_id(
+        str(toolang_root)
+    ) / str(layout.instance_id):
         return None
     if placement == "roaming" and (
-        layout.root.parent.name != ".toolang"
-        or layout.root.name != layout.instance_name
+        layout.root.parent.name != area_id(str(toolang_root))
+        or layout.root.parent.parent.name != ".toolang"
+        or layout.root.name != layout.instance_id
     ):
         return None
     return (
@@ -452,7 +477,7 @@ def runtime_inventory(
         if previous.diagnostic is None:
             previous.diagnostic = candidate.diagnostic
 
-    instance_dir = root / ".runtime" / "instances"
+    instance_dir = root / ".runtime" / "active"
     try:
         reference_paths = sorted(
             (

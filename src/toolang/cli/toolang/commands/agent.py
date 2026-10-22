@@ -11,10 +11,10 @@ from typing import Annotated, cast
 
 import typer
 
-from toolang.cli.common.agent_argument import AgentArgument
+from ...common.execution import select_agent_instance
+from toolang.cli.common.agent_argument import AgentArgument, AgentNameType
 from typer._click.exceptions import ClickException
 
-from toolang.cli.common.parameters import InstanceOption
 from toolang.cli.common.parameters import TextType
 
 from toolang.catalog.chore import AuthoredChores
@@ -37,7 +37,6 @@ from ...common.context import (
     cli_context,
     context_root,
     require_runtime_agent,
-    select_agent_instance,
     resolve_model_catalog_option,
     ui_base_url,
     user_call,
@@ -60,7 +59,7 @@ def new_agent(
         str,
         typer.Argument(
             metavar="NAME",
-            click_type=TextType(),
+            click_type=AgentNameType(),
             help="New agent name",
         ),
     ],
@@ -83,15 +82,15 @@ def clone_agent(
         typer.Argument(
             metavar="SOURCE",
             click_type=TextType(),
-            help="Agent name, ref, URL",
+            help="Agent name, ref or URL",
         ),
     ],
     target: Annotated[
         str | None,
         typer.Argument(
-            metavar="TARGET",
-            click_type=TextType(),
-            help="New agent name",
+            metavar="NAME",
+            click_type=AgentNameType(),
+            help="New agent name; required for resident agents",
         ),
     ] = None,
 ) -> None:
@@ -103,7 +102,7 @@ def clone_agent(
         selector = agent_sources.parse_agent_target(source)
         if selector.form == "name":
             if target is None:
-                raise ValueError("target name is required when cloning one local agent")
+                raise ValueError("a new name is required when cloning a resident agent")
             source_home = homes.get(selector.name or "")
             if source_home is None:
                 raise FileNotFoundError(source)
@@ -134,7 +133,10 @@ def clone_agent(
 
 def remove_agent(
     ctx: typer.Context,
-    agent: Annotated[str, AgentArgument("resident,after")],
+    agent: Annotated[
+        str,
+        typer.Argument(metavar="NAME", click_type=AgentNameType(), help="Agent name"),
+    ],
 ) -> None:
     from toolang.up import sandbox as sandbox_runtime
 
@@ -177,9 +179,8 @@ def list_agents(ctx: typer.Context) -> None:
 
 def info_agent(
     ctx: typer.Context,
-    agent: Annotated[str, AgentArgument("resident,visiting,roaming,after,before")],
+    agent: Annotated[str, AgentArgument("home")],
     model_catalog: ModelCatalogOption = None,
-    instance: InstanceOption = None,
 ) -> None:
     agent_name = require_runtime_agent(ctx, agent)
     layout = select_agent_instance(ctx)
@@ -226,25 +227,40 @@ def info_agent(
     message = runtime_value(status.message)
     if status.status not in {"running", "stopped"} and message != "-":
         status_value = f"{status_value}: {message}"
+    import shlex
+
+    selector = (
+        f"{layout.source_path}@{layout.instance_id}"
+        if layout.placement == "roaming"
+        else layout.instance_name
+    )
+    if layout.placement == "resident" and selector in getattr(
+        ctx.find_root().command, "commands", {}
+    ):
+        selector = f"agent:{selector}"
+    toolang_root = str(context_root(ctx).expanduser().resolve())
+    command = shlex.join(["too", "--root", toolang_root, selector, "info"])
     rows = [
+        ("Toolang root", toolang_root),
+        ("Agent root", str(layout.root)),
         ("Home", shorten_home_path(layout.home)),
+        ("Agent", layout.instance_name),
         *resources,
         ("Status", status_value),
     ]
     if status.status == "running":
         rows.append(("Drivers", _drivers_summary(runtime_state.get("drivers"))))
-    if status.status == "stopped":
-        echo_pairs_table(rows, avatar=agent_avatar(), title=agent_name.upper())
-        return
-    if status.sandbox:
-        rows.append(("Sandbox", status.sandbox))
-    if runtime_identity is not None and status.status != "stopped":
-        rows.append(runtime_identity)
-    if status.endpoint:
-        rows.append(("API", status.endpoint))
-    if status.webui_url:
-        rows.append(("WebUI", status.webui_url))
+    if status.status != "stopped":
+        if status.sandbox:
+            rows.append(("Sandbox", status.sandbox))
+        if runtime_identity is not None:
+            rows.append(runtime_identity)
+        if status.endpoint:
+            rows.append(("API", status.endpoint))
+        if status.webui_url:
+            rows.append(("WebUI", status.webui_url))
     echo_pairs_table(rows, avatar=agent_avatar(), title=agent_name.upper())
+    typer.echo(f"Command: {command}")
 
 
 def _drivers_summary(value: object) -> str:

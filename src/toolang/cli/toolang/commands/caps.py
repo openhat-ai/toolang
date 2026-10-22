@@ -3,22 +3,11 @@
 from __future__ import annotations
 
 from functools import cache
-from typing import Annotated
 
 import typer
 
 from toolang.catalog.types import CapKind
-from toolang.cli.common.agent_argument import AgentArgument
 from toolang.cli.common.help import CliGroup
-
-
-def _bind_agent(
-    ctx: typer.Context,
-    agent: Annotated[
-        str | None, AgentArgument("resident,visiting,roaming,before")
-    ] = None,
-) -> None:
-    """Keep the optional selection on the group context."""
 
 
 @cache
@@ -27,7 +16,6 @@ def _apps() -> dict[CapKind, typer.Typer]:
 
     return create_cap_apps(
         group_cls=CliGroup,
-        group_callback=_bind_agent,
     )
 
 

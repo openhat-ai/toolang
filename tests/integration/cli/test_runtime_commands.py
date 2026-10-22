@@ -95,10 +95,10 @@ def _startup_event(
             ),
         ),
         (
-            ["chat", "alice", "--help"],
+            ["alice", "chat", "--help"],
             ("--sandbox", "--allow", "--limit", "--default", "--compact-model"),
         ),
-        (["rerun", "alice", "--help"], ("--allow", "--limit", "--model")),
+        (["alice", "rerun", "--help"], ("--allow", "--limit", "--model")),
     ],
 )
 def test_policy_options_follow_cli_display_order(
@@ -116,13 +116,13 @@ def test_policy_options_follow_cli_display_order(
     positions = tuple(match.start() for match in matches if match is not None)
     assert positions == tuple(sorted(positions))
     if "--compact-model" in options:
-        assert "Model parameters:" in output
-        assert "Reasoning level, token budget, or auto" in " ".join(output.split())
+        assert "'too help model'" in " ".join(output.split())
+        assert "Model parameters:" not in output
 
 
 def test_session_and_restart_commands_expose_only_valid_runtime_options() -> None:
-    chat = strip_ansi(runner.invoke(cli.app, ["chat", "alice", "--help"]).stdout)
-    rerun = strip_ansi(runner.invoke(cli.app, ["rerun", "alice", "--help"]).stdout)
+    chat = strip_ansi(runner.invoke(cli.app, ["alice", "chat", "--help"]).stdout)
+    rerun = strip_ansi(runner.invoke(cli.app, ["alice", "rerun", "--help"]).stdout)
 
     assert "--default" in chat
     assert re.search(r"--model(?![a-z-])", chat) is None
@@ -357,8 +357,8 @@ def test_run_resolves_sandbox_inputs_and_runs_in_foreground(
         [
             "--root",
             str(root),
-            "serve",
             "alice",
+            "serve",
             "--catalog",
             str(model_catalog),
             "--sandbox",
@@ -432,8 +432,8 @@ def test_runtime_dev_help_describes_wheel_selection() -> None:
     commands = (
         ["serve", "--help"],
         ["start", "--help"],
-        ["chat", "alice", "--help"],
-        ["rerun", "alice", "--help"],
+        ["alice", "chat", "--help"],
+        ["alice", "rerun", "--help"],
     )
     for command in commands:
         result = runner.invoke(cli.app, command)
@@ -490,7 +490,8 @@ def test_runtime_commands_reject_inbox_option(command: str) -> None:
     assert help_result.exit_code == 0
     assert "--inbox" not in strip_ansi(help_result.stdout)
 
-    result = runner.invoke(cli.app, [command, "alice", "--inbox", "requests"])
+    operands = [command, "alice"] if command == "_serve" else ["alice", command]
+    result = runner.invoke(cli.app, [*operands, "--inbox", "requests"])
     assert result.exit_code == 2
     assert "No such option: --inbox" in strip_ansi(result.stderr)
 
@@ -539,7 +540,7 @@ def test_resident_commands_resolve_ports_before_launch(
     monkeypatch.setattr(agent_server, "serve", lambda *a, **k: 0)
     options = [] if option is None else ["--port", str(option)]
     result = runner.invoke(
-        cli.app, ["--root", str(tmp_path), command, "alice", *options]
+        cli.app, ["--root", str(tmp_path), "alice", command, *options]
     )
     assert result.exit_code == 0, result.stderr
     assert captured == [expected]
@@ -595,8 +596,8 @@ def test_start_launches_in_background_and_reports_endpoint(
         [
             "--root",
             str(root),
-            "start",
             "alice",
+            "start",
             "--catalog",
             str(model_catalog),
             "--sandbox",
@@ -714,7 +715,7 @@ def test_repeated_start_preserves_omitted_settings_and_checks_explicit_options(
     )
     monkeypatch.setenv("TOOLANG_LIMIT_TOKENS", "invalid-startup-value")
     result = runner.invoke(
-        cli.app, ["--root", str(tmp_path), "start", "alice", *options]
+        cli.app, ["--root", str(tmp_path), "alice", "start", *options]
     )
     if conflict is None:
         assert result.exit_code == 0, result.stderr
@@ -782,7 +783,7 @@ def test_start_reports_guest_failure_stage_reason_hint_and_log(
 
     result = runner.invoke(
         cli.app,
-        ["--root", str(root), "start", "alice", "--sandbox", "docker"],
+        ["--root", str(root), "alice", "start", "--sandbox", "docker"],
         env={},
     )
 
@@ -832,7 +833,7 @@ def test_start_interruption_during_sandbox_launch_exits_130(
 
     result = runner.invoke(
         cli.app,
-        ["--root", str(root), "start", "alice", "--sandbox", "docker"],
+        ["--root", str(root), "alice", "start", "--sandbox", "docker"],
         env={},
     )
 
@@ -863,7 +864,7 @@ def test_stop_forwards_force_to_sandbox(
 
     result = runner.invoke(
         cli.app,
-        ["--root", str(root), "stop", "alice", "--force"],
+        ["--root", str(root), "alice", "stop", "--force"],
     )
 
     assert result.exit_code == 0, result.stderr
@@ -891,7 +892,7 @@ def test_stop_rejects_agent_without_sandbox_state(
 
     result = runner.invoke(
         cli.app,
-        ["--root", str(root), "stop", "alice"],
+        ["--root", str(root), "alice", "stop"],
     )
 
     assert result.exit_code == 1
@@ -928,7 +929,7 @@ def test_stop_reports_one_structured_runtime_failure(
 
     result = runner.invoke(
         cli.app,
-        ["--root", str(root), "stop", "alice"],
+        ["--root", str(root), "alice", "stop"],
     )
 
     assert result.exit_code == 1
@@ -1029,8 +1030,8 @@ def test_dev_selects_a_wheel_from_the_invocation_directory(
             [
                 "--root",
                 str(layout.root),
-                command,
                 "alice",
+                command,
                 "--sandbox",
                 "docker",
                 *options,
@@ -1063,8 +1064,8 @@ def test_bare_dev_preserves_host_and_missing_wheel_errors(
             [
                 "--root",
                 str(layout.root),
-                command,
                 "alice",
+                command,
                 "--sandbox",
                 sandbox,
                 "--dev",
@@ -1099,7 +1100,7 @@ def test_info_shows_starting_identity_without_stale_report(
         process_created=0.0,
     )
     monkeypatch.setattr(sandbox_runtime, "_health_ready", lambda _url: False)
-    result = runner.invoke(cli.app, ["--root", str(root), "info", "alice"])
+    result = runner.invoke(cli.app, ["--root", str(root), "alice", "info"])
     assert result.exit_code == 0, result.stderr
     assert "starting" in result.stdout
     assert "PID" in result.stdout and str(os.getpid()) in result.stdout

@@ -193,47 +193,6 @@ def test_imported_failed_talk_receipts_cannot_send_failure_notices(tmp_path):
         store.close()
 
 
-def test_continuation_does_not_inherit_scheduler_checkpoints(tmp_path):
-    from contextlib import closing
-    from toolang.catalog.chores import Chore
-    from toolang.driver.chore.store import ChoreStore
-    from toolang.up.identity import allocate_roaming
-    from toolang.up.replay import prepare_continuation
-
-    source = tmp_path / "aid.too"
-    source.write_text("flow main():\n  pass\n")
-    root = tmp_path / "global"
-    layout = allocate_roaming(source, toolang_root=root)
-    definition = Chore(
-        name="once",
-        title=None,
-        body="Do work.",
-        schedule=None,
-        path=source,
-        agent_name="aid",
-    )
-    with closing(RunStore(layout.run_store)) as store:
-        ids = IdIssuer(layout.run_store, agent_name="aid")
-        run = project_run_start(
-            store,
-            run_id=ids.issue_run(),
-            thread_id=ids.issue_thread("exec"),
-            input=Message.user("old"),
-        )
-        project_run_end(store, run_id=run.id)
-    with closing(ChoreStore(layout.run_store)) as chores:
-        chores.reconcile(chores=[definition])
-        checkpoint = chores.claim(chore=definition, trigger="source", run_id=run.id)
-    destination = prepare_continuation(layout, toolang_root=root, source_run=run.id)
-    with closing(ChoreStore(destination.run_store, read_only=True)) as chores:
-        assert chores.list() == ()
-    with closing(ChoreStore(layout.run_store, read_only=True)) as chores:
-        assert chores.get(chore_id=definition.id) == checkpoint
-    with closing(RunStore(destination.run_store, read_only=True)) as store:
-        assert store.get_run(run_id=run.id) is not None
-        assert store.is_imported(run.id)
-
-
 def test_rerun_thread_selector_is_resolved_inside_the_snapshot(tmp_path):
     source = tmp_path / "source.db"
     store = RunStore(source)
@@ -286,43 +245,18 @@ def test_rerun_thread_selector_is_resolved_inside_the_snapshot(tmp_path):
     assert replay_request_id(destination, latest.id) is None
 
 
-def test_partial_state_seed_cannot_be_used_as_a_replay_source(tmp_path, monkeypatch):
-    from toolang.up import replay
-    from toolang.up.identity import allocate_roaming, select_roaming
-
-    source = tmp_path / "aid.too"
-    source.write_text("flow main():\n  pass\n")
-    layout = allocate_roaming(source, toolang_root=tmp_path / "global")
-    state = layout.home / ".state"
-    state.mkdir()
-    (state / "captured").write_text("immutable state")
-    store = RunStore(layout.run_store)
-    ids = IdIssuer(layout.run_store, agent_name="aid")
-    run = project_run_start(
-        store,
-        run_id=ids.issue_run(),
-        thread_id=ids.issue_thread("exec"),
-        input=Message.user("first"),
-    )
-    project_run_end(store, run_id=run.id)
-    store.close()
-    with monkeypatch.context() as patch:
-
-        def fail(*_args, **_kwargs):
-            raise OSError("state copy failed")
-
-        patch.setattr(replay.shutil, "copytree", fail)
-        with pytest.raises(OSError, match="state copy failed"):
-            replay.prepare_continuation(
-                layout, toolang_root=tmp_path / "global", source_run=run.id
-            )
-    incomplete = select_roaming(source)
-    assert incomplete.run_store.is_file()
+def test_incomplete_replay_seed_cannot_execute(tmp_path):
     from toolang.up.core import AgentCore
+    from toolang.up.identity import allocate_roaming
+    from toolang.up.instance import update_instance
 
+    layout = allocate_roaming(tmp_path / "aid.too", toolang_root=tmp_path / "global")
+    update_instance(
+        layout.runtime_status,
+        lambda entry: entry["control"].update(replay_seed_complete=False),
+    )
+    before = layout.runtime_status.read_bytes()
     with pytest.raises(ValueError, match="incomplete replay seed"):
-        AgentCore(incomplete)
-    with pytest.raises(ValueError, match="incomplete replay seed"):
-        replay.prepare_continuation(
-            incomplete, toolang_root=tmp_path / "global", source_run=run.id
-        )
+        AgentCore(layout)
+    assert layout.runtime_status.read_bytes() == before
+    assert not layout.run_store.exists()

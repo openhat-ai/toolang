@@ -239,7 +239,7 @@ def _model(formatter: HelpFormatter) -> None:
             ),
             (
                 "Set the compaction model",
-                "too start gus --compact-model \\\n  'openai/gpt-5 max_output=2048'",
+                "too gus start --compact-model \\\n  'openai/gpt-5 max_output=2048'",
             ),
         ],
     )

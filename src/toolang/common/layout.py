@@ -3,13 +3,18 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-import hashlib
 from pathlib import Path
 import re
 from typing import Literal
 
 from .source import AcquiredSource
-from .instance_ids import decode_instance_id, roaming_timestamp_ms, visiting_instance_id
+from .instance_ids import (
+    area_id,
+    decode_instance_id,
+    roaming_instance_id,
+    roaming_timestamp_ms,
+    visiting_instance_id,
+)
 
 AgentPlacement = Literal["resident", "visiting", "roaming"]
 
@@ -73,7 +78,7 @@ class AgentLayout:
             if self.placement == "resident":
                 raise ValueError("instance ID does not match its placement")
             decode_instance_id(
-                self.instance_id, marker="v" if self.placement == "visiting" else "r"
+                self.instance_id, marker="h" if self.placement == "visiting" else "s"
             )
         if self.instance is not None and (
             not self.instance or not self.instance.isalnum()
@@ -81,13 +86,15 @@ class AgentLayout:
             raise ValueError("instance identity must be alphanumeric")
         if self.source_id is not None and (
             not isinstance(self.source_id, str)
-            or len(self.source_id) != 16
+            or len(self.source_id) not in {7, 10}
             or any(
                 char not in "0123456789abcdefghjkmnpqrstvwxyz"
                 for char in self.source_id
             )
         ):
-            raise ValueError("source identity must be 16 lowercase base32 characters")
+            raise ValueError(
+                "source identity must be 7 or 10 lowercase base32 characters"
+            )
         object.__setattr__(self, "root", root)
         object.__setattr__(self, "name", name)
         if self.toolang_root is not None:
@@ -110,9 +117,10 @@ class AgentLayout:
         """Create the stable temporary layout for one remote Source Ref."""
 
         validate_agent_name(name)
-        token = visiting_instance_id(str(toolang_root.expanduser().resolve()), source)
+        toolang_root = toolang_root.expanduser().resolve()
+        token = visiting_instance_id(source)
         return cls(
-            root=VISITING_ROOT / f"{name}@{token}",
+            root=VISITING_ROOT / area_id(str(toolang_root)) / token,
             name=name,
             placement="visiting",
             toolang_root=toolang_root,
@@ -122,21 +130,31 @@ class AgentLayout:
         )
 
     @classmethod
-    def roaming(cls, source: Path, *, instance_id: str | None = None) -> AgentLayout:
+    def roaming(
+        cls,
+        source: Path,
+        *,
+        instance_id: str | None = None,
+        toolang_root: Path | None = None,
+    ) -> AgentLayout:
         """Create the source-local layout for one roaming program."""
 
         source = source.expanduser().resolve()
+        root = source.parent / ".toolang"
+        if instance_id is not None:
+            if toolang_root is None:
+                raise ValueError("a retained roaming root requires its Toolang root")
+            root = (
+                root / area_id(str(toolang_root.expanduser().resolve())) / instance_id
+            )
         return cls(
-            root=source.parent
-            / ".toolang"
-            / f"{derive_agent_name(source.stem)}@{instance_id}"
-            if instance_id is not None
-            else source.parent / ".toolang",
+            root=root,
             name=derive_agent_name(source.stem),
             placement="roaming",
-            source_id=hashlib.sha256(str(source).encode("utf-8")).hexdigest()[:16],
+            source_id=roaming_instance_id(str(source), 0)[1:8],
             instance_id=instance_id,
             source_path=source,
+            toolang_root=toolang_root,
             request_order_ns=roaming_timestamp_ms(instance_id) * 1_000_000
             if instance_id is not None
             else None,

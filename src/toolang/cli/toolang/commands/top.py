@@ -19,12 +19,14 @@ from toolang.up.types import TopPeriod as Period, TopRecent as Recent
 
 def top(
     ctx: typer.Context,
-    agent: Annotated[str | None, AgentArgument("resident,before,after")] = None,
+    agent: Annotated[str | None, AgentArgument("home", placements="resident")] = None,
     period: Annotated[Period, typer.Option(help="Rolling usage period")] = Period.hour,
     recent: Annotated[
         Recent, typer.Option(help="Recently completed root Runs")
     ] = Recent.five_minutes,
-    refresh: Annotated[float, typer.Option(help="Refresh interval in seconds")] = 1,
+    refresh: Annotated[
+        float, typer.Option(metavar="SECONDS", help="Refresh interval in seconds")
+    ] = 1,
     once: Annotated[bool, typer.Option("--once", help="Print one snapshot")] = False,
     json_output: Annotated[
         bool, typer.Option("--json", help="Print one JSON snapshot")

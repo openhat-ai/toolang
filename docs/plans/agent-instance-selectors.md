@@ -1,6 +1,6 @@
 # Implement agent addresses and unified CLI operands
 
-Definition for #914. No implementation is included in that PR. The approved
+Approved in #914. No implementation is included in that PR. The approved
 contracts live in [agent addresses](../design/agent-addresses.md) and
 [CLI command recognition](../design/cli-command-recognition.md); this plan records
 implementation scope and verification only.
@@ -21,9 +21,14 @@ Deliver in independently reviewable increments:
 Each implementation PR names its increment and completed acceptance scenarios;
 subsequent increments follow the same target contract without temporary aliases.
 
+Native grammar, leaf declarations, descriptions, instance identities/layout,
+active lookup, and bound continuation are implemented. Instance selection uses
+`AGENT` with no `--instance/-i` compatibility. `cd` retains source preparation,
+and `top`/`chore` retain resident scope pending their expanded home views.
+
 ## Typical cases
 
-Proposed interface; shell variables contain complete IDs. Assume valid source,
+Implemented interface; shell variables contain complete IDs. Assume valid source,
 home, and record bindings; `alice` is initially unused.
 
 | Command | Result |
@@ -45,9 +50,9 @@ home, and record bindings; `alice` is initially unused.
 
 ## Touchpoints and acceptance
 
-Likely files under `src/toolang`: `cli/common/{agent_argument,context,help,lazy}.py`,
+Implementation under `src/toolang`: `cli/common/{agent_argument,context,execution,help,lazy}.py`,
 CLI routing/command factories, `common/{layout,instance_ids}.py`,
-`up/{identity,source,private_paths,observation,workload,config,replay}.py`,
+`up/{addresses,identity,source,private_paths,observation,workload,config}.py`,
 Chat/thread continuation, `top` presentation/schemas, and source/workspace inspection.
 Update current CLI/layout/hosting/execution docs with the implemented increment.
 
@@ -73,6 +78,11 @@ Acceptance scenarios and pass conditions:
 - Source inspection: resource commands reject decorated addresses and keep their
   configuration view while running. Source inspection/workspace edits do not
   advance home selection; unavailable offline data is not presented as live state.
+- Workspace scope: list/add/remove accept resident and project sources; visiting
+  refs and URLs fail before acquisition or configuration changes.
+- Help wording: built-in argument descriptions use sentence case and uppercase
+  URL/ID, list accepted input forms, and keep placement/driver constraints in
+  validation. Authored descriptions remain unchanged.
 
 Definition checks: verify links, examples, field calculations, and `git diff --check`.
 Implementation checks: default repository verification, acceptance tests, and a

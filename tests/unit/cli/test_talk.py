@@ -167,7 +167,9 @@ def test_talk_without_target_shows_help_without_reading_settings(
     output = capsys.readouterr().out
     assert "Usage: too talk [OPTIONS] [CONVO] [MESSAGE...]" in output
     arguments = output.split("Arguments:\n", 1)[1].split("Options:\n", 1)[0]
-    assert "Conversation ID or shorthand" in arguments
+    assert (
+        "Conversation ID, agent name, comma-separated agent names, or all" in arguments
+    )
     assert "convo list" not in arguments
     examples = output.split("Examples:\n", 1)[1]
     assert [

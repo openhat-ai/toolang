@@ -4,7 +4,9 @@ Unify CLI help wording, argument notation, field reference sections, and example
 layout. Success means concise, consistent help across `too`, `toolang`, `caps`,
 agent-target help, and generated script help, with unchanged invocation behavior.
 
-Status: proposed; human confirmation is required before implementation.
+Status: historical definition. Current wording, placeholders, and topic references
+are documented in [CLI help vocabulary](../design/cli.md#help-vocabulary).
+The standalone `caps` command and inline field reference sections below were removed.
 
 ## Scope
 

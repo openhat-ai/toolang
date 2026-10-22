@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from importlib import import_module
 from threading import Lock
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import typer
 from typer._click import Command, Context
@@ -15,6 +15,9 @@ from typer.models import CompletionItem
 from toolang.common.typer.ui import inherit_ui
 
 from .help import CliCommand
+
+if TYPE_CHECKING:
+    from .agent_argument import AgentParameter
 
 
 class LazyCommand(TyperCommand):
@@ -75,6 +78,12 @@ class LazyCommand(TyperCommand):
         """Complete parameters from the real command."""
 
         return self.load().shell_complete(ctx, incomplete)
+
+    def agent_parameters(self) -> tuple[AgentParameter, ...]:
+        """Expose the selected command's own native agent metadata."""
+        from .agent_argument import agent_parameters
+
+        return agent_parameters(self.load())
 
 
 def lazy_typer_command(name: str, target: str, **kwargs: Any) -> LazyCommand:

@@ -43,7 +43,7 @@ def test_host_sandbox_runs_without_backend_with_default_teaming(tmp_path: Path) 
 
     try:
         started = subprocess.run(
-            (*base, "start", "alice", "--sandbox", "host", "--port", str(port)),
+            (*base, "alice", "start", "--sandbox", "host", "--port", str(port)),
             check=False,
             capture_output=True,
             text=True,
@@ -59,7 +59,7 @@ def test_host_sandbox_runs_without_backend_with_default_teaming(tmp_path: Path) 
         assert "toolang.cli.toolang" in argv
         assert "_serve" in argv
         info = subprocess.run(
-            (*base, "info", "alice"), capture_output=True, text=True, timeout=20
+            (*base, "alice", "info"), capture_output=True, text=True, timeout=20
         )
         assert info.returncode == 0, info.stderr
         assert "PID" in info.stdout and state.ref.runtime_id in info.stdout
@@ -97,7 +97,7 @@ def test_host_sandbox_runs_without_backend_with_default_teaming(tmp_path: Path) 
             assert len(ended) == 1 and ended[0]["status"] == "succeeded"
 
         stopped = subprocess.run(
-            (*base, "stop", "alice"),
+            (*base, "alice", "stop"),
             check=False,
             capture_output=True,
             text=True,
@@ -110,7 +110,7 @@ def test_host_sandbox_runs_without_backend_with_default_teaming(tmp_path: Path) 
         state = SandboxState.load(layout.runtime_status)
         if state is not None:
             subprocess.run(
-                (*base, "stop", "alice", "--force"),
+                (*base, "alice", "stop", "--force"),
                 check=False,
                 capture_output=True,
                 text=True,
@@ -213,8 +213,8 @@ with acquire_agent_server(layout, sandbox="host", show_progress=False) as server
                     "toolang.cli.toolang",
                     "--root",
                     str(layout.root),
-                    "stop",
                     "alice",
+                    "stop",
                     "--force",
                 ),
                 env=env,
@@ -262,7 +262,7 @@ def test_direct_server_registers_and_stops_without_signalling_shell(
             assert state.ref.meta["signal_scope"] == "process"
             assert os.getpgid(child.pid) == os.getpgrp()
             stopped = subprocess.run(
-                (*base, "stop", "alice"), capture_output=True, text=True, timeout=10
+                (*base, "alice", "stop"), capture_output=True, text=True, timeout=10
             )
             assert stopped.returncode == 0, stopped.stderr
             assert child.wait(timeout=5) in {0, -signal.SIGTERM}
@@ -324,7 +324,7 @@ def test_foreground_serve_is_one_process_and_kill_preserves_restart_settings(
     base = (sys.executable, "-m", "toolang.cli.toolang", "--root", str(layout.root))
     with (tmp_path / "serve.log").open("w+") as log:
         workload = subprocess.Popen(
-            (*base, "serve", "alice", "--port", str(port)), stdout=log, stderr=log
+            (*base, "alice", "serve", "--port", str(port)), stdout=log, stderr=log
         )
         try:
             deadline = time.monotonic() + 15
@@ -343,7 +343,7 @@ def test_foreground_serve_is_one_process_and_kill_preserves_restart_settings(
             assert entry["workload"]["pid"] == workload.pid
             assert not psutil.Process(workload.pid).children()
             assert not layout.previous_sandbox_state.exists()
-            reference = next((layout.root / ".runtime" / "instances").glob("*.json"))
+            reference = next((layout.root / ".runtime" / "active").glob("*.json"))
             assert set(json.loads(reference.read_text())) == {
                 "version",
                 "status",
@@ -364,14 +364,14 @@ def test_foreground_serve_is_one_process_and_kill_preserves_restart_settings(
             assert entry is not None and entry["workload"]["status"] == "stopped"
             assert entry["control"]["last_successful"]["endpoint"].endswith(f":{port}")
             restarted = subprocess.run(
-                (*base, "start", "alice"), capture_output=True, text=True, timeout=25
+                (*base, "alice", "start"), capture_output=True, text=True, timeout=25
             )
             assert restarted.returncode == 0, restarted.stderr
             state = SandboxState.load(layout.runtime_status)
             assert state is not None and state.launch_id != first_identity
             assert state.ref.endpoint.endswith(f":{port}") and state.sandbox == "host"
             stopped = subprocess.run(
-                (*base, "stop", "alice"), capture_output=True, text=True, timeout=15
+                (*base, "alice", "stop"), capture_output=True, text=True, timeout=15
             )
             assert stopped.returncode == 0, stopped.stderr
             assert SandboxState.load(layout.runtime_status) is None
@@ -381,5 +381,5 @@ def test_foreground_serve_is_one_process_and_kill_preserves_restart_settings(
                 workload.kill()
                 workload.wait(timeout=5)
             subprocess.run(
-                (*base, "stop", "alice", "--force"), capture_output=True, timeout=15
+                (*base, "alice", "stop", "--force"), capture_output=True, timeout=15
             )

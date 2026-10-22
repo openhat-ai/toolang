@@ -2,15 +2,10 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from typer._click import Command, Context
-from typer._click.exceptions import NoArgsIsHelpError, UsageError
-from typer.core import TyperGroup
+from typer._click.exceptions import UsageError
 
-from toolang.catalog.agent import LocalAgents
-from ..common.agent_argument import agent_parameter, bind_prefix
-from ..common.context import resolve_root
+from ..common.agent_argument import agent_parameters, bind_prefix
 from ..common.help import CliGroup, show_help
 from ..common.lazy import LazyCommand
 
@@ -20,19 +15,12 @@ def local_script_candidate(token: str) -> bool:
     return token.endswith(".too") and ":" not in token.split("/", 1)[0]
 
 
-def _agent_candidate(ctx: Context, token: str) -> bool:
-    if token.startswith("-"):
-        return False
-    if any(marker in token for marker in (":", "/", "\\", "@")) or token.endswith(
-        ".too"
-    ):
-        return True
-    explicit = ctx.params.get("toolang_root")
-    root = resolve_root(Path(explicit) if explicit is not None else None)
-    try:
-        return LocalAgents(root / "agents").get(token) is not None
-    except ValueError:
-        return False
+def _agent_candidate(token: str) -> bool:
+    """Recognize explicit selector syntax without consulting installed homes."""
+    return not token.startswith("-") and (
+        any(marker in token for marker in (":", "/", "\\", "@"))
+        or token.endswith(".too")
+    )
 
 
 def resolve_command(
@@ -47,17 +35,15 @@ def resolve_command(
         command = group.commands[name]
         if isinstance(command, LazyCommand):
             command = command.load()
-        agent = agent_parameter(command)
-        if agent is None or "before" not in agent.contract.positions:
+        if not agent_parameters(command):
             if ctx.resilient_parsing:
                 return None, None, args
             with command.context_class(command, info_name=name, parent=ctx) as selected:
-                raise NoArgsIsHelpError(selected)
+                raise UsageError(
+                    f"Command {name!r} does not accept an agent prefix.", selected
+                )
         bind_prefix(ctx, command, first)
         tail = args[2:]
-        if not tail and command.no_args_is_help and not isinstance(command, TyperGroup):
-            # The bound AGENT already supplies input to this leaf command.
-            tail = ["--"]
         # Selected LazyCommand.make_context still applies the caller's UI hooks.
         return name, group.commands[name], tail
     if local_script_candidate(first):
@@ -66,7 +52,10 @@ def resolve_command(
         implicit_entry(ctx)
         # The root has recognized FILE; preserve it as a literal in run's header.
         return "run", group.commands["run"], ["--", *args]
-    if _agent_candidate(ctx, first):
+    if ctx.resilient_parsing and len(args) == 1 and not first.startswith("-"):
+        bind_prefix(ctx, group, first)
+        return None, None, args
+    if _agent_candidate(first):
         if not ctx.resilient_parsing and args[1:] in (["--help"], ["-h"]):
             show_help(ctx)
         if len(args) == 1:
