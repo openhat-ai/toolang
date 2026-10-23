@@ -102,17 +102,17 @@ runtime failure handling into the owning execution call site, supplying its
 expected launch/operation identity. Info must not inherit
 materialize_roaming_program's current fail_preparation side effect.
 
-Add Placement; put the full address in the title and remove the duplicate Agent
-row. On preparation rejection, still obtain single-home runtime status and show
+Put the full address in the title. Show Home without redundant Root, Placement,
+or Agent rows. On preparation rejection, still obtain single-home runtime status and show
 known identity/status plus preparation diagnostics with nonzero exit. Label any
 Watcher last-valid publication explicitly. Do not substitute startup counts.
 
 ## Shared files and mounts
 
-Keep the current layout and registration payload:
+Keep the format-5 registration payload and use one private directory per address:
 
 ```text
-TOOLANG_ROOT/.runtime/active/
+TOOLANG_ROOT/.runtime/active/<address>/
     register.lock
     <address>.json              # {version, status: <host path>, launch_id}
 
@@ -121,19 +121,21 @@ AGENT_HOME/.runtime/
     status.json.lock
 ```
 
-register.lock serializes this root's reference publication/withdrawal.
+register.lock serializes one address's reference publication/withdrawal.
 status.json.lock serializes one home's authoritative state. Both use the existing
 shared-filesystem lock primitive. A lock claim exists while owned and is removed
 on normal release; acquisition may briefly create the primitive's existing
 .toolang-lock-* temporary file. No separate owner file or persistent index.
 
-Mount the existing home and additionally mount the selected root's active
-directory read/write at an explicit guest control path. Pass the reference name,
-canonical host status path, launch_id, and mounted registry location as launch
-metadata. Do not reconstruct host paths from guest paths. Mounting a single
-reference file is insufficient for unlinking its directory entry. Directory
-access grants registry write access; protocol checks are not filesystem-enforced
-per-agent isolation.
+Mount the existing home and additionally mount only the selected address's
+registration directory read/write at an explicit guest control path. Pass the
+reference name, canonical host status path, launch_id, and mounted location as
+launch metadata. Never mount the root's whole active registry or reconstruct host
+paths from guest paths. A single-file bind mount cannot unlink the host directory
+entry; the per-address directory gives the guest only its own reference/guard.
+Hosts continue reading and repairing existing flat format-5 references during
+an upgrade. New publications use only per-address directories. Remove empty
+private directories after host guard release when possible.
 
 Host launch commands publish before Server startup; embedded scripts publish in
 their foreground workload scope. Servers, including guests, withdraw their own
@@ -292,6 +294,6 @@ Execution-history commands retain their separate contracts.
 
 Implementation review must verify nested lock ordering and startup rejection
 before execution, shared-mount hard-link/ownership behavior, and namespace-aware
-claim recovery on supported macOS/Linux hosts. Writable registry-directory access
-remains an explicit sandbox capability. No product implementation or approval
+claim recovery on supported macOS/Linux hosts. Registry access is limited to the
+selected address directory. No product implementation or approval
 of the earlier info-only patch is implied.
