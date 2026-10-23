@@ -117,9 +117,14 @@ class HomeLayer:
 
 
 def state_root(layout: AgentLayout, scope: LayerScope) -> Path:
-    """Return the persistent directory for one State layer scope."""
+    """Return this format's persistent directory for one State layer scope."""
 
-    return layout.place_state if scope == "root" else layout.home_state
+    anchor = layout.place_state if scope == "root" else layout.home_state
+    return anchor / f"v{AGENT_STATE_FORMAT}"
+
+
+def _agent_state_root(layout: AgentLayout) -> Path:
+    return layout.agent_state / f"v{AGENT_STATE_FORMAT}"
 
 
 def layer_current_path(layout: AgentLayout, scope: LayerScope) -> Path:
@@ -140,16 +145,16 @@ def layer_revision_dir(
 
 
 def agent_current_path(layout: AgentLayout) -> Path:
-    return layout.agent_state / "current"
+    return _agent_state_root(layout) / "current"
 
 
 def _agent_publish_lock_path(layout: AgentLayout) -> Path:
-    return layout.agent_state / "publish.lock"
+    return _agent_state_root(layout) / "publish.lock"
 
 
 def agent_revision_dir(layout: AgentLayout, revision: str) -> Path:
     _require_revision(revision)
-    return layout.agent_state / _REVS_DIR / revision
+    return _agent_state_root(layout) / _REVS_DIR / revision
 
 
 def load_current_revision(layout: AgentLayout, scope: LayerScope) -> str:

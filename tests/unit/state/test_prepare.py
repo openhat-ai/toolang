@@ -26,6 +26,9 @@ from toolang.state import prepare as state_prepare
 from toolang.state.cache import (
     LayerScope,
     _agent_publish_lock,
+    agent_current_path,
+    layer_current_path,
+    state_root,
     agent_revision_dir,
     canonical_json,
     load_home_layer,
@@ -382,9 +385,9 @@ def test_prepare_ignores_legacy_state_cache_layout(tmp_path: Path) -> None:
 
     assert (toolang_root / ".state" / "current").read_text() == "legacy\n"
     assert (home / ".state" / "current").read_text() == "legacy\n"
-    assert (toolang_root / ".state" / "root" / "current").is_file()
-    assert (home / ".state" / "agent" / "current").read_text().strip() == (
-        state.revision
+    assert layer_current_path(_layout(toolang_root), "root").is_file()
+    assert (
+        agent_current_path(_layout(toolang_root)).read_text().strip() == state.revision
     )
 
 
@@ -408,7 +411,9 @@ def test_prepare_root_home_reuses_unchanged_revisions(tmp_path: Path) -> None:
     )
     assert state.root_revision == second[0].revision
     assert state.home_revision == second[1].revision
-    assert state.revision_dir == (home / ".state" / "agent" / "revs" / state.revision)
+    assert state.revision_dir == agent_revision_dir(
+        _layout(toolang_root), state.revision
+    )
     assert state.revision_dir is not None
     assert state.revision_dir.is_dir()
 
@@ -438,9 +443,9 @@ def test_prepare_reuses_portable_state_after_root_and_home_remount(
         changed = path.stat().st_mtime_ns + 2_000_000_000
         os.utime(path, ns=(changed, changed))
     guest_layout = _layout(guest_root)
-    root_current = guest_layout.place_state / "current"
-    home_current = guest_layout.home_state / "current"
-    agent_current = guest_layout.agent_state / "current"
+    root_current = layer_current_path(guest_layout, "root")
+    home_current = layer_current_path(guest_layout, "home")
+    agent_current = agent_current_path(guest_layout)
     pointer_inodes = tuple(
         path.stat().st_ino for path in (root_current, home_current, agent_current)
     )
@@ -820,18 +825,10 @@ def test_concurrent_processes_publish_one_root_and_home_revision(
         )
 
     assert results[0] == results[1]
-    assert len(tuple((toolang_root / ".state" / "root" / "revs").iterdir())) == 1
-    assert (
-        len(
-            tuple(
-                (
-                    toolang_root / "agents" / "alice" / ".state" / "home" / "revs"
-                ).iterdir()
-            )
-        )
-        == 1
-    )
-    agent_revs = home / ".state" / "agent" / "revs"
+    layout = _layout(toolang_root)
+    assert len(tuple((state_root(layout, "root") / "revs").iterdir())) == 1
+    assert len(tuple((state_root(layout, "home") / "revs").iterdir())) == 1
+    agent_revs = agent_revision_dir(layout, results[0][0]).parent
     assert [path.name for path in agent_revs.iterdir()] == [results[0][0]]
 
 
@@ -951,12 +948,10 @@ def test_different_agent_processes_share_one_root_generation(tmp_path: Path) -> 
         )
 
     assert alice[1] == bob[1]
-    root_revisions = toolang_root / ".state" / "root" / "revs"
+    root_revisions = state_root(_layout(toolang_root), "root") / "revs"
     assert [path.name for path in root_revisions.iterdir()] == [alice[1]]
-    assert (
-        toolang_root / "agents" / "alice" / ".state" / "agent" / "current"
-    ).is_file()
-    assert (toolang_root / "agents" / "bob" / ".state" / "agent" / "current").is_file()
+    assert agent_current_path(_layout(toolang_root, "alice")).is_file()
+    assert agent_current_path(_layout(toolang_root, "bob")).is_file()
 
 
 def test_remote_refresh_changes_resolved_and_root_revision(

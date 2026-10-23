@@ -1,6 +1,6 @@
 # Isolate State Storage by Format
 
-Status: Proposed; awaiting human confirmation. Definition only.
+Status: Approved by the human in this chat; implemented and verified.
 
 ## Goal and success criteria
 
@@ -142,4 +142,4 @@ offline pytest verification before every commit.
 
 ## Open questions
 
-None within this scope. Human confirmation is required before implementation.
+None within the approved scope.

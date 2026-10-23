@@ -256,9 +256,9 @@ Authored scopes and derived State use locks in their existing `.state` directori
 | --- | --- |
 | `.state/root/edit.lock` | All edits to shared root sources |
 | `agents/<agent>/.state/home/edit.lock` | All edits to one agent's sources |
-| `.state/root/build.lock` | Root layer construction and publication |
-| `agents/<agent>/.state/home/build.lock` | Home layer construction and publication |
-| `agents/<agent>/.state/agent/publish.lock` | Complete agent preparation, composition, and publication |
+| `.state/root/v<format>/build.lock` | Root layer construction and publication |
+| `agents/<agent>/.state/home/v<format>/build.lock` | Home layer construction and publication |
+| `agents/<agent>/.state/agent/v<format>/publish.lock` | Complete agent preparation, composition, and publication |
 
 Edit locks first appear on a mutation attempt, including one that fails or makes
 no content change. Read-only operations never create edit locks or their parent
@@ -303,8 +303,9 @@ cursor lives in the teaming backend. Agents generate no `.runtime/channels/` fil
 ID allocation updates the `seqs` table in `runs.db` under a short SQLite write
 transaction; there is no separate allocator file or lock.
 
-Stop all host/guest processes and writers sharing the affected root, upgrade
-together, then restart. Mixed versions cannot coordinate across the new paths.
+State formats have independent build/publication locks and share source edit
+locks. Runtime status and databases retain their own compatibility rules; stop
+host/guest writers together when upgrading those incompatible contracts.
 Native lock guards remain stable after release; existence does not mean a lock
 is held. The shared `status.json.lock` claim instead contains writer identity
 and is removed only by its owner or confirmed-dead recovery. Do not delete live
@@ -319,12 +320,15 @@ State directories:
 
 | Value | Directory |
 | --- | --- |
-| Root layer | `<place>/.state/root/` |
-| Home layer | `<place>/agents/<agent>/.state/home/` |
-| Agent composition | `<place>/agents/<agent>/.state/agent/` |
+| Root layer | `<place>/.state/root/v<format>/` |
+| Home layer | `<place>/agents/<agent>/.state/home/v<format>/` |
+| Agent composition | `<place>/agents/<agent>/.state/agent/v<format>/` |
 
-Each directory holds its current pointer, immutable revisions, and appropriate
-build/publication locks. [State](state.md#persistent-layout) owns revision
+`<format>` is the running `AGENT_STATE_FORMAT`, independent of the software
+release version. Each directory holds its current pointer, immutable revisions,
+and build/publication locks. Source edit locks remain in the unversioned scope
+directories. Other formats and old unversioned caches remain untouched and are
+not searched. [State](state.md#persistent-layout) owns revision
 contents, formats, integrity checks, and publication. [Workspaces](workspaces.md)
 owns path capture; [Hosting](hosting.md) owns guest mounts.
 

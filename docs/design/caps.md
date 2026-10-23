@@ -223,9 +223,9 @@ versions pin a full commit SHA before fetching; HTTP(S) refreshes compare fetche
 bytes. Source owners control normalization and selection, so new sources require
 no State-specific layout rules.
 
-Root layers live under `${TOOLANG_ROOT}/.state/root/revs/<revision>`.
+Root layers live under `${TOOLANG_ROOT}/.state/root/v<format>/revs/<revision>`.
 Home layers live under
-`${TOOLANG_ROOT}/agents/<agent>/.state/home/revs/<revision>`. See
+`${TOOLANG_ROOT}/agents/<agent>/.state/home/v<format>/revs/<revision>`. See
 [State](state.md) for documents, times, and integrity rules.
 
 Inline skills retain literal guidance and description directly in their Cap

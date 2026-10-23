@@ -57,48 +57,59 @@ referenced capabilities have `here` scope and belong to one module.
 
 ```text
 ${PLACE}/.state/root/
-  current
   edit.lock
-  build.lock
-  revs/<root-revision>/
-    layer.json
-    source/
-      config.toml
-      prompts/<name>.md
-      skills/<name>/SKILL.md
-    materialized/<acquisition-key>/<original-relative-path>
+  v24/
+    current
+    build.lock
+    revs/<root-revision>/
+      layer.json
+      source/
+        config.toml
+        prompts/<name>.md
+        skills/<name>/SKILL.md
+      materialized/<acquisition-key>/<original-relative-path>
 
 ${PLACE}/agents/<agent>/.state/home/
-  current
   edit.lock
-  build.lock
-  revs/<home-revision>/
-    layer.json
-    source/
-      agent.too
-      config.toml
-      runnables/<name>.too
-      chores/<name>.md
-      prompts/<name>.md
-      skills/<name>/SKILL.md
-    materialized/<acquisition-key>/<original-relative-path>
+  v24/
+    current
+    build.lock
+    revs/<home-revision>/
+      layer.json
+      source/
+        agent.too
+        config.toml
+        runnables/<name>.too
+        chores/<name>.md
+        prompts/<name>.md
+        skills/<name>/SKILL.md
+      materialized/<acquisition-key>/<original-relative-path>
 
-${PLACE}/agents/<agent>/.state/agent/
+${PLACE}/agents/<agent>/.state/agent/v24/
   current
   publish.lock
   revs/<state-revision>/
     layers.json
 ```
 
-Each source scope's edit lock coordinates participating source writers and is
-created only on a mutation attempt. State preparation does not acquire edit
-locks; it verifies source snapshots and retries when sources change. Build and
-publish locks coordinate derived State writes. Old
-`.state/current` and `.state/versions` caches are ignored and are not migrated.
+The `v<format>` directory follows `AGENT_STATE_FORMAT`, currently 24. Software
+releases with the same State format share these stores. Different formats have
+independent pointers, revisions, build/publication locks, and watcher baselines.
+A watcher ignores another format's derived files and checks only its own current
+pointers. Authored source remains shared.
+
+Each source scope's unversioned edit lock coordinates participating source
+writers and is created only on a mutation attempt. State preparation does not
+acquire edit locks; it verifies source snapshots and retries when sources change.
+Build and publish locks coordinate derived State writes within each format.
+Unversioned caches and other formats' stores are ignored without migration,
+fallback, or deletion. A missing current-format store is rebuilt from authored
+inputs; exact historical loads search only the running format's store. State
+isolation does not change runtime, API, or database compatibility rules.
 
 ## Canonical Documents and Revisions
 
-`layer.json` (agent state format 23) contains `scope`, `created_at`, normalized State
+`layer.json` (agent state format 24) contains `scope`, `created_at`, normalized State
 `config`, `source` and `materialized` file maps, and `modules`, `caps`, and
 `chores` arrays. Each item has `ref`, `source`, and `value`; caps also have
 `form`. The `source` field names its original file in the source map. Only an
@@ -136,7 +147,7 @@ If that cached Program is edited locally, the new module keeps the captured
 local source and omits the fetched resolution. Restoring the acquired bytes
 restores their provenance; the visiting source-cache lifecycle is unchanged.
 
-`layers.json` (the same agent state format 23) records `created_at`, selected root/home
+`layers.json` (the same agent state format 24) records `created_at`, selected root/home
 revisions, agent name, frozen cap overrides, and optional workspace additions.
 Both documents use canonical UTF-8 JSON: sorted object keys, compact separators,
 direct Unicode, finite numbers, and no trailing newline. Unordered item arrays
@@ -159,7 +170,7 @@ List home revisions by creation time from an agent home:
 
 ```sh
 jq -r 'select(.created_at != null) | [.created_at, input_filename] | @tsv' \
-  .state/home/revs/*/layer.json | sort
+  .state/home/v24/revs/*/layer.json | sort
 ```
 
 Public source receipts keep `scope`, `key`, `observed_digest`, `accepted_digest`,
