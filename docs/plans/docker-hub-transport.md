@@ -1,121 +1,125 @@
-# Docker agent access to the host Hub
+# Docker Hub access and consistent mount layout
 
-Status: proposed; requires explicit human approval before implementation.
+Status: proposed; updated to reuse existing local-service routing and preserve
+relative filesystem layout. No implementation approval has been given.
 
-## Goal and evidence
+## Goal and success criteria
 
-Docker agents with teaming enabled must acquire a lease, process Talk messages,
-use conversation tools, and export execution events through their selected host
-Hub on supported macOS and Linux hosts.
+Docker agents must reach their selected host Hub. Host and guest root/place
+bases may differ; paths below each base keep their names, scope, and relative
+layout. Successful Hub access means a live lease, Talk processing, conversation
+tools, and event export.
 
-Current Docker agents have no mounted Hub discovery. Their clients look under
-the guest place, while host discovery advertises loopback. Both reported Docker
-agents reproduce `BackendUnavailable`; the host Hub has no live lease for either.
-`too hub` reports driver selection, not transport health. The approved
-[Hub transport plan](agent-hub-transport.md) excludes sandbox networking and
-requires a separate approved connection contract.
+## Existing behavior and scope
 
-## Scope
+Docker already supplies `TOOLANG_HOST_GATEWAY` and the Docker `host-gateway`
+entry. Ollama/llama.cpp use `replace_guest_loopback` in
+`src/toolang/plugin/catalogs/_local.py`; reuse that URL transformation through a
+package-neutral helper, preserving those plugins' explicit-endpoint behavior.
 
-- Support locally managed Docker agents and the existing local Hub lifecycle.
-- Preserve the human API's loopback listener, backend ownership, root isolation,
-  lease fencing, delivery semantics, and explicit teaming/Talk opt-outs.
-- Keep current public commands and `too hub` status meanings. Explain enabled
-  versus connected in the messaging documentation.
-- Exclude remote Docker engines, remote Hub deployment, host networking mode,
-  direct backend access, and unrelated mount cleanup.
+The existing `ROOT/hub/hub.json` also owns PID/create-time validation, readiness,
+and the actual port after CLI/environment overrides. Retain this necessary
+runtime record and mount its directory at the same relative guest path. Keep
+`ROOT/config.toml` as the authored configuration source. Do not introduce a
+second listener, guest discovery format, proxy, or capability-token system.
+This supersedes the sandbox-network exclusion in the previous
+[Hub transport definition](agent-hub-transport.md).
 
-## Connection and authorization
+This definition covers local Docker Hub access and mount mapping. Rust shell and
+image-environment bugs require separate minimal fixes and regression tests.
+Historical State cleanup requires a separate retention decision; this work does
+not delete or migrate retained data.
 
-1. Hub owns a second, agent-only HTTP listener on `0.0.0.0` with an OS-assigned
-   port. The human listener remains `127.0.0.1`. The guest listener exposes only
-   existing `/agents/{agent}/...` operations and authenticated health checks;
-   human routes are absent. Reuse the existing agent handlers and backend
-   instance rather than proxying arbitrary URLs or duplicating operations.
-2. Every guest request requires a random 256-bit bearer capability bound to one
-   canonical host root, complete agent address, actor, and launch ID. Validate it
-   before backend access, including initial lease registration. Existing lease
-   headers and backend/human identity checks remain independent requirements.
-   Reject missing, forged, expired, other-root, and other-agent capabilities.
-3. Host orchestration prepares a mode-`0600` authorization record under
-   `ROOT/.runtime/guest-hub/<address>/<launch-id>.json`. It contains the capability
-   and launch binding; this directory is never mounted into a guest. Hub checks
-   the record against the authoritative runtime generation. Allow startup and
-   final drain for that generation; terminal or replaced launches cannot renew
-   authorization. Compare capabilities in constant time and never log them.
-4. Hub publishes only connection metadata, readiness, human, and backend identity
-   under `ROOT/hub/guest/discovery.json`. No PID, backend credentials, or guest
-   capability appears there. Mount the containing `guest/` directory read-only
-   at `HOME/.runtime/hub` so atomic replacement remains visible on Linux.
-   Mount no Hub log, process lock, backend files, or other agent authorization.
-5. Put only that launch's capability in its private mode-`0600` staging file,
-   exposed through the existing read-only bootstrap mount. Resolve discovery and
-   credential file paths at the hosting boundary; pass concrete connection
-   providers to the lifecycle and conversation tool factory. Never reinterpret
-   the guest filesystem path as the canonical host root.
-6. Docker resolves the listener through its existing `host.docker.internal`
-   host-gateway mapping. The sandbox supplies this routing choice explicitly;
-   shared clients do not inspect environment variables or guess a gateway.
-   Host clients continue using ordinary local discovery.
+## Hub connection
 
-The new authenticated listener is a deliberate network-boundary change requiring
-human approval. Its capability protects agent authority; it does not add remote
-deployment or TLS support to this local Docker contract.
+- Use the existing Hub HTTP API and lease/session/recovery behavior. Resolve
+  configured defaults at the host boundary; preserve the actual running
+  human/backend identity from the existing record, including for containers with
+  different usernames and filesystem roots.
+- Agent polling, `convo`, and export resolve the same selected Toolang root and
+  connection provider. A nonresident agent's place is not its Toolang root.
+- Read `hub/hub.json` through the mapped root. Translate its host-local endpoint
+  with the existing gateway rule at the Docker boundary. Shared clients receive
+  concrete paths/routing values; they do not infer Docker from ambient state.
+- Keep one Hub listener. Add ordinary `teaming.hub.host` configuration and
+  `too hub start/serve --host` using existing CLI/config factory patterns;
+  default to `127.0.0.1`. Existing port precedence remains unchanged. Discovery
+  includes the actual advertised host, using loopback for wildcard binds, and
+  retains compatibility with existing records lacking that field.
+- Docker Desktop gateway access to the current loopback Hub is verified on this
+  Mac. Linux bridge access requires the operator to bind the same service to a
+  reachable host interface, as with Ollama. Do not silently widen the default
+  listener or add Docker-specific forwarding. Document an explicit bind-address
+  example and the existing trusted-local-client access model.
+- Mount `ROOT/hub/` read-only as `guest_ROOT/hub/`, including the existing
+  record/lock/log names. Mount the directory so atomic record replacement is
+  visible on Linux. Guest clients do not validate host PIDs. Create the source
+  directory when preparing a mount, without starting Hub implicitly.
+- Missing/stopped Hub remains a recoverable communication failure. Existing
+  agents reconnect when Hub starts/restarts, including a changed actual port;
+  record identity/session pinning keeps cursors isolated. Local runs continue.
 
-## Lifecycle and failure
+## Mount mapping decisions
 
-- Create the guest discovery directory before mounting, even without a running
-  Hub. Missing/starting discovery means unavailable; local execution still works.
-  Neither agent launch nor retries start Hub implicitly.
-- Read discovery on the next connection/retry and pin it for a Talk batch using
-  the existing session mechanism. A Hub restart or port/backend change must not
-  require restarting agents or reuse another backend's cursor.
-- Hub listener readiness and shutdown follow Hub lifetime. Bridge failures retain
-  the existing communication-unavailable behavior and never stop local runs.
-- Retire authorization after bounded final export/unregister on normal shutdown.
-  Failed launch and forced cleanup remove only the matching generation; stale
-  records cannot authorize traffic after a crash or replacement.
-- Keep uncertain-send handling, retry boundaries, event deduplication, cursor
-  persistence, and publication limits as defined by the existing Hub contract.
+Define explicit host/guest root, place, and home pairs at orchestration startup.
+A resident has root equal to place; nonresident guest bases must remain distinct.
+Use the existing sandbox root for the guest Toolang root and the existing
+`/tmp/toolang/<root_code>/<place_code>` placement shape for nonresident guest
+places. Pass canonical host identity separately from mapped filesystem paths.
 
-## Implementation touchpoints
+Reuse a covering mount before creating an additional mount. Match the most
+specific owning base, preserve its suffix, and retain current read/write intent.
 
-- `up/hub.py`, `teaming/api.py`, and a focused guest authorization module: second
-  listener, metadata publication, scoped routing, and capability checks.
-- `up/sandbox.py`, `up/server.py`, Docker sandbox/bootstrap, and sandbox request
-  types: generation-bound credentials, directory mounts, and concrete routing.
-- `teaming/discovery.py`, `teaming/agent_client.py`, and `teaming/client.py`:
-  explicit guest connection provider and redacted authentication handling.
-- `setup/teaming.py`, `setup/watcher.py`, and `plugin/toolsets/convo.py`: share the
-  resolved root/connection contract between polling, export, and tools.
-- Corresponding unit/integration tests and `docs/design/{hosting,messaging}.md`;
-  generate the user-facing changelog through `too aid.too update_changelog`.
+| Host source | Guest destination / decision |
+| --- | --- |
+| `ROOT/config.toml` and root capability directories | Same suffix below guest root; do not substitute place/home inputs. |
+| `PLACE/config.toml`, capability directories, and State | Same suffix below guest place; coalesce with root when equal. |
+| `HOME/` | Same `agents/<name>/` layout below guest place, read-write. |
+| Root/place `catalog.json` | Same filename and owning-root/place suffix, read-only; remove the extra home `.runtime/model-catalog.json` alias. |
+| Home `catalog.json` | Reuse the home mount at `HOME/catalog.json`; preserve selected source priority. |
+| External or bundled selected catalog | One read-only mapping under `guest_PLACE/.inputs/models/<path-hash>/<original-basename>` only when no existing mount covers it. |
+| `ROOT/hub/` | `guest_ROOT/hub/`, read-only. |
+| `ROOT/.runtime/active/<address>/` | Same suffix below guest root, read-write; do not expose other registrations or rename it to home `.runtime/registration`. |
+| `PLACE/.sandbox/<name>/launches/<id>/` | Same suffix below guest place, read-only; remove the home `.runtime/sandbox` alias. |
+| `HOME/.lab/` | Reuse `guest_HOME/.lab` through the home mount; remove the duplicate `.workspaces/lab` mount and point logical `lab` there. |
+| External workspace grant | Retain the existing `.workspaces/<name>` mount when no root/place/home mount covers it; preserve nested workspace relationships. |
+
+Keep generated environment data in the launch's own staging path. Preserve
+PR #942's fix for Docker-created empty dotenv files and the required masking of
+an existing authored home dotenv; never stage the whole host root environment.
+Keep captured configuration rebasing and linked-source overrides only where
+needed to resolve an external host path; do not rename logical config files.
 
 ## Acceptance checks
 
 | Scenario | Pass condition |
 | --- | --- |
-| No Hub at launch | Docker agent serves local requests; communication retries; no backend connection or implicit Hub startup occurs. |
-| Hub starts later | Existing guest acquires a lease and consumes an isolated test message without restart. |
-| macOS and Linux | A real guest registers, handles a local test-provider Talk batch, writes its response, and exports events through the host Hub. |
-| Restart and atomic discovery replacement | Existing guests reconnect to the current listener/identity; no stale file bind or old-backend cursor survives. |
-| Shared connection | Lifecycle, receive batch, conversation tools, and exporter use the same host root and selected Hub. |
-| Authorization | Missing/forged/cross-agent/cross-root/retired credentials and human routes are rejected before backend access. |
-| Failure and replacement | Partial startup, forced stop, and replacement revoke only their launch; stale cleanup cannot revoke the new guest. |
-| Opt-outs and regression | Teaming-disabled agents stay disconnected; Talk-disabled agents never consume; host transport and current delivery/recovery tests pass unchanged. |
+| Gateway reuse | Hub and existing local-model URL tests share transformation behavior; Ollama's authored explicit endpoints retain their current meaning. |
+| Real Docker communication | On macOS and Linux with an explicitly reachable Hub binding, an isolated guest registers, handles a local-stub Talk batch, replies, and exports events. |
+| Late/restarted Hub | No implicit Hub startup; existing guests reconnect through directory-mounted current records without advancing another backend's cursor. |
+| Root/place identity | Resident and nonresident clients read their selected root Hub, with unchanged canonical host-root identity and correct human defaults. |
+| Mapping table | Every listed source preserves its owning-base suffix and filename; covered catalogs/lab have no duplicate aliases. |
+| Source priority | Root, home, explicit external, and packaged catalogs select the same data on host and guest. |
+| Existing contracts | Private registration access, nested workspaces, symlinks, config rebasing, dotenv restrictions, historical workspace URIs, and bounded shutdown still pass. |
 
-Default tests stay offline using in-process transports and isolated fake storage.
-Real Docker plus isolated Redis/Valkey checks are opt-in and use a local model
-stub; never send verification messages into user conversations or call a live
-model provider. Implementation must pass the repository's default checks.
+Default tests stay offline. Opt-in Docker/Redis/Valkey checks use isolated
+conversations and a local model stub, never user conversations or live providers.
+Update focused hosting, layout, messaging, and model documentation and generate
+the user-facing changelog through `too aid.too update_changelog`.
 
-## Risks and open questions
+## Touchpoints and remaining boundaries
 
-The additional listener introduces a reachable network surface; authorization
-must precede every operation, with no human-route fallback. Lifecycle races and
-credential disclosure are addressed by generation checks, private files,
-redacted representations, and explicit cleanup tests. Docker gateway behavior
-requires validation on both supported host platforms.
+Likely files: `up/{hub,sandbox,mounts,server}.py`, Docker sandbox/bootstrap,
+`teaming/{config,discovery,agent_client}.py`, `setup/teaming.py`, `convo` tool
+factory, a neutral URL helper, and focused unit/integration tests.
 
-No implementation decision remains open. Approval of this listener and
-authorization contract is pending; this definition ships no product code.
+The existing single-file config/catalog binds have separate Linux atomic-replace
+limitations: guest root-config writes fail with `EBUSY`, and host replacement
+can leave a native Linux file bind on old content. Path renaming does not fix
+those semantics. Define the required update/write contract before changing that
+mount strategy; do not mount all peer homes or credentials as a shortcut.
+
+Root State currently exposes legacy unversioned revisions alongside active
+versioned data. Audit and retention are separate from path normalization. No
+legacy cache deletion, automatic migration, listener widening, or live agent
+restart is authorized by this proposed definition.
