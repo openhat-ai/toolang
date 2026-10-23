@@ -70,14 +70,18 @@ Relevant owners:
 
 ### 1. One observation owner, explicit scopes
 
-The closest existing encapsulation is `ScopeReader`, not a missing new service.
-Rename/generalize it to `InstanceWatcher` and consolidate the current
-discovery/probe/repair pipeline behind it; do not wrap the existing competing
-paths with another facade. Support one-shot refresh/current access and observing
-one selected layout through the same per-instance implementation.
+Rename/generalize the existing `ScopeReader` to `RuntimeWatcher`, consolidating
+the discovery/probe/repair pipeline rather than wrapping competing paths with
+another facade. Its `refresh()` returns a `RuntimeInventory`; `current()` returns
+the latest publication.
+
+Expose `runtime_status(layout)` from the same module for one selected home. It
+uses the watcher's per-instance observation and repair implementation without
+discovery or inventory construction. Info calls this function directly: it needs
+neither a `RuntimeWatcher` instance nor a `RuntimeInventory`.
 
 `list` selects residents; hub and root top select residents plus active
-nonresidents; info observes its resolved home. Probe resident homes even without
+nonresidents. Probe resident homes even without
 registrations. A registration is a discovery candidate, not proof of activity.
 Preparing/starting instances with verified live owners are active candidates too.
 
@@ -167,10 +171,9 @@ the binding; graceful guest exit must use it on both success and failure.
 
 ### 5. Repair discovery, preserve resources and history
 
-Normal exit withdraws promptly. Every instance observation also performs bounded,
-best-effort repair for its observed candidates, including top's existing discovery
-refresh. There is no command-specific read-only policy that preserves known-dead
-members. Info performs this observation even when static preparation fails.
+Normal exit withdraws promptly. `RuntimeWatcher` and `runtime_status(layout)`
+perform bounded, best-effort repair for their observed candidates. Info performs
+its single-home observation even when static preparation fails.
 
 Retire only a reference proven obsolete, or a workload proven finished with no
 live management/preparation owner. Missing source files, health-request failure,
@@ -182,6 +185,16 @@ registry, and process/container release in sandbox lifecycle management. Removin
 an expired active reference must not require deleting recovery references,
 containers, homes, prepared State, or Run/usage history. Failure to acquire a
 cleanup guard defers the write to a later observation; it does not invent activity.
+
+`top` reuses the existing background discovery job and five-second discovery
+cadence, with only one discovery job in flight. Rendering and Run/usage polling
+do not trigger registry scans or repairs. Each sweep reuses its validated
+snapshots and liveness results to identify stale candidates; cleanup adds no
+second discovery, HTTP request, or sandbox probe. Acquire repair guards
+nonblocking, mutate only changed records, and retry deferred cleanup on later
+discovery refreshes. Keep UI and stats reads independent of repair completion;
+exclude confirmed-departed instances even when their reference cannot yet be
+removed. Collection observation never refreshes Setup/State or prepares sources.
 
 ## Implementation touchpoints and acceptance
 
@@ -202,11 +215,13 @@ compatibility rather than renaming public fields incidentally.
 | Active visiting/roaming membership | Include live preparing/starting/running instances. On confirmed departure, remove their complete statistical contribution at the next discovery refresh. |
 | Identical evidence and degraded peers | All views classify consistently; cache does not select health policy; unknown differs from failure; one bad peer cannot freeze confirmed departures. |
 | Watcher-based info | Names, refs, URLs, paths, and exact instances resolve correctly; changed inputs reach Watcher results; no custom scanners, active registration, executor, or Run database is created. |
+| Single-home runtime status | Info obtains status and repairs only its selected binding through the public module function; constructing a RuntimeWatcher, enumerating residents/registry, or constructing a RuntimeInventory is forbidden. |
 | Preparation rejection | Known identity/status survives with diagnostics; last-valid State is explicit; unavailable default credentials do not block inspection solely through execution validation. |
 | Normal host/guest exit and forced death | Both can withdraw their own reference; missing finalization is repaired by a later host info/list/hub/top observer without releasing unrelated resources. |
 | Concurrent cleanup and restart | Real subprocess barriers exercise two cleaners, old/new launches, and stale references. Neither cleanup nor status repair changes the replacement generation. |
 | Mounted guest cleanup | Verify directory mounting, explicit host/guest binding, shared guard use, read/write permissions, and host-visible deletion; a container restart cannot let an old guest remove the new launch. |
 | Bounded cost and retained data | Busy cleanup locks defer without hanging the UI; no periodic historical nonresident scan; cleanup preserves homes, State, recovery references, and Run history. |
+| Refresh cost in `top` | Repeated rendering and Run/usage ticks launch no discovery or cleanup; at most one discovery runs at the existing cadence. Unchanged records cause no writes; cleanup adds no probes; lock contention does not block the UI or retain confirmed-departed statistical contributions. |
 
 Extend the existing process, registry, runtime-observation, scope, top-observer,
 agent-info, hub, mount, and sandbox lifecycle tests. Keep deterministic tests
