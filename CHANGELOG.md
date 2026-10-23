@@ -507,6 +507,10 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   recovery attempts so a busy guest cannot starve other agents' cleanup.
   ([#936](https://github.com/openhat-ai/toolang/pull/936))
 
+- Runtime status and inventory queries recover a dead host status writer
+  without blocking, even while the workload stays alive.
+  ([#936](https://github.com/openhat-ai/toolang/pull/936))
+
 ### Security
 
 - The locked certifi trust store advances to 2026.10.19, resolving trust-store
