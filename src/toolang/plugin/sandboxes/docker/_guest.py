@@ -9,6 +9,7 @@ import shutil
 
 from toolang.base.types.sandbox import SandboxRequest
 from toolang.common.files import atomic_write_text
+from toolang.common.environment import is_environment_name
 
 
 _GUEST_FILES = {"docker_guest.sh": 0o755, "docker_guest.py": 0o644}
@@ -113,7 +114,7 @@ def _dotenv_section(title: str, environ: Mapping[str, str]) -> str:
 
 
 def _dotenv_name(name: str) -> str:
-    if not name or any(char.isspace() or char in "=#\x00" for char in name):
+    if not is_environment_name(name):
         raise ValueError(f"invalid guest environment variable name: {name!r}")
     return name
 

@@ -2245,3 +2245,13 @@ def test_generated_guest_environment_uses_the_common_parser(tmp_path):
         "LITERAL": '${HOME}/"quoted"/\\literal',
         "MULTILINE": "first\nsecond\rthird",
     }
+
+
+@pytest.mark.parametrize(
+    "name", ["WITH-DASH", "WITH.DOT", "1NUMBER", "QUOTED'", "NON_ASCII_é"]
+)
+def test_docker_rejects_names_the_common_dotenv_parser_cannot_load(tmp_path, name):
+    request = replace(_request(tmp_path), envs={name: "synthetic-value"})
+    with pytest.raises(ValueError, match="invalid guest environment variable name"):
+        create_sandbox("docker", config={}).prepare(None, request)
+    assert not list(tmp_path.glob(".sandbox/alice/launches/*"))

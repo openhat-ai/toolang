@@ -38,7 +38,10 @@ from toolang.cli.common.parameters import (
 
 from toolang.common.layout import AgentLayout
 from toolang.common.environment import (
+    EnvironmentPolicy,
     RUNTIME_ENV_NAMES,
+    ResolvedEnvironment,
+    environment_identity,
     environment_scope,
 )
 from toolang.up.types import ServerLifetime
@@ -600,7 +603,8 @@ def serve(
     from toolang.up.types import ALL_DRIVERS
     from toolang.plugin.sandboxes.host import HOST_LAUNCH_ENV
 
-    launch_id = launch_id or os.environ.pop(HOST_LAUNCH_ENV, None)
+    host_launch = os.environ.pop(HOST_LAUNCH_ENV, None)
+    launch_id = launch_id or host_launch
     if (
         source_policy not in {"project", "root"}
         or membership not in {"managed", "unmanaged"}
@@ -637,8 +641,17 @@ def serve(
     environ = dict(os.environ)
     environ["TOOLANG_ROOT"] = str(context_root(ctx))
     environ["TOOLANG_SANDBOX"] = sandbox
-    # Dotenv selection is shared; host inheritance alone is reduced by keep/pick.
-    selected = user_call(load_runtime_environment, layout, base_environ=environ)
+    if location == "host" and host_launch:
+        # The controller already resolved and reduced this exec environment.
+        selected = ResolvedEnvironment(
+            context_root(ctx),
+            EnvironmentPolicy(),
+            environ,
+            identity=environment_identity(layout),
+        )
+    else:
+        # Guests load their generated root file; standalone hosts apply policy.
+        selected = user_call(load_runtime_environment, layout, base_environ=environ)
     controls = {
         name: value for name, value in environ.items() if name in RUNTIME_ENV_NAMES
     }

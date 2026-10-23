@@ -460,3 +460,71 @@ def test_host_serve_preserves_an_explicit_or_absent_path(
     assert result.exit_code == 0, (result.stderr, result.exception)
     assert len(observed) == 1
     assert observed[0].get("PATH") == path
+
+
+@pytest.mark.parametrize(
+    "changed", ["ADMITTED=changed\nNEW_SECRET=excluded\n", "", "BROKEN='\n"]
+)
+def test_managed_host_exec_uses_the_controller_environment_snapshot(
+    tmp_path, monkeypatch, shell_environment, changed
+):
+    from toolang.base.types.sandbox import SandboxRequest
+    from toolang.common.environment import (
+        resolve_agent_environment,
+        resolve_root_environment,
+    )
+    from toolang.common.layout import AgentLayout
+    from toolang.plugin.sandboxes.host import HostSandbox, HOST_LAUNCH_ENV
+    from toolang.setup.config import load_setup_envs
+    from toolang.up import server
+
+    root = tmp_path / "root"
+    LocalAgents(root / "agents").create("alice", content="")
+    layout = AgentLayout.resident(root, "alice")
+    policy = root / ".alice.env"
+    policy.write_text("ADMITTED=selected\n")
+    selected = resolve_agent_environment(
+        resolve_root_environment(root, dict(os.environ)), layout
+    )
+    spec = server.resolve_serve(layout=layout, port=8123, launch_id="managed-launch")
+    plan = HostSandbox({}).prepare(
+        None,
+        SandboxRequest(
+            local_place=root,
+            local_home=layout.home,
+            hosted_place=root,
+            hosted_home=layout.home,
+            agent_name="alice",
+            bind_host="127.0.0.1",
+            endpoint_host="localhost",
+            port=8123,
+            endpoint="http://localhost:8123",
+            command=("too", *server.build_serve_argv(spec)),
+            working_directory=layout.home,
+            output="inherit",
+            log_path=None,
+            envs={**selected.values, HOST_LAUNCH_ENV: "managed-launch"},
+        ),
+    )
+    policy.write_text(changed)
+    observed = []
+
+    def captured(spec, *, environ, **_kwargs):
+        observed.append(dict(environ))
+        assert load_setup_envs(spec.layout) == environ
+        return 0
+
+    monkeypatch.setattr(server, "_serve_captured", captured)
+    # Popen/exec replaces the inherited mapping, rather than overlaying it.
+    for name in tuple(os.environ):
+        monkeypatch.delenv(name)
+    for name, value in plan.envs.items():
+        monkeypatch.setenv(name, value)
+    result = CliRunner().invoke(app, list(plan.command[plan.command.index("--root") :]))
+    assert result.exit_code == 0, (result.stderr, result.exception)
+    assert len(observed) == 1
+    assert observed[0]["ADMITTED"] == "selected"
+    assert observed[0]["PATH"] == selected.values["PATH"]
+    assert "NEW_SECRET" not in observed[0]
+    assert "PRIVATE_SENTINEL" not in observed[0]
+    assert HOST_LAUNCH_ENV not in observed[0]

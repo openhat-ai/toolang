@@ -93,6 +93,10 @@ RUNTIME_ENV_NAMES = frozenset(
 )
 
 
+def is_environment_name(name: str) -> bool:
+    return _NAME.fullmatch(name) is not None
+
+
 @dataclass(frozen=True, slots=True)
 class EnvironmentPolicy:
     keep: tuple[str, ...] = DEFAULT_KEEP
@@ -108,7 +112,7 @@ class EnvironmentPolicy:
         for key, default in (("keep", DEFAULT_KEEP), ("pick", DEFAULT_PICK)):
             raw = table.get(key, list(default))
             if not isinstance(raw, list) or not all(
-                isinstance(name, str) and _NAME.fullmatch(name) for name in raw
+                isinstance(name, str) and is_environment_name(name) for name in raw
             ):
                 raise ValueError(f"{path}: env.{key} must contain environment names")
             if len(raw) != len(set(raw)):
@@ -165,7 +169,7 @@ def apply_environment_file(path: Path, parent: Mapping[str, str]) -> dict[str, s
                 name = binding.key
                 if (
                     binding.error
-                    or (name is not None and not _NAME.fullmatch(name))
+                    or (name is not None and not is_environment_name(name))
                     or (binding.value is not None and "\x00" in binding.value)
                 ):
                     raise ValueError(

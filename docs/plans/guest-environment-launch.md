@@ -20,6 +20,8 @@ this change.
   host/guest paths at orchestration and carry source identity into `_serve`.
   Encoded filenames over 255 bytes use `.source-<sha256>.env` on both sides.
 - Host processes receive the reduced environment before plugin construction.
+  Managed host children consume that exec snapshot without rereading dotenv;
+  standalone internal serving resolves the ordinary host policy.
   Docker receives only resolved guest grants and mapped workload bindings;
   host-only `keep` values are not staged automatically.
 - Always generate mode-0600 `guest.env`, including an empty result, and mount it
@@ -45,6 +47,7 @@ this change.
 | Scenario | Pass condition |
 | --- | --- |
 | Host boundary | Existing root/agent priority and `keep`/`pick` tests remain valid; plugins and children see the reduced snapshot. |
+| Host exec handoff | Editing, emptying, or corrupting dotenv after controller selection does not change the child snapshot or prevent its startup. |
 | Guest boundary | Picked, explicit, empty, and absent credentials produce a mounted root policy file without changing authored host dotenv files. |
 | Common loading | Resident, roaming, and visiting guest launches select generated root data over local fallbacks, with no interpolation or duplicate-name serialization. |
 | Native baseline | Custom image variables, Rust toolchain homes, and configured UV variables survive; installation-only values are absent when not supplied by the image or user. |

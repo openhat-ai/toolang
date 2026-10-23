@@ -207,6 +207,7 @@ or modification; the loader does not merge it with the selected root file. The
 controller does not separately reload authored dotenv files for staging. Public
 sandbox requests retain the trusted `dotenv_envs` input, whose names bypass the
 optional pattern; resolved process bindings win on duplicate names in the generated file.
+Generated names use the common dotenv validator before container creation.
 
 The guest preserves all native image/entrypoint environment variables, overlays
 the loaded bindings, and restores the finite launcher-owned control values.
@@ -216,6 +217,9 @@ Host serving preserves the selected PATH, including an absent or empty value.
 Shell tools use `/bin/sh -c`, preserving that environment without login profiles.
 Setup refreshes, model calls, tools, and child processes reuse the startup
 snapshot; file edits take effect after restart.
+Managed host children use the controller's reduced exec environment without
+rereading authored dotenv files. A standalone `_serve` invocation still applies
+the host selection rules.
 
 Bootstrap installs in a child process using private `UV_CACHE_DIR`,
 `UV_PYTHON_INSTALL_DIR`, `UV_PYTHON_BIN_DIR`, `UV_TOOL_DIR`, `UV_TOOL_BIN_DIR`,
