@@ -307,9 +307,8 @@ def test_header_fixed_fields_right_edge_footer_and_normal_width_clipping():
     view = TopView()
     header = view.header(snapshot, 140)
     assert header[0].cell_len == 140
-    assert header[2].plain.rstrip().endswith("right now") and header[
-        3
-    ].plain.rstrip().endswith("last 1h")
+    assert header[2].plain[-17:-2].strip() == "now"
+    assert header[3].plain.rstrip().endswith("last 1h")
     assert header[4].plain.rstrip().endswith("last 5m")
     assert all(line.cell_len == 140 for line in header if line.plain)
     assert (
@@ -463,7 +462,7 @@ def test_summary_emphasizes_only_nonzero_values_and_dims_captions():
         frame(metrics=Metrics(512000, 54000, 360000, 2460000, 76, 188)), 140
     )
     assert "agents: 1 resident, 0 visiting, 0 roaming" in header[2].plain
-    for line, caption in zip(header[2:5], ("right now", "last 1h", "last 5m")):
+    for line, caption in zip(header[2:5], ("now", "last 1h", "last 5m")):
         assert line.plain.startswith("  ") and line.plain.endswith("  ")
         caption_at = line.plain.rindex(caption)
         for index in range(caption_at, caption_at + len(caption)):

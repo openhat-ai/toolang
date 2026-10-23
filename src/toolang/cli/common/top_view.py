@@ -594,7 +594,7 @@ class TopView:
         left_width = max(1, inner_width - caption_width - (2 if caption_width else 0))
         console = Console(width=left_width)
         for text, caption in (
-            (agents, "right now"),
+            (agents, "now"),
             (usage, f"last {window(snapshot.period)}"),
             (runs, f"last {window(snapshot.recent)}"),
         ):
