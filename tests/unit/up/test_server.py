@@ -352,6 +352,8 @@ def test_serve_argv_contains_only_server_inputs(tmp_path: Path) -> None:
             "time": None,
         },
         log_spec="toolang.up=debug",
+        cors_allowed_origins=(),
+        ui_base_url="https://ui.example",
     )
 
     argv = build_serve_argv(
@@ -375,6 +377,8 @@ def test_serve_argv_contains_only_server_inputs(tmp_path: Path) -> None:
     assert _option_values(argv, "--store-schema") == ["63"]
     assert "--sandbox-child" not in argv
     assert _option_values(argv, "--compact-model") == ["ref=test/compact effort=low"]
+    assert _option_values(argv, "--cors-allowed-origins") == ["[]"]
+    assert _option_values(argv, "--ui-base-url") == ["https://ui.example"]
     assert _option_values(argv, "--allow") == [
         "models=openai/gpt-5",
         "tools=none",

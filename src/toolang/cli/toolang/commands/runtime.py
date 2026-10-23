@@ -546,6 +546,12 @@ def serve(
         str | None,
         typer.Option("--log", metavar="LOG_SPEC", help="Python logging specification"),
     ] = None,
+    cors_allowed_origins: Annotated[
+        str | None, typer.Option("--cors-allowed-origins", hidden=True)
+    ] = None,
+    ui_base_url: Annotated[
+        str | None, typer.Option("--ui-base-url", hidden=True)
+    ] = None,
     place: Annotated[Path | None, typer.Option("--place", hidden=True)] = None,
     source_policy: Annotated[
         str, typer.Option("--source-policy", hidden=True)
@@ -627,6 +633,14 @@ def serve(
     environ["TOOLANG_SANDBOX"] = sandbox
     if model_catalog := resolve_model_catalog_option(model_catalog):
         environ[MODEL_CATALOG_ENV] = str(model_catalog)
+    cors_origins = None
+    if cors_allowed_origins is not None:
+        parsed = user_call(json.loads, cors_allowed_origins)
+        if not isinstance(parsed, list) or not all(
+            isinstance(item, str) for item in parsed
+        ):
+            raise ClickException("invalid CORS origins startup input")
+        cors_origins = tuple(parsed)
     spec = user_call(
         resolve_serve,
         layout=layout,
@@ -642,6 +656,8 @@ def serve(
         compact_override=user_call(resolve_compact_override, environ, compact_model),
         limit_overrides=user_call(resolve_limit_overrides, {}, limits),
         log_spec=log_spec,
+        cors_allowed_origins=cors_origins,
+        ui_base_url=ui_base_url,
         workspace_additions=json.loads(workspace_bindings),
         workdir=initial_workdir,
     )

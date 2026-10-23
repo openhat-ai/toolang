@@ -97,12 +97,13 @@ so policy survives home removal and is reused for the same stable identity.
 
 The CLI installs the selected environment before user plugin loading; adapters,
 tools, child processes, inspection, and `cd` share it. Controller startup inputs
-such as ports, catalog paths, and policy overrides are captured separately and
-passed as concrete settings. Finite generated runtime facts take precedence over
-authored values. Selection logs report source paths and the picked name, never
-values. HTTP source filenames are redacted in logs and errors because their
-reversible spelling may contain URL credentials; visiting identities are omitted
-from selection logs. [Hosting](hosting.md) owns guest transport.
+such as ports, catalog paths, policy overrides, CORS origins, and UI URLs are
+captured separately and passed as concrete settings. Finite generated runtime
+facts take precedence over authored values. Selection logs report source paths
+and the picked name, never values. HTTP source filenames are redacted in logs and
+errors because their reversible spelling may contain URL credentials; visiting
+identities are omitted from selection logs. [Hosting](hosting.md) owns guest
+transport.
 
 Dotenv retains comments, quoting, literal assignments, empty values, and the
 resident `HOME/.env` fallback. Its role changes from supplying defaults to

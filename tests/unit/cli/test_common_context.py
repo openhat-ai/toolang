@@ -42,6 +42,7 @@ def test_controller_settings_are_resolved_without_forwarding_them(
         "TOOLANG_AGENT_PORT": "8123",
         "TOOLANG_LIMIT_TOKENS": "123",
         "TOOLANG_MODEL_CATALOG": str(tmp_path / "models.json"),
+        "TOOLANG_CORS_ALLOWED_ORIGINS": "https://ui.example",
         "TOOLANG_UNRECOGNIZED": "excluded",
     }
     state = CliContext(root=tmp_path, agent="alice", shell_environment=shell)
@@ -52,6 +53,7 @@ def test_controller_settings_are_resolved_without_forwarding_them(
         settings = startup_environ(os.environ)
         assert settings["TOOLANG_AGENT_PORT"] == "8123"
         assert settings["TOOLANG_LIMIT_TOKENS"] == "123"
+        assert settings["TOOLANG_CORS_ALLOWED_ORIGINS"] == "https://ui.example"
         assert "TOOLANG_UNRECOGNIZED" not in settings
         assert resolve_model_catalog_option(None) == tmp_path / "models.json"
     assert dict(os.environ) == before
@@ -96,6 +98,8 @@ def test_launch_parses_controller_settings_without_widening_workload(
             "TOOLANG_AGENT_PORT": "8123",
             "TOOLANG_LIMIT_TOKENS": "123",
             "TOOLANG_MODEL_CATALOG": str(tmp_path / "models.json"),
+            "TOOLANG_CORS_ALLOWED_ORIGINS": "https://ui.example, https://other.example",
+            "TOOLANG_UI_BASE_URL": "https://ui.example",
             "PRIVATE_SENTINEL": "excluded",
         },
         sandbox="host",
@@ -110,3 +114,8 @@ def test_launch_parses_controller_settings_without_widening_workload(
     }
     assert captured["port"] == 8123
     assert captured["limit_overrides"] == {"tokens": 123}
+    assert captured["cors_allowed_origins"] == (
+        "https://ui.example",
+        "https://other.example",
+    )
+    assert captured["ui_base_url"] == "https://ui.example"

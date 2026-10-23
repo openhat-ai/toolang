@@ -12,6 +12,7 @@ import json
 import httpx
 from httpx_sse import connect_sse
 import psutil
+import pytest
 
 from toolang.plugin.sandboxes.host import HOST_LAUNCH_ENV
 from urllib.request import urlopen
@@ -123,6 +124,83 @@ def _available_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as stream:
         stream.bind(("127.0.0.1", 0))
         return int(stream.getsockname()[1])
+
+
+@pytest.mark.parametrize(
+    ("cors_name", "ui_name"),
+    [
+        ("TOOLANG_CORS_ALLOWED_ORIGINS", "TOOLANG_UI_BASE_URL"),
+        ("TOOLANG_CORS_ORIGINS", "TOOLANG_WEBUI_BASE_URL"),
+    ],
+)
+def test_host_start_preserves_web_settings_without_forwarding_them(
+    tmp_path: Path, cors_name: str, ui_name: str
+) -> None:
+    root = tmp_path / "root"
+    layout = AgentLayout.resident(root, "alice")
+    layout.home.mkdir(parents=True)
+    layout.program.write_text("flow main:\n  pass\n")
+    layout.place_config.write_text(
+        f'[teaming.backend]\nurl = "unix://{root / "missing.sock"}"\n'
+        '[web]\ncors_allowed_origins = ["https://config.example"]\n'
+        'ui_base_url = "https://config.example"\n'
+    )
+    port = _available_port()
+    origin = "https://custom-ui.example"
+    env = {
+        "PATH": os.defpath,
+        "HOME": str(tmp_path),
+        cors_name: origin,
+        ui_name: origin,
+    }
+    base = (
+        sys.executable,
+        "-m",
+        "toolang.cli.toolang",
+        "--root",
+        str(root),
+        "alice",
+    )
+    try:
+        started = subprocess.run(
+            (*base, "start", "--enable", "none", "--port", str(port)),
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=40,
+        )
+        assert started.returncode == 0, started.stderr
+        state = SandboxState.load(layout.runtime_status)
+        assert state is not None
+        with httpx.Client(timeout=3, trust_env=False) as http:
+            response = http.options(
+                f"{state.ref.endpoint}/healthz",
+                headers={"Origin": origin, "Access-Control-Request-Method": "GET"},
+            )
+            denied = http.options(
+                f"{state.ref.endpoint}/healthz",
+                headers={
+                    "Origin": "https://config.example",
+                    "Access-Control-Request-Method": "GET",
+                },
+            )
+        assert response.status_code == 200, response.text
+        assert response.headers["access-control-allow-origin"] == origin
+        assert denied.status_code == 400
+        assert f"webui={origin}/{port}" in layout.runtime_log.read_text()
+        workload_env = psutil.Process(int(state.ref.runtime_id)).environ()
+        assert cors_name not in workload_env
+        assert ui_name not in workload_env
+    finally:
+        if SandboxState.load(layout.runtime_status) is not None:
+            stopped = subprocess.run(
+                (*base, "stop", "--force"),
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+            assert stopped.returncode == 0, stopped.stderr
 
 
 def test_concurrent_cli_acquisition_shares_a_persistent_host(tmp_path: Path) -> None:

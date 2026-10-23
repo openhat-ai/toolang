@@ -7,6 +7,9 @@ from pathlib import Path
 from toolang.base.types.model import ModelOverride
 from toolang.common.layout import AgentLayout
 from toolang.plugin.catalogs.models_dev.path import MODEL_CATALOG_ENV
+from toolang.common.config import resolve_ui_base_url
+from toolang.setup.config import load_setup_config
+from toolang.up.config import resolve_cors_allowed_origins
 from toolang.up import sandbox as sandbox_runtime
 from toolang.up.contract import development_bindings
 from toolang.up.logging import (
@@ -112,6 +115,7 @@ def resolve_runtime_launch(
     )
     if not background:
         configure_logging_plan(log_plan)
+    web_config = load_setup_config(layout)
     return asyncio.run(
         sandbox_runtime.resolve_launch(
             layout=layout,
@@ -129,6 +133,10 @@ def resolve_runtime_launch(
             default_overrides=resolve_default_overrides(settings, defaults),
             limit_overrides=resolve_limit_overrides(settings, limits),
             compact_override=compact_override or resolve_compact_override(settings),
+            cors_allowed_origins=resolve_cors_allowed_origins(
+                web_config, environ=settings
+            ),
+            ui_base_url=resolve_ui_base_url(web_config, environ=settings),
             log_spec=log_plan.spec,
             output="file" if background else "inherit",
             log_path=log_plan.path,

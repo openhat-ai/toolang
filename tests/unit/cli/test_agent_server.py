@@ -1260,6 +1260,8 @@ def test_inactive_launch_uses_fresh_environment_and_file_logging(
         "output": "file",
         "log_path": layout.runtime_log,
         "log_spec": "error",
+        "cors_allowed_origins": (),
+        "ui_base_url": "https://too.run",
         "temporary_port": False,
         "environ": captured["logging"]["environ"],
         "ceiling_overrides": {"models": ("test/*",)},
