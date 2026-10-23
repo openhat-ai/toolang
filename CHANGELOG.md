@@ -544,6 +544,11 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   URL exceeds the filesystem's component limit.
   ([#940](https://github.com/openhat-ai/toolang/pull/940))
 
+- Startup rejects selected dotenv files that are not regular files instead of
+  opening a FIFO and blocking, and installs the scoped environment before
+  selection diagnostics.
+  ([#940](https://github.com/openhat-ai/toolang/pull/940))
+
 ### Security
 
 - The locked certifi trust store advances to 2026.10.19, resolving trust-store
