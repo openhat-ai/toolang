@@ -33,6 +33,11 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   in the root footer.
   ([#921](https://github.com/openhat-ai/toolang/pull/921))
 
+- Root and agent environments resolve exact-name keep and ordered pick lists
+  from `ROOT/config.toml`, keeping secret values in `.env` and agent dotenv
+  files installed before plugin factories run.
+  ([#940](https://github.com/openhat-ai/toolang/pull/940))
+
 ### Changed
 
 - `too AGENT chore list` shows complete `chore_<ID>` thread identities in its
@@ -298,6 +303,12 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 - Help, `too AGENT info`, validation errors, logs, persisted runtime lists, and
   API schema enums order drivers as `chat`, `chore`, `talk`.
+
+- **Breaking:** Agents no longer inherit the caller's full environment, so list
+  required extra names in their dotenv file, such as `ROOT/.name.env`, and
+  restart running servers. Process values no longer override dotenv assignments,
+  and dotenv edits need a restart.
+  ([#940](https://github.com/openhat-ai/toolang/pull/940))
 
 ### Fixed
 
