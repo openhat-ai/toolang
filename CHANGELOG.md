@@ -610,6 +610,14 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   roaming paths and visiting URLs.
   ([#946](https://github.com/openhat-ai/toolang/pull/946))
 
+- Generated guest environment inputs with unsupported variable names fail before
+  container creation, instead of after bootstrap installation.
+  ([#946](https://github.com/openhat-ai/toolang/pull/946))
+
+- Managed host launches use their resolved environment throughout startup, so
+  dotenv edits cannot change credentials or block the launch.
+  ([#946](https://github.com/openhat-ai/toolang/pull/946))
+
 ### Security
 
 - The locked certifi trust store advances to 2026.10.19, resolving trust-store
