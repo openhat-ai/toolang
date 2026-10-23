@@ -91,7 +91,7 @@ roaming agents. Consolidate it with the existing address registration:
 
 ```text
 ROOT/.runtime/active/<address>/
-  <address>.json
+  registration.json
   register.lock
   launches/<launch_id>/
     guest.env
@@ -103,8 +103,12 @@ ROOT/.runtime/active/<address>/
 Use the full address, including its place code when present, rather than only
 the agent name. Resolve both host and guest staging paths at orchestration and
 pass concrete values to the sandbox plugin; it must not derive them from PLACE.
-Keep the existing registration filename and lock. The reference remains a
-locator to authoritative `HOME/.runtime/status.json`; do not copy status here.
+Use the fixed filename `registration.json`; the parent directory already owns
+the address. Discovery and identity checks take the address from that directory,
+not the filename. Retain `register.lock`. Keep existing nested `<address>.json`
+and flat registration records readable for stop/recovery; publish only the new
+path. The reference remains a locator to authoritative
+`HOME/.runtime/status.json`; do not copy status here.
 
 Mount the whole `launches/` subtree read-only over the writable address mount,
 so its parent cannot provide a writable route to bootstrap files. Keep a unique
@@ -135,6 +139,7 @@ needed to resolve an external host path; do not rename logical config files.
 | Root/place identity | Resident and nonresident clients read their selected root Hub, with unchanged canonical host-root identity and correct human defaults. |
 | Mapping table | Every listed source preserves its owning-base suffix and filename; covered catalogs/lab have no duplicate aliases. |
 | Runtime root ownership | Resident, visiting, and roaming launches stage under the selected root's full address; different places with the same agent name do not collide. |
+| Registration naming | New references use `<address>/registration.json`; discovery validates the parent address against runtime identity. Existing registration formats remain discoverable and stoppable without duplicate publication. |
 | Staging lifetime and permissions | Guest registration works while `launches/` remains read-only; failed startup and stop/restart clean only owned resources, and delayed old-launch cleanup preserves the replacement. Staging without a reference is not reported as running. |
 | Existing resource recovery | An existing recorded staging path remains stoppable; neither live mounts nor unverified orphan directories are moved or deleted. |
 | Source priority | Root, home, explicit external, and packaged catalogs select the same data on host and guest. |
