@@ -565,6 +565,19 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   URLs for foreground, detached, and Docker server startup.
   ([#940](https://github.com/openhat-ai/toolang/pull/940))
 
+- Docker agents reach a discovered Hub through `TOOLANG_HOST_GATEWAY` instead of
+  guest loopback, matching local-model endpoint routing.
+  ([#947](https://github.com/openhat-ai/toolang/pull/947))
+
+- Host gateway URL rewriting preserves original credentials so catalog checks
+  still reject them, and implicit local-model IPv6 gateway defaults gain
+  brackets.
+  ([#947](https://github.com/openhat-ai/toolang/pull/947))
+
+- Visiting and roaming agents reach a Hub mounted at the selected Toolang
+  root for presence, event export, conversations, and rules lookup.
+  ([#947](https://github.com/openhat-ai/toolang/pull/947))
+
 ### Security
 
 - The locked certifi trust store advances to 2026.10.19, resolving trust-store

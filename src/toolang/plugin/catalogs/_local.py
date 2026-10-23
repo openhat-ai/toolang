@@ -8,13 +8,14 @@ import json
 import logging
 import math
 from typing import cast
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import urlsplit
 
 from toolang.base.types.model import (
     CatalogModel,
     CatalogSnapshot,
     CatalogProvider,
 )
+from toolang.common.urls import replace_guest_loopback
 
 
 # A local runtime bills no API tokens. The zero rates are declared on the model's
@@ -101,30 +102,6 @@ def local_snapshot(
     )
 
 
-def replace_guest_loopback(value: str, environ: Mapping[str, str]) -> str:
-    """Rewrite a default loopback endpoint to the Toolang host gateway."""
-
-    gateway = environ.get("TOOLANG_HOST_GATEWAY")
-    if not gateway:
-        return value
-    try:
-        parsed = urlsplit(value)
-        if parsed.hostname not in {
-            "0.0.0.0",
-            "127.0.0.1",
-            "localhost",
-            "::",
-            "::1",
-        }:
-            return value
-        port = parsed.port
-    except ValueError:
-        return value
-    gateway_host = f"[{gateway}]" if ":" in gateway else gateway
-    netloc = f"{gateway_host}:{port}" if port is not None else gateway_host
-    return urlunsplit(parsed._replace(netloc=netloc))
-
-
 def resolve_local_endpoint(
     endpoint: str | None,
     *,
@@ -136,12 +113,11 @@ def resolve_local_endpoint(
 
     value = endpoint or environ.get(env_name)
     if value is None:
-        host = environ.get("TOOLANG_HOST_GATEWAY", "127.0.0.1")
-        return f"http://{host}:{default_port}"
+        value = f"http://127.0.0.1:{default_port}"
     if "://" not in value:
         value = f"http://{value}"
     if endpoint is None:
-        value = replace_guest_loopback(value, environ)
+        value = replace_guest_loopback(value, environ.get("TOOLANG_HOST_GATEWAY"))
     parsed = urlsplit(value)
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
         raise ValueError("local model catalog endpoint must be an HTTP(S) URL")

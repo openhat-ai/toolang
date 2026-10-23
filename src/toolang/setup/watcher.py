@@ -214,7 +214,9 @@ class SetupWatcher:
         else:
             teaming = self._setup.teaming
         toolset_configs["convo"] = (
-            teaming.toolset_config(root=self.layout.place) if teaming else {}
+            teaming.toolset_config(root=self.layout.root or self.layout.place)
+            if teaming
+            else {}
         )
         catalog_path = resolve_model_catalog_path(
             self.layout,

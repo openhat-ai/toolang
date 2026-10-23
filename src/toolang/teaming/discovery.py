@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from functools import lru_cache
 import os
 from pathlib import Path
@@ -14,6 +15,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from toolang.common.files import atomic_write_text
+from toolang.common.urls import replace_guest_loopback
 from .schemas import HubConnection
 
 
@@ -48,14 +50,17 @@ class HubDiscovery(BaseModel):
             raise ValueError(f"Invalid Hub discovery: {path}") from exc
 
 
-def hub_connection(root: Path) -> HubConnection:
+def hub_connection(root: Path, *, gateway: str | None = None) -> HubConnection:
     try:
         record = HubDiscovery.load(root / "hub" / "hub.json")
     except ValueError as exc:
         raise BackendUnavailable("Hub discovery is invalid; check 'too hub'") from exc
     if record is None or record.status != "running":
         raise BackendUnavailable("Hub is unavailable; run 'too hub start'")
-    return record.connection
+    connection = record.connection
+    return replace(
+        connection, endpoint=replace_guest_loopback(connection.endpoint, gateway)
+    )
 
 
 @lru_cache

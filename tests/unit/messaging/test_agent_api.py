@@ -158,20 +158,31 @@ def test_convo_peek_exposes_current_revision_for_renaming(tmp_path, monkeypatch)
     asyncio.run(scenario())
 
 
-def test_agent_discovery_pins_batch_identity_and_refreshes_connections(tmp_path):
+@pytest.mark.parametrize("gateway", [None, "host.docker.internal", "fd00::1"])
+def test_agent_discovery_pins_batch_identity_and_refreshes_connections(
+    tmp_path, monkeypatch, gateway
+):
+    if gateway is None:
+        monkeypatch.delenv("TOOLANG_HOST_GATEWAY", raising=False)
+    else:
+        monkeypatch.setenv("TOOLANG_HOST_GATEWAY", gateway)
+
     async def scenario():
         current = CONNECTION
+        port = 7000
         human = client(FakeServer(server_type="valkey"), CONNECTION.human)
         app = create_app(human, version="0.4.0-test")
+        requests = []
 
         async def handle(request):
+            requests.append(request)
             return await httpx.ASGITransport(app).handle_async_request(request)
 
         def save():
             HubDiscovery(
                 pid=1,
                 created=1.0,
-                port=7000,
+                port=port,
                 human=current.human,
                 identity=current.identity,
             ).save(tmp_path / "hub" / "hub.json")
@@ -184,9 +195,14 @@ def test_agent_discovery_pins_batch_identity_and_refreshes_connections(tmp_path)
             ) as alice,
         ):
             await alice.register(CONNECTION.human)
+            assert requests[-1].url.host == (gateway or "127.0.0.1")
+            assert requests[-1].url.port == port
+            assert requests[-1].headers["X-Toolang-Backend"] == current.identity
+            assert requests[-1].headers["X-Toolang-Human"] == "human%3Aowner"
             with alice.session() as identity:
                 human.config = BackendConfig("redis://second", root="/test/toolang")
                 current = replace(current, identity=human.config.identity)
+                port = 7123
                 app = create_app(human, version="0.4.0-test")
                 save()
                 assert identity == CONNECTION.identity
@@ -207,6 +223,9 @@ def test_agent_discovery_pins_batch_identity_and_refreshes_connections(tmp_path)
                 ) as other:
                     assert await other.targets()
             await alice.register(CONNECTION.human)
+            assert requests[-1].url.host == (gateway or "127.0.0.1")
+            assert requests[-1].url.port == port
+            assert requests[-1].headers["X-Toolang-Backend"] == current.identity
             assert await alice.targets()
             with alice.session() as identity:
                 assert identity == current.identity

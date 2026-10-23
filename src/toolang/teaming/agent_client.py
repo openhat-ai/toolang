@@ -3,6 +3,7 @@
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
+import os
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -34,8 +35,9 @@ class AgentClient(HubClient):
         self.root = root
         self.managed = managed
         self.token = token if token is not None else host_token()
+        gateway = os.environ.get("TOOLANG_HOST_GATEWAY")
         super().__init__(
-            connection or (lambda: hub_connection(root)),
+            connection or (lambda: hub_connection(root, gateway=gateway)),
             actor=actor,
             prefix="/agents/" + quote(actor, safe=""),
             lease=self.token,
