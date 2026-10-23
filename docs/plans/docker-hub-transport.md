@@ -75,6 +75,7 @@ specific owning base, preserve its suffix, and retain current read/write intent.
 | `ROOT/config.toml` and root capability directories | Same suffix below guest root; do not substitute place/home inputs. |
 | `PLACE/config.toml`, capability directories, and State | Same suffix below guest place; coalesce with root when equal. |
 | `HOME/` | Same `agents/<name>/` layout below guest place, read-write. |
+| Launch-generated `.<name>.env` | Always mount read-only as `guest_ROOT/.<name>.env`; use the generated-environment contract below. |
 | Root/place `catalog.json` | Same filename and owning-root/place suffix, read-only; remove the extra home `.runtime/model-catalog.json` alias. |
 | Home `catalog.json` | Reuse the home mount at `HOME/catalog.json`; preserve selected source priority. |
 | External or bundled selected catalog | One read-only mapping under `guest_PLACE/.inputs/models/<path-hash>/<original-basename>` only when no existing mount covers it. |
@@ -94,7 +95,7 @@ ROOT/.runtime/active/<address>/
   registration.json
   register.lock
   launches/<launch_id>/
-    guest.env
+    .<name>.env
     docker_guest.sh
     docker_guest.py
     <development-wheel>.whl   # Only for development launches.
@@ -123,11 +124,35 @@ recovery. Existing recorded paths remain usable for stop/release; do not move
 live mounts. Preserve rejection of unreferenced staging in both the old and
 new locations until associated resources can be verified.
 
-Keep generated environment data in the launch's own staging path. Preserve
-PR #942's fix for Docker-created empty dotenv files and the required masking of
-an existing authored home dotenv; never stage the whole host root environment.
 Keep captured configuration rebasing and linked-source overrides only where
 needed to resolve an external host path; do not rename logical config files.
+
+### Generated guest environment
+
+Resolve host root/agent dotenv inputs once using the existing
+[environment policy](agent-environment-policy.md#agent-environment), including
+source priority, explicit empty files, and ordered `pick`. Preserve its
+host-side source identity for resident, roaming, and visiting agents. Stage only
+the resolved guest grants and existing mapped workload values, never the whole
+host root environment or host-only `keep` values.
+
+Always create `.<name>.env` in the launch staging directory and mount that file
+read-only as `guest_ROOT/.<name>.env`, including when there are no granted
+variables. This is a generated runtime input for the current agent in its own
+container; it does not change host policy filenames or source selection. Pass
+its concrete guest path to bootstrap and use it as the sole guest dotenv input.
+Merge its resolved bindings with the native image/entrypoint environment under
+the guest environment policy; keep runtime controls authoritative. Guest startup
+must not rerun `pick`, merge lower-priority dotenv files, or lose the captured
+environment during setup refreshes, model calls, or tool subprocess launches.
+
+Keep the complete home mount. An authored `HOME/.env` may remain visible and
+writable through that mount, but contributes no additional guest environment
+values. Do not mask it with generated data or an empty file. Do not directly
+mount authored root dotenv inputs. In particular, never create an absent host
+`HOME/.env` as a mount target; preserve PR #942's fix for that side effect.
+This contract deliberately permits tools to read an existing home dotenv file;
+it controls environment selection, not file secrecy.
 
 ## Acceptance checks
 
@@ -143,6 +168,9 @@ needed to resolve an external host path; do not rename logical config files.
 | Staging lifetime and permissions | Guest registration works while `launches/` remains read-only; failed startup and stop/restart clean only owned resources, and delayed old-launch cleanup preserves the replacement. Staging without a reference is not reported as running. |
 | Existing resource recovery | An existing recorded staging path remains stoppable; neither live mounts nor unverified orphan directories are moved or deleted. |
 | Source priority | Root, home, explicit external, and packaged catalogs select the same data on host and guest. |
+| Generated dotenv entry | With a picked variable, explicit agent file, explicit empty file, or no available credential, a read-only `guest_ROOT/.<name>.env` always exists and contains only the resolved guest values. Resident and nonresident launches retain their host policy identity. |
+| Home dotenv precedence | A conflicting or lower-priority `HOME/.env` remains unchanged and visible but adds no values during guest startup, setup refresh, model calls, or tool launches. An empty generated root file never falls back to it or reruns `pick`. |
+| No host dotenv artifacts | Starting, stopping, failing, and restarting a guest never creates an absent host home/root agent dotenv file and never modifies an existing authored one. |
 | Existing contracts | Private registration access, nested workspaces, symlinks, config rebasing, dotenv restrictions, historical workspace URIs, and bounded shutdown still pass. |
 
 Default tests stay offline. Opt-in Docker/Redis/Valkey checks use isolated
