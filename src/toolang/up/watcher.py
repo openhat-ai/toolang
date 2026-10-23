@@ -95,7 +95,11 @@ class _RuntimeProbe:
                 if snapshot is not None
                 else read_instance(self.layout.runtime_status, self.layout.instance)
             )
-            if observed is not None and "address" in observed["control"]:
+            # Resource-only records have no layout bindings. Partial identity
+            # records still require validation, even if their address is missing.
+            if observed is not None and any(
+                key in observed["control"] for key in ("address", "home", "place")
+            ):
                 from .identity import verify_identity
 
                 try:
@@ -347,6 +351,33 @@ def _repairable(status: AgentStatus) -> bool:
     }
 
 
+def _recheck_status(layout, status, *, changed=False):
+    """Deferred writes cannot turn an obsolete death probe into a departure."""
+    try:
+        if (
+            not changed
+            and read_instance(layout.runtime_status, layout.instance) == status.entry
+        ):
+            return status
+        refreshed = _RuntimeProbe(layout).status(ui_base_url="", cache=False)
+        if (
+            refreshed is not None
+            and refreshed.entry is not None
+            and read_instance(layout.runtime_status, layout.instance) == refreshed.entry
+        ):
+            return refreshed
+    except (OSError, ValueError):
+        pass
+    return replace(
+        status,
+        status="unknown",
+        endpoint=None,
+        api_url=None,
+        webui_url=None,
+        message="runtime changed during inspection",
+    )
+
+
 def _repair_status(layout, status, recovery, reference_path=None):
     from .registry import repair_registration
 
@@ -357,28 +388,11 @@ def _repair_status(layout, status, recovery, reference_path=None):
         recovery=recovery,
         reference_path=reference_path,
     )
-    if result == "changed":
-        # A launcher changed the full entry after the probe. Observe the new
-        # generation once, then let the next refresh perform any further repair.
-        try:
-            refreshed = _RuntimeProbe(layout).status(ui_base_url="", cache=False)
-            if (
-                refreshed is not None
-                and read_instance(layout.runtime_status, layout.instance)
-                == refreshed.entry
-            ):
-                return refreshed
-        except (OSError, ValueError):
-            pass
-        return replace(
-            status,
-            status="unknown",
-            endpoint=None,
-            api_url=None,
-            webui_url=None,
-            message="runtime changed during inspection",
-        )
-    return status
+    return (
+        status
+        if result == "retired"
+        else _recheck_status(layout, status, changed=result == "changed")
+    )
 
 
 def runtime_status(
@@ -459,11 +473,6 @@ class RuntimeWatcher:
                 path in resolved or path.name in known_homes
                 for path in (runtime.registrations or ())
             )
-            and all(
-                source.layout.placement == "resident"
-                or source.instance.state != "unknown"
-                for source in runtime.sources
-            )
         )
         registered = {source.instance.identity: source for source in runtime.sources}
         # Preserve only unresolved references that still exist, or all previous
@@ -489,6 +498,16 @@ class RuntimeWatcher:
                     registration=old.registration,
                     launch_id=old.launch_id,
                 )
+        if homes_complete:
+            for identity, source in tuple(registered.items()):
+                if (
+                    source.layout.placement == "resident"
+                    and f"{source.layout.address}.json" not in known_homes
+                ):
+                    del registered[identity]
+                    diagnostics.append(
+                        f"runtime registry {identity}: resident home is absent"
+                    )
         self._registered = registered
         scoped = dict(registered)
         pending = [layout for layout in self._homes if layout.address not in scoped]
@@ -518,9 +537,16 @@ class RuntimeWatcher:
             stale.sort(key=lambda source: source.instance.identity)
             offset = self._repair_offset % len(stale)
             ordered = stale[offset:] + stale[:offset]
-            for source in ordered[:8]:
-                status = _repair_status(
-                    source.layout, source.observation, recovery, source.registration
+            for index, source in enumerate(ordered):
+                status = (
+                    _repair_status(
+                        source.layout,
+                        source.observation,
+                        recovery,
+                        source.registration,
+                    )
+                    if index < 8
+                    else _recheck_status(source.layout, source.observation)
                 )
                 scoped[source.instance.identity] = _runtime_source(
                     source.layout,
@@ -552,6 +578,12 @@ class RuntimeWatcher:
         )
         if self.residents_only:
             complete = homes_complete
+        else:
+            complete = complete and all(
+                source.layout.placement == "resident"
+                or source.instance.state != "unknown"
+                for source in sources
+            )
         return RuntimeInventory(
             RuntimeInstanceSnapshot(
                 tuple(source.instance for source in sources),

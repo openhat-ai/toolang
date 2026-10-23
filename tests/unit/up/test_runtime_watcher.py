@@ -1,7 +1,10 @@
 """Shared membership, bounded repair, and cross-process retirement contracts."""
 
-from contextlib import contextmanager
+from contextlib import contextmanager, ExitStack
 import os
+import shutil
+import subprocess
+import sys
 
 import pytest
 
@@ -74,6 +77,38 @@ def test_bad_registration_does_not_preserve_an_unrelated_departure(tmp_path):
         assert monitor.refresh().sources == ()
 
 
+@pytest.mark.parametrize("stage", ["reference_read", "status_probe"])
+def test_departure_during_discovery_does_not_restore_the_previous_binding(
+    tmp_path, monkeypatch, stage
+):
+    from toolang.up import observation
+
+    home = AgentLayout.visiting("https://example.com/alice.too", "alice", root=tmp_path)
+    monitor = RuntimeWatcher(tmp_path)
+    with ForegroundWorkload(home, toolang_root=tmp_path, drivers=frozenset()) as active:
+        assert len(monitor.refresh().sources) == 1
+        if stage == "reference_read":
+            original_read = observation.read_reference
+
+            def read(path):
+                active.close()
+                return original_read(path)
+
+            monkeypatch.setattr(observation, "read_reference", read)
+        else:
+            original_probe = watcher._RuntimeProbe.status
+
+            def probe(self, **kwargs):
+                status = original_probe(self, **kwargs)
+                active.close()
+                return status
+
+            monkeypatch.setattr(watcher._RuntimeProbe, "status", probe)
+        result = monitor.refresh()
+        assert not result.sources and result.snapshot.membership_complete
+        assert result.registrations == frozenset()
+
+
 def test_resident_status_failure_does_not_lose_known_membership(tmp_path):
     home = AgentLayout.resident(tmp_path, "alice")
     home.runtime_status.parent.mkdir(parents=True)
@@ -81,6 +116,28 @@ def test_resident_status_failure_does_not_lose_known_membership(tmp_path):
     result = RuntimeWatcher(tmp_path).refresh()
     assert result.snapshot.instances[0].state == "unknown"
     assert result.snapshot.partial and result.snapshot.membership_complete
+
+
+@pytest.mark.parametrize("residents_only", [False, True])
+def test_registration_cannot_keep_a_removed_resident_home_in_scope(
+    tmp_path, residents_only
+):
+    home = AgentLayout.resident(tmp_path, "alice")
+    other = AgentLayout.resident(tmp_path, "bob")
+    other.home.mkdir(parents=True)
+    monitor = RuntimeWatcher(tmp_path, residents_only=residents_only)
+    with ForegroundWorkload(home, toolang_root=tmp_path, drivers=frozenset()) as active:
+        assert len(monitor.refresh().sources) == 2
+        shutil.rmtree(home.home)
+        for watcher in (
+            monitor,
+            RuntimeWatcher(tmp_path, residents_only=residents_only),
+        ):
+            result = watcher.refresh()
+            assert [item.name for item in result.snapshot.instances] == ["bob"]
+            assert result.snapshot.membership_complete
+            assert result.snapshot.diagnostics
+        assert active.path.exists()  # Missing status alone cannot prove owner death.
 
 
 def test_repair_contention_does_not_keep_a_proven_dead_visitor(tmp_path, monkeypatch):
@@ -147,6 +204,162 @@ def test_repair_cannot_remove_a_launch_that_bound_after_its_probe(
         assert result.entry["workload"]["started_at"] == "bound after probe"
         assert active.path.exists()
         assert required_entry(home)["workload"]["status"] == "running"
+
+
+@pytest.mark.parametrize("cleanup", ["busy", "budget"])
+@pytest.mark.parametrize("alive", [True, None])
+def test_deferred_repair_rechecks_changed_liveness_before_publishing_membership(
+    tmp_path, monkeypatch, cleanup, alive
+):
+    with ExitStack() as owners:
+        active = [
+            owners.enter_context(
+                ForegroundWorkload(
+                    AgentLayout.visiting(
+                        f"https://example.com/agent{index}.too",
+                        f"agent{index}",
+                        root=tmp_path,
+                    ),
+                    toolang_root=tmp_path,
+                    drivers=frozenset(),
+                )
+            )
+            for index in range(9 if cleanup == "budget" else 1)
+        ]
+        target = active[-1]
+        original = registry.repair_registration
+
+        with monkeypatch.context() as patch:
+            patch.setattr(watcher, "process_alive", lambda *args: False)
+
+            def bind():
+                patch_workload(
+                    target.layout.runtime_status,
+                    target.token,
+                    {"started_at": "bound after probe"},
+                )
+                patch.setattr(watcher, "process_alive", lambda *args: alive)
+
+            if cleanup == "busy":
+
+                @contextmanager
+                def busy(*args, **kwargs):
+                    bind()
+                    raise BlockingIOError("busy")
+                    yield
+
+                patch.setattr(registry, "_registration_guard", busy)
+            else:
+                attempts = []
+
+                def repair(*args, **kwargs):
+                    if not attempts:
+                        bind()
+                    attempts.append(args[0].address)
+                    return original(*args, **kwargs)
+
+                patch.setattr(registry, "repair_registration", repair)
+
+            result = RuntimeWatcher(tmp_path).refresh()
+            assert [item.identity for item in result.snapshot.instances] == [
+                target.layout.address
+            ]
+            assert result.snapshot.instances[0].state == (
+                "running" if alive else "unknown"
+            )
+            assert result.snapshot.membership_complete == (alive is True)
+            if cleanup == "budget":
+                assert len(attempts) == 8 and target.layout.address not in attempts
+            assert target.path.exists()
+            assert required_entry(target.layout)["workload"]["status"] == "running"
+
+
+def test_child_binding_while_holding_the_status_guard_invalidates_a_death_probe(
+    tmp_path, monkeypatch
+):
+    home = AgentLayout.resident(tmp_path, "alice")
+    script = """
+import os, psutil, sys
+from pathlib import Path
+from toolang.up.instance import patch_workload, runtime_lock
+path, launch = Path(sys.argv[1]), sys.argv[2]
+print('ready', flush=True)
+sys.stdin.readline()
+patch_workload(path, launch, {
+    'pid': os.getpid(), 'process_created': psutil.Process().create_time(),
+    'status': 'starting',
+})
+with runtime_lock(path):
+    print('bound', flush=True)
+    sys.stdin.readline()
+"""
+    with ForegroundWorkload(home, toolang_root=tmp_path, drivers=frozenset()) as active:
+        child = subprocess.Popen(
+            (sys.executable, "-c", script, str(home.runtime_status), active.token),
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            text=True,
+        )
+        try:
+            assert child.stdin is not None and child.stdout is not None
+            commands, output = child.stdin, child.stdout
+            assert output.readline().strip() == "ready"
+            original_guard = registry._registration_guard
+            process_alive = watcher.process_alive
+
+            with monkeypatch.context() as patch:
+                patch.setattr(watcher, "process_alive", lambda *args: False)
+
+                @contextmanager
+                def bind_before_repair(*args, **kwargs):
+                    commands.write("bind\n")
+                    commands.flush()
+                    assert output.readline().strip() == "bound"
+                    patch.setattr(watcher, "process_alive", process_alive)
+                    with original_guard(*args, **kwargs):
+                        yield
+
+                patch.setattr(registry, "_registration_guard", bind_before_repair)
+                status = runtime_status(home, cache=False)
+                assert status is not None and status.status == "starting"
+                assert status.entry is not None
+                assert status.entry["workload"]["pid"] == child.pid
+                assert active.path.exists()
+        finally:
+            if child.stdin is not None:
+                child.stdin.close()
+            try:
+                child.wait(timeout=5)
+            finally:
+                if child.poll() is None:
+                    child.kill()
+                    child.wait(timeout=5)
+        assert child.returncode == 0
+        status = runtime_status(home, cache=False)
+        assert status is not None and status.status == "stopped"
+        assert not active.path.exists()
+
+
+def test_status_loss_during_deferred_repair_keeps_membership_unknown(
+    tmp_path, monkeypatch
+):
+    home = AgentLayout.visiting("https://example.com/alice.too", "alice", root=tmp_path)
+    with ForegroundWorkload(home, toolang_root=tmp_path, drivers=frozenset()) as active:
+        with monkeypatch.context() as patch:
+            patch.setattr(watcher, "process_alive", lambda *args: False)
+
+            @contextmanager
+            def busy(*args, **kwargs):
+                home.runtime_status.unlink()
+                raise BlockingIOError("busy")
+                yield
+
+            patch.setattr(registry, "_registration_guard", busy)
+            result = RuntimeWatcher(tmp_path).refresh()
+            assert len(result.sources) == 1
+            assert result.sources[0].instance.state == "unknown"
+            assert not result.snapshot.membership_complete
+            assert active.path.exists()
 
 
 def test_delayed_child_cannot_reactivate_a_retired_launch(tmp_path, monkeypatch):
@@ -266,12 +479,18 @@ def test_membership_failure_recovers_without_freezing_known_departures(
             assert len(result.sources) == 1 and not result.snapshot.membership_complete
 
 
-def test_single_home_status_rejects_foreign_identity_without_repair(tmp_path):
+@pytest.mark.parametrize("fault", ["foreign_name", "missing_address", "missing_home"])
+def test_single_home_status_rejects_invalid_identity_without_repair(tmp_path, fault):
     home = AgentLayout.resident(tmp_path, "alice")
     with ForegroundWorkload(home, toolang_root=tmp_path, drivers=frozenset()) as active:
-        update_instance(
-            home.runtime_status, lambda entry: entry["control"].update(name="bob")
-        )
+
+        def corrupt(entry):
+            if fault == "foreign_name":
+                entry["control"]["name"] = "bob"
+            else:
+                entry["control"].pop(fault.removeprefix("missing_"))
+
+        update_instance(home.runtime_status, corrupt)
         before = home.runtime_status.read_bytes()
         status = runtime_status(home)
         assert status is not None and status.status == "unknown"

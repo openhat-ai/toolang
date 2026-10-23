@@ -479,6 +479,10 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   records on exit, while stale-record cleanup preserves concurrent restarts.
   ([#936](https://github.com/openhat-ai/toolang/pull/936))
 
+- A home whose runtime registration belongs to a different identity is reported
+  as unknown instead of exposing or repairing foreign runtime state.
+  ([#936](https://github.com/openhat-ai/toolang/pull/936))
+
 ### Security
 
 - The locked certifi trust store advances to 2026.10.19, resolving trust-store

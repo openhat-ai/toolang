@@ -92,14 +92,16 @@ LiveTree. `up.watcher.RuntimeWatcher` composes resident homes and active runtime
 registrations into `RuntimeInventory`; `up.observation` validates source identity
 and launch generations. Membership completeness is explicit and independent of
 diagnostics: an unreadable resident status does not erase its known home count.
-A broken peer cannot prevent unrelated confirmed departures.
+A removed resident home leaves scope even if its registration remains. A broken
+peer cannot prevent unrelated confirmed departures.
 
 Discovery uses one background job every five seconds, with eight parallel probes
 and at most eight nonblocking stale-registration repairs per refresh. A persistent
-watcher rotates repair attempts for fairness; deferred writes do not retain known
-dead visitors in summaries. Lock recovery shares one additional bounded sandbox
-probe per refresh. Rendering, usage polls, and Run polls perform no registry scans. `up.activity.ActivityReader` owns endpoint,
-history and paging reads, sharing established-history knowledge across workers
+watcher rotates repair attempts for fairness; deferred writes recheck the status
+snapshot before excluding a visitor. Lock recovery shares one additional bounded
+sandbox probe per refresh. Rendering, usage polls, and Run polls perform no
+registry scans. `up.activity.ActivityReader` owns endpoint, history and paging
+reads, sharing established-history knowledge across workers
 and resident rebindings. `up.top.TopObserver` schedules bounded independent jobs
 and reconciles scope; `up.schemas` derives coverage and totals without I/O, and
 the CLI presenter formats snapshots. The recent reader opens only `runs.db`,

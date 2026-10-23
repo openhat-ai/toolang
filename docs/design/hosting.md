@@ -327,9 +327,11 @@ Publication waits at most two seconds for the registry guard. Query repair is
 nonblocking. Liveness probes happen before mutation guards. Mutation order is
 registry guard, then status guard: repair compares the full probed entry and
 reference under both, marks a dead active workload stopped, and withdraws its
-reference. A changed entry is observed once more; further instability stays
-unknown. A terminal launch cannot bind a resource or return to an active phase;
-a new execution requires a new launch ID.
+reference. Deferred repairs, including entries beyond the repair budget, recheck
+the probed entry before reporting departure. A changed entry is observed once
+more; missing status or further instability stays unknown. A terminal launch
+cannot bind a resource or return to an active phase; a new execution requires a
+new launch ID.
 
 The owning workload performs the same ordered terminal update and withdrawal on
 exit, including from a sandbox guest. These operations never release sandbox

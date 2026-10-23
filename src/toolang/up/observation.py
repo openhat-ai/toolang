@@ -304,11 +304,13 @@ def _registered_inventory(root: Path, *, agent: str | None = None) -> RuntimeInv
             f"runtime registry: {str(exc).strip() or type(exc).__name__}"
         )
 
+    registrations = set(reference_paths)
     for reference_path in reference_paths:
         fallback: AgentLayout | None = None
         try:
             reference = read_reference(reference_path)
             if reference is None:
+                registrations.discard(reference_path)
                 continue
             status_path = root / reference.status.expanduser()
             if (
@@ -506,7 +508,9 @@ def _registered_inventory(root: Path, *, agent: str | None = None) -> RuntimeInv
         try:
             if not source.is_current():
                 reference = read_reference(source.registration)
-                if reference is not None and reference.launch_id == source.launch_id:
+                if reference is None:
+                    registrations.discard(source.registration)
+                elif reference.launch_id == source.launch_id:
                     diagnostics.append(
                         f"runtime registry {source.registration.name}: status path does not match the agent home"
                     )
@@ -528,5 +532,5 @@ def _registered_inventory(root: Path, *, agent: str | None = None) -> RuntimeInv
             membership_complete,
         ),
         tuple(sources),
-        frozenset(reference_paths) if enumerated else None,
+        frozenset(registrations) if enumerated else None,
     )
