@@ -47,6 +47,8 @@ def wait_for(check):
     [
         ("chat", "alice>", "alice"),
         ("chat", "alice> topic", "alice"),
+        ("chat", "alice> " + "x" * 121, "alice"),
+        ("chat", "alice> " + "开发" * 30 + "!", "alice"),
         ("talk", "#dev", ""),
         ("top", "alice top", "alice"),
         ("top", "top", ""),

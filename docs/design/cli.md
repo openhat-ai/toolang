@@ -344,7 +344,7 @@ TOOLANG_TITLE_PREFIX_CHAT='' too alice chat
 
 Prefixes concatenate directly: `"💬"` gives `💬alice>`; `"💬 "` gives `💬 alice>`.
 Printable spaces are preserved. Unsafe controls are removed and the complete
-title is clipped to 32 display columns without splitting graphemes. Titles clear
+title is clipped to 128 display columns without splitting graphemes. Titles clear
 on handled exit. TTY input, output, and presentation streams are required;
 snapshots, scripted Chat, quiet/file output, and background/internal services
 publish neither titles nor marks.

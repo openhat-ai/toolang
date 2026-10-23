@@ -93,7 +93,7 @@ def test_title_sanitizes_controls_and_terminal_failures_are_nonfatal(
             assert title.startswith("\x1b]0;Talk ") and title.endswith("\x07")
             assert "secret" not in title and "\n" not in title
             assert title.count("\x1b") == title.count("\x07") == 1
-            assert display_width(title[4:-1]) <= 32
+            assert display_width(title[4:-1]) == 128
             write.side_effect = OSError("terminal closed")
             assert not ui.terminal.set_title("Talk")
 

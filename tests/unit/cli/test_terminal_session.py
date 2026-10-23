@@ -91,11 +91,15 @@ def test_config_read_errors_are_cli_errors_with_the_source_path(tmp_path, agent)
         ("   ", "alice", "   alice"),
         ("\x1b[31m💬\x1b[0m ", " alice\n  topic ", "💬 alice topic"),
         ("\x1b]52;c;secret\x07\x00\x9c\ud800\u2028", "alice", "alice"),
-        ("x" * 40, "alice", "x" * 31 + "…"),
-        (" " * 40, "alice", " " * 31 + "…"),
-        ("", "x" * 30 + "👩🏽‍💻", "x" * 30 + "👩🏽‍💻"),
-        ("", "x" * 30 + "👩🏽‍💻z", "x" * 30 + "…"),
-        ("", "e\u0301" * 33, "e\u0301" * 31 + "…"),
+        ("", "x" * 40, "x" * 40),
+        ("", "x" * 128, "x" * 128),
+        ("", "开发" * 32, "开发" * 32),
+        ("💬 ", "开发" * 32, "💬 " + "开发" * 31 + "…"),
+        ("x" * 136, "alice", "x" * 127 + "…"),
+        (" " * 136, "alice", " " * 127 + "…"),
+        ("", "x" * 126 + "👩🏽‍💻", "x" * 126 + "👩🏽‍💻"),
+        ("", "x" * 126 + "👩🏽‍💻z", "x" * 126 + "…"),
+        ("", "e\u0301" * 129, "e\u0301" * 127 + "…"),
     ],
 )
 def test_title_safe_grapheme_clipping_and_exact_prefix(prefix, label, expected):
@@ -109,7 +113,7 @@ def test_title_safe_grapheme_clipping_and_exact_prefix(prefix, label, expected):
     title.close()
     assert not title.set("late")
     assert output.getvalue() == f"\x1b]0;{expected}\x07\x1b]0;\x07"
-    assert wcswidth(expected) <= 32
+    assert wcswidth(expected) <= 128
 
 
 def test_failed_initial_title_can_succeed_later_and_still_clear():
