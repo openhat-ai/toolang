@@ -80,49 +80,59 @@ specific owning base, preserve its suffix, and retain current read/write intent.
 | Home `catalog.json` | Reuse the home mount at `HOME/catalog.json`; preserve selected source priority. |
 | External or bundled selected catalog | One read-only mapping under `guest_PLACE/.inputs/models/<path-hash>/<original-basename>` only when no existing mount covers it. |
 | `ROOT/hub/` | `guest_ROOT/hub/`, read-only. |
-| `ROOT/.runtime/active/<address>/` | Same suffix below guest root, read-write for registration; protect `launches/` with the read-only subtree mount below. Do not expose other addresses or rename it to home `.runtime/registration`. |
-| `ROOT/.runtime/active/<address>/launches/` | Same suffix below guest root, read-only, including all launch generations. Replaces `PLACE/.sandbox/<name>/launches/` and the home `.runtime/sandbox` alias. |
+| `ROOT/.runtime/active/<address>.json` | Host-owned current-launch reference; no guest mount or guest mutation is needed. |
+| `ROOT/.runtime/active/<address>/` | Temporary Docker inputs, mounted read-only at the same suffix below guest root. No `launches/` or launch-ID subdirectory; replaces `PLACE/.sandbox/<name>/launches/<id>/` and the home `.runtime/sandbox` alias. |
 | `HOME/.lab/` | Reuse `guest_HOME/.lab` through the home mount; remove the duplicate `.workspaces/lab` mount and point logical `lab` there. |
 | External workspace grant | Retain the existing `.workspaces/<name>` mount when no root/place/home mount covers it; preserve nested workspace relationships. |
 
 ### Runtime directory ownership and lifetime
 
-Launch staging belongs to the selected Toolang root, including for visiting and
-roaming agents. Consolidate it with the existing address registration:
+Each full address selects one home with at most one executor owner. Resident
+`hak` and visiting `lex@<t_code>` each have one current owner. New executions of
+the same roaming source receive distinct `check@<s_code>` addresses; restarting
+a retained address preserves that address. None requires another instance or
+launch directory in the registry.
 
 ```text
-ROOT/.runtime/active/<address>/
-  registration.json
-  register.lock
-  launches/<launch_id>/
-    .<name>.env
+ROOT/.runtime/active/
+  hak.json
+  lex@<t_code>.json
+  check@<s_code>.json
+  hak/                     # Temporary Docker inputs, only when needed.
+    .hak.env
     docker_guest.sh
     docker_guest.py
-    <development-wheel>.whl   # Only for development launches.
+    <development-wheel>.whl # Only for development launches.
 ```
 
-Use the full address, including its place code when present, rather than only
-the agent name. Resolve both host and guest staging paths at orchestration and
-pass concrete values to the sandbox plugin; it must not derive them from PLACE.
-Use the fixed filename `registration.json`; the parent directory already owns
-the address. Discovery and identity checks take the address from that directory,
-not the filename. Retain `register.lock`. Keep existing nested `<address>.json`
-and flat registration records readable for stop/recovery; publish only the new
-path. The reference remains a locator to authoritative
-`HOME/.runtime/status.json`; do not copy status here.
+Create one `<address>.json` at launch. Preserve the existing reference fields
+`version`, `status`, and `launch_id`; add explicit `location` (`host` or `guest`)
+and the concrete `sandbox` selection. Derive address from the filename and
+validate it against the referenced runtime identity. `status` still locates
+authoritative `HOME/.runtime/status.json`; do not duplicate changing status here.
+Keep the generation fence in the content, not in the directory hierarchy.
 
-Mount the whole `launches/` subtree read-only over the writable address mount,
-so its parent cannot provide a writable route to bootstrap files. Keep a unique
-launch directory until its associated container is released. Registration
-withdrawal removes only the matching reference; resource cleanup removes only
-the matching launch directory, then removes empty parents under the existing
-guards. An old launch must never remove a replacement's reference or staging.
-Directory existence alone does not indicate an active workload.
+The host publishes and retires references under a per-address host file guard.
+Guests update only their mounted home runtime status and do not write the root
+registry. Explicit host shutdown retires the matching reference; after guest
+self-exit, the existing host watcher retires it on its next verified refresh.
+A record's presence never proves liveness. This removes the guest registry mount
+without exposing peer records or relying on single-file guest writes.
 
-Persist the exact staging locator before preparing resources and retain it for
-recovery. Existing recorded paths remain usable for stop/release; do not move
-live mounts. Preserve rejection of unreferenced staging in both the old and
-new locations until associated resources can be verified.
+Docker still needs file inputs for bootstrap. Use one temporary directory named
+by the full address alongside the reference; a host execution needs no such
+directory. Resolve concrete host/guest input paths at orchestration and pass
+them to the plugin. These inputs are neither additional instances nor retained
+launch history. Reuse the fixed directory only after the previous container and
+pending creation helpers are conclusively released under management guards.
+Before removing or replacing inputs or references, recheck the expected launch
+against authoritative status under the existing guards. Delayed cleanup from an
+old launch must leave its replacement untouched.
+
+Persist the exact bootstrap locator before preparation for recovery. Keep
+existing recorded paths and nested registration formats readable for normal
+stop/release, publishing only the flat reference for new launches. Do not move
+live mounts or delete unverified orphan inputs in old or new locations.
 
 Keep captured configuration rebasing and linked-source overrides only where
 needed to resolve an external host path; do not rename logical config files.
@@ -136,8 +146,8 @@ host-side source identity for resident, roaming, and visiting agents. Stage only
 the resolved guest grants and existing mapped workload values, never the whole
 host root environment or host-only `keep` values.
 
-Always create `.<name>.env` in the launch staging directory and mount that file
-read-only as `guest_ROOT/.<name>.env`, including when there are no granted
+Always create `.<name>.env` in the temporary Docker input directory and mount
+that file read-only as `guest_ROOT/.<name>.env`, including when there are no granted
 variables. This is a generated runtime input for the current agent in its own
 container; it does not change host policy filenames or source selection. Pass
 its concrete guest path to bootstrap and use it as the sole guest dotenv input.
@@ -163,15 +173,16 @@ it controls environment selection, not file secrecy.
 | Late/restarted Hub | No implicit Hub startup; existing guests reconnect through directory-mounted current records without advancing another backend's cursor. |
 | Root/place identity | Resident and nonresident clients read their selected root Hub, with unchanged canonical host-root identity and correct human defaults. |
 | Mapping table | Every listed source preserves its owning-base suffix and filename; covered catalogs/lab have no duplicate aliases. |
-| Runtime root ownership | Resident, visiting, and roaming launches stage under the selected root's full address; different places with the same agent name do not collide. |
-| Registration naming | New references use `<address>/registration.json`; discovery validates the parent address against runtime identity. Existing registration formats remain discoverable and stoppable without duplicate publication. |
-| Staging lifetime and permissions | Guest registration works while `launches/` remains read-only; failed startup and stop/restart clean only owned resources, and delayed old-launch cleanup preserves the replacement. Staging without a reference is not reported as running. |
+| Runtime root ownership | Docker inputs belong to the selected root and full address; different places with the same agent name do not collide. Direct host execution creates no Docker input directory. |
+| Current execution record | Each full address has one flat JSON reference with explicit location/sandbox and an in-content launch ID; no registry launch hierarchy. Existing formats remain discoverable and stoppable without duplicate publication. |
+| Registry ownership | Guests have no root registry write mount. Host stop removes only the matching reference; guest self-exit is retired on the next verified host refresh and is never reported alive merely because its record exists. |
+| Input lifetime and permissions | Docker inputs are read-only in the guest. Fixed paths are reused only after verified release; failed startup and delayed cleanup preserve replacement inputs and references. |
 | Existing resource recovery | An existing recorded staging path remains stoppable; neither live mounts nor unverified orphan directories are moved or deleted. |
 | Source priority | Root, home, explicit external, and packaged catalogs select the same data on host and guest. |
 | Generated dotenv entry | With a picked variable, explicit agent file, explicit empty file, or no available credential, a read-only `guest_ROOT/.<name>.env` always exists and contains only the resolved guest values. Resident and nonresident launches retain their host policy identity. |
 | Home dotenv precedence | A conflicting or lower-priority `HOME/.env` remains unchanged and visible but adds no values during guest startup, setup refresh, model calls, or tool launches. An empty generated root file never falls back to it or reruns `pick`. |
 | No host dotenv artifacts | Starting, stopping, failing, and restarting a guest never creates an absent host home/root agent dotenv file and never modifies an existing authored one. |
-| Existing contracts | Private registration access, nested workspaces, symlinks, config rebasing, dotenv restrictions, historical workspace URIs, and bounded shutdown still pass. |
+| Existing contracts | Nested workspaces, symlinks, config rebasing, dotenv restrictions, historical workspace URIs, and bounded shutdown still pass. |
 
 Default tests stay offline. Opt-in Docker/Redis/Valkey checks use isolated
 conversations and a local model stub, never user conversations or live providers.
@@ -180,7 +191,7 @@ the user-facing changelog through `too aid.too update_changelog`.
 
 ## Touchpoints and remaining boundaries
 
-Likely files: `up/{hub,sandbox,mounts,server,registry,discovery}.py`,
+Likely files: `up/{hub,sandbox,mounts,server,registry,discovery,watcher,workload}.py`,
 `common/layout.py`, `base/types/sandbox.py`, Docker sandbox/bootstrap,
 `teaming/{config,discovery,agent_client}.py`, `setup/teaming.py`, `convo` tool
 factory, a neutral URL helper, and focused unit/integration tests.
