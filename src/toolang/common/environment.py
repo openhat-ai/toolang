@@ -16,6 +16,7 @@ from typing import cast
 from dotenv.parser import parse_stream
 
 from .config_sources import read_config
+from .flatname import encode_flatname
 from .layout import AgentLayout
 
 DEFAULT_KEEP = (
@@ -139,7 +140,13 @@ def apply_environment_file(path: Path, parent: Mapping[str, str]) -> dict[str, s
 
 
 def _exists(path: Path) -> bool:
-    return path.exists() or path.is_symlink()
+    try:
+        path.lstat()
+    except (FileNotFoundError, NotADirectoryError):
+        return False
+    except OSError as exc:
+        raise ValueError(f"could not inspect environment file: {path}") from exc
+    return True
 
 
 def resolve_root_environment(
@@ -167,8 +174,13 @@ def resolve_agent_environment(
     if layout.placement == "resident":
         candidates = (root.root / f".{layout.name}.env", layout.env)
     elif layout.placement == "roaming" and layout.source_path is not None:
-        # Nonresident root-file lookup awaits the approved reversible codec.
-        candidates = (layout.source_path.resolve().parent / ".toolang.env",)
+        source_path = layout.source_path.resolve()
+        candidates = (
+            root.root / f".{encode_flatname(str(source_path))}.env",
+            source_path.parent / ".toolang.env",
+        )
+    elif layout.placement == "visiting" and layout.source_ref is not None:
+        candidates = (root.root / f".{encode_flatname(layout.source_ref)}.env",)
     source = next((path for path in candidates if _exists(path)), None)
     values = {
         name: root.values[name] for name in root.policy.keep if name in root.values

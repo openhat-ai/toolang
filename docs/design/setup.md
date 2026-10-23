@@ -55,12 +55,23 @@ file, or the first nonblank variable in `pick` when no file exists.
 | Placement | Selected agent file |
 | --- | --- |
 | Resident | `ROOT/.alice.env`, then `HOME/.env` |
-| Roaming | `SOURCE_DIR/.toolang.env` beside the canonical `.too` source |
-| Visiting | None; uses `keep` plus automatic `pick` |
+| Roaming | `ROOT/.{encode_flatname(canonical_source_path)}.env`, then `SOURCE_DIR/.toolang.env` |
+| Visiting | `ROOT/.{encode_flatname(canonical_requested_ref_or_url)}.env` |
 
-Nonresident root files await a separately defined reversible path/ref/URL
-filename codec. Nonresident agents never use same-name resident files, visiting
-home dotenv, project `.env`, or ancestor `.toolang.env` files.
+Nonresident root filenames use `toolang.common.flatname.encode_flatname`.
+Roaming identity is the canonical absolute `.too` path, resolving symlinks;
+visiting identity is the requested source standardized by the source parser,
+not the fetched content or resolved commit. GitHub URL/ref aliases share a
+canonical ref, while a shorthand such as `gh:owner/alice` remains a shorthand.
+Other HTTP URLs retain their requested spelling, including query and escapes.
+For example, `/work/aid.too` uses `ROOT/.%work%aid.too.env`, and
+`gh:owner/alice` uses `ROOT/.gh+3aowner%alice.env`.
+
+Encoding preserves case and produces the full filename without truncation or
+hash fallback. Filesystem lookup errors, including excessive filename length,
+fail resolution. Case-distinct identities may share a file on a case-insensitive
+filesystem. Nonresident agents never use same-name resident files, visiting home
+dotenv, project `.env`, or ancestor `.toolang.env` files.
 
 The first existing file replaces lower-priority agent files completely. Its
 bindings are applied after `keep`; explicit assignments can override kept names.
@@ -79,8 +90,8 @@ Ordinary comments and quoting are supported without interpolation. Malformed,
 duplicate, or unreadable bindings fail with path/line diagnostics that omit
 values. A bare agent name cannot recover a caller variable excluded by the root
 file. Centralize values in `ROOT/.env` and normally use bare names in agent
-files. Resident root files are independent of generated homes, so policy
-survives home removal.
+files. Root agent files are independent of generated homes and runtime instances,
+so policy survives home removal and is reused for the same stable identity.
 
 The CLI installs the selected environment before user plugin loading; adapters,
 tools, child processes, inspection, and `cd` share it. Controller startup inputs

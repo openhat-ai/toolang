@@ -44,8 +44,9 @@ The root-code directory identifies the selected root; its `root.json` retains
 the full root path. Chat and record commands reuse an existing home when selected by
 instance or Thread/Run; see [agent addresses](agent-addresses.md#binding-and-execution).
 Roaming scripts use the selected root's [environment policy](setup.md#environments),
-with a source-local `.toolang.env` override. Project `.env`, ancestor dotenv, and
-same-name resident files are ignored. Source-owned edit guards remain shared.
+preferring the root file named by the encoded canonical source path over a
+source-local `.toolang.env`. Project `.env`, ancestor dotenv, and same-name
+resident files are ignored. Source-owned edit guards remain shared.
 
 ## Runnable input and help
 

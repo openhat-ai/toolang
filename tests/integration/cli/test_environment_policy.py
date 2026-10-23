@@ -11,7 +11,10 @@ from typer.testing import CliRunner
 from toolang.catalog.agent import LocalAgents
 from toolang.cli.toolang.main import app
 from toolang.cli.toolang.commands import script
+from toolang.common.flatname import encode_flatname
+from toolang.common.github import GitHubRef
 from toolang.setup import tools as setup_tools
+from toolang.up import source as sources
 
 
 @pytest.fixture
@@ -80,15 +83,20 @@ def test_tool_factories_and_children_receive_the_selected_environment(
     assert "synthetic-private" not in result.output
 
 
-@pytest.mark.parametrize("explicit", [False, True])
+@pytest.mark.parametrize("selected_file", ["auto", "local", "root"])
 def test_script_entry_uses_roaming_policy_before_execution(
-    tmp_path, monkeypatch, shell_environment, explicit
+    tmp_path, monkeypatch, shell_environment, selected_file
 ):
     root = tmp_path / "root"
     source = tmp_path / "main.too"
     source.write_text("flow main():\n  pass\n")
-    if explicit:
+    if selected_file != "auto":
         (source.parent / ".toolang.env").write_text("ANTHROPIC_API_KEY\n")
+    if selected_file == "root":
+        root.mkdir()
+        (root / f".{encode_flatname(str(source.resolve()))}.env").write_text(
+            "PRIVATE_SENTINEL\n"
+        )
     observed = []
 
     def execute(*_args, **_kwargs):
@@ -100,11 +108,77 @@ def test_script_entry_uses_roaming_policy_before_execution(
     shell_environment = dict(os.environ)
     result = CliRunner().invoke(app, [str(source), "main"])
     assert result.exit_code == 0, result.stderr
-    provider = "ANTHROPIC_API_KEY" if explicit else "OPENAI_API_KEY"
+    provider = {
+        "auto": "OPENAI_API_KEY",
+        "local": "ANTHROPIC_API_KEY",
+        "root": "PRIVATE_SENTINEL",
+    }[selected_file]
     assert observed == [
         {name: shell_environment[name] for name in ("PATH", "HOME", provider)}
     ]
     assert dict(os.environ) == shell_environment
+
+
+@pytest.mark.parametrize(
+    "selector, identity",
+    [
+        (
+            "https://example.invalid/alice.too?version=1+2%2F3",
+            "https://example.invalid/alice.too?version=1+2%2F3",
+        ),
+        (
+            "https://github.com/owner/repo/blob/main/alice.too",
+            "github://owner/repo/alice.too@main",
+        ),
+        ("github:owner/alice", "gh:owner/alice"),
+    ],
+)
+@pytest.mark.parametrize("explicit", [False, True])
+def test_visiting_factories_use_requested_identity_before_and_after_fetch(
+    tmp_path, monkeypatch, shell_environment, selector, identity, explicit
+):
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / ".alice.env").write_text("RESIDENT=excluded\n")
+    pinned_ref = GitHubRef("owner", "repo", "alice.too", "a" * 40)
+    (root / f".{encode_flatname(pinned_ref.render())}.env").write_text(
+        "PINNED=excluded\n"
+    )
+    if explicit:
+        (root / f".{encode_flatname(identity)}.env").write_text("ANTHROPIC_API_KEY\n")
+    monkeypatch.setattr(
+        sources, "_resolve_github_agent_shorthand", lambda *_a, **_kw: pinned_ref
+    )
+    monkeypatch.setattr(sources, "_resolve_github_commit", lambda _ref: pinned_ref.rev)
+    fetched = []
+
+    def fetch(ref, **_kwargs):
+        fetched.append((ref.render(), dict(os.environ)))
+        return "flow main():\n  pass\n"
+
+    monkeypatch.setattr(sources, "fetch_agent_ref", fetch)
+    observed = []
+    original = setup_tools.load_toolsets_with_sources
+
+    def factory(**kwargs):
+        observed.append(dict(os.environ))
+        return original(**kwargs)
+
+    monkeypatch.setattr(setup_tools, "load_toolsets_with_sources", factory)
+    caller = dict(os.environ)
+    result = CliRunner().invoke(app, ["--root", str(root), selector, "tools", "--json"])
+    assert result.exit_code == 0, result.stderr
+    provider = "ANTHROPIC_API_KEY" if explicit else "OPENAI_API_KEY"
+    expected = {name: caller[name] for name in ("PATH", "HOME", provider)}
+    assert len(fetched) == 1
+    assert fetched[0][0] == (
+        identity
+        if selector.startswith("https://example.invalid")
+        else pinned_ref.render()
+    )
+    assert fetched[0][1] == expected
+    assert observed == [expected]
+    assert dict(os.environ) == caller
 
 
 def test_invalid_agent_file_fails_without_fallback_or_secret_output(

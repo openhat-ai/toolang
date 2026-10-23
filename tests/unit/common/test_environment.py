@@ -10,6 +10,7 @@ from toolang.common.environment import (
     resolve_agent_environment,
     resolve_root_environment,
 )
+from toolang.common.flatname import encode_flatname
 from toolang.common.layout import AgentLayout
 
 
@@ -88,7 +89,7 @@ def test_home_file_is_a_supported_resident_fallback(tmp_path):
     }
 
 
-def test_roaming_uses_only_source_local_toolang_env(tmp_path):
+def test_roaming_falls_back_to_source_local_toolang_env(tmp_path):
     root_path = tmp_path / "root"
     root_path.mkdir()
     source = tmp_path / "source" / "aid.too"
@@ -105,6 +106,59 @@ def test_roaming_uses_only_source_local_toolang_env(tmp_path):
     assert agent.source == source.parent / ".toolang.env"
 
 
+@pytest.mark.parametrize("content", ["ANTHROPIC_API_KEY\nOPENAI_API_KEY\n", ""])
+def test_roaming_root_file_wins_and_uses_only_root_values(tmp_path, content):
+    root_path = tmp_path / "root"
+    root_path.mkdir()
+    (root_path / ".env").write_text("ANTHROPIC_API_KEY=central\n")
+    source = tmp_path / "aid.too"
+    source.write_text("flow main():\n  pass\n")
+    (source.parent / ".toolang.env").write_text("LOCAL=excluded\n")
+    policy_file = root_path / f".{encode_flatname(str(source.resolve()))}.env"
+    policy_file.write_text(content)
+    root = resolve_root_environment(
+        root_path, {"PATH": "/bin", "OPENAI_API_KEY": "excluded"}
+    )
+    agent = resolve_agent_environment(root, AgentLayout.roaming(source, root=root_path))
+    assert dict(agent.values) == (
+        {"PATH": "/bin", "ANTHROPIC_API_KEY": "central"}
+        if content
+        else {"PATH": "/bin"}
+    )
+    assert agent.source == policy_file
+    assert agent.picked is None
+
+
+def test_roaming_root_file_is_bound_to_canonical_source_not_name_or_home(
+    tmp_path, monkeypatch
+):
+    source = tmp_path / "source" / "aid.too"
+    source.parent.mkdir()
+    source.write_text("flow main():\n  pass\n")
+    alias = tmp_path / "alias.too"
+    alias.symlink_to(source)
+    other = tmp_path / "other" / source.name
+    other.parent.mkdir()
+    other.write_text(source.read_text())
+    (tmp_path / ".aid.env").write_text("RESIDENT=excluded\n")
+    policy_file = tmp_path / f".{encode_flatname(str(source.resolve()))}.env"
+    policy_file.write_text("SELECTED=fixed\n")
+    root = resolve_root_environment(tmp_path, {"OPENAI_API_KEY": "automatic"})
+    monkeypatch.chdir(tmp_path)
+    first = AgentLayout.roaming(alias.relative_to(tmp_path), root=tmp_path)
+    second = AgentLayout.roaming(source, root=tmp_path)
+    for layout in (first, second):
+        assert not layout.home.exists()
+        selected = resolve_agent_environment(root, layout)
+        assert dict(selected.values) == {"SELECTED": "fixed"}
+        assert selected.source == policy_file
+    assert dict(
+        resolve_agent_environment(
+            root, AgentLayout.roaming(other, root=tmp_path)
+        ).values
+    ) == {"OPENAI_API_KEY": "automatic"}
+
+
 def test_visiting_uses_default_without_same_name_resident_grant(tmp_path):
     (tmp_path / ".alice.env").write_text("RESIDENT=excluded\n")
     root = resolve_root_environment(
@@ -115,6 +169,123 @@ def test_visiting_uses_default_without_same_name_resident_grant(tmp_path):
     )
     agent = resolve_agent_environment(root, layout)
     assert dict(agent.values) == {"OPENAI_API_KEY": "selected"}
+
+
+@pytest.mark.parametrize(
+    "selector, identity",
+    [
+        ("github:owner/alice", "gh:owner/alice"),
+        ("gh:owner/alice", "gh:owner/alice"),
+        (
+            "gh:owner/repo/alice.too@main",
+            "github://owner/repo/alice.too@main",
+        ),
+        (
+            "https://github.com/owner/repo/blob/main/alice.too",
+            "github://owner/repo/alice.too@main",
+        ),
+        (
+            "https://raw.githubusercontent.com/owner/repo/main/alice.too",
+            "github://owner/repo/alice.too@main",
+        ),
+        (
+            " https://example.invalid/alice.too?version=1+2%2F3#top ",
+            "https://example.invalid/alice.too?version=1+2%2F3#top",
+        ),
+    ],
+)
+def test_visiting_root_file_uses_canonical_requested_identity(
+    tmp_path, selector, identity
+):
+    from toolang.up.source import visiting_layout
+
+    policy_file = tmp_path / f".{encode_flatname(identity)}.env"
+    policy_file.write_text("ANTHROPIC_API_KEY\n")
+    (tmp_path / ".alice.env").write_text("RESIDENT=excluded\n")
+    root = resolve_root_environment(
+        tmp_path, {"OPENAI_API_KEY": "first", "ANTHROPIC_API_KEY": "selected"}
+    )
+    layout = visiting_layout(selector, toolang_root=tmp_path)
+    agent = resolve_agent_environment(root, layout)
+    assert dict(agent.values) == {"ANTHROPIC_API_KEY": "selected"}
+    assert agent.source == policy_file
+    assert agent.picked is None
+
+
+def test_visiting_root_file_distinguishes_requested_urls(tmp_path):
+    granted = "https://example.invalid/alice.too?version=1+2%2F3"
+    (tmp_path / f".{encode_flatname(granted)}.env").write_text("GRANTED=selected\n")
+    root = resolve_root_environment(tmp_path, {"OPENAI_API_KEY": "automatic"})
+    for ref in (
+        "https://other.invalid/alice.too?version=1+2%2F3",
+        "https://example.invalid/alice.too?version=1+2/3",
+        "https://example.invalid/alice.too?version=1%202%2F3",
+    ):
+        agent = resolve_agent_environment(
+            root, AgentLayout.visiting(ref, "alice", root=tmp_path)
+        )
+        assert dict(agent.values) == {"OPENAI_API_KEY": "automatic"}
+
+
+@pytest.mark.parametrize("placement", ["roaming", "visiting"])
+def test_nonresident_without_source_does_not_borrow_resident_policy(
+    tmp_path, placement
+):
+    (tmp_path / ".alice.env").write_text("RESIDENT=excluded\n")
+    layout = AgentLayout(place=tmp_path, name="alice", placement=placement)
+    layout.home.mkdir(parents=True)
+    layout.env.write_text("HOME_VALUE=excluded\n")
+    root = resolve_root_environment(tmp_path, {"OPENAI_API_KEY": "automatic"})
+    assert dict(resolve_agent_environment(root, layout).values) == {
+        "OPENAI_API_KEY": "automatic"
+    }
+
+
+@pytest.mark.parametrize("placement", ["roaming", "visiting"])
+@pytest.mark.parametrize("invalid", [False, True])
+def test_nonresident_root_file_errors_do_not_fall_back(tmp_path, placement, invalid):
+    source = tmp_path / "alice.too"
+    source.write_text("flow main():\n  pass\n")
+    (tmp_path / ".toolang.env").write_text("LOCAL=excluded\n")
+    ref = "gh:owner/alice"
+    layout = (
+        AgentLayout.roaming(source, root=tmp_path)
+        if placement == "roaming"
+        else AgentLayout.visiting(ref, "alice", root=tmp_path)
+    )
+    identity = str(source.resolve()) if placement == "roaming" else ref
+    policy_file = tmp_path / f".{encode_flatname(identity)}.env"
+    if invalid:
+        policy_file.write_text("TOKEN='do-not-print\n")
+    else:
+        policy_file.symlink_to(tmp_path / "missing")
+    root = resolve_root_environment(tmp_path, {"OPENAI_API_KEY": "excluded"})
+    with pytest.raises(ValueError) as error:
+        resolve_agent_environment(root, layout)
+    assert str(policy_file) in str(error.value)
+    assert "do-not-print" not in str(error.value)
+
+
+def test_uninspectable_encoded_filename_fails_instead_of_using_automatic_policy(
+    tmp_path, monkeypatch
+):
+    import errno
+    from pathlib import Path
+
+    ref = "https://example.invalid/alice.too?version=" + "a" * 300
+    layout = AgentLayout.visiting(ref, "alice", root=tmp_path)
+    root = resolve_root_environment(tmp_path, {"OPENAI_API_KEY": "excluded"})
+    policy_file = tmp_path / f".{encode_flatname(ref)}.env"
+    original = Path.lstat
+
+    def inspect(path):
+        if path == policy_file:
+            raise OSError(errno.ENAMETOOLONG, "File name too long")
+        return original(path)
+
+    monkeypatch.setattr(Path, "lstat", inspect)
+    with pytest.raises(ValueError, match="could not inspect environment file"):
+        resolve_agent_environment(root, layout)
 
 
 def test_configured_lists_replace_defaults_and_skip_blank_values(tmp_path):

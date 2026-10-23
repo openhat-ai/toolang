@@ -1,7 +1,7 @@
 # Define Root and Agent Environments
 
-Status: Approved in #937; implementation covers the environment rules below.
-Nonresident root-file lookup remains deferred with the reserved path/ref/URL codec.
+Status: Approved in #937; implementation includes nonresident root-file lookup
+using the Flat Name Encoding codec merged in #938.
 Work type: feature implementation.
 
 ## Goal and Scope
@@ -184,6 +184,8 @@ values, and an agent can read a credential explicitly admitted to its environmen
 - [x] Add a shared, explicit environment binding/resolution helper; parse the
   root-only lists there, and resolve root/layout inputs in
   `cli/common/context.py`.
+- [x] Use `encode_flatname` on canonical source paths and requested refs for
+  nonresident root files, preserving the source parser's identity rules.
 - [x] Route agent startup, root/agent inspection, and `cd` through the resolver
   using existing CLI entry points and lifecycle ownership.
 - [x] Thread the captured mapping through `up/sandbox.py`, `up/server.py`, and
@@ -208,13 +210,14 @@ values, and an agent can read a credential explicitly admitted to its environmen
 | Explicit agent file | Kept names remain; bare names use root values; assignments win; `pick` and lower-priority files contribute nothing. |
 | Empty explicit file | Only kept names remain; no fallback file or provider is selected. |
 | Placement precedence | Root file wins over resident home/roaming local files; repeated source runs and same-name resident recreation reuse root policy. |
+| Stable source identity | Path symlinks and GitHub aliases reuse their canonical grant; different same-name sources and distinct HTTP URL escapes remain separate; fetched commit grants do not replace requested refs or shorthands. |
 | Root authority | A bare agent binding cannot recover an excluded shell value, including through Setup refresh or guest bootstrap. |
 | Configuration safety | Missing lists use defaults; empty lists disable them; invalid TOML/env bindings fail without leaking values. |
 | Execution parity | Root/agent commands, foreground/background servers, `cd`, host/guest workloads, adapters, and tool subprocesses receive their expected mapping. |
 | Runtime lifetime | Refresh and attachment retain the captured environment; restart applies changed policy. |
 | Secret handling | Resolution/staging never copies a credential sentinel into generated TOML, diagnostics, provenance, or runtime metadata; this does not sanitize output deliberately produced by user code. |
 
-## Risks and Deferred Encoding
+## Risks and Filename Encoding
 
 Defaults intentionally admit one common provider credential to the whole agent,
 including its tools. Selecting an unavailable provider or needing several
@@ -222,10 +225,10 @@ providers requires an explicit agent file or a changed `pick` order. Existing
 deployments that rely on full inheritance, process-over-dotenv precedence, or
 home dotenv hot reload need migration and restart.
 
-**Reserved: path/ref/URL filename encoding.** Define the exact reversible,
-readable codec separately before implementing nonresident root-file lookup.
-Its contract must preserve resident names, operate on standardized stable
-identities, and specify escaping, case/Unicode handling, filename limits, and
-invalid/colliding names. This plan deliberately chooses no slug, hash, or other
-encoding algorithm. Complete that section and obtain definition approval before
-shipping the corresponding implementation.
+Use the approved [Flat Name Encoding contract](readable-filename-codec.md)
+without additional URL decoding or case normalization. Source parsing owns
+identity standardization; encoding consumes its result. Retain the full encoded
+identity without truncation, hashing, or an external mapping. Lookup errors,
+including filesystem filename limits, fail resolution rather than selecting a
+fallback. Case-distinct identities can share a file on case-insensitive
+filesystems, as accepted by the codec contract.
