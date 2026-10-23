@@ -23,4 +23,7 @@ def replace_guest_loopback(value: str, gateway: str | None) -> str:
         return value
     gateway_host = f"[{gateway}]" if ":" in gateway else gateway
     netloc = f"{gateway_host}:{port}" if port is not None else gateway_host
+    userinfo, separator, _ = parsed.netloc.rpartition("@")
+    if separator:
+        netloc = f"{userinfo}@{netloc}"
     return urlunsplit(parsed._replace(netloc=netloc))

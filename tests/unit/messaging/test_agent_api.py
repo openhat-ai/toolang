@@ -158,7 +158,7 @@ def test_convo_peek_exposes_current_revision_for_renaming(tmp_path, monkeypatch)
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("gateway", [None, "host.docker.internal"])
+@pytest.mark.parametrize("gateway", [None, "host.docker.internal", "fd00::1"])
 def test_agent_discovery_pins_batch_identity_and_refreshes_connections(
     tmp_path, monkeypatch, gateway
 ):

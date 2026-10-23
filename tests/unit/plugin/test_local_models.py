@@ -244,6 +244,41 @@ def test_explicit_local_catalog_endpoints_are_not_rewritten() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    "resolve,env_name,port,path",
+    [
+        (ollama_models._ollama_host, "OLLAMA_HOST", 11434, ""),
+        (llama_cpp_models._llama_cpp_endpoint, "LLAMA_CPP_HOST", 8080, "/v1"),
+    ],
+)
+@pytest.mark.parametrize("configured", [False, True])
+def test_local_catalog_endpoints_support_an_ipv6_gateway(
+    resolve, env_name, port, path, configured
+):
+    environ = {"TOOLANG_HOST_GATEWAY": "fd00::1"}
+    if configured:
+        environ[env_name] = f"http://localhost:{port}"
+    assert resolve(None, environ) == f"http://[fd00::1]:{port}{path}"
+
+
+@pytest.mark.parametrize(
+    "resolve,env_name",
+    [
+        (ollama_models._ollama_host, "OLLAMA_HOST"),
+        (llama_cpp_models._llama_cpp_endpoint, "LLAMA_CPP_HOST"),
+    ],
+)
+@pytest.mark.parametrize("gateway", [None, "host.docker.internal"])
+def test_gateway_rewriting_does_not_bypass_catalog_credential_validation(
+    resolve, env_name, gateway
+):
+    environ = {env_name: "http://user:example@localhost:7001"}
+    if gateway is not None:
+        environ["TOOLANG_HOST_GATEWAY"] = gateway
+    with pytest.raises(ValueError, match="credentials"):
+        resolve(None, environ)
+
+
 def test_local_probes_distinguish_unreachable_from_invalid_responses(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,

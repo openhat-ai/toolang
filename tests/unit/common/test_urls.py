@@ -26,6 +26,16 @@ def test_missing_gateway_preserves_loopback(gateway):
     assert replace_guest_loopback(endpoint, gateway) == endpoint
 
 
+@pytest.mark.parametrize("userinfo", ["user", "user:example", "user%40name:p%3Ass"])
+def test_gateway_replacement_preserves_encoded_userinfo(userinfo):
+    assert (
+        replace_guest_loopback(
+            f"https://{userinfo}@localhost:7001/api", "host.docker.internal"
+        )
+        == f"https://{userinfo}@host.docker.internal:7001/api"
+    )
+
+
 @pytest.mark.parametrize(
     "endpoint",
     [

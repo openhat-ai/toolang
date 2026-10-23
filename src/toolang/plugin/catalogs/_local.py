@@ -113,8 +113,7 @@ def resolve_local_endpoint(
 
     value = endpoint or environ.get(env_name)
     if value is None:
-        host = environ.get("TOOLANG_HOST_GATEWAY", "127.0.0.1")
-        return f"http://{host}:{default_port}"
+        value = f"http://127.0.0.1:{default_port}"
     if "://" not in value:
         value = f"http://{value}"
     if endpoint is None:
