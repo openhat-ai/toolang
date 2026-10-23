@@ -377,6 +377,22 @@ async def _launch_locked(
             local_guard.touch(exist_ok=True)
             guest_edit_lock = hosted_place / ".state" / "root" / "edit.lock"
             edit_lock_mounts = (SandboxMount(local_guard, guest_edit_lock),)
+        registry_mounts: tuple[SandboxMount, ...] = ()
+        guest_registry = None
+        if not on_host:
+            from .registry import registration_directory
+
+            registry = registration_directory(
+                spec.serve.layout,
+                toolang_root=(
+                    spec.serve.toolang_root
+                    or spec.serve.layout.root
+                    or spec.serve.layout.place
+                ),
+            )
+            registry.mkdir(parents=True, exist_ok=True)
+            guest_registry = hosted_home / ".runtime" / "registration"
+            registry_mounts = (SandboxMount(registry, guest_registry),)
         request = SandboxRequest(
             local_place=spec.serve.layout.place,
             local_home=spec.serve.layout.home,
@@ -396,6 +412,7 @@ async def _launch_locked(
                     location=implementation.location,
                     host=spec.serve.host if on_host else "0.0.0.0",
                     source_edit_lock=guest_edit_lock,
+                    registry_directory=guest_registry,
                 ),
             ),
             working_directory=spec.serve.layout.home if on_host else hosted_home,
@@ -419,6 +436,7 @@ async def _launch_locked(
                 ()
                 if on_host
                 else (
+                    *registry_mounts,
                     *workspace_mounts,
                     *catalog_mounts,
                     *prepare_source_mounts(

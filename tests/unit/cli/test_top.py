@@ -1042,8 +1042,8 @@ def test_padded_header_and_single_footer_fit_resizes_with_real_failures(width, f
     "state, observed, diagnostic, running",
     [
         ("running", None, "effective launch drivers are missing or invalid", 1),
-        ("unknown", "preparing", "observed preparing", 0),
-        ("unknown", "starting", "observed starting", 0),
+        ("preparing", None, None, 0),
+        ("starting", None, None, 0),
         ("not running", "failed", None, 0),
         ("unknown", "running", "cannot inspect runtime", None),
     ],

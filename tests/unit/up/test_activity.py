@@ -445,7 +445,7 @@ def test_nonresident_history_requires_full_ownership_before_any_data_read(
     import json
     from toolang.common.layout import AgentLayout
     from toolang.up.allocation import allocate_roaming
-    from toolang.up.observation import runtime_inventory
+    from toolang.up.watcher import runtime_inventory
     from toolang.up.workload import ForegroundWorkload
     from toolang.up.activity import ActivityReader
     from toolang.up import activity
@@ -456,7 +456,7 @@ def test_nonresident_history_requires_full_ownership_before_any_data_read(
         else allocate_roaming(tmp_path / "alice.too", toolang_root=tmp_path)
     )
     with ForegroundWorkload(layout, toolang_root=tmp_path, drivers=frozenset()):
-        source = runtime_inventory(tmp_path, read_only=True).sources[0]
+        source = runtime_inventory(tmp_path).sources[0]
         document = json.loads(layout.runtime_status.read_text())
         field = "source_ref" if placement == "visiting" else "source_path"
         document["instances"]["default"]["control"][field] = (

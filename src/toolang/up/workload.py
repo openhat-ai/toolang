@@ -23,7 +23,7 @@ from .instance import (
     remove_finished_instance,
     update_instance,
 )
-from .registry import RuntimeRegistration, remove_registration
+from .registry import RuntimeRegistration, remove_registration, finalize_runtime
 from .types import ExecutionDrivers
 
 
@@ -176,8 +176,7 @@ class ForegroundWorkload:
         return self
 
     def close(self) -> None:
-        stop_runtime_state(self.layout, expected_pid=os.getpid(), launch_id=self.token)
-        self._registration.close()
+        finalize_runtime(self.layout, self.token, expected_pid=os.getpid())
         remove_finished_instance(self.layout, self.token)
 
     def __exit__(self, *exc: object) -> None:
@@ -194,10 +193,16 @@ def finish_preparation(layout: AgentLayout, message: str) -> None:
         fail_preparation(layout, RuntimeError(message))
 
 
-def fail_preparation(layout: AgentLayout, error: BaseException) -> None:
+def fail_preparation(
+    layout: AgentLayout, error: BaseException, *, expected_launch_id: str | None = None
+) -> None:
     """Retain failed identities without leaving an unowned active reference."""
     entry = read_instance(layout.runtime_status)
-    if entry is not None and not entry["control"].get("ref"):
+    if (
+        entry is not None
+        and owns_preparation(layout, entry)
+        and (expected_launch_id is None or entry["launch_id"] == expected_launch_id)
+    ):
         patch_workload(
             layout.runtime_status,
             entry["launch_id"],

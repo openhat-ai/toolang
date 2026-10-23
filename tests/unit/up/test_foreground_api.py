@@ -21,7 +21,7 @@ from toolang.up.allocation import allocate_roaming
 from toolang.up.instance import read_instance
 from toolang.up.lifecycle import LAUNCH_HEADER, ServerLifecycle
 from toolang.up.registry import RuntimeRegistration
-from toolang.up.observation import runtime_inventory
+from toolang.up.watcher import runtime_inventory
 
 
 @pytest.mark.parametrize("placement", ["resident", "visiting", "roaming"])
@@ -148,4 +148,4 @@ def test_shared_foreground_api_observes_and_cancels_the_owning_executor(
 
     asyncio.run(scenario())
     assert layout.run_store.exists()
-    assert not list((tmp_path / ".runtime" / "active").glob("*.json"))
+    assert not list((tmp_path / ".runtime" / "active").glob("*/*.json"))

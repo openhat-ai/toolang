@@ -100,10 +100,12 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   `_`, main module `agent`, and modules named after `runnables/<module>.too`,
   while `agent.too` and `_.too` are reserved module filenames. Rename a
   conflicting runnable module and its named export before upgrading.
+  ([#895](https://github.com/openhat-ai/toolang/pull/895))
 
 - **Breaking:** a `runnable` field keeps the runnable's full name, and the
   separate `runnable_kind` field carries its kind, so API and event consumers
   read `runnable_kind` instead of parsing the kind from `runnable`.
+  ([#895](https://github.com/openhat-ai/toolang/pull/895))
 
 - `too top` and `too AGENT top` show `agents:`, `usage:`, and `runs:` with
   separate dim time ranges, omitting the running, total, and completed counts.
@@ -264,18 +266,31 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 - Talk sends progress, dispatches independent work, then reports the worker's
   accepted admission without awaiting completion.
+  ([#925](https://github.com/openhat-ai/toolang/pull/925))
 
 - `too AGENT info` labels one Root as the agent root, beside the home.
   ([#928](https://github.com/openhat-ai/toolang/pull/928))
 
 - `info`, `chat`, `cd`, `start`, `stop`, and `serve` accept AGENT before or
   after the command, so both `too AGENT COMMAND` and `too COMMAND AGENT` work.
+  ([#929](https://github.com/openhat-ai/toolang/pull/929))
 
 - **Breaking:** Derived Agent State moves to per-format stores in
   `<agent root>/.state/root/v24/`, `<home>/.state/home/v24/`, and
   `<home>/.state/agent/v24/`; missing State rebuilds from authored inputs and
   older caches are neither migrated nor loaded.
   ([#932](https://github.com/openhat-ai/toolang/pull/932))
+
+- `too AGENT info` prints the canonical address and home without redundant
+  Root, Placement, or Agent rows.
+  ([#936](https://github.com/openhat-ai/toolang/pull/936))
+
+- `too help` groups topic sections by setting and clarifies cost and automatic
+  output values.
+  ([#924](https://github.com/openhat-ai/toolang/pull/924))
+
+- `too top` shows a shorter current-time caption.
+  ([#935](https://github.com/openhat-ai/toolang/pull/935))
 
 ### Fixed
 
@@ -325,6 +340,7 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 - Automatic compaction binds to builtin `_::compact`, fixing checkpoint
   ownership failures from the builtin Talk handler, while a user
   `runnables/compact.too` still runs as `compact::compact`.
+  ([#895](https://github.com/openhat-ai/toolang/pull/895))
 
 - Retained `runnables::<module>` route restrictions keep authorizing run and
   handoff targets, and targets named `ALL` or `NONE` are no longer mistaken for
@@ -334,6 +350,7 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 - Earlier Run and exec labels follow the current naming rules, including
   anonymous entry runnables, and new Run captions show the accepted runnable
   name.
+  ([#895](https://github.com/openhat-ai/toolang/pull/895))
 
 - Top retains resident agents without running instances and drops departing
   visiting or roaming agents with their rows, usage, and errors, keeping one
@@ -436,9 +453,11 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 - Default-entry worker requests using `_` no longer fail with
   `runnable is not authorized by hands: _`, as the unnamed entry alias is
   canonicalized before authorization.
+  ([#925](https://github.com/openhat-ai/toolang/pull/925))
 
 - Inherited default prompts whose runtime module is absent from published Agent
   State no longer fail with `Program not found: _`.
+  ([#925](https://github.com/openhat-ai/toolang/pull/925))
 
 - Ctrl+Q after a successful Chat run no longer closes HTTP under a pending
   detail fetch or prints a spurious `ReadError`.
@@ -447,6 +466,50 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 - Successful `info` and `init` results no longer append `Command` or `Try`
   invocation examples.
   ([#928](https://github.com/openhat-ai/toolang/pull/928))
+
+- `too list` includes every resident; `too hub` and `too top` also include active
+  visiting and roaming instances, with Top usage and runs sharing that scope.
+  ([#936](https://github.com/openhat-ai/toolang/pull/936))
+
+- `too AGENT info` prepares from current Setup and State, including fresh URL
+  and local `.too` sources, without starting execution.
+  ([#936](https://github.com/openhat-ai/toolang/pull/936))
+
+- Sandbox guests access only their own registration directory and withdraw runtime
+  records on exit, while stale-record cleanup preserves concurrent restarts.
+  ([#936](https://github.com/openhat-ai/toolang/pull/936))
+
+- A home whose runtime registration belongs to a different identity is reported
+  as unknown instead of exposing or repairing foreign runtime state.
+  ([#936](https://github.com/openhat-ai/toolang/pull/936))
+
+- `too list`, `too hub`, and `too top` stop showing a resident agent whose home is
+  removed, even when its runtime registration remains.
+  ([#936](https://github.com/openhat-ai/toolang/pull/936))
+
+- Deferred runtime cleanup rechecks status before removing visiting or roaming
+  agents from `too hub` and `too top`.
+  ([#936](https://github.com/openhat-ai/toolang/pull/936))
+
+- `too AGENT info` keeps prepared details and `too hub` and `too top` keep
+  healthy peers when runtime metadata is malformed, instead of failing.
+  ([#936](https://github.com/openhat-ai/toolang/pull/936))
+
+- A workload failure reports its original error even when its shutdown state
+  cannot be read.
+  ([#936](https://github.com/openhat-ai/toolang/pull/936))
+
+- Automatic port allocation preserves reservations for preparing and starting
+  agents before their APIs become ready.
+  ([#936](https://github.com/openhat-ai/toolang/pull/936))
+
+- Runtime queries recover orphaned guest locks after terminal reports and rotate
+  recovery attempts so a busy guest cannot starve other agents' cleanup.
+  ([#936](https://github.com/openhat-ai/toolang/pull/936))
+
+- Runtime status and inventory queries recover a dead host status writer
+  without blocking, even while the workload stays alive.
+  ([#936](https://github.com/openhat-ai/toolang/pull/936))
 
 ### Security
 

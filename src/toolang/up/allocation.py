@@ -118,7 +118,7 @@ def allocate_roaming(source: Path, *, toolang_root: Path) -> AgentLayout:
             timestamp_ms += 1
             token = roaming_place_code(str(source), timestamp_ms)
         layout = AgentLayout.roaming(source, place_code=token, root=toolang_root)
-        with registration_lock(toolang_root):
+        with registration_lock(toolang_root, layout):
             if layout.place.exists() or layout.place.is_symlink():
                 raise FileExistsError(f"roaming place code collision: {layout.address}")
             verify_registration(layout, toolang_root=toolang_root, require_absent=True)
@@ -138,6 +138,6 @@ def allocate_roaming(source: Path, *, toolang_root: Path) -> AgentLayout:
                     launch_id=launch_id,
                 ).publish()
             except BaseException as exc:
-                fail_preparation(layout, exc)
+                fail_preparation(layout, exc, expected_launch_id=launch_id)
                 raise
         return layout

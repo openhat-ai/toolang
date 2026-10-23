@@ -24,7 +24,7 @@ def test_roaming_argument_failure_does_not_publish_an_identity(tmp_path, monkeyp
     monkeypatch.setenv("TOOLANG_ROOT", str(root))
     assert main([str(source), "chat", "--unknown"]) == 2
     assert not (tmp_path / ".toolang").exists()
-    assert not list((root / ".runtime" / "active").glob("*.json"))
+    assert not list((root / ".runtime" / "active").glob("*/*.json"))
 
 
 def test_duplicate_chat_workdir_does_not_prepare_a_roaming_instance(
@@ -97,7 +97,7 @@ def test_interrupted_script_preparation_keeps_failed_history_without_registratio
     assert main([str(source), "main", "--quiet", "hello"]) == 130
     entry = read_instance(select_roaming(source, toolang_root=root).runtime_status)
     assert entry is not None and entry["workload"]["status"] == "failed"
-    assert not list((root / ".runtime" / "active").glob("*.json"))
+    assert not list((root / ".runtime" / "active").glob("*/*.json"))
 
 
 def test_resident_stop_selects_and_fences_the_original_owner(tmp_path, monkeypatch):
@@ -142,7 +142,7 @@ def test_roaming_rejects_hosting_commands_without_mutating_instances(
     before = layout.runtime_status.read_bytes()
     references = {
         path.name: path.read_bytes()
-        for path in (root / ".runtime" / "active").glob("*.json")
+        for path in (root / ".runtime" / "active").glob("*/*.json")
     }
     args = [
         f"{source}@{layout.place_code}" if explicit_instance else str(source),
@@ -153,7 +153,7 @@ def test_roaming_rejects_hosting_commands_without_mutating_instances(
     assert list((source.parent / ".toolang").glob("*/s*")) == [layout.place]
     assert {
         path.name: path.read_bytes()
-        for path in (root / ".runtime" / "active").glob("*.json")
+        for path in (root / ".runtime" / "active").glob("*/*.json")
     } == references
 
 
@@ -198,7 +198,7 @@ def test_retained_selection_and_rerun_preserve_the_selected_home(
         reader.pin()
         completed = reader.completed(now=int(time.time()) + 1, recent=300)
         assert completed.counts.succeeded == 2
-    assert not list((tmp_path / "global" / ".runtime" / "active").glob("*.json"))
+    assert not list((tmp_path / "global" / ".runtime" / "active").glob("*/*.json"))
 
 
 @pytest.mark.parametrize("command", ["fork", "rewind"])
@@ -226,7 +226,7 @@ def test_offline_edit_chat_restarts_in_the_same_home(tmp_path, monkeypatch, comm
     assert entry is not None
     assert entry["control"]["drivers"] == ["chat"]
     assert entry["workload"]["status"] == "stopped"
-    assert not list((root / ".runtime" / "active").glob("*.json"))
+    assert not list((root / ".runtime" / "active").glob("*/*.json"))
 
 
 @pytest.mark.parametrize("command", ["rerun", "fork", "rewind"])
@@ -314,7 +314,7 @@ def test_chat_thread_selection_requires_one_matching_home(
     assert select_roaming(source, toolang_root=root).place == second.place
 
 
-def test_info_shows_the_offline_agent_root_without_a_command_footer(
+def test_info_shows_the_selected_home_without_redundant_identity(
     tmp_path, monkeypatch, capsys
 ):
     from toolang.cli.toolang.commands import agent
@@ -322,6 +322,7 @@ def test_info_shows_the_offline_agent_root_without_a_command_footer(
     from toolang.up.workload import fail_preparation
 
     source = tmp_path / "a id.too"
+    source.write_text("flow main():\n  pass\n")
     root = tmp_path / "toolang root"
     layout = allocate_roaming(source, toolang_root=root)
     fail_preparation(layout, RuntimeError("finished"))
@@ -331,10 +332,11 @@ def test_info_shows_the_offline_agent_root_without_a_command_footer(
     )
     selector = f"{source}@{layout.place_code}"
     assert main(["--root", str(root), selector, "info"]) == 0
-    assert captured["Root"] == str(layout.place)
+    assert captured["Home"]
+    assert "Root" not in captured and "Placement" not in captured
     assert "Toolang root" not in captured
     assert "Agent root" not in captured
-    assert captured["Agent"] == layout.address
+    assert "Agent" not in captured
     assert capsys.readouterr().out == ""
 
 

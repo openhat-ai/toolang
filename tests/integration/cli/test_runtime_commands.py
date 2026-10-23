@@ -281,6 +281,10 @@ def test_serve_uses_process_sandbox_instead_of_dotenv(
             expected,
             "--location",
             "guest" if expected.startswith("docker") else "host",
+            "--registry-directory",
+            str(root / ".runtime" / "active"),
+            "--registry-status",
+            str(layout.runtime_status),
         ],
     )
 

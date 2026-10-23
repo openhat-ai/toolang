@@ -703,6 +703,7 @@ def _run(
 
     progress = make_cli_progress(enabled=not quiet, preparation=True)
     layout: AgentLayout | None = None
+    preparation_launch_id: str | None = None
     store: RunStore | None = None
     run_id: str | None = None
     log_path: Path | None = None
@@ -712,6 +713,11 @@ def _run(
         from toolang.up.allocation import allocate_roaming
 
         layout = allocate_roaming(source_path, toolang_root=resolve_root(None))
+        from toolang.up.instance import read_instance
+
+        prepared = read_instance(layout.runtime_status)
+        assert prepared is not None
+        preparation_launch_id = prepared["launch_id"]
         agent_sources.materialize_roaming_program(source_path, layout=layout)
         workspaces = resolve_workspaces(
             layout,
@@ -820,7 +826,11 @@ def _run(
 
             entry = read_instance(layout.runtime_status)
             if entry is not None and entry["workload"].get("status") == "preparing":
-                fail_preparation(layout, RuntimeError("script interrupted"))
+                fail_preparation(
+                    layout,
+                    RuntimeError("script interrupted"),
+                    expected_launch_id=preparation_launch_id,
+                )
         if run_id is None and accepted:
             run_id = accepted[0]
         progress.close()
@@ -837,7 +847,7 @@ def _run(
         if layout is not None:
             from toolang.up.workload import fail_preparation
 
-            fail_preparation(layout, exc)
+            fail_preparation(layout, exc, expected_launch_id=preparation_launch_id)
         progress.close()
         message = (
             progress.failure_message(exc)

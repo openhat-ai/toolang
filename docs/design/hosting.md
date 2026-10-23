@@ -30,8 +30,8 @@ container references use adapter-owned instance IDs. `info` shows the referenced
 PID or instance even during startup and ignores status reports from another
 workload. Missing or unverifiable control state produces a diagnostic instead of
 adopting a process by name. Stop unregistered legacy servers before upgrading.
-References are removed only after resource release, including failed workloads;
-places and history remain available afterward.
+Owners withdraw references when their workload ends; queries repair stale
+references independently of resource release. Places and history remain available.
 
 Control-side launches report ordered operational work on stderr: preparing the
 sandbox, creating the runtime, and connecting to the Agent API. Host foreground
@@ -250,8 +250,12 @@ workload; cleanup failures preserve `SandboxState` for a later forced stop.
 guest update that shared file with generation checks and owned-field merges.
 Docker mounts the agent home read-write, including status, database sidecars,
 and logs; required inputs/workspaces and read-only bootstrap materials are added
-separately. Entire roots and discovery references are not mounted. Guest field
-ownership is cooperative, not filesystem isolation. Independent sandbox state
+separately. Only the instance's `.runtime/active/<address>` directory is mounted read-write at
+an explicit guest path, so the guest can atomically unlink its own reference.
+Other instances' registrations and guards are outside that mount. Startup
+passes the reference name (the complete agent address), canonical host status
+path, and launch ID; guests never derive host paths from their mounted layout.
+Guest field ownership is cooperative, not filesystem isolation. Independent sandbox state
 is removed. Legacy `.sandbox/<agent>/state.json` and `.runtime/sandbox.json`
 block launch, stop, and removal: stop old workloads with the previous version
 before upgrading. Older status formats are rejected without migration; preserve
@@ -284,6 +288,71 @@ environment values. Guest writes are best-effort, and the host reads only a
 bounded, regular, non-symlink file. The file is presentation-only: unknown,
 duplicate, out-of-order, or stale values cannot affect readiness, recovery, or
 cleanup. The referenced file is removed with the sandbox resources.
+
+## Runtime observation and retirement
+
+`RuntimeWatcher` observes canonical `preparing`, `starting`, `running`, `stopped`,
+`failed`, or `unknown` status. Its single-home `runtime_status` capability serves
+`info` without scanning peers. Basic status uses process/sandbox identity and
+persisted phase; HTTP readiness is an explicit startup check. Endpoint, drivers,
+and display identity come from the same launch-bound snapshot. Inspection errors
+remain unknown; they are not recorded as workload failures.
+
+`up.discovery` enumerates resident homes and resolves registered identities;
+`up.observation.RuntimeProbe` reads and classifies one runtime without mutation.
+`up.watcher` owns scope selection and repair policy. `up.instance` owns status
+updates and shared-lock recovery; `up.registry` owns ordered publication and
+withdrawal. Lifecycle code owns workload exit and sandbox resource release.
+Port allocation reads registered endpoints only, reserving declared endpoints
+during preparation and startup before an API becomes available. Resident-only
+collection filters nonresident references before reading or probing their status.
+
+New publications retain the format-5 payload in a per-address directory:
+
+```text
+TOOLANG_ROOT/.runtime/active/<address>/
+    register.lock
+    <address>.json         # canonical host status path and launch_id
+AGENT_HOME/.runtime/
+    status.json
+    status.json.lock
+```
+
+The registry guard serializes only one address; the status guard serializes one
+home. Empty per-address directories are removed after host guard release when
+possible. Existing flat format-5 references remain readable and repairable by
+hosts during an upgrade; new guests receive only their private directory.
+
+Both guards use shared-file claims carrying owner location, PID, process creation
+time, and acquisition time. Guest claims additionally retain their exact launch,
+canonical control identity, sandbox, and resource reference. Claims remain
+recoverable after status/reference removal. Host readers recover dead host PIDs;
+a guest namespace is dead only when its sandbox resource is proven absent. Guests
+recover only claims from their own launch/resource namespace, never host claims.
+Unknown ownership stays busy; time alone never expires a claim. Only hosts recover
+legacy empty registry guards through the shared primitive's native reaper lock.
+
+Both guards share one recovery budget during a repair. Either orphaned claim
+can spend the refresh's single additional namespace probe; the other guard
+reuses that evidence. Terminal reports need no ordinary sandbox liveness probe.
+Prepare recovery evidence in registry-then-status order before acquiring either
+guard, so recovery progresses even when their orphaned owners differ.
+
+Publication waits at most two seconds for the registry guard. Query repair is
+nonblocking. Liveness probes happen before mutation guards. Mutation order is
+registry guard, then status guard: repair compares the full probed entry and
+reference under both, marks a dead active workload stopped, and withdraws its
+reference. Deferred repairs, including entries beyond the repair budget, recheck
+the probed entry before reporting departure. A changed entry is observed once
+more; missing status or further instability stays unknown. A terminal launch
+cannot bind a resource or return to an active phase; a new execution requires a
+new launch ID.
+
+The owning workload performs the same ordered terminal update and withdrawal on
+exit, including from a sandbox guest. These operations never release sandbox
+resources; host lifecycle management owns release. Other host CLI processes
+repair records left by interrupted owners. Run history is never rewritten by
+runtime observation or retirement.
 
 ## Runtime identity and ports
 

@@ -3,8 +3,9 @@
 `too top` includes every materialized resident home under the selected Toolang
 root, whether running or stopped, plus visiting/roaming identities in the current
 validated `.runtime/active/` registry. `too alice top` selects only that
-resident home and its optional runtime binding. hub keeps its runtime-only
-inventory. Observation starts no runtime, creates no stores and acquires no lease.
+resident home and its optional runtime binding. This is the same inventory used
+by `too hub`; `too list` restricts it to residents. Observation starts no runtime,
+creates no stores and acquires no lease.
 
 Discovery refreshes every five seconds. Resident departure removes its live
 binding while preserving its home, usage and completions. Visiting/roaming
@@ -18,8 +19,8 @@ cannot republish a departed or replaced launch. A current unreadable registratio
 remains diagnostic. Queued jobs for removed sources are canceled; running jobs
 receive cancellation and cannot restore removed results.
 
-Instances confirmed `not running` contribute zero active roots without live
-warnings, including while runtime management retains resource cleanup references. Embedded instances without an endpoint can prove idle from a pinned
+Instances verified stopped or failed contribute zero active roots without live
+warnings, including while sandbox resource references await lifecycle cleanup. Embedded instances without an endpoint can prove idle from a pinned
 source with no unfinished physical roots. Otherwise live coverage stays unknown;
 shutdown never implies a Run's terminal status. Genuine failures of a current
 endpoint or history store remain visible.
@@ -87,12 +88,21 @@ its pane identity through the same terminal session and clears both publishers
 on exit. Snapshot and JSON output do not publish titles or pane identity.
 
 Top reads persisted facts through `toolang.stats.recent` and current paths through
-LiveTree. `up.scope.ScopeReader` composes resident homes and runtime registrations
-and owns membership failure/recovery policy. `up.observation` validates runtime
-identity and launch generations. Top explicitly requests read-only inventory
-and process probes, leaving registration cleanup and status repair to runtime
-management callers. `up.activity.ActivityReader` owns endpoint,
-history and paging reads, sharing established-history knowledge across workers
+LiveTree. `up.watcher.RuntimeWatcher` composes resident homes and active runtime
+registrations into `RuntimeInventory`; `up.discovery` validates registered
+identities and `up.observation` probes their launch-bound status. Membership
+completeness is explicit and independent of
+diagnostics: an unreadable resident status does not erase its known home count.
+A removed resident home leaves scope even if its registration remains. A broken
+peer cannot prevent unrelated confirmed departures.
+
+Discovery uses one background job every five seconds, with eight parallel probes
+and at most eight nonblocking stale-registration repairs per refresh. A persistent
+watcher rotates repair attempts for fairness; deferred writes recheck the status
+snapshot before excluding a visitor. Lock recovery shares one additional bounded
+sandbox probe per refresh. Rendering, usage polls, and Run polls perform no
+registry scans. `up.activity.ActivityReader` owns endpoint, history and paging
+reads, sharing established-history knowledge across workers
 and resident rebindings. `up.top.TopObserver` schedules bounded independent jobs
 and reconciles scope; `up.schemas` derives coverage and totals without I/O, and
 the CLI presenter formats snapshots. The recent reader opens only `runs.db`,

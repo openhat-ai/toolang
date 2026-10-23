@@ -11,7 +11,7 @@ from rich.text import Text
 
 from toolang.common.layout import AgentPlacement
 from toolang.cli.toolang.commands.hub_status import HubSnapshot, render_hub_snapshot
-from toolang.up.observation import RuntimeInstance, RuntimeInstanceSnapshot
+from toolang.up.types import RuntimeInstance, RuntimeInstanceSnapshot
 
 
 @pytest.fixture(autouse=True)

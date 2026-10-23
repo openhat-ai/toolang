@@ -56,7 +56,7 @@ class TopSnapshot(BaseModel):
 
     @property
     def membership_unknown(self) -> bool:
-        return self.inventory_updating or bool(self.inventory.diagnostics)
+        return self.inventory_updating or not self.inventory.membership_complete
 
     @property
     def scoped_sources(self) -> tuple[SourceActivity, ...]:

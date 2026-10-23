@@ -141,7 +141,7 @@ registration.close()
 """
     with ForegroundWorkload(layout, toolang_root=tmp_path, drivers=frozenset()) as old:
         with ExitStack() as stack:
-            with registration_lock(tmp_path):
+            with registration_lock(tmp_path, layout):
                 cleanup = stack.enter_context(worker(code, tmp_path, old.token))
                 assert message(cleanup) == "ready"
                 update_instance(
@@ -180,5 +180,7 @@ print(layout.place_code, flush=True)
     for code in codes:
         layout = select_roaming(source, code, toolang_root=root)
         assert layout.runtime_status.is_file()
-        assert (root / ".runtime" / "active" / f"{layout.address}.json").is_file()
+        assert (
+            root / ".runtime" / "active" / layout.address / f"{layout.address}.json"
+        ).is_file()
     assert select_roaming(source, toolang_root=root).place_code == max(codes)

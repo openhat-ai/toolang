@@ -228,7 +228,7 @@ def test_departure_removes_history_and_fresh_top_has_the_same_scope(
                 first.summary.completed is not None
                 and first.summary.completed.total == 1
             )
-        observer.discovery_job = resolved(observer.scope_reader.read())
+        observer.discovery_job = resolved(observer.runtime_watcher.refresh())
         now[0] += 1
         snapshot = observer.tick()
         assert len(snapshot.inventory.instances) == 1
@@ -282,8 +282,8 @@ def test_slow_usage_never_blocks_live_or_marks_new_window_with_old_metrics(
     live_calls = []
     monkeypatch.setattr(top.time, "time", lambda: now[0])
     monkeypatch.setattr(
-        top.ScopeReader,
-        "read",
+        top.RuntimeWatcher,
+        "refresh",
         lambda _, **kwargs: RuntimeInventory(
             RuntimeInstanceSnapshot((source.instance,)), (source,)
         ),
@@ -928,8 +928,8 @@ def test_embedded_completed_work_proves_zero_active_roots(
     monkeypatch.setattr(httpx, "get", offline)
     monkeypatch.setattr(top.time, "time", lambda: NOW)
     monkeypatch.setattr(
-        top.ScopeReader,
-        "read",
+        top.RuntimeWatcher,
+        "refresh",
         lambda *args, **kwargs: RuntimeInventory(
             RuntimeInstanceSnapshot((source.instance,)), (source,)
         ),
@@ -988,7 +988,7 @@ def test_once_reports_initial_discovery_failure_without_fabricating_zero(
     def denied(_, **kwargs):
         raise PermissionError("permission denied")
 
-    monkeypatch.setattr(top.ScopeReader, "read", denied)
+    monkeypatch.setattr(top.RuntimeWatcher, "refresh", denied)
     with closing(
         top.TopObserver(tmp_path, agent=None, period=3600, recent=300, refresh=60)
     ) as observer:
@@ -1043,7 +1043,8 @@ def test_failed_docker_batch_keeps_membership_and_readable_history(
 ):
     from toolang.base.types.sandbox import SandboxRef
     from toolang.up.instance import SandboxState
-    from toolang.up.process import AgentProcess, AgentStatus
+    from toolang.up.observation import RuntimeProbe as AgentProcess
+    from toolang.up.types import AgentStatus
 
     layout = AgentLayout.resident(tmp_path, "alice")
     layout.home.mkdir(parents=True)
@@ -1520,7 +1521,7 @@ def test_stopped_resident_keeps_durable_usage_and_runs_when_top_reopens(
             first = observer.once()
             state = observer.sources[layout.address]
         observer.discovery_job = Future()
-        observer.discovery_job.set_result(observer.scope_reader.read())
+        observer.discovery_job.set_result(observer.runtime_watcher.refresh())
         stopped = observer.tick()
         assert observer.sources[layout.address] is state
         assert stopped.summary.running == 0 and stopped.summary.total == 1

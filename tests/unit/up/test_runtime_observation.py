@@ -11,11 +11,8 @@ from toolang.common.layout import AgentLayout
 from toolang.up.allocation import allocate_roaming
 from toolang.execution.store import RunStore
 from tests.support.runtime_observation import binding
-from toolang.up.observation import (
-    running_instances,
-    runtime_inventory,
-    runtime_snapshot,
-)
+from toolang.up.discovery import registered_inventory, active_runtime_endpoints
+from toolang.up.watcher import runtime_inventory, runtime_snapshot
 
 
 def _roaming(source, *, toolang_root=None):
@@ -131,7 +128,7 @@ def test_relaunch_reuses_reference_name_and_preserves_new_registration(
         entry = read_instance(layout.runtime_status)
         assert entry is not None and entry["control"]["source_id"] == layout.source_id
         old.close()
-        assert running_instances(tmp_path)[0]["source_id"] == layout.source_id
+        assert active_runtime_endpoints(tmp_path)[0]["source_id"] == layout.source_id
         assert current.path.exists()
 
 
@@ -151,7 +148,7 @@ def test_discovery_ignores_non_object_references_and_cleanup_tolerates_them(tmp_
     registration.__enter__()
     for value in (None, [], "invalid", 123):
         registration.path.write_text(json.dumps(value))
-        assert running_instances(tmp_path) == ()
+        assert active_runtime_endpoints(tmp_path) == ()
         registration.close()
 
 
@@ -162,7 +159,7 @@ def test_discovery_does_not_adopt_previous_reference_names(tmp_path):
     ) as registration:
         old_path = registration.path.with_name("gus-resident-0123456789abcdef.json")
         registration.path.rename(old_path)
-        assert running_instances(tmp_path) == ()
+        assert active_runtime_endpoints(tmp_path) == ()
 
 
 @pytest.mark.parametrize("instances", [None, [], "invalid", 123])
@@ -174,7 +171,7 @@ def test_discovery_ignores_invalid_status_instances(tmp_path, instances):
             layout.runtime_status.write_text(
                 json.dumps({"version": 5, "instances": instances})
             )
-            assert running_instances(tmp_path) == ()
+            assert active_runtime_endpoints(tmp_path) == ()
         finally:
             layout.runtime_status.write_bytes(before)
 
@@ -189,7 +186,7 @@ def test_discovery_rejects_noncurrent_formats_without_mutation(
     with ForegroundWorkload(
         layout, toolang_root=root, drivers=frozenset()
     ) as registration:
-        assert len(running_instances(root)) == 1
+        assert len(active_runtime_endpoints(root)) == 1
         path = registration.path if owner == "reference" else layout.runtime_status
         original = path.read_bytes()
         document = json.loads(original)
@@ -197,7 +194,7 @@ def test_discovery_rejects_noncurrent_formats_without_mutation(
         path.write_text(json.dumps(document))
         before = path.read_bytes()
         try:
-            assert running_instances(root) == ()
+            assert active_runtime_endpoints(root) == ()
             assert all(
                 item.state != "running" for item in runtime_snapshot(root).instances
             )
@@ -215,7 +212,7 @@ def test_discovery_preserves_valid_entries_beside_a_malformed_peer(tmp_path, inv
             document = json.loads(before)
             document["instances"]["bad"] = invalid
             layout.runtime_status.write_text(json.dumps(document))
-            assert len(running_instances(tmp_path)) == 1
+            assert len(active_runtime_endpoints(tmp_path)) == 1
         finally:
             layout.runtime_status.write_bytes(before)
 
@@ -231,7 +228,12 @@ def test_discovery_reads_do_not_wait_for_reference_updates(tmp_path):
         with ThreadPoolExecutor(max_workers=1) as pool:
             with file_write_lock(registration.path.parent / "register.lock"):
                 assert (
-                    len(pool.submit(running_instances, tmp_path).result(timeout=1)) == 1
+                    len(
+                        pool.submit(active_runtime_endpoints, tmp_path).result(
+                            timeout=1
+                        )
+                    )
+                    == 1
                 )
 
 
@@ -268,12 +270,12 @@ def test_stale_registration_and_replaced_owner_are_safe(tmp_path) -> None:
     old.__enter__()
     current.__enter__()
     old.close()
-    assert running_instances(tmp_path)[0]["drivers"] == ["chat"]
+    assert active_runtime_endpoints(tmp_path)[0]["drivers"] == ["chat"]
     assert runtime_snapshot(tmp_path).instances[0].drivers == ("chat",)
     from toolang.up.instance import patch_workload
 
     patch_workload(layout.runtime_status, current.token, {"process_created": 0})
-    assert running_instances(tmp_path) == ()
+    assert active_runtime_endpoints(tmp_path) == ()
     current.close()
 
 
@@ -317,7 +319,7 @@ def test_guest_discovery_uses_host_sandbox_ownership_not_guest_pid(
             sandbox="docker:image",
             launch_id=registration.token,
         )
-        assert running_instances(tmp_path)[0]["drivers"] == ["chore"]
+        assert active_runtime_endpoints(tmp_path)[0]["drivers"] == ["chore"]
         alive = False
         # Record changes invalidate the top cache immediately.
         from toolang.up.instance import patch_workload
@@ -325,7 +327,7 @@ def test_guest_discovery_uses_host_sandbox_ownership_not_guest_pid(
         patch_workload(
             layout.runtime_status, registration.token, {"updated_at": "later"}
         )
-        assert running_instances(tmp_path) == ()
+        assert active_runtime_endpoints(tmp_path) == ()
 
 
 def test_unbound_guest_discovery_preserves_unknown_workload(tmp_path):
@@ -343,7 +345,7 @@ def test_unbound_guest_discovery_preserves_unknown_workload(tmp_path):
             layout.runtime_status, registration.token, {"process_created": 0}
         )
         before = layout.runtime_status.read_bytes()
-        assert running_instances(tmp_path) == ()
+        assert active_runtime_endpoints(tmp_path) == ()
         assert layout.runtime_status.read_bytes() == before
 
 
@@ -360,7 +362,7 @@ def test_short_lived_scripts_keep_local_status_and_share_registry_lock(tmp_path)
             assert registration.path.name == f"{layout.address}.json"
         entry = read_instance(layout.runtime_status)
         assert entry is not None and entry["workload"]["status"] == "stopped"
-    assert tuple(path.name for path in directory.iterdir()) == ("register.lock",)
+    assert tuple(directory.iterdir()) == ()
 
 
 @pytest.mark.parametrize("legacy_guard", ["update.lock", None])
@@ -377,16 +379,17 @@ def test_cleanup_creates_register_guard_for_an_existing_reference(
     stop_runtime_state(layout, expected_pid=os.getpid(), launch_id=registration.token)
     guard = registration.path.parent / "register.lock"
     if legacy_guard is None:
-        guard.unlink()
+        guard.unlink(missing_ok=True)
     else:
-        guard.rename(guard.with_name(legacy_guard))
-    assert running_instances(tmp_path) == ()
+        guard.with_name(legacy_guard).touch()
+    runtime_inventory(tmp_path)
+    assert active_runtime_endpoints(tmp_path) == ()
     assert not guard.exists()
 
     registration.close()
 
     assert not registration.path.exists()
-    assert guard.exists()
+    assert not guard.exists()
     if legacy_guard is not None:
         assert guard.with_name(legacy_guard).exists()
 
@@ -464,7 +467,7 @@ def test_placement_free_workload_cleans_the_reference_using_control_bindings(
 def test_discovery_reads_a_shared_agent_document_once_per_refresh(
     tmp_path, monkeypatch
 ):
-    from toolang.up import observation, instance as instances
+    from toolang.up import discovery, instance as instances
     from contextlib import ExitStack
 
     with ExitStack() as scope:
@@ -485,8 +488,8 @@ def test_discovery_reads_a_shared_agent_document_once_per_refresh(
             return read(path, **kwargs)
 
         monkeypatch.setattr(instances, "read_document", count_read)
-        monkeypatch.setattr(observation, "read_document", count_read)
-        assert len(running_instances(tmp_path)) == 10
+        monkeypatch.setattr(discovery, "read_document", count_read)
+        assert len(active_runtime_endpoints(tmp_path)) == 10
         assert reads == 10
 
 
@@ -521,7 +524,7 @@ def test_runtime_snapshot_lists_residents_and_registered_placements_once(tmp_pat
         snapshot = runtime_snapshot(root)
 
     assert not snapshot.partial
-    assert len(snapshot.instances) == 3
+    assert len(snapshot.instances) == 4
     running = [item for item in snapshot.instances if item.state == "running"]
     assert len(running) == 3
     assert (
@@ -535,7 +538,10 @@ def test_runtime_snapshot_lists_residents_and_registered_placements_once(tmp_pat
     )
     assert len({item.label for item in running}) == 3
     assert len({item.identity for item in running}) == 3
-    assert all(item.name != "bob" for item in snapshot.instances)
+    assert (
+        next(item for item in snapshot.instances if item.name == "bob").state
+        == "stopped"
+    )
 
 
 def test_runtime_snapshot_reports_starting_and_invalid_drivers_as_partial(tmp_path):
@@ -554,10 +560,10 @@ def test_runtime_snapshot_reports_starting_and_invalid_drivers_as_partial(tmp_pa
         )
         starting = runtime_snapshot(root)
         row = starting.instances[0]
-        assert row.state == "unknown"
-        assert row.observed_state == "starting"
-        assert row.drivers is None and row.diagnostic is not None
-        assert starting.partial
+        assert row.state == "starting"
+        assert row.observed_state is None
+        assert row.drivers is None and row.diagnostic is None
+        assert not starting.partial
 
         update_instance(
             layout.runtime_status,
@@ -578,33 +584,37 @@ def test_runtime_snapshot_reports_starting_and_invalid_drivers_as_partial(tmp_pa
 
 
 def test_runtime_snapshot_reads_a_shared_status_document_once(tmp_path, monkeypatch):
-    import toolang.up.observation as observation
+    import toolang.up.discovery as discovery
 
     root = tmp_path / "toolang"
     layout = AgentLayout.resident(root, "alice")
     layout.home.mkdir(parents=True)
     with ForegroundWorkload(layout, toolang_root=root, drivers=frozenset({"talk"})):
-        original = observation.read_document
+        original = discovery.read_document
         reads = []
 
         def counted(path, *, location="host"):
             reads.append(path)
             return original(path, location=location)
 
-        monkeypatch.setattr(observation, "read_document", counted)
+        monkeypatch.setattr(discovery, "read_document", counted)
         snapshot = runtime_snapshot(root)
         assert len(snapshot.instances) == 1
         assert reads.count(layout.runtime_status.resolve()) == 1
 
 
-def test_unregistered_residents_do_not_enter_inventory(tmp_path):
+def test_unregistered_residents_enter_inventory_with_their_status(tmp_path):
     valid = AgentLayout.resident(tmp_path, "alice")
     valid.home.mkdir(parents=True)
     malformed = AgentLayout.resident(tmp_path, "bob")
     malformed.runtime_status.parent.mkdir(parents=True)
     malformed.runtime_status.write_text("not json")
     snapshot = runtime_snapshot(tmp_path)
-    assert snapshot.instances == () and not snapshot.partial
+    assert {row.name: row.state for row in snapshot.instances} == {
+        "alice": "stopped",
+        "bob": "unknown",
+    }
+    assert snapshot.partial and snapshot.membership_complete
 
 
 def test_registration_can_disappear_between_listing_and_reading(tmp_path, monkeypatch):
@@ -625,7 +635,7 @@ def test_registration_can_disappear_between_listing_and_reading(tmp_path, monkey
             return original(path, *args, **kwargs)
 
         monkeypatch.setattr(Path, "read_text", read)
-        inventory = runtime_inventory(tmp_path)
+        inventory = registered_inventory(tmp_path)
         assert departed
         assert not inventory.snapshot.instances and not inventory.snapshot.partial
         assert not inventory.sources
@@ -635,13 +645,13 @@ def test_registration_can_disappear_between_listing_and_reading(tmp_path, monkey
 def test_departure_during_status_read_is_not_an_observation_failure(
     tmp_path, monkeypatch, outcome
 ):
-    from toolang.up import observation
+    from toolang.up import discovery
 
     layout = AgentLayout.resident(tmp_path, "alice")
     with ForegroundWorkload(
         layout, toolang_root=tmp_path, drivers=frozenset()
     ) as registration:
-        original = observation.read_document
+        original = discovery.read_document
 
         def read(path):
             snapshot = original(path)
@@ -650,8 +660,8 @@ def test_departure_during_status_read_is_not_an_observation_failure(
                 raise PermissionError("obsolete status read")
             return snapshot if outcome == "stale" else None
 
-        monkeypatch.setattr(observation, "read_document", read)
-        inventory = runtime_inventory(tmp_path)
+        monkeypatch.setattr(discovery, "read_document", read)
+        inventory = registered_inventory(tmp_path)
         assert not inventory.snapshot.instances and not inventory.snapshot.partial
         assert not inventory.sources
 
@@ -661,7 +671,7 @@ def test_departure_during_status_read_is_not_an_observation_failure(
 def test_departed_probe_cannot_publish_failure_or_a_replacement_generation(
     tmp_path, monkeypatch, outcome, restart
 ):
-    from toolang.up.process import AgentProcess
+    from toolang.up.observation import RuntimeProbe as AgentProcess
 
     layout = AgentLayout.resident(tmp_path, "alice")
     with (
@@ -683,11 +693,11 @@ def test_departed_probe_cannot_publish_failure_or_a_replacement_generation(
 
         monkeypatch.setattr(AgentProcess, "status", inspect)
         try:
-            inventory = runtime_inventory(tmp_path)
+            inventory = registered_inventory(tmp_path)
             assert not inventory.snapshot.instances and not inventory.snapshot.partial
             assert not inventory.sources
             monkeypatch.setattr(AgentProcess, "status", original)
-            following = runtime_inventory(tmp_path)
+            following = registered_inventory(tmp_path)
             assert len(following.sources) == int(restart)
             if restart:
                 assert following.snapshot.instances[0].drivers == ("chat",)
@@ -702,7 +712,8 @@ def test_runtime_snapshot_caps_independent_liveness_probes_at_eight(
     from threading import Lock
     import time
 
-    from toolang.up.process import AgentProcess, AgentStatus
+    from toolang.up.observation import RuntimeProbe as AgentProcess
+    from toolang.up.types import AgentStatus
 
     root = tmp_path / "toolang"
     registrations = []
@@ -745,7 +756,8 @@ def test_runtime_snapshot_batches_docker_liveness_references(tmp_path, monkeypat
     import time
 
     from toolang.base.types.sandbox import SandboxRef
-    from toolang.up.process import AgentProcess, AgentStatus
+    from toolang.up.observation import RuntimeProbe as AgentProcess
+    from toolang.up.types import AgentStatus
     from toolang.up.instance import SandboxState
 
     root = tmp_path / "toolang"
@@ -846,14 +858,17 @@ def test_runtime_snapshot_keeps_failed_residents_and_excludes_finished_visitors(
             )
         snapshot = runtime_snapshot(root)
 
-    assert snapshot.instances == ()
+    assert len(snapshot.instances) == 1
+    assert snapshot.instances[0].name == "alice"
+    assert snapshot.instances[0].state == terminal_state
 
 
 @pytest.mark.parametrize("placement", ["visiting", "roaming"])
 def test_first_liveness_probe_excludes_a_departed_temporary_instance(
     tmp_path, monkeypatch, placement
 ):
-    from toolang.up.process import AgentProcess, AgentStatus
+    from toolang.up.observation import RuntimeProbe as AgentProcess
+    from toolang.up.types import AgentStatus
 
     resident = AgentLayout.resident(tmp_path, "alice")
     resident.home.mkdir(parents=True)
@@ -871,7 +886,8 @@ def test_first_liveness_probe_excludes_a_departed_temporary_instance(
     )
     with ForegroundWorkload(temporary, toolang_root=tmp_path, drivers=frozenset()):
         snapshot = runtime_snapshot(tmp_path)
-        assert snapshot.instances == ()
+        assert len(snapshot.instances) == 1
+        assert snapshot.instances[0].name == "alice"
 
 
 @pytest.mark.parametrize("fault", ["foreign_status", "unsupported"])
@@ -934,8 +950,8 @@ def test_foreign_root_references_cannot_supply_a_fallback_home_or_hub_member(tmp
         copied.parent.mkdir(parents=True)
         copied.write_bytes(registration.path.read_bytes())
         before = layout.runtime_status.read_bytes()
-        assert running_instances(foreign) == ()
-        inventory = runtime_inventory(foreign, read_only=True)
+        assert active_runtime_endpoints(foreign) == ()
+        inventory = runtime_inventory(foreign)
         assert inventory.snapshot.partial
         assert not inventory.sources
         assert layout.runtime_status.read_bytes() == before
@@ -960,7 +976,7 @@ def test_invalid_identity_is_isolated_from_a_healthy_discovery_peer(tmp_path, fa
         broken.runtime_status.write_text(json.dumps(document))
         before = broken.runtime_status.read_bytes()
         try:
-            snapshot = runtime_inventory(tmp_path, read_only=True).snapshot
+            snapshot = runtime_inventory(tmp_path).snapshot
             states = {item.name: item for item in snapshot.instances}
             assert states["bob"].state == "running"
             assert states["alice"].state == "unknown"

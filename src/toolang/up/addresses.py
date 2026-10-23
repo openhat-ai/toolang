@@ -62,7 +62,7 @@ def resolve_address(root: Path, address: AgentAddress) -> tuple[AgentLayout, str
     if address.source is not None:
         layout = select_roaming(address.source, address.place_code, toolang_root=root)
     elif address.place_code.startswith("s"):
-        from .observation import active_layout
+        from .discovery import active_layout
 
         layout, launch_id = active_layout(root, f"{address.name}@{address.place_code}")
         return layout, launch_id
