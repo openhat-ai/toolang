@@ -7,7 +7,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from toolang.common.layout import AgentLayout
-from .instance import LockRecovery, read_instance
+from .instance import LockRecovery, read_instance, recover_control_write_lock
 from .observation import (
     RuntimeInventory,
     RuntimeProbe,
@@ -79,6 +79,8 @@ def runtime_status(
     repair: bool = True,
 ) -> AgentStatus | None:
     """Inspect one selected home without enumerating other agents."""
+    if repair:
+        recover_control_write_lock(layout.runtime_status)
     status = RuntimeProbe(layout).status(
         ui_base_url=ui_base_url,
         check_health=check_health,
@@ -192,6 +194,8 @@ class RuntimeWatcher:
         recovery = LockRecovery()
         stale = []
         for source in scoped.values():
+            # Live guests can also be waiting on a dead host writer.
+            recover_control_write_lock(source.layout.runtime_status)
             status = source.observation
             if status is not None and status.entry is not None:
                 recovery.remember(status.entry, status.alive)

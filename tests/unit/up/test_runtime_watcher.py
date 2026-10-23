@@ -126,6 +126,35 @@ def test_owner_cleanup_preserves_the_original_error_if_status_is_unreadable(tmp_
             raise RuntimeError("work failed")
 
 
+@pytest.mark.parametrize("query", ["single", "inventory"])
+def test_queries_recover_a_dead_host_writer_without_retiring_a_live_workload(
+    tmp_path, query
+):
+    from toolang.common.files import file_lock_path
+
+    home = AgentLayout.resident(tmp_path, "alice")
+    with ForegroundWorkload(home, toolang_root=tmp_path, drivers=frozenset()) as active:
+        before = home.runtime_status.read_bytes()
+        claim = file_lock_path(home.runtime_status)
+        claim.write_text(
+            json.dumps({"location": "host", "pid": os.getpid(), "created": 0})
+        )
+        status = runtime_status(home, repair=False)
+        assert status is not None and status.status == "running"
+        assert claim.exists(), "pure observation must leave the claim alone"
+
+        if query == "single":
+            status = runtime_status(home)
+            assert status is not None and status.status == "running"
+        else:
+            result = RuntimeWatcher(tmp_path).refresh()
+            assert [row.state for row in result.snapshot.instances] == ["running"]
+
+        assert not claim.exists()
+        assert active.path.exists()
+        assert home.runtime_status.read_bytes() == before
+
+
 @pytest.mark.parametrize("claims", ["status", "both"])
 @pytest.mark.parametrize("alive", [False, True, None])
 def test_terminal_guest_claims_share_one_recovery_probe(
