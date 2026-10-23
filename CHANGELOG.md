@@ -38,6 +38,11 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   files installed before plugin factories run.
   ([#940](https://github.com/openhat-ai/toolang/pull/940))
 
+- Roaming and visiting agents read optional values from root dotenv files named
+  `.<encoded-source>.env`, keyed by the canonical source path or requested ref
+  or URL, while residents keep `ROOT/.<agent>.env`.
+  ([#940](https://github.com/openhat-ai/toolang/pull/940))
+
 ### Changed
 
 - `too AGENT chore list` shows complete `chore_<ID>` thread identities in its
@@ -300,9 +305,11 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 - `too AGENT info` titles use uppercase agent names while keeping placement
   codes unchanged, and place `Caps` directly after `Home`, before `Tools` and
   `Models`.
+  ([#939](https://github.com/openhat-ai/toolang/pull/939))
 
 - Help, `too AGENT info`, validation errors, logs, persisted runtime lists, and
   API schema enums order drivers as `chat`, `chore`, `talk`.
+  ([#939](https://github.com/openhat-ai/toolang/pull/939))
 
 - **Breaking:** Agents no longer inherit the caller's full environment, so list
   required extra names in their dotenv file, such as `ROOT/.name.env`, and
