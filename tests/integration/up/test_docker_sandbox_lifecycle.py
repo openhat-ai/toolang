@@ -537,6 +537,7 @@ def _docker_agent(
     layout.home.mkdir(parents=True)
     layout.program.write_text(_AGENT_SOURCE, encoding="utf-8")
     _write_local_model_env(layout.place_env, local_model_port)
+    (root / ".alice.env").write_text("OLLAMA_HOST\nLLAMA_CPP_HOST\n")
     skill = layout.home / "skills" / "reviewer"
     skill.mkdir(parents=True)
     (skill / "SKILL.md").write_text(

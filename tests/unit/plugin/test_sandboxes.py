@@ -20,7 +20,12 @@ import pytest
 from toolang.base.errors import SandboxLaunchError, ToolangError
 from toolang.base.protocols.sandbox import Sandbox
 from toolang.base.types.progress import ProgressEvent
-from toolang.base.types.sandbox import SandboxMount, SandboxRef, SandboxRequest
+from toolang.base.types.sandbox import (
+    SandboxMount,
+    SandboxPlan,
+    SandboxRef,
+    SandboxRequest,
+)
 from toolang.common.layout import AgentLayout
 from toolang.plugin.catalogs.models_dev.path import MODEL_CATALOG_ENV
 from toolang.plugin.sandboxes.docker import _cli as docker_cli
@@ -32,6 +37,10 @@ from toolang.up.mounts import prepare_place_mounts
 
 
 _CONTAINER_ID = "176191c1528b8e2861cc16422dee13ade59d4977c2148a9ebf5d36a06f090abb"
+
+
+def _staged_guest_env(plan: SandboxPlan) -> Path:
+    return Path(plan.meta["stage_dir"]) / "guest.env"
 
 
 @pytest.mark.parametrize(
@@ -522,7 +531,9 @@ def test_docker_sandbox_prepares_and_launches(
     control_lock.write_text("host control\n", encoding="utf-8")
     sandbox = create_sandbox("docker", config={})
 
-    plan = sandbox.prepare("python:3.13-slim", _request(tmp_path, dev=dev))
+    request = _request(tmp_path, dev=dev)
+    (request.local_home / ".env").write_text("EXCLUDED=home-only\n")
+    plan = sandbox.prepare("python:3.13-slim", request)
 
     assert plan.sandbox == "docker:python:3.13-slim"
     assert plan.working_directory == Path("/root/.toolang/agents/alice")
@@ -591,7 +602,7 @@ def test_docker_sandbox_prepares_and_launches(
         "/bin/sh",
         "/root/.toolang/agents/alice/.runtime/sandbox/docker_guest.sh",
         "/root/.toolang/agents/alice/.runtime/sandbox/docker_guest.py",
-        "/root/.toolang/agents/alice/.env",
+        "/root/.toolang/agents/alice/.runtime/sandbox/guest.env",
         f"/root/.toolang/agents/alice/.runtime/{diagnostic_path.name}",
         str(diagnostic_path),
         f"/root/.toolang/agents/alice/.runtime/{startup_events_path.name}",
@@ -628,6 +639,32 @@ def test_docker_sandbox_prepares_and_launches(
     assert run_call["log_path"] is None
 
 
+@pytest.mark.parametrize("content", [None, "", "EXCLUDED=home-only\n"])
+def test_docker_masks_only_existing_home_dotenv(tmp_path, content):
+    request = _request(tmp_path)
+    home_env = request.local_home / ".env"
+    if content is not None:
+        home_env.write_text(content)
+
+    plan = create_sandbox("docker", config={}).prepare(None, request)
+
+    mask = next(
+        (
+            mount
+            for mount in plan.mounts
+            if mount.hosted_path == request.hosted_home / ".env"
+        ),
+        None,
+    )
+    assert (mask is not None) == (content is not None)
+    if mask is not None:
+        assert mask.read_only
+        assert "EXCLUDED" not in dotenv_values(mask.local_path, interpolate=False)
+    assert home_env.exists() == (content is not None)
+    if content is not None:
+        assert home_env.read_text() == content
+
+
 def test_docker_sandbox_mounts_external_model_catalog_at_guest_path(
     tmp_path: Path,
 ) -> None:
@@ -643,19 +680,14 @@ def test_docker_sandbox_mounts_external_model_catalog_at_guest_path(
     source_mount = next(
         mount for mount in plan.mounts if mount.local_path == external.resolve()
     )
-    guest_env_mount = next(
-        mount
-        for mount in plan.mounts
-        if mount.hosted_path == request.hosted_home / ".env"
-    )
-    guest_envs = dotenv_values(guest_env_mount.local_path, interpolate=False)
+    guest_envs = dotenv_values(_staged_guest_env(plan), interpolate=False)
 
     assert source_mount.read_only is True
     assert source_mount.hosted_path.is_relative_to(
         request.hosted_place / ".inputs" / "models"
     )
     assert guest_envs[MODEL_CATALOG_ENV] == str(source_mount.hosted_path)
-    assert str(external) not in guest_env_mount.local_path.read_text(encoding="utf-8")
+    assert str(external) not in _staged_guest_env(plan).read_text(encoding="utf-8")
 
 
 def test_explicit_catalog_does_not_require_a_valid_default_root_catalog(
@@ -700,15 +732,9 @@ def test_docker_sandbox_rewrites_root_model_catalog_and_mounts_it_read_only(
     source_mount = next(
         mount for mount in plan.mounts if mount.local_path == source.resolve()
     )
-    guest_env_mount = next(
-        mount
-        for mount in plan.mounts
-        if mount.hosted_path == request.hosted_home / ".env"
-    )
-
     assert source_mount == SandboxMount(source.resolve(), expected, read_only=True)
     assert sum(mount.hosted_path == expected for mount in plan.mounts) == 1
-    assert dotenv_values(guest_env_mount.local_path, interpolate=False)[
+    assert dotenv_values(_staged_guest_env(plan), interpolate=False)[
         MODEL_CATALOG_ENV
     ] == str(expected)
 
@@ -1224,12 +1250,7 @@ def test_docker_sandbox_uses_a_configured_environment_allow_pattern(
 
     plan = sandbox.prepare(None, request)
 
-    guest_env_mount = next(
-        item
-        for item in plan.mounts
-        if item.hosted_path == Path("/root/.toolang/agents/alice/.env")
-    )
-    assert dotenv_values(guest_env_mount.local_path, interpolate=False) == {
+    assert dotenv_values(_staged_guest_env(plan), interpolate=False) == {
         "CUSTOM_TOKEN": "custom",
         "DOTENV_TOKEN": "dotenv",
     }
@@ -1708,12 +1729,7 @@ def test_docker_preserves_already_mounted_catalog_input(tmp_path, shadowed):
     )
     plan = create_sandbox("docker", config={}).prepare(None, request)
     assert plan.mounts.count(mounted) == 1
-    env_mount = next(
-        mount
-        for mount in plan.mounts
-        if mount.hosted_path == request.hosted_home / ".env"
-    )
-    assert dotenv_values(env_mount.local_path, interpolate=False)[
+    assert dotenv_values(_staged_guest_env(plan), interpolate=False)[
         MODEL_CATALOG_ENV
     ] == str(mounted.hosted_path)
 
@@ -1733,10 +1749,8 @@ def test_docker_stages_only_resolved_agent_values(tmp_path):
     )
     request = replace(_request(tmp_path), envs=dict(environment.values), dotenv_envs={})
     plan = create_sandbox("docker", config={}).prepare(None, request)
-    mount = next(
-        item for item in plan.mounts if item.hosted_path == request.hosted_home / ".env"
-    )
-    assert dotenv_values(mount.local_path, interpolate=False) == {"ADMITTED": "central"}
-    assert "synthetic-excluded" not in mount.local_path.read_text()
+    guest_env = _staged_guest_env(plan)
+    assert dotenv_values(guest_env, interpolate=False) == {"ADMITTED": "central"}
+    assert "synthetic-excluded" not in guest_env.read_text()
     assert "central" not in repr(plan)
     assert "central" not in json.dumps(plan.meta)

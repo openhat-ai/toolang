@@ -196,11 +196,13 @@ full-match regular expression:
 environment_allow_pattern = '^(?:COMPANY_CATALOG_TOKEN|HTTPS?_PROXY)$'
 ```
 
-Docker writes resolved values to a mode-`0600` staged dotenv file, bind-mounted
-read-only over `HOME/.env`. The controller does not separately reload authored
-dotenv files for staging. Public sandbox requests retain the legacy
-`dotenv_envs` input for trusted callers; those explicit names bypass the optional
-pattern. The original home `.env` remains hidden behind the nested mount.
+Docker writes resolved values to a mode-`0600` staged dotenv file, read by
+bootstrap through the read-only staging mount. If `HOME/.env` exists, Docker
+also covers it with the staged file; absent home dotenv files remain absent on
+the host so later launches retain automatic provider selection. The controller
+does not separately reload authored dotenv files for staging. Public sandbox
+requests retain the legacy `dotenv_envs` input for trusted callers; those explicit
+names bypass the optional pattern.
 Bootstrap preserves only native `PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL`,
 `LANG`, `LC_ALL`, `LC_CTYPE`, `TZ`, `TMPDIR`, `TMP`, `TEMP`, `TERM`, `COLORTERM`,
 and `NO_COLOR`, then overlays the staged bindings and generated control/bootstrap

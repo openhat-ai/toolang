@@ -335,13 +335,16 @@ class DockerSandbox:
         mounts = [
             *_request_mounts(request),
             *model_catalog_mounts,
-            SandboxMount(
-                guest_env_path,
-                request.hosted_home / ".env",
-                read_only=True,
-            ),
             SandboxMount(stage_dir, runtime_dir, read_only=True),
         ]
+        # Docker creates missing nested mount targets inside the writable home.
+        # An empty .env there would suppress provider selection on later launches.
+        if (request.local_home / ".env").exists():
+            mounts.append(
+                SandboxMount(
+                    guest_env_path, request.hosted_home / ".env", read_only=True
+                )
+            )
         container_name = (
             f"toolang-{_container_label(request.agent_name)}-{stage_dir.name}"
         )
@@ -357,7 +360,7 @@ class DockerSandbox:
                 "/bin/sh",
                 str(runtime_dir / "docker_guest.sh"),
                 str(runtime_dir / "docker_guest.py"),
-                str(request.hosted_home / ".env"),
+                str(runtime_dir / "guest.env"),
                 str(hosted_diagnostic_path),
                 str(diagnostic_path),
                 str(request.hosted_home / ".runtime" / startup_events_path.name),
