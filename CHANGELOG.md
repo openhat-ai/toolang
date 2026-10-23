@@ -540,6 +540,10 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   longer conversation topics stay visible in terminal tabs.
   ([#941](https://github.com/openhat-ai/toolang/pull/941))
 
+- Roaming and visiting commands no longer fail when a flattened source path or
+  URL exceeds the filesystem's component limit.
+  ([#940](https://github.com/openhat-ai/toolang/pull/940))
+
 ### Security
 
 - The locked certifi trust store advances to 2026.10.19, resolving trust-store
@@ -550,6 +554,11 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   `tracestate` header parsing to remove a quadratic CPU cost tracked as
   CVE-2026-114603.
   ([#932](https://github.com/openhat-ai/toolang/pull/932))
+
+- HTTP source credentials are redacted from displayed environment filenames,
+  selection logs, reprs, and low-level exception context, while exact matching
+  and on-disk encoded filenames stay unchanged.
+  ([#940](https://github.com/openhat-ai/toolang/pull/940))
 
 ## [0.4.0a11] - 2026-10-20
 
