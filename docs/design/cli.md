@@ -226,8 +226,12 @@ while JSON and query records retain `ref`. These lists have no `--long`; complet
 field values remain available through `--json`.
 
 `too AGENT chore list` keeps its column order: `CHORE`, `TITLE`, `STATUS`,
-`LAST RUN`, `NEXT RUN`, `SCHEDULE`, `ERROR`, `LOCATION`. It shrinks title, error,
-and location text in that order, then omits `TITLE` followed by `LAST RUN` when
+`LAST RUN`, `NEXT RUN`, `SCHEDULE`, `ERROR`, `LOCATION`. `CHORE` shows the complete
+`chore_<ID>` thread identity, including for definitions that have never run;
+invalid sources without an identity fall back to their authored name.
+File locations retain the chore name; inline locations identify the source file
+and line. The table shrinks title, error, and location text in that order, then
+omits `TITLE` followed by `LAST RUN` when
 needed, refitting remaining fields after each omission. Every chore occupies one
 logical row. Before omitting columns, title, error, and location retain up to
 12, 16, and 12 cells as readable minima. Once both optional columns are omitted,

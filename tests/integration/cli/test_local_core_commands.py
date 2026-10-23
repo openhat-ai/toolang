@@ -835,8 +835,9 @@ def test_inspect_thread_summary_keeps_selection_snapshot(
 @pytest.mark.parametrize(
     "external_flow", [None, "flow:\n  pass\n", "flow:\n  run missing\n"]
 )
+@pytest.mark.parametrize("inline", [False, True])
 def test_chore_list_does_not_resolve_runnables_or_prepare_state(
-    tmp_path: Path, external_flow: str | None
+    tmp_path: Path, external_flow: str | None, inline: bool
 ) -> None:
     root = tmp_path / "toolang"
     _create_agent(root)
@@ -845,14 +846,46 @@ def test_chore_list_does_not_resolve_runnables_or_prepare_state(
     if external_flow is not None:
         flows.mkdir()
         (flows / "research.too").write_text(external_flow)
-    layout.program.write_text(
-        "flow chat:\n  run research\n\nchore cleanup:\n  Clean up.\n"
-    )
+    layout.program.write_text("flow chat:\n  run research\n")
+    if inline:
+        layout.program.write_text(
+            layout.program.read_text() + "\nchore cleanup:\n  Clean up.\n"
+        )
+    else:
+        AuthoredChores(
+            layout.home, lock_path=layout.home_edit_lock, agent_name=layout.name
+        ).create(ChoreFile.parse("Clean up.", name="cleanup"))
+    (chore,) = load_chores(layout)
 
     result = _invoke(root, "alice", "chore", "list")
 
     assert result.exit_code == 0, result.stderr
-    assert "cleanup" in result.stdout
+    assert result.stdout.splitlines()[2].split()[0] == chore.thread_id
+    assert not layout.agent_state.exists()
+    assert not layout.run_store.exists()
+
+
+def test_chore_list_keeps_invalid_sources_without_thread_identity(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("COLUMNS", "400")
+    root = tmp_path / "toolang"
+    _create_agent(root)
+    layout = AgentLayout.resident(root, "alice")
+    directory = layout.home / "chores"
+    directory.mkdir()
+    (directory / "bad .md").write_text("Invalid name, readable source.")
+    (directory / "good.md").write_text("Valid sibling.")
+    valid = next(chore for chore in load_chores(layout) if chore.name == "good")
+
+    result = _invoke(root, "alice", "chore", "list")
+
+    assert result.exit_code == 0, result.stderr
+    rows = result.stdout.splitlines()[2:-2]
+    invalid = next(row for row in rows if "chores/bad .md" in row)
+    assert invalid.split()[0] == "bad"
+    assert "invalid chore name" in invalid
+    assert any(row.split()[0] == valid.thread_id for row in rows)
     assert not layout.agent_state.exists()
     assert not layout.run_store.exists()
 
@@ -860,8 +893,8 @@ def test_chore_list_does_not_resolve_runnables_or_prepare_state(
 @pytest.mark.parametrize(
     "columns,expected_headers,expected_width",
     [
-        ("40", "CHORE STATUS NEXT RUN SCHEDULE ERROR LOCATION", 105),
-        ("80", "CHORE STATUS NEXT RUN SCHEDULE ERROR LOCATION", 105),
+        ("40", "CHORE STATUS NEXT RUN SCHEDULE ERROR LOCATION", 112),
+        ("80", "CHORE STATUS NEXT RUN SCHEDULE ERROR LOCATION", 112),
         ("120", "CHORE STATUS NEXT RUN SCHEDULE ERROR LOCATION", 120),
         ("240", "CHORE TITLE STATUS LAST RUN NEXT RUN SCHEDULE ERROR LOCATION", 240),
         (None, "CHORE STATUS NEXT RUN SCHEDULE ERROR LOCATION", 120),
@@ -947,12 +980,15 @@ def test_chore_list_fits_terminal_and_omits_columns_in_priority_order(
     assert wcswidth(lines[1]) == expected_width
     assert max(map(wcswidth, lines)) == expected_width
     assert all(not line.startswith(" ") for line in lines if line)
+    assert [line.split()[0] for line in lines[2:5]] == [
+        chore.thread_id for chore in load_chores(layout)
+    ]
     assert schedule in lines[3] and "2026-10-22T17:30:00+08:00" in lines[3]
     assert "done" in lines[2] and "pending" in lines[3] and "unsynced" in lines[4]
     assert "once" in lines[2] and lines[4].rstrip().endswith(":1")
     assert lines[-2:] == ["", "3 chores"]
     if expected_width == 120:
-        assert "Provider reques…" in lines[3]
+        assert "Provider…" in lines[3]
     with closing(ChoreStore(layout.chore_store, read_only=True)) as jobs:
         assert jobs.list() == checkpoints
     assert not layout.agent_state.exists()
@@ -1023,6 +1059,10 @@ Maintain the knowledge base.
     result = _invoke(root, "alice", "chore", "list")
 
     assert result.exit_code == 0, result.stderr
+    identity = result.stdout.splitlines()[2].split()[0]
+    threads = _invoke(root, "alice", "inspect", "threads")
+    assert threads.exit_code == 0, threads.stderr
+    assert identity == threads.stdout.splitlines()[2].split()[0] == job.thread_id
     assert "STATUS" in result.stdout
     assert "LAST RUN" in result.stdout
     assert "NEXT RUN" in result.stdout

@@ -35,6 +35,11 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Changed
 
+- `too AGENT chore list` shows complete `chore_<ID>` thread identities in its
+  CHORE column, falling back to authored names for invalid sources without a
+  thread identity.
+  ([#934](https://github.com/openhat-ai/toolang/pull/934))
+
 - `too talk` help labels its argument `CONVO`, lists conversation-ID open and
   send forms first, and describes `all` as the conversation with all agents.
   ([#917](https://github.com/openhat-ai/toolang/pull/917))
