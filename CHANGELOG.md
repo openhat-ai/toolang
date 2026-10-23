@@ -565,6 +565,11 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   URLs for foreground, detached, and Docker server startup.
   ([#940](https://github.com/openhat-ai/toolang/pull/940))
 
+- Docker guest startup keeps an existing host dotenv intact, so automatic
+  provider selection survives later launches instead of being suppressed by an
+  empty file.
+  ([#942](https://github.com/openhat-ai/toolang/pull/942))
+
 ### Security
 
 - The locked certifi trust store advances to 2026.10.19, resolving trust-store
