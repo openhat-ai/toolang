@@ -491,6 +491,22 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   agents from `too hub` and `too top`.
   ([#936](https://github.com/openhat-ai/toolang/pull/936))
 
+- `too AGENT info` keeps prepared details and `too hub` and `too top` keep
+  healthy peers when runtime metadata is malformed, instead of failing.
+  ([#936](https://github.com/openhat-ai/toolang/pull/936))
+
+- A workload failure reports its original error even when its shutdown state
+  cannot be read.
+  ([#936](https://github.com/openhat-ai/toolang/pull/936))
+
+- Automatic port allocation preserves reservations for preparing and starting
+  agents before their APIs become ready.
+  ([#936](https://github.com/openhat-ai/toolang/pull/936))
+
+- Runtime queries recover orphaned guest locks after terminal reports and rotate
+  recovery attempts so a busy guest cannot starve other agents' cleanup.
+  ([#936](https://github.com/openhat-ai/toolang/pull/936))
+
 ### Security
 
 - The locked certifi trust store advances to 2026.10.19, resolving trust-store
