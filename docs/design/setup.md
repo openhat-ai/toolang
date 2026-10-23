@@ -49,8 +49,14 @@ Add `.env` and `.*.env` to `.gitignore` in repositories containing these files.
 
 Without `ROOT/.env`, root commands inherit the caller's complete environment.
 With it, they receive `keep` from the caller plus the file's bindings. Agent
-commands start from that root result and receive `keep` plus one selected agent
+host processes start from that root result and receive `keep` plus one selected agent
 file, or the first nonblank variable in `pick` when no file exists.
+
+`keep` applies only to host inheritance. Guests receive the selected file's
+bindings or the single picked variable, including names that also occur in
+`keep`. An empty file forwards no host variables. Guests use their own limited
+base environment; their image or entrypoint owns any runtime defaults.
+Explicit file bindings can override native guest base values.
 
 | Placement | Selected agent file |
 | --- | --- |

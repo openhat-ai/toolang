@@ -32,7 +32,7 @@ from toolang.up.types import (
 )
 from toolang.up.config import placement_policy
 
-from .context import load_root_environ, load_runtime_environ, resolve_root
+from .context import load_root_environ, load_runtime_environment, resolve_root
 from .server_lease import ServerLease
 from .parameters import DEVELOPMENT_WHEEL_HELP as DEVELOPMENT_WHEEL_HELP
 from .startup import resolve_attachment_requirements, resolve_runtime_launch
@@ -541,10 +541,11 @@ def _resolve_launch(
     active_port: int | None = None,
 ) -> sandbox_runtime.LaunchSpec:
     try:
-        environ = load_runtime_environ(
+        environment = load_runtime_environment(
             layout,
             base_environ=os.environ if base_environ is None else base_environ,
         )
+        environ = dict(environment.values)
         toolang_root = layout.root or (
             layout.place
             if layout.placement == "resident"
@@ -557,6 +558,7 @@ def _resolve_launch(
             layout,
             toolang_root=toolang_root,
             environ=environ,
+            guest_environ=environment.guest_values,
             settings_environ=load_root_environ(
                 toolang_root,
                 base_environ=os.environ if base_environ is None else base_environ,

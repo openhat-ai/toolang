@@ -29,6 +29,49 @@ def test_root_without_file_retains_shell_and_agent_selects_one_provider(tmp_path
     assert "first" not in repr(agent)
 
 
+@pytest.mark.parametrize(
+    ("content", "pick", "expected"),
+    [
+        (
+            None,
+            '"ANTHROPIC_API_KEY", "OPENAI_API_KEY"',
+            {"ANTHROPIC_API_KEY": "second"},
+        ),
+        (None, '"OPENAI_API_KEY", "ANTHROPIC_API_KEY"', {"OPENAI_API_KEY": "first"}),
+        ("", '"OPENAI_API_KEY"', {}),
+        (
+            "HOME=/guest-home\nCUSTOM\nOPENAI_API_KEY\n",
+            '"ANTHROPIC_API_KEY"',
+            {"HOME": "/guest-home", "CUSTOM": "host-custom", "OPENAI_API_KEY": "first"},
+        ),
+    ],
+)
+def test_guest_receives_only_pick_or_explicit_bindings(
+    tmp_path, content, pick, expected
+):
+    (tmp_path / "config.toml").write_text(
+        f'[env]\nkeep = ["HOME", "CUSTOM", "OPENAI_API_KEY"]\npick = [{pick}]\n'
+    )
+    if content is not None:
+        (tmp_path / ".alice.env").write_text(content)
+    agent = resolve_agent_environment(
+        resolve_root_environment(
+            tmp_path,
+            {
+                "HOME": "/host-home",
+                "CUSTOM": "host-custom",
+                "OPENAI_API_KEY": "first",
+                "ANTHROPIC_API_KEY": "second",
+            },
+        ),
+        AgentLayout.resident(tmp_path, "alice"),
+    )
+    assert agent.guest_values == expected
+    assert agent.values["CUSTOM"] == "host-custom"
+    assert agent.values["HOME"] == ("/guest-home" if content else "/host-home")
+    assert "host-custom" not in repr(agent)
+
+
 def test_root_file_restricts_inheritance_and_supplies_central_values(tmp_path):
     (tmp_path / ".env").write_text("ANTHROPIC_API_KEY=central\nPATH=/custom\nEMPTY=\n")
     shell = {"PATH": "/bin", "OPENAI_API_KEY": "excluded", "UNRELATED": "private"}

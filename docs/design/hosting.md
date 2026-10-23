@@ -185,7 +185,9 @@ interpret plugin-specific path settings.
 
 The CLI resolves the [root/agent environment](setup.md#environments) before
 sandbox preparation. The host sandbox passes that concrete mapping to the
-workload. Docker accepts every selected name by default. An explicitly configured
+workload. Guests receive only explicit agent-file bindings or the picked
+variable; host-only `keep` values are not staged. Docker accepts every forwarded
+name by default. An explicitly configured
 legacy `environment_allow_pattern` can further narrow process names using a
 full-match regular expression:
 
@@ -199,9 +201,13 @@ read-only over `HOME/.env`. The controller does not separately reload authored
 dotenv files for staging. Public sandbox requests retain the legacy
 `dotenv_envs` input for trusted callers; those explicit names bypass the optional
 pattern. The original home `.env` remains hidden behind the nested mount.
-Bootstrap reads the generated file without interpolation, adds finite generated
-control/bootstrap paths, and starts the workload without unrelated image
-variables. Setup receives that final startup snapshot and never reloads staged
+Bootstrap preserves only native `PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL`,
+`LANG`, `LC_ALL`, `LC_CTYPE`, `TZ`, `TMPDIR`, `TMP`, `TEMP`, `TERM`, `COLORTERM`,
+and `NO_COLOR`, then overlays the staged bindings and generated control/bootstrap
+paths. Host configuration cannot widen this native allowlist. The image or its
+entrypoint supplies runtime defaults; Toolang does not infer users, shells,
+locales, or terminal settings. Other image/entrypoint variables are discarded.
+Setup receives that final startup snapshot and never reloads staged
 or authored dotenv during refresh.
 Toolang passes gateway, Toolang-root, sandbox, and workspace control values
 through Docker's environment arguments; `TOOLANG_ROOT` retains the selected

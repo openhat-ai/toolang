@@ -94,6 +94,7 @@ def test_launch_parses_controller_settings_without_widening_workload(
         AgentLayout.resident(tmp_path, "alice"),
         toolang_root=tmp_path,
         environ={"ADMITTED": "synthetic"},
+        guest_environ={"ADMITTED": "synthetic"},
         settings_environ={
             "TOOLANG_AGENT_PORT": "8123",
             "TOOLANG_LIMIT_TOKENS": "123",
@@ -113,6 +114,7 @@ def test_launch_parses_controller_settings_without_widening_workload(
         "TOOLANG_MODEL_CATALOG": str(tmp_path / "models.json"),
     }
     assert captured["port"] == 8123
+    assert captured["guest_environ"] == {"ADMITTED": "synthetic"}
     assert captured["limit_overrides"] == {"tokens": 123}
     assert captured["cors_allowed_origins"] == (
         "https://ui.example",

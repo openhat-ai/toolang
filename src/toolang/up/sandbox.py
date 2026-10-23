@@ -95,6 +95,7 @@ class LaunchSpec:
     log_path: Path | None = None
     dev_artifact: Path | None = None
     dotenv_envs: dict[str, str] = field(default_factory=dict, repr=False)
+    guest_environ: dict[str, str] | None = field(default=None, repr=False)
 
 
 @dataclass(slots=True)
@@ -118,6 +119,7 @@ async def resolve_launch(
     *,
     layout: AgentLayout,
     environ: Mapping[str, str],
+    guest_environ: Mapping[str, str] | None = None,
     sandbox: str | None = None,
     host: str = "127.0.0.1",
     endpoint_host: str | None = None,
@@ -172,6 +174,7 @@ async def resolve_launch(
         sandbox=selected,
         config=config,
         environ=dict(environ),
+        guest_environ=dict(guest_environ) if guest_environ is not None else None,
         output=output,
         log_path=log_path,
         dev_artifact=artifact,
@@ -419,7 +422,11 @@ async def _launch_locked(
             output=spec.output,
             log_path=spec.log_path,
             envs={
-                **spec.environ,
+                **(
+                    spec.environ
+                    if on_host or spec.guest_environ is None
+                    else spec.guest_environ
+                ),
                 **catalog_env,
                 "TOOLANG_HOST_LAUNCH": launch_id,
                 "TOOLANG_ROOT": str(

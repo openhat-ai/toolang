@@ -16,7 +16,7 @@ Tools and adapters share the resulting agent environment; this feature adds no
 separate permissions for them. Keychain support, credential brokers, plugin
 process isolation, and a new environment-management CLI are outside this scope.
 
-Success means every covered boundary receives the same resolved environment,
+Success means every covered boundary receives its resolved environment,
 unselected shell variables cannot reappear through Toolang's loaders, and common
 provider credentials work automatically when no explicit agent file exists.
 
@@ -154,14 +154,20 @@ passing a filtered adapter dictionary while leaving ambient `os.environ` intact
 is insufficient. Root commands and temporary agent commands use their respective
 environments, including inspection and `cd`.
 
-Carry the final agent mapping through host/guest startup, model calls, tool
+Carry the final host or guest mapping through startup, model calls, tool
 execution, and subprocess launch. Setup refreshes must retain this startup
 snapshot instead of rereading raw dotenv files or recovering the controller's
 environment. Environment changes take effect on restart; attachment to an
 existing server retains that server's environment.
 
-Guest staging must contain only resolved values, and bootstrap must not re-add
-unselected controller or image variables to the agent workload. Docker's default
+Following the guest-boundary refinement, `keep` is host-only. Guest staging
+contains only selected agent-file bindings or the picked variable, even when
+those names also occur in `keep`. Preserve that distinction in the startup
+snapshot rather than rereading files. Bootstrap takes a fixed allowlist of
+native base variables, overlays staged bindings and existing generated controls,
+and discards other image/entrypoint variables. Images and entrypoints own missing
+runtime defaults; Toolang does not infer users, shells, locales, or terminal
+settings. Explicit bindings can override native base values. Docker's default
 provider pattern must not independently veto a name admitted by this policy;
 retain an explicitly configured legacy pattern only as an additional narrowing
 filter. Preserve public sandbox factories and entry points.

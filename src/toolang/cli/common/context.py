@@ -259,11 +259,11 @@ def ui_base_url(*, environ: Mapping[str, str] | None = None) -> str:
     return resolve_ui_base_url(config, environ=values)
 
 
-def load_runtime_environ(
+def load_runtime_environment(
     layout: AgentLayout,
     *,
     base_environ: Mapping[str, str],
-) -> dict[str, str]:
+) -> ResolvedEnvironment:
     """Resolve once at the command boundary; reuse an active startup snapshot."""
     active = current_environment()
     root = layout.root or (
@@ -276,13 +276,22 @@ def load_runtime_environ(
         and active.root == root
         and active.identity == environment_identity(layout)
     ):
-        return dict(active.values)
+        return active
     parent = (
         active
         if active is not None and active.root == root and active.identity is None
         else resolve_root_environment(root, base_environ)
     )
-    merged = dict(resolve_agent_environment(parent, layout).values)
+    return resolve_agent_environment(parent, layout)
+
+
+def load_runtime_environ(
+    layout: AgentLayout,
+    *,
+    base_environ: Mapping[str, str],
+) -> dict[str, str]:
+    """Read the host mapping from the invocation's resolved snapshot."""
+    merged = dict(load_runtime_environment(layout, base_environ=base_environ).values)
     if merged.get("TOOLANG_MODEL_CATALOG"):
         merged["TOOLANG_MODEL_CATALOG"] = str(
             Path(merged["TOOLANG_MODEL_CATALOG"]).expanduser().resolve()

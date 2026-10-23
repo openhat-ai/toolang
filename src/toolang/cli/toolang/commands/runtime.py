@@ -64,7 +64,7 @@ from ...common.context import (
     context_layout,
     context_root,
     require_runtime_agent,
-    load_runtime_environ,
+    load_runtime_environment,
     resolve_model_catalog_option,
     ui_base_url,
     user_call,
@@ -712,7 +712,8 @@ def resolve_startup(
     existing = agents.AgentProcess(target).status(ui_base_url=ui_base_url())
     if existing is not None and existing.status in {"running", "preparing", "starting"}:
         raise ClickException(active_agent_error(existing))
-    environ = load_runtime_environ(target, base_environ=os.environ)
+    environment = load_runtime_environment(target, base_environ=os.environ)
+    environ = dict(environment.values)
     toolang_root = (
         toolang_root or target.root or Path(environ.get("TOOLANG_ROOT", str(place)))
     )
@@ -721,6 +722,7 @@ def resolve_startup(
         target,
         toolang_root=toolang_root,
         environ=environ,
+        guest_environ=environment.guest_values,
         drivers=drivers,
         lifetime="persistent" if background else "foreground",
         background=background,

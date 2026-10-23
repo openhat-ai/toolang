@@ -88,9 +88,13 @@ class ResolvedEnvironment:
     identity: str | None = field(default=None, repr=False)
     source: Path | None = field(default=None, repr=False)
     picked: str | None = None
+    guest_values: Mapping[str, str] = field(default_factory=dict, repr=False)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "values", MappingProxyType(dict(self.values)))
+        object.__setattr__(
+            self, "guest_values", MappingProxyType(dict(self.guest_values))
+        )
 
 
 _CURRENT: ContextVar[ResolvedEnvironment | None] = ContextVar(
@@ -214,17 +218,25 @@ def resolve_agent_environment(
         name: root.values[name] for name in root.policy.keep if name in root.values
     }
     picked = None
+    grants: dict[str, str] = {}
     if source is not None:
-        values.update(apply_environment_file(source, root.values))
+        grants = apply_environment_file(source, root.values)
     else:
         picked = next(
             (name for name in root.policy.pick if root.values.get(name, "").strip()),
             None,
         )
         if picked is not None:
-            values[picked] = root.values[picked]
+            grants[picked] = root.values[picked]
+    values.update(grants)
     return ResolvedEnvironment(
-        root.root, root.policy, values, environment_identity(layout), source, picked
+        root.root,
+        root.policy,
+        values,
+        environment_identity(layout),
+        source,
+        picked,
+        guest_values=grants,
     )
 
 

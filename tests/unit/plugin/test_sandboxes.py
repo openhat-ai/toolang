@@ -842,7 +842,6 @@ def test_docker_guest_reuses_uv_and_preserves_generated_environment(
         },
         process_envs={
             "LITERAL": "process ${HOME}",
-            "PATH": f"{tools}{os.pathsep}{os.environ['PATH']}",
             "TOOLANG_TEST_INSTALL_ENV_LOG": str(tmp_path / "install-env"),
             "TOOLANG_TEST_TOO": str(tools / "too-template"),
         },
@@ -868,6 +867,8 @@ def test_docker_guest_reuses_uv_and_preserves_generated_environment(
             "'instance': os.environ['TOOLANG_SANDBOX_INSTANCE'], "
             "'literal': os.environ['LITERAL'], "
             "'multiline': os.environ['MULTILINE'], "
+            "'home': os.environ['HOME'], "
+            "'lang': os.environ['LANG'], "
             "'image_secret': os.environ.get('IMAGE_SECRET')}))",
         ),
         check=False,
@@ -880,6 +881,8 @@ def test_docker_guest_reuses_uv_and_preserves_generated_environment(
             "TOOLANG_TEST_INSTALL_ENV_LOG": str(tmp_path / "install-env"),
             "TOOLANG_TEST_TOO": str(tools / "too-template"),
             "IMAGE_SECRET": "excluded-image-secret",
+            "HOME": str(tmp_path / "container-home"),
+            "LANG": "C",
             "TOOLANG_GUEST_RUNTIME": str(tmp_path / "runtime"),
         },
     )
@@ -889,6 +892,8 @@ def test_docker_guest_reuses_uv_and_preserves_generated_environment(
         "instance": _CONTAINER_ID[:12],
         "literal": "process ${HOME}",
         "multiline": "first\nsecond\rthird",
+        "home": str(tmp_path / "container-home"),
+        "lang": "C",
         "image_secret": None,
     }
     assert completed.stderr.splitlines() == [

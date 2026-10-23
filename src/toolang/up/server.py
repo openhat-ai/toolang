@@ -307,6 +307,7 @@ def serve(
         identity=environment_identity(spec.layout),
         source=active.source if active is not None else None,
         picked=active.picked if active is not None else None,
+        guest_values=active.guest_values if active is not None else environ,
     )
     with environment_scope(environment):
         return _serve_captured(
