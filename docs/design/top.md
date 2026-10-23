@@ -39,7 +39,7 @@ incomplete totals are null rather than partial values presented as complete.
 
 The summary order is `agents:`, `usage:`, `runs:`, followed by the table.
 Their left-hand names have normal intensity. Only the right-aligned time captions
-are dim: `right now`, `last <Period>`, and `last <Recent>`. The agents line shows
+are dim: `now`, `last <Period>`, and `last <Recent>`. The agents line shows
 resident, visiting and roaming scope counts. It does not show running/total
 counts. JSON retains `summary.running` for confirmed running instances and
 `summary.total` for the complete roster, including stopped residents.
