@@ -28,6 +28,13 @@ source version and `api_version: 0`; `HUB_API_VERSION` also versions publication
 staging, and event wires. The one-shot hub roster describes discovered instances
 and recorded launches, not delivery or live presence.
 
+Agent clients read `ROOT/hub/hub.json`. When `TOOLANG_HOST_GATEWAY` is set,
+they route the discovered loopback endpoint through that gateway using the same
+URL transformation as local model catalogs. The recorded port, human, and
+backend identity remain unchanged; record refresh and batch identity pinning
+still apply. The record must be visible below the selected guest root, and the
+Hub listener must be reachable through the gateway.
+
 hub store schema `5` owns messaging and execution-event data. Incompatible or
 corrupt initialized stores fail closed without resets, mutation, or import.
 All Hub keys use `toolang:<root_code>:v0:`, including execution events and Talk
