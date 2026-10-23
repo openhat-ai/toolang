@@ -4,7 +4,7 @@ from collections.abc import Callable
 
 from wcwidth import iter_graphemes, strip_sequences, wcswidth
 
-TITLE_WIDTH = 32
+TITLE_WIDTH = 128
 
 
 def safe_text(text: str) -> str:
