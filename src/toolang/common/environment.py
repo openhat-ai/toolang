@@ -117,6 +117,8 @@ def apply_environment_file(path: Path, parent: Mapping[str, str]) -> dict[str, s
     seen: set[str] = set()
     display_path = _display_path(path)
     try:
+        if not path.is_file():
+            raise ValueError(f"could not read environment file: {display_path}")
         with path.open(encoding="utf-8") as stream:
             for binding in parse_stream(stream):
                 name = binding.key
@@ -231,17 +233,19 @@ def environment_scope(environment: ResolvedEnvironment) -> Iterator[None]:
     """Install an invocation's environment until all of its work has stopped."""
     previous = dict(os.environ)
     token = _CURRENT.set(environment)
-    logger.info(
-        "environment.selected identity=%s source=%s pick=%s",
-        "visiting"
-        if environment.identity and environment.identity.startswith("visiting:")
-        else environment.identity or "root",
-        _display_path(environment.source) if environment.source is not None else "none",
-        environment.picked or "none",
-    )
     try:
         os.environ.clear()
         os.environ.update(environment.values)
+        logger.info(
+            "environment.selected identity=%s source=%s pick=%s",
+            "visiting"
+            if environment.identity and environment.identity.startswith("visiting:")
+            else environment.identity or "root",
+            _display_path(environment.source)
+            if environment.source is not None
+            else "none",
+            environment.picked or "none",
+        )
         yield
     finally:
         os.environ.clear()

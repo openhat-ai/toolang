@@ -272,6 +272,7 @@ def test_uninspectable_environment_file_fails_instead_of_using_automatic_policy(
 ):
     import errno
     from pathlib import Path
+    import traceback
 
     ref = "https://user:private-userinfo@example.invalid/alice.too?token=private-query"
     layout = AgentLayout.visiting(ref, "alice", root=tmp_path)
@@ -281,15 +282,15 @@ def test_uninspectable_environment_file_fails_instead_of_using_automatic_policy(
 
     def inspect(path):
         if path == policy_file:
-            raise OSError(getattr(errno, error_name), "Cannot inspect file")
+            raise OSError(getattr(errno, error_name), "Cannot inspect file", str(path))
         return original(path)
 
     monkeypatch.setattr(Path, "lstat", inspect)
     with pytest.raises(ValueError, match="could not inspect environment file") as error:
         resolve_agent_environment(root, layout)
-    assert "private-userinfo" not in str(error.value)
-    assert "private-query" not in str(error.value)
-    assert error.value.__suppress_context__
+    output = "".join(traceback.format_exception(error.value, limit=0))
+    assert "private-userinfo" not in output
+    assert "private-query" not in output
 
 
 def test_configured_lists_replace_defaults_and_skip_blank_values(tmp_path):
@@ -381,6 +382,54 @@ def test_selection_provenance_does_not_log_values(tmp_path, caplog):
     assert "synthetic-secret" not in caplog.text
 
 
+def test_logging_handlers_receive_the_selected_environment(tmp_path, monkeypatch):
+    import os
+    from toolang.common import environment
+
+    monkeypatch.setenv("PRIVATE_SENTINEL", "caller-private")
+    monkeypatch.setenv("ADMITTED", "caller-value")
+    selected = resolve_root_environment(tmp_path, {"ADMITTED": "startup-value"})
+    observed = []
+
+    def report(*_args):
+        observed.append(
+            (os.environ.get("PRIVATE_SENTINEL"), os.environ.get("ADMITTED"))
+        )
+
+    monkeypatch.setattr(environment.logger, "info", report)
+    with environment_scope(selected):
+        pass
+    assert observed == [(None, "startup-value")]
+    assert os.environ["PRIVATE_SENTINEL"] == "caller-private"
+
+
+def test_logging_failure_restores_environment_context(tmp_path, monkeypatch):
+    import os
+    from contextvars import ContextVar
+    from toolang.common import environment
+
+    # Keep a cleanup failure from affecting other tests.
+    monkeypatch.setattr(
+        environment, "_CURRENT", ContextVar("test_environment", default=None)
+    )
+    monkeypatch.setenv("PRIVATE_SENTINEL", "caller-private")
+    monkeypatch.setenv("ADMITTED", "caller-value")
+    selected = resolve_root_environment(tmp_path, {"ADMITTED": "startup-value"})
+
+    def fail(*_args):
+        raise RuntimeError("logging failed")
+
+    monkeypatch.setattr(environment.logger, "info", fail)
+    with (
+        pytest.raises(RuntimeError, match="logging failed"),
+        environment_scope(selected),
+    ):
+        pytest.fail("logging failure must abort entry")
+    assert current_environment() is None
+    assert os.environ["PRIVATE_SENTINEL"] == "caller-private"
+    assert os.environ["ADMITTED"] == "caller-value"
+
+
 def test_unreadable_agent_file_does_not_fall_back(tmp_path):
     layout = AgentLayout.resident(tmp_path, "alice")
     layout.home.mkdir(parents=True)
@@ -388,6 +437,24 @@ def test_unreadable_agent_file_does_not_fall_back(tmp_path):
     (tmp_path / ".alice.env").symlink_to(tmp_path / "missing")
     with pytest.raises(ValueError, match="could not read environment file"):
         resolve_agent_environment(resolve_root_environment(tmp_path, {}), layout)
+
+
+def test_environment_file_rejects_fifo_before_opening_it(tmp_path, monkeypatch):
+    import os
+    from pathlib import Path
+
+    path = tmp_path / ".env"
+    os.mkfifo(path)
+    original = Path.open
+
+    def open_file(candidate, *args, **kwargs):
+        if candidate == path:
+            pytest.fail("opening a FIFO could block environment resolution")
+        return original(candidate, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", open_file)
+    with pytest.raises(ValueError, match="could not read environment file"):
+        resolve_root_environment(tmp_path, {"OPENAI_API_KEY": "excluded"})
 
 
 @pytest.mark.parametrize("local_file", [False, True])
@@ -458,9 +525,7 @@ def test_source_url_credentials_are_private_in_environment_file_errors(
         resolve_agent_environment(
             root, AgentLayout.visiting(ref, "alice", root=tmp_path)
         )
-    output = "".join(traceback.format_exception_only(error.value))
-    if not invalid:
-        assert error.value.__suppress_context__
+    output = "".join(traceback.format_exception(error.value, limit=0))
     for marker in (
         "private-userinfo",
         "private-query",

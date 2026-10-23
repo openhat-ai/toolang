@@ -87,10 +87,11 @@ OPTION=
 LITERAL='${HOME}/literal'
 ```
 
-Ordinary comments and quoting are supported without interpolation. Malformed,
-duplicate, or unreadable bindings fail with path/line diagnostics that omit
-values. A bare agent name cannot recover a caller variable excluded by the root
-file. Centralize values in `ROOT/.env` and normally use bare names in agent
+Ordinary comments and quoting are supported without interpolation. Malformed or
+duplicate bindings fail with path/line diagnostics that omit values. Unreadable
+or nonregular files also fail without falling back. A bare agent binding cannot
+recover a caller variable excluded by the root file. Centralize values in
+`ROOT/.env` and normally use bare names in agent
 files. Root agent files are independent of generated homes and runtime instances,
 so policy survives home removal and is reused for the same stable identity.
 
@@ -103,12 +104,24 @@ values. HTTP source filenames are redacted in logs and errors because their
 reversible spelling may contain URL credentials; visiting identities are omitted
 from selection logs. [Hosting](hosting.md) owns guest transport.
 
-Setup captures its environment when created and retains it across refreshes.
-Changing dotenv or shell values requires a restart; attaching to a running server
-keeps that server's environment. This replaces the earlier full process
-inheritance, process-over-dotenv precedence, and dotenv hot reload: explicitly
-list required credentials, proxy/certificate variables, or other dependencies in
-an agent file, and restart existing servers after migration.
+Dotenv retains comments, quoting, literal assignments, empty values, and the
+resident `HOME/.env` fallback. Its role changes from supplying defaults to
+selecting and assigning the environment that every execution path shares:
+
+| Behavior | Previous | Current |
+| --- | --- | --- |
+| `ROOT/.env` | Defaults below the full process environment | `keep(shell)` plus file bindings |
+| Agent inheritance | Full process environment | `keep` plus one automatic credential or the selected file |
+| Agent file precedence | Merge `PLACE/.env` and `HOME/.env`; process values win | First agent file only; explicit assignments win |
+| Bare `NAME` | Discarded | Inherit that name from the resolved parent |
+| Duplicate names | Last assignment wins | Configuration error |
+| Refresh | Reread dotenv during Setup refresh | Startup snapshot; restart to apply edits |
+
+Roaming previously used process variables without loading project dotenv; it
+now follows the source-specific policy above. Setup retains its startup mapping
+across refreshes, and attachment keeps the running server's environment. List
+required credentials, proxy/certificate variables, and other dependencies in an
+agent file, then restart existing servers after migration.
 
 This controls initial propagation, without adding filesystem, memory, or OS
 isolation. User code and shell startup files can load other values; admitted
