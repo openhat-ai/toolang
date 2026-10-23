@@ -332,8 +332,9 @@ talk = "[too] "
 Precedence is `TOOLANG_TITLE_PREFIX_<TYPE>` > agent-home config > root
 config > empty. Omitted keys inherit; explicit empty strings clear. Root-only
 views skip agent-home config. Roaming/scripts use their existing outer-to-inner
-project `toolang.toml` layers. Environment values use `PLACE/.env` < `HOME/.env`
-< process ordering; roaming/scripts use the process environment only.
+project `toolang.toml` layers. Controller title settings are captured before the
+[agent environment](setup.md#environments) is installed; excluded names are not
+forwarded to the workload.
 
 For a one-off override, set the type's environment variable:
 

@@ -109,6 +109,12 @@ class CliCommand(TyperCommand):
 
     context_class = HelpContext
 
+    def invoke(self, ctx: Context) -> Any:
+        from .context import command_environment
+
+        with command_environment(ctx):
+            return super().invoke(ctx)
+
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         install_agent_parameter(self)
@@ -166,6 +172,13 @@ class CliCommand(TyperCommand):
             else:
                 pieces.extend(parameter_usage(param, ctx))
         return pieces
+
+
+class MetadataCommand(CliCommand):
+    """Offline metadata commands that never load user factories or execute code."""
+
+    def invoke(self, ctx: Context) -> Any:
+        return TyperCommand.invoke(self, ctx)
 
 
 class CliGroup(TyperGroup):

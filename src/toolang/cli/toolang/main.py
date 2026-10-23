@@ -14,7 +14,7 @@ from rich.text import Text
 from typer._click import Context, HelpFormatter as NativeHelpFormatter
 from typer._click.core import augment_usage_errors
 from typer._click.exceptions import ClickException
-from typer.core import TyperGroup
+from typer.core import TyperCommand, TyperGroup
 
 from toolang.common.typer.ui import HelpFormatter, run
 from toolang.cli.common.parameters import RootOption
@@ -22,7 +22,7 @@ from toolang.common.typer.options import BARE_VALUE, OptionalValue, OptionalValu
 
 from ...common import version as _version
 from ..common.context import CliContext, resolve_root
-from ..common.help import CliCommand, CliGroup, HelpContext, show_help
+from ..common.help import CliCommand, CliGroup, HelpContext, MetadataCommand, show_help
 from ..common.lazy import LazyCommand, lazy_typer_command, lazy_typer_group
 from . import routing
 
@@ -164,6 +164,11 @@ class _InspectCommand(CliCommand):
 
 
 class _TalkCommand(CliCommand):
+    def invoke(self, ctx: Context) -> Any:
+        if ctx.params.get("target") is None:
+            return TyperCommand.invoke(self, ctx)
+        return super().invoke(ctx)
+
     def write_help_sections(self, ctx: Context, formatter: HelpFormatter) -> None:
         super().write_help_sections(ctx, formatter)
         prefix = f"{ctx.find_root().info_name} talk"
@@ -300,7 +305,11 @@ def callback(
     except ValueError as exc:
         raise ClickException(str(exc)) from exc
     root = resolve_root(toolang_root)
-    ctx.obj = CliContext(root=root)
+    # A managed server receives its complete startup snapshot from its controller.
+    if ctx.invoked_subcommand == "_serve":
+        ctx.obj = CliContext(root=root)
+        return
+    ctx.obj = CliContext(root=root, shell_environment=dict(os.environ))
 
 
 class _MoreCommandsCommand(CliCommand):
@@ -537,24 +546,28 @@ _registered_command(
 _registered_command(
     "catalogs",
     "toolang.cli.toolang.commands.plugin:list_catalogs",
+    cls=MetadataCommand,
     help="List installed model catalogs",
     hidden=True,
 )
 _registered_command(
     "adapters",
     "toolang.cli.toolang.commands.plugin:adapters_command",
+    cls=MetadataCommand,
     help="List installed model adapters",
     hidden=True,
 )
 _registered_command(
     "toolsets",
     "toolang.cli.toolang.commands.plugin:list_toolsets",
+    cls=MetadataCommand,
     help="List installed toolsets",
     hidden=True,
 )
 _registered_command(
     "sandboxes",
     "toolang.cli.toolang.commands.plugin:list_sandboxes",
+    cls=MetadataCommand,
     help="List installed sandboxes",
     hidden=True,
 )

@@ -3,7 +3,7 @@
 import json
 from os.path import relpath
 from pathlib import Path
-from shutil import get_terminal_size
+from .context import get_terminal_size
 from collections.abc import Mapping, Sequence
 from typing import cast
 

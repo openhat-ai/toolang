@@ -12,8 +12,6 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Iterator, cast
 
-from dotenv import dotenv_values
-
 from toolang.base.model_settings import apply_model_override, parse_model_body
 from toolang.base.money import normalize_cost
 from toolang.base.types.model import (
@@ -26,6 +24,12 @@ from toolang.base.types.policy import AgentCeiling, RunDefaults, RunLimits
 from toolang.common.errors import ToolangError
 from toolang.common.layout import AgentLayout
 from toolang.common.config_sources import read_config
+from toolang.common.environment import (
+    current_environment,
+    environment_identity,
+    resolve_root_environment,
+    resolve_agent_environment,
+)
 from toolang.common.policy import resolve_query_sentinels
 
 from .types import CompactConfig, TalkConfig
@@ -68,29 +72,35 @@ def load_agent_config(layout: AgentLayout) -> dict[str, object]:
 
 
 def load_setup_envs(layout: AgentLayout) -> dict[str, str]:
-    """Load place and home dotenv defaults below the process environment."""
-
-    envs = load_setup_dotenvs(layout)
-    envs.update(os.environ)
-    return envs
+    """Resolve an agent boundary, or reuse its already installed snapshot."""
+    active = current_environment()
+    root = layout.root or (
+        layout.place
+        if layout.placement == "resident"
+        else Path(os.environ.get("TOOLANG_ROOT", str(Path.home() / ".toolang")))
+    )
+    if (
+        active is not None
+        and active.root == root
+        and active.identity == environment_identity(layout)
+    ):
+        return dict(active.values)
+    parent = (
+        active
+        if active is not None and active.root == root and active.identity is None
+        else resolve_root_environment(root, os.environ)
+    )
+    return dict(resolve_agent_environment(parent, layout).values)
 
 
 def load_place_setup_envs(layout: AgentLayout) -> dict[str, str]:
-    """Load place dotenv defaults below the process environment."""
-
-    envs = _load_dotenv(layout.place_env)
-    envs.update(os.environ)
-    return envs
-
-
-def load_setup_dotenvs(layout: AgentLayout) -> dict[str, str]:
-    """Load the merged place and home dotenv values without process values."""
-
-    if layout.project_inputs:
-        return {}
-    envs = _load_dotenv(layout.place_env)
-    envs.update(_load_dotenv(layout.env))
-    return envs
+    """Resolve root-only inspection without loading home defaults."""
+    active = current_environment()
+    if active is not None and active.root == (layout.root or layout.place):
+        return dict(active.values)
+    return dict(
+        resolve_root_environment(layout.root or layout.place, os.environ).values
+    )
 
 
 def project_setup_config(config: Mapping[str, object]) -> dict[str, object]:
@@ -418,16 +428,6 @@ def _query_values(name: str, value: object) -> tuple[str, ...] | None:
         )
     except ToolangError as error:
         raise ValueError(str(error)) from error
-
-
-def _load_dotenv(path: Path) -> dict[str, str]:
-    if not path.is_file():
-        return {}
-    return {
-        key: value
-        for key, value in dotenv_values(path, interpolate=False).items()
-        if isinstance(key, str) and isinstance(value, str)
-    }
 
 
 def _mutable_value(value: object) -> object:

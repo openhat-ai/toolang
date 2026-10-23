@@ -62,9 +62,10 @@ class AgentEnvironment:
 
         if not sandbox or sandbox != sandbox.strip():
             raise ValueError("agent environment requires a canonical sandbox")
-        location = os.environ.get(
-            "TOOLANG_WORKSPACE_LOCATION",
-            "host" if sandbox.partition(":")[0] == "host" else "guest",
+        location = (
+            "host"
+            if sandbox == "host"
+            else os.environ.get("TOOLANG_WORKSPACE_LOCATION", "guest")
         )
         if location not in {"host", "guest"}:
             raise ValueError("invalid sandbox workspace location")
@@ -248,7 +249,7 @@ class AgentSetup:
     """One immutable setup generation with independently lazy resources."""
 
     layout: AgentLayout
-    envs: Mapping[str, str]
+    envs: Mapping[str, str] = field(repr=False)
     revision: str = ""
     environment: AgentEnvironment | None = None
     defaults: RunDefaults = RunDefaults()

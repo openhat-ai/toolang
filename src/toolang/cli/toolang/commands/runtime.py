@@ -622,8 +622,9 @@ def serve(
         project_inputs=source_policy == "project",
         managed_membership=membership == "managed",
     )
-    environ = load_runtime_environ(layout, base_environ=os.environ)
+    environ = dict(os.environ)
     environ["TOOLANG_ROOT"] = str(context_root(ctx))
+    environ["TOOLANG_SANDBOX"] = sandbox
     if model_catalog := resolve_model_catalog_option(model_catalog):
         environ[MODEL_CATALOG_ENV] = str(model_catalog)
     spec = user_call(

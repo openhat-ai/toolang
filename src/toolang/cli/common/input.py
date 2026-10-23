@@ -20,6 +20,9 @@ INPUTBOX_MAX_WIDTH_ENV = "TOOLANG_INPUTBOX_MAX_WIDTH"
 def resolve_inputbox_max_width(environ: Mapping[str, str], *, fallback: int) -> int:
     """Resolve the input area's positive maximum width at the command boundary."""
 
+    from toolang.cli.common.context import startup_environ
+
+    environ = startup_environ(environ)
     raw = environ.get(INPUTBOX_MAX_WIDTH_ENV)
     if raw is None:
         return fallback

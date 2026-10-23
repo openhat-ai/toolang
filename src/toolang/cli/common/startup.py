@@ -21,6 +21,7 @@ from .policy import (
     resolve_limit_overrides,
 )
 from .ports import agent_port
+from .context import startup_environ, resolve_model_catalog_option
 
 
 def resolve_attachment_requirements(
@@ -70,6 +71,7 @@ def resolve_runtime_launch(
     *,
     toolang_root: Path,
     environ: Mapping[str, str],
+    settings_environ: Mapping[str, str] | None = None,
     sandbox: str | None,
     dev: Path | None,
     lifetime: ServerLifetime,
@@ -90,17 +92,22 @@ def resolve_runtime_launch(
 ) -> sandbox_runtime.LaunchSpec:
     """Use the same environment, policy, logging, and launch resolution sequence."""
     environ = dict(environ)
+    settings = startup_environ({**(settings_environ or {}), **environ})
+    if model_catalog is None and (configured := settings.get(MODEL_CATALOG_ENV)):
+        model_catalog = Path(configured)
+    model_catalog = resolve_model_catalog_option(model_catalog)
     environ["TOOLANG_ROOT"] = str(toolang_root)
     if model_catalog is not None:
         environ[MODEL_CATALOG_ENV] = str(model_catalog)
+    settings.update(environ)
     port = (
         None
         if temporary_port
-        else agent_port(layout, port, environ=environ) or active_port
+        else agent_port(layout, port, environ=settings) or active_port
     )
     log_plan = resolve_agent_logging(
         mode="start" if background else "run",
-        environ=environ,
+        environ=settings,
         agent_log_path=layout.runtime_log,
     )
     if not background:
@@ -117,11 +124,11 @@ def resolve_runtime_launch(
             endpoint_host=endpoint_host,
             port=port,
             temporary_port=temporary_port,
-            environ=log_plan.environ,
-            ceiling_overrides=resolve_ceiling_overrides(environ, allows),
-            default_overrides=resolve_default_overrides(environ, defaults),
-            limit_overrides=resolve_limit_overrides(environ, limits),
-            compact_override=compact_override or resolve_compact_override(environ),
+            environ=environ,
+            ceiling_overrides=resolve_ceiling_overrides(settings, allows),
+            default_overrides=resolve_default_overrides(settings, defaults),
+            limit_overrides=resolve_limit_overrides(settings, limits),
+            compact_override=compact_override or resolve_compact_override(settings),
             log_spec=log_plan.spec,
             output="file" if background else "inherit",
             log_path=log_plan.path,

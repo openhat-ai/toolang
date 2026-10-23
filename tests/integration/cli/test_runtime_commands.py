@@ -228,7 +228,7 @@ def _launch_spec(
 @pytest.mark.parametrize(
     ("process_sandbox", "expected", "merged"),
     [
-        (None, "host", "docker:spoofed"),
+        (None, "host", "host"),
         (
             "docker:python:3.13-slim",
             "docker:python:3.13-slim",

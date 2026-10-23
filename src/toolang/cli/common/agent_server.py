@@ -32,7 +32,7 @@ from toolang.up.types import (
 )
 from toolang.up.config import placement_policy
 
-from .context import load_runtime_environ, resolve_root
+from .context import load_root_environ, load_runtime_environ, resolve_root
 from .server_lease import ServerLease
 from .parameters import DEVELOPMENT_WHEEL_HELP as DEVELOPMENT_WHEEL_HELP
 from .startup import resolve_attachment_requirements, resolve_runtime_launch
@@ -557,6 +557,10 @@ def _resolve_launch(
             layout,
             toolang_root=toolang_root,
             environ=environ,
+            settings_environ=load_root_environ(
+                toolang_root,
+                base_environ=os.environ if base_environ is None else base_environ,
+            ),
             sandbox=sandbox,
             dev=dev,
             model_catalog=model_catalog,

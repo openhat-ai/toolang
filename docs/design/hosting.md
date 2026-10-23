@@ -183,31 +183,26 @@ reference. Each plugin owns its agent root configuration and reports whether
 the workload runs on the host or in a guest environment; orchestration does not
 interpret plugin-specific path settings.
 
-The host fixes the workload's runtime environment before sandbox preparation.
-Docker includes every name authored in `PLACE/.env` or `HOME/.env`, then includes
-host-process names that match its default environment allow pattern.
-That pattern covers Toolang controls, proxy and certificate settings, Python
-bootstrap settings, and common model-provider variables. Override it with a
-full-match regular expression when another process variable is required:
+The CLI resolves the [root/agent environment](setup.md#environments) before
+sandbox preparation. The host sandbox passes that concrete mapping to the
+workload. Docker accepts every selected name by default. An explicitly configured
+legacy `environment_allow_pattern` can further narrow process names using a
+full-match regular expression:
 
 ```toml
 [plugin.sandbox.docker]
 environment_allow_pattern = '^(?:COMPANY_CATALOG_TOKEN|HTTPS?_PROXY)$'
 ```
 
-The configured pattern replaces the default and is compiled as written. Agent
-root dotenv values are overlaid by home dotenv values without applying the pattern.
-A host-process value overrides those layers only when its name matches the
-pattern.
-
-Docker writes the selected mapping to one mode-`0600` staged dotenv file. Its
-comments separate merged agent root/home dotenv values from filtered host-process
-values, with the process section last to preserve precedence. The file is
-bind-mounted read-only over `HOME/.env`; `PLACE/.env` is not mounted, and the
-original home `.env` remains hidden behind the nested file
-mount. A small bootstrap reads this same generated dotenv into the guest process
-before package installation or plugin loading. Dotenv values are literal on
-both host and guest, so `${NAME}` is not expanded during either load.
+Docker writes resolved values to a mode-`0600` staged dotenv file, bind-mounted
+read-only over `HOME/.env`. The controller does not separately reload authored
+dotenv files for staging. Public sandbox requests retain the legacy
+`dotenv_envs` input for trusted callers; those explicit names bypass the optional
+pattern. The original home `.env` remains hidden behind the nested mount.
+Bootstrap reads the generated file without interpolation, adds finite generated
+control/bootstrap paths, and starts the workload without unrelated image
+variables. Setup receives that final startup snapshot and never reloads staged
+or authored dotenv during refresh.
 Toolang passes gateway, Toolang-root, sandbox, and workspace control values
 through Docker's environment arguments; `TOOLANG_ROOT` retains the selected
 Toolang root, and `_serve` receives the mapped place explicitly. Docker maps

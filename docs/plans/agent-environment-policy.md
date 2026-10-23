@@ -1,8 +1,8 @@
 # Define Root and Agent Environments
 
-Status: Draft for review. Environment rules discussed on 2026-10-23;
-path/ref/URL filename encoding is intentionally reserved for a later decision.
-Work type: feature definition. This PR ships no implementation.
+Status: Approved in #937; implementation covers the environment rules below.
+Nonresident root-file lookup remains deferred with the reserved path/ref/URL codec.
+Work type: feature implementation.
 
 ## Goal and Scope
 
@@ -20,7 +20,7 @@ Success means every covered boundary receives the same resolved environment,
 unselected shell variables cannot reappear through Toolang's loaders, and common
 provider credentials work automatically when no explicit agent file exists.
 
-## Verified Current Behavior
+## Behavior Before Implementation
 
 - [CLI context](../../src/toolang/cli/common/context.py) and
   [Setup configuration](../../src/toolang/setup/config.py) independently merge
@@ -181,21 +181,21 @@ values, and an agent can read a credential explicitly admitted to its environmen
 
 ## Implementation Plan
 
-- [ ] Add a shared, explicit environment binding/resolution helper; parse the
-  root lists in `cli/config.py`, and resolve root/layout inputs in
+- [x] Add a shared, explicit environment binding/resolution helper; parse the
+  root-only lists there, and resolve root/layout inputs in
   `cli/common/context.py`.
-- [ ] Route agent startup, root/agent inspection, and `cd` through the resolver
+- [x] Route agent startup, root/agent inspection, and `cd` through the resolver
   using existing CLI entry points and lifecycle ownership.
-- [ ] Thread the captured mapping through `up/sandbox.py`, `up/server.py`, and
+- [x] Thread the captured mapping through `up/sandbox.py`, `up/server.py`, and
   Setup configuration/watcher inputs; remove independent dotenv reload paths.
-- [ ] Align host/Docker startup, guest staging/bootstrap, and subprocess
+- [x] Align host/Docker startup, guest staging/bootstrap, and subprocess
   environments; preserve trusted generated controls without ambient widening.
-- [ ] Add the acceptance tests below and verify diagnostics expose provenance
+- [x] Add the acceptance tests below and verify diagnostics expose provenance
   without values. Use existing CLI, Setup, sandbox, and toolset test modules.
-- [ ] Update the focused Setup, Hosting, Plugins, Scripts, and CLI design docs
+- [x] Update the focused Setup, Hosting, Plugins, Scripts, and CLI design docs
   and migration guidance; generate the user-visible changelog through `aid.too`
   according to repository policy.
-- [ ] Run focused tests, then `uv run ruff check .`, `uv run ruff format --check .`,
+- [x] Run focused tests, then `uv run ruff check .`, `uv run ruff format --check .`,
   `uv run ty check`, and `uv run pytest -n auto` before implementation commits.
 
 ## Acceptance Tests

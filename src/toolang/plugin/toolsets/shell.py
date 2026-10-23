@@ -79,6 +79,7 @@ class ShellToolset:
                     "-lc",
                     command,
                     cwd=str(resolved_cwd),
+                    env=dict(os.environ),
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                     start_new_session=True,

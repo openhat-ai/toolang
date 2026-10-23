@@ -267,6 +267,53 @@ def serve(
     launch_id: str | None = None,
     location: str = "host",
 ) -> int:
+    from toolang.common.environment import (
+        EnvironmentPolicy,
+        ResolvedEnvironment,
+        current_environment,
+        environment_identity,
+        environment_scope,
+    )
+
+    active = current_environment()
+    environ = dict(environ)
+    environ.update(
+        {
+            "TOOLANG_ROOT": str(
+                spec.toolang_root or spec.layout.root or spec.layout.place
+            ),
+            "TOOLANG_SANDBOX": sandbox,
+        }
+    )
+    if location == "host":
+        environ["TOOLANG_WORKSPACE_LOCATION"] = "host"
+        environ["TOOLANG_WORKSPACE_MOUNTS"] = "{}"
+    environment = ResolvedEnvironment(
+        spec.toolang_root or spec.layout.root or spec.layout.place,
+        active.policy if active is not None else EnvironmentPolicy(),
+        environ,
+        identity=environment_identity(spec.layout),
+        source=active.source if active is not None else None,
+        picked=active.picked if active is not None else None,
+    )
+    with environment_scope(environment):
+        return _serve_captured(
+            spec,
+            environ=environ,
+            sandbox=sandbox,
+            launch_id=launch_id,
+            location=location,
+        )
+
+
+def _serve_captured(
+    spec: ServeSpec,
+    *,
+    environ: Mapping[str, str],
+    sandbox: str,
+    launch_id: str | None,
+    location: str,
+) -> int:
     """Retry automatic host binds only after releasing each failed generation."""
     owns_control = location == "host" and not (launch_id or spec.launch_id)
     for attempt in range(3):
@@ -397,6 +444,7 @@ def _serve_once(
         )
         core = AgentCore(
             spec.layout,
+            environ=environ,
             lifecycle=lifecycle,
             drivers=spec.drivers,
             sandbox=sandbox,

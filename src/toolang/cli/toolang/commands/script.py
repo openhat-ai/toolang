@@ -45,7 +45,11 @@ from toolang.lang.types import display_runnable_ref
 from toolang.plugin.models.query import first_model_ref
 
 from ...common.terminal_surfaces import resolve_terminal_surfaces
-from ...common.context import load_runtime_environ
+from ...common.context import (
+    load_runtime_environ,
+    startup_environ,
+    resolve_model_catalog_option,
+)
 from ...common.workspaces import (
     WorkspaceOptions,
     WorkdirOption,
@@ -108,6 +112,14 @@ def script_context(
     shown = label if parent.meta.get(_IMPLICIT_ENTRY) else f"{info_name} {label}"
     if not tail and _entry_command_name(command) is None:
         tail = ["--help"]
+    from ...common.context import cli_context, target_context
+
+    if not parent.resilient_parsing:
+        root_state = cli_context(parent)
+        state = target_context(root_state.root, Path(label).expanduser().resolve())
+        state.root_environment = root_state.root_environment
+        state.shell_environment = root_state.shell_environment
+        extra["obj"] = state
     return command.make_context(shown, tail, parent=parent, **extra)
 
 
@@ -257,7 +269,7 @@ class _RunnableCommand(OptionalValueCommand, CliCommand):
 
     def invoke(self, ctx: Context) -> Any:
         try:
-            result = TyperCommand.invoke(self, ctx)
+            result = CliCommand.invoke(self, ctx)
             if isinstance(result, int) and result:
                 raise typer.Exit(result)
             return result
@@ -773,7 +785,7 @@ def _run(
                 accept(run_id)
                 log_plan = resolve_agent_logging(
                     mode="script",
-                    environ=os.environ,
+                    environ=startup_environ(os.environ),
                     run_log_path=layout.run_log(runnable, run_id),
                 )
                 configure_logging_plan(log_plan)
@@ -1254,9 +1266,12 @@ async def _execute(
     from ...common.script_progress.blocks import RunContext
 
     environ = load_runtime_environ(layout, base_environ=os.environ)
-    allow_overrides = resolve_ceiling_overrides(environ)
+    settings = startup_environ(environ)
+    allow_overrides = resolve_ceiling_overrides(settings)
     core = AgentCore(
         layout,
+        environ=environ,
+        model_catalog=resolve_model_catalog_option(None),
         sandbox=sandbox,
         drivers=frozenset(),
         store=store,
@@ -1266,9 +1281,9 @@ async def _execute(
         workspace_additions=state.workspace_additions,
         lifecycle=ServerLifecycle(workload.token, "foreground") if workload else None,
         ceiling_overrides=allow_overrides,
-        default_overrides=resolve_default_overrides(environ),
-        limit_overrides=resolve_limit_overrides(environ),
-        compact_override=resolve_compact_override(environ),
+        default_overrides=resolve_default_overrides(settings),
+        limit_overrides=resolve_limit_overrides(settings),
+        compact_override=resolve_compact_override(settings),
     )
     setup_watcher, state_watcher = core.setup, core.state
     sink = progress.sink if progress is not None else None

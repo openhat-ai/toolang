@@ -58,11 +58,11 @@ class SandboxRequest:
     working_directory: Path
     output: SandboxOutput
     log_path: Path | None
-    envs: dict[str, str] = field(default_factory=dict)
+    envs: dict[str, str] = field(default_factory=dict, repr=False)
     mounts: tuple[SandboxMount, ...] = ()
     remove_on_exit: bool = False
     local_dev_artifact: Path | None = None
-    dotenv_envs: dict[str, str] = field(default_factory=dict)
+    dotenv_envs: dict[str, str] = field(default_factory=dict, repr=False)
 
     def __post_init__(self) -> None:
         _validate_output(self.output, self.log_path)
@@ -78,7 +78,7 @@ class SandboxPlan:
     output: SandboxOutput
     log_path: Path | None
     endpoint: str
-    envs: dict[str, str] = field(default_factory=dict)
+    envs: dict[str, str] = field(default_factory=dict, repr=False)
     mounts: tuple[SandboxMount, ...] = ()
     ports: tuple[SandboxPort, ...] = ()
     meta: dict[str, Any] = field(default_factory=dict)

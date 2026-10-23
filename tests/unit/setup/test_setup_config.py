@@ -46,7 +46,7 @@ def test_setup_config_reads_only_the_toolang_root(tmp_path: Path) -> None:
     }
 
 
-def test_setup_envs_overlay_root_agent_and_process_values(
+def test_setup_envs_select_agent_bindings_from_root_environment(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -58,7 +58,7 @@ def test_setup_envs_overlay_root_agent_and_process_values(
         encoding="utf-8",
     )
     (home / ".env").write_text(
-        "AGENT_ONLY=from-agent\nLAYERED=from-agent\nOVERRIDDEN=from-agent\n",
+        "ROOT_ONLY\nAGENT_ONLY=from-agent\nLAYERED=from-agent\nOVERRIDDEN=from-agent\n",
         encoding="utf-8",
     )
     monkeypatch.setenv("OVERRIDDEN", "from-process")
@@ -69,8 +69,8 @@ def test_setup_envs_overlay_root_agent_and_process_values(
     assert envs["ROOT_ONLY"] == "from-root"
     assert envs["AGENT_ONLY"] == "from-agent"
     assert envs["LAYERED"] == "from-agent"
-    assert envs["OVERRIDDEN"] == "from-process"
-    assert envs["PROCESS_ONLY"] == "from-process"
+    assert envs["OVERRIDDEN"] == "from-agent"
+    assert "PROCESS_ONLY" not in envs
 
 
 def test_setup_envs_treat_dotenv_values_as_literals(

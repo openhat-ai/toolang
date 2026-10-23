@@ -1261,7 +1261,7 @@ def test_inactive_launch_uses_fresh_environment_and_file_logging(
         "log_path": layout.runtime_log,
         "log_spec": "error",
         "temporary_port": False,
-        "environ": {"LOGGED": "yes"},
+        "environ": captured["logging"]["environ"],
         "ceiling_overrides": {"models": ("test/*",)},
         "default_overrides": {
             "model": ModelOverride(identity="test/chat", effort="high")

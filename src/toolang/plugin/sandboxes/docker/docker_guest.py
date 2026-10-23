@@ -212,8 +212,16 @@ def main() -> None:
         raise ValueError("docker guest command is missing")
 
     hostname = os.environ["HOSTNAME"]
-    environ = dict(os.environ)
-    environ.update(load_generated_dotenv(guest_env))
+    environ = load_generated_dotenv(guest_env)
+    for name in (
+        "TOOLANG_HOST_GATEWAY",
+        "TOOLANG_ROOT",
+        "TOOLANG_SANDBOX",
+        "TOOLANG_WORKSPACE_MOUNTS",
+        "TOOLANG_WORKSPACE_LOCATION",
+    ):
+        if name in os.environ:
+            environ[name] = os.environ[name]
     environ["HOSTNAME"] = hostname
     environ["TOOLANG_SANDBOX_INSTANCE"] = hostname
     for name in (

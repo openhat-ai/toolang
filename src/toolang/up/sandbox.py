@@ -47,9 +47,6 @@ from toolang.plugin.config import (
     resolve_sandbox_binding,
 )
 from toolang.plugin.loading import create_sandbox
-from toolang.setup.config import (
-    load_setup_dotenvs,
-)
 from toolang.state.config import CAP_ALLOW_FIELDS
 from toolang.up.mounts import (
     prepare_source_mounts,
@@ -88,7 +85,7 @@ class LaunchSpec:
     serve: ServeSpec
     sandbox: str
     config: dict[str, object]
-    environ: dict[str, str]
+    environ: dict[str, str] = field(repr=False)
     progress_id: str = field(
         default_factory=lambda: f"runtime:{uuid4().hex}",
         compare=False,
@@ -97,7 +94,7 @@ class LaunchSpec:
     output: SandboxOutput = "inherit"
     log_path: Path | None = None
     dev_artifact: Path | None = None
-    dotenv_envs: dict[str, str] = field(default_factory=dict)
+    dotenv_envs: dict[str, str] = field(default_factory=dict, repr=False)
 
 
 @dataclass(slots=True)
@@ -172,7 +169,6 @@ async def resolve_launch(
         config=config,
         environ=dict(environ),
         output=output,
-        dotenv_envs=load_setup_dotenvs(layout),
         log_path=log_path,
         dev_artifact=artifact,
     )
@@ -1091,7 +1087,6 @@ async def register_host_server(
                     explicit="host",
                 )[1],
                 dict(environ or {}),
-                dotenv_envs=load_setup_dotenvs(layout),
             )
             _begin_launch(
                 replace(

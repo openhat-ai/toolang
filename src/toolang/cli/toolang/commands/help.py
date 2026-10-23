@@ -8,7 +8,7 @@ import typer
 from rich.text import Text
 from typer._click import Context, HelpFormatter as NativeHelpFormatter
 
-from toolang.cli.common.help import CliCommand, CliGroup, show_help
+from toolang.cli.common.help import MetadataCommand, CliGroup, show_help
 from toolang.common.typer.ui import HelpFormatter
 
 
@@ -299,7 +299,7 @@ _TOPICS: dict[str, tuple[str, Callable[[HelpFormatter], None]]] = {
 }
 
 
-class _TopicCommand(CliCommand):
+class _TopicCommand(MetadataCommand):
     def format_help(self, ctx: Context, formatter: NativeHelpFormatter) -> None:
         output = formatter if isinstance(formatter, HelpFormatter) else HelpFormatter()
         assert self.name is not None

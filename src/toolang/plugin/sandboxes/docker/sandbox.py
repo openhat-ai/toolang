@@ -51,17 +51,9 @@ from ._guest import (
 )
 
 DEFAULT_IMAGE = "python:3.13-slim"
-DEFAULT_ENVIRONMENT_ALLOW_PATTERN = (
-    r"(?i)^(?:"
-    r"TOOLANG_[A-Z0-9_]+|PY_LOG|"
-    r"(?:HTTP|HTTPS|ALL|NO)_PROXY|"
-    r"SSL_CERT_FILE|SSL_CERT_DIR|REQUESTS_CA_BUNDLE|CURL_CA_BUNDLE|"
-    r"(?:PIP|UV)_[A-Z0-9_]+|"
-    r"(?:OPENAI|ANTHROPIC|GOOGLE|GEMINI|MISTRAL|GROQ|COHERE|XAI|"
-    r"DEEPSEEK|OPENROUTER|TOGETHER|FIREWORKS|PERPLEXITY|AZURE|AWS|"
-    r"BEDROCK|VERTEX|HF|HUGGING_FACE|OLLAMA|LLAMA_CPP)_[A-Z0-9_]+"
-    r")$"
-)
+# Requests already contain the resolved agent environment. Only an explicit
+# legacy pattern adds another restriction.
+DEFAULT_ENVIRONMENT_ALLOW_PATTERN = r".*"
 _CONTROL_ENV_NAMES = frozenset(
     {
         "TOOLANG_HOST_GATEWAY",

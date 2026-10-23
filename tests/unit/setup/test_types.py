@@ -331,3 +331,13 @@ def test_failed_load_can_be_retried_from_its_terminal_progress_callback():
     assert retries == [()]
     assert setup.models() is retries[0]
     assert calls == 2
+
+
+def test_host_environment_cannot_be_spoofed_by_authored_controls(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOOLANG_WORKSPACE_LOCATION", "guest")
+    monkeypatch.setenv("TOOLANG_WORKSPACE_MOUNTS", "invalid-authored-value")
+    environment = AgentEnvironment.capture(
+        AgentLayout.resident(tmp_path, "alice"), sandbox="host"
+    )
+    assert environment.workspace_location == "host"
+    assert not environment.workspace_mounts

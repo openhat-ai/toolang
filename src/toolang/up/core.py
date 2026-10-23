@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from pathlib import Path
 
 from toolang.base.types.model import ModelOverride
 from toolang.common.ids import IdIssuer
@@ -41,6 +42,7 @@ class AgentCore:
         layout: AgentLayout,
         *,
         sandbox: str = "host",
+        model_catalog: Path | None = None,
         lifecycle: ServerLifecycle | None = None,
         drivers: ExecutionDrivers = ALL_DRIVERS,
         ceiling_overrides: Mapping[str, tuple[str, ...] | None] | None = None,
@@ -53,6 +55,7 @@ class AgentCore:
         ids: IdIssuer | None = None,
         initial_state: AgentState | None = None,
         start_executor: bool = True,
+        environ: Mapping[str, str] | None = None,
     ) -> None:
         from .source import restore_program_acquisition
         from .replay import require_complete_seed
@@ -70,6 +73,8 @@ class AgentCore:
         allow_overrides = dict(ceiling_overrides or {})
         self.setup = SetupWatcher(
             layout,
+            environ=environ,
+            model_catalog=model_catalog,
             sandbox=sandbox,
             allow_overrides={
                 name: value

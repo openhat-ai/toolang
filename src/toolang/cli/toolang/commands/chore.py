@@ -2,7 +2,7 @@
 
 from collections.abc import Iterable, Sequence
 from pathlib import Path
-from shutil import get_terminal_size
+from toolang.cli.common.context import get_terminal_size
 from typing import Annotated, cast
 from urllib.parse import quote
 

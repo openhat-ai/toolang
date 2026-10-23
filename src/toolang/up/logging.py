@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import logging
 import logging.config
 from pathlib import Path
@@ -38,7 +38,7 @@ class LoggingPlan:
     spec: str | None
     destination: LogDestination
     path: Path | None
-    environ: dict[str, str]
+    environ: dict[str, str] = field(repr=False)
 
 
 class HttpxLogFilter(logging.Filter):

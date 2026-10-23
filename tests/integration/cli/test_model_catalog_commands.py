@@ -1022,7 +1022,7 @@ def test_models_uses_agent_provider_config_and_environment(
         (["alice"], None, True),
         ([], None, False),
         (["bob"], None, False),
-        (["alice"], "", False),
+        (["alice"], "", True),
         (["alice"], None, True),
     ):
         if key_override is None:
@@ -1255,6 +1255,8 @@ def test_catalog_commands_share_default_and_complete_views(
     data["excluded"] = {**provider, "id": "excluded"}
     _write_catalog(tmp_path / "catalog.json", data)
     config_home = _resident_home(tmp_path, "alice") if agent else tmp_path
+    if agent:
+        (tmp_path / ".alice.env").write_text("TEST_API_KEY\n")
     (config_home / "config.toml").write_text(
         '[allow]\nmodels = ["test/one", "offline/*"]\n'
     )
