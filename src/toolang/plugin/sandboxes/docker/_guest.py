@@ -9,6 +9,7 @@ import shutil
 
 from toolang.base.types.sandbox import SandboxRequest
 from toolang.common.files import atomic_write_text
+from toolang.common.environment import is_environment_name
 
 
 _GUEST_FILES = {"docker_guest.sh": 0o755, "docker_guest.py": 0o644}
@@ -33,7 +34,14 @@ def write_guest_env(
 ) -> None:
     """Write the restricted generated dotenv consumed by the guest core."""
 
-    content = _dotenv_section("Explicit sandbox bindings", dotenv_envs)
+    content = _dotenv_section(
+        "Explicit sandbox bindings",
+        {
+            name: value
+            for name, value in dotenv_envs.items()
+            if name not in process_envs
+        },
+    )
     content += "\n"
     content += _dotenv_section("Resolved workload values", process_envs)
     atomic_write_text(path, content)
@@ -106,7 +114,7 @@ def _dotenv_section(title: str, environ: Mapping[str, str]) -> str:
 
 
 def _dotenv_name(name: str) -> str:
-    if not name or any(char.isspace() or char in "=#\x00" for char in name):
+    if not is_environment_name(name):
         raise ValueError(f"invalid guest environment variable name: {name!r}")
     return name
 

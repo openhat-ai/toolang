@@ -102,8 +102,8 @@ file, or the first nonblank variable in `pick` when no file exists.
 
 `keep` applies only to host inheritance. Guests receive the selected file's
 bindings or the single picked variable, including names that also occur in
-`keep`. An empty file forwards no host variables. Guests use their own limited
-base environment; their image or entrypoint owns any runtime defaults.
+`keep`. An empty file forwards no host variables. Guests retain their native
+image/entrypoint environment as the baseline.
 Explicit file bindings can override native guest base values.
 
 | Placement | Selected agent file |
@@ -121,12 +121,13 @@ Other HTTP URLs retain their requested spelling, including query and escapes.
 For example, `/work/aid.too` uses `ROOT/.%work%aid.too.env`, and
 `gh:owner/alice` uses `ROOT/.gh+3aowner%alice.env`.
 
-Encoding preserves case and produces the full filename without truncation or
-hash fallback. A filename exceeding the filesystem's component limit is treated
-as absent, allowing the local or automatic policy to work; other inspection/read
-errors fail resolution. Case-distinct identities may share a file on a
-case-insensitive filesystem. Nonresident agents never use same-name resident
-files, visiting home dotenv, project `.env`, or ancestor `.toolang.env` files.
+Encoding preserves case. If the complete encoded filename exceeds 255 ASCII
+bytes, use `ROOT/.source-<sha256>.env`, hashing the UTF-8 source identity. This
+keeps the same policy filename usable on supported hosts and Linux guests.
+Inspection/read errors fail resolution. Case-distinct encoded identities may
+share a file on a case-insensitive filesystem. Nonresident agents never use
+same-name resident files, visiting home dotenv, project `.env`, or ancestor
+`.toolang.env` files.
 
 The first existing file replaces lower-priority agent files completely. Its
 bindings are applied after `keep`; explicit assignments can override kept names.

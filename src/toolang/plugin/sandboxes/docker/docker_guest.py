@@ -8,68 +8,6 @@ import subprocess
 import sys
 
 
-# Only native runtime variables may survive the container/entrypoint boundary.
-# User-defined keep names apply to host inheritance, never to this allowlist.
-_BASE_ENV_NAMES = (
-    "PATH",
-    "HOME",
-    "USER",
-    "LOGNAME",
-    "SHELL",
-    "LANG",
-    "LC_ALL",
-    "LC_CTYPE",
-    "TZ",
-    "TMPDIR",
-    "TMP",
-    "TEMP",
-    "TERM",
-    "COLORTERM",
-    "NO_COLOR",
-)
-
-
-def load_generated_dotenv(path: Path) -> dict[str, str]:
-    """Read the restricted dotenv format without shell evaluation."""
-
-    text = path.read_text(encoding="utf-8")
-    values: dict[str, str] = {}
-    index = 0
-    while index < len(text):
-        if text[index] in " \t\n":
-            index += 1
-            continue
-        if text[index] == "#":
-            newline = text.find("\n", index)
-            index = len(text) if newline < 0 else newline + 1
-            continue
-        separator = text.find('="', index)
-        if separator < 0:
-            raise ValueError("invalid staged guest environment")
-        name = text[index:separator]
-        index = separator + 2
-        value: list[str] = []
-        while index < len(text):
-            char = text[index]
-            index += 1
-            if char == "\\":
-                if index >= len(text):
-                    raise ValueError("invalid staged guest environment")
-                escaped = text[index]
-                index += 1
-                value.append("\r" if escaped == "r" else escaped)
-            elif char == '"':
-                break
-            else:
-                value.append(char)
-        else:
-            raise ValueError("invalid staged guest environment")
-        if not name or any(char.isspace() or char in "=#\x00" for char in name):
-            raise ValueError("invalid staged guest environment")
-        values[name] = "".join(value)
-    return values
-
-
 def fail(message: str, diagnostic_display: str, status: int) -> None:
     """Report one concise failure while retaining private diagnostics."""
 
@@ -212,49 +150,22 @@ def _open_workload_log(path: str, diagnostic_display: str) -> int | None:
     return descriptor
 
 
-def main() -> None:
-    """Load guest state, install Toolang, and exec the requested workload."""
+def install() -> None:
+    """Install Toolang in a bootstrap child and report the selected Python."""
 
-    if len(sys.argv) < 14 or sys.argv[12] != "--":
+    if len(sys.argv) < 13 or sys.argv[11] != "--":
         raise ValueError("invalid docker guest helper arguments")
-    guest_env = Path(sys.argv[1])
-    diagnostic = Path(sys.argv[2])
-    diagnostic_display = sys.argv[3]
-    progress_events = sys.argv[4]
-    package_source = sys.argv[5]
-    workload_log = sys.argv[6]
-    python = sys.argv[7]
-    tool_bin_dir = Path(sys.argv[8])
-    uv_mode = sys.argv[9]
-    uv_executable = sys.argv[10]
-    uv_module_dir = sys.argv[11]
-    command = sys.argv[13:]
-    if not command:
-        raise ValueError("docker guest command is missing")
-
-    hostname = os.environ["HOSTNAME"]
-    environ = {name: os.environ[name] for name in _BASE_ENV_NAMES if name in os.environ}
-    environ.update(load_generated_dotenv(guest_env))
-    for name in (
-        "TOOLANG_HOST_GATEWAY",
-        "TOOLANG_ROOT",
-        "TOOLANG_SANDBOX",
-        "TOOLANG_WORKSPACE_MOUNTS",
-        "TOOLANG_WORKSPACE_LOCATION",
-    ):
-        if name in os.environ:
-            environ[name] = os.environ[name]
-    environ["HOSTNAME"] = hostname
-    environ["TOOLANG_SANDBOX_INSTANCE"] = hostname
-    for name in (
-        "UV_CACHE_DIR",
-        "UV_PYTHON_INSTALL_DIR",
-        "UV_PYTHON_BIN_DIR",
-        "UV_TOOL_DIR",
-        "UV_TOOL_BIN_DIR",
-        "UV_NO_PROGRESS",
-    ):
-        environ[name] = os.environ[name]
+    diagnostic = Path(sys.argv[1])
+    diagnostic_display = sys.argv[2]
+    progress_events = sys.argv[3]
+    package_source = sys.argv[4]
+    python = sys.argv[6]
+    tool_bin_dir = Path(sys.argv[7])
+    uv_mode = sys.argv[8]
+    uv_executable = sys.argv[9]
+    uv_module_dir = sys.argv[10]
+    environ = dict(os.environ)
+    environ["TOOLANG_SANDBOX_INSTANCE"] = environ["HOSTNAME"]
     environ["PATH"] = str(tool_bin_dir) + os.pathsep + environ.get("PATH", "")
 
     uv_command, uv_environ = _uv_command(
@@ -284,6 +195,32 @@ def main() -> None:
     if progress_events == "-":
         print(f"Installed Toolang{suffix}", file=sys.stderr)
 
+    print(python)
+
+
+def run() -> None:
+    """Exec the workload from the unmodified image/entrypoint environment."""
+
+    if len(sys.argv) < 8 or sys.argv[6] != "--":
+        raise ValueError("invalid docker guest launch arguments")
+    diagnostic = Path(sys.argv[1])
+    diagnostic_display = sys.argv[2]
+    progress_events = sys.argv[3]
+    workload_log = sys.argv[5]
+    command = sys.argv[7:]
+    runtime = os.environ.get("TOOLANG_GUEST_RUNTIME")
+    runtime_root = (
+        Path(runtime)
+        if runtime
+        else Path(os.environ.get("TMPDIR") or "/tmp") / "toolang-runtime"
+    )
+    tool_bin_dir = runtime_root / "bin"
+    too = tool_bin_dir / "too"
+    environ = dict(os.environ)
+    environ["TOOLANG_SANDBOX_INSTANCE"] = environ["HOSTNAME"]
+    path = environ.get("PATH", "")
+    environ["PATH"] = str(tool_bin_dir) + (os.pathsep + path if path else "")
+
     authored_command = command[0]
     if authored_command in {"too", "toolang"}:
         command[0] = str(too)
@@ -299,6 +236,14 @@ def main() -> None:
         os.dup2(descriptor, sys.stderr.fileno())
         os.close(descriptor)
     os.execvpe(command[0], command, environ)
+
+
+def main() -> None:
+    if sys.argv[1:2] == ["--install"]:
+        del sys.argv[1]
+        install()
+    else:
+        run()
 
 
 if __name__ == "__main__":

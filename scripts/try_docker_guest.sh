@@ -115,9 +115,8 @@ trap interrupt INT TERM HUP
 mkdir "$GUEST_DIR" "$STATE_DIR" || exit 73
 cp "$GUEST_SOURCE/docker_guest.sh" "$GUEST_SOURCE/docker_guest.py" "$GUEST_DIR" || exit 73
 chmod 755 "$GUEST_DIR/docker_guest.sh"
-printf '%s\n' '# Generated guest environment' >"$GUEST_DIR/guest.env"
 : >"$DIAGNOSTIC"
-chmod 600 "$GUEST_DIR/guest.env" "$DIAGNOSTIC"
+chmod 600 "$DIAGNOSTIC"
 
 PACKAGE_SOURCE=toolang
 if [ -n "$DEV" ]; then
@@ -137,7 +136,6 @@ CONTAINER_ID=$(docker create \
     "$IMAGE" \
     /bin/sh /tmp/toolang-guest/docker_guest.sh \
     /tmp/toolang-guest/docker_guest.py \
-    /tmp/toolang-guest/guest.env \
     /tmp/toolang-guest-state/diagnostic.log \
     "$DIAGNOSTIC_DISPLAY" - "$PACKAGE_SOURCE" - -- "$@") || exit $?
 

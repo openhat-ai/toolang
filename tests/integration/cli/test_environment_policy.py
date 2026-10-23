@@ -254,3 +254,277 @@ def test_shell_tool_child_receives_the_agent_snapshot(tmp_path):
         )
     assert result.error is None
     assert result.output["exit_code"] == 0
+
+
+@pytest.mark.parametrize("path", [None, "", "/authorized/bin"])
+@pytest.mark.parametrize("placement", ["resident", "roaming", "visiting"])
+def test_guest_launch_uses_common_dotenv_priority_and_preserves_native_environment(
+    tmp_path, monkeypatch, shell_environment, path, placement
+):
+    from dataclasses import replace
+    from toolang.common.environment import agent_environment_paths, current_environment
+    from toolang.common.layout import AgentLayout
+    from toolang.plugin.sandboxes.docker._guest import write_guest_env
+    from toolang.setup.config import load_setup_envs
+    from toolang.up import server
+
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "config.toml").write_text('[env]\nkeep=[]\npick=["OPENAI_API_KEY"]\n')
+    if placement == "resident":
+        layout = AgentLayout.resident(root, "alice")
+    elif placement == "roaming":
+        source = tmp_path / "alice.too"
+        source.write_text("")
+        layout = AgentLayout.roaming(source, root=root)
+    else:
+        layout = replace(
+            AgentLayout.visiting(
+                "https://example.invalid/alice.too", "alice", root=root
+            ),
+            place=tmp_path / "visit",
+        )
+    layout.home.mkdir(parents=True)
+    layout.env.write_text("LOWER_PRIORITY=must-not-load\nADMITTED=wrong\n")
+    selected_file = agent_environment_paths(root, layout)[0]
+    values = (
+        {}
+        if path is None
+        else {
+            "ADMITTED": '${HOME}/"literal"/\\tail\nnext',
+            "PATH": path,
+            "TOOLANG_ROOT": "/spoofed/root",
+            "HOSTNAME": "spoofed",
+            "TOOLANG_SANDBOX_INSTANCE": "spoofed",
+        }
+    )
+    write_guest_env(selected_file, dotenv_envs=values, process_envs={})
+    native = {
+        "CARGO_HOME": "/usr/local/cargo",
+        "RUSTUP_HOME": "/usr/local/rustup",
+        "UV_TOOL_DIR": "/image/tools",
+        "UV_NO_PROGRESS": "0",
+        "PYTHONPATH": "/image/python",
+        "IMAGE_CUSTOM": "preserved",
+        "HOSTNAME": "0123456789ab",
+        "TOOLANG_SANDBOX_INSTANCE": "0123456789ab",
+    }
+    for name, value in native.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.setattr(sys, "argv", ["/runtime/bin/too"])
+    observed = []
+
+    def serve(spec, *, environ, **_kwargs):
+        observed.append(dict(environ))
+        assert dict(os.environ) == environ
+        active = current_environment()
+        assert active is not None
+        assert active.source == selected_file
+        assert active.picked is None
+        assert spec.layout.placement == placement
+        # Existing setup refreshes must keep the startup mapping.
+        selected_file.write_text("ADMITTED=changed\nNEW_VALUE=must-not-load\n")
+        assert load_setup_envs(spec.layout) == environ
+        child = json.loads(
+            subprocess.check_output(
+                [
+                    sys.executable,
+                    "-c",
+                    "import json,os;print(json.dumps(dict(os.environ)))",
+                ],
+                text=True,
+            )
+        )
+        assert all(child[name] == value for name, value in environ.items())
+        return 0
+
+    monkeypatch.setattr(server, "serve", serve)
+    args = [
+        "--root",
+        str(root),
+        "_serve",
+        "alice",
+        "--place",
+        str(layout.place),
+        "--location",
+        "guest",
+        "--sandbox",
+        "docker:test",
+        "--placement",
+        placement,
+        "--registry-directory",
+        str(root / ".runtime/active"),
+        "--registry-status",
+        str(layout.runtime_status),
+    ]
+    if layout.source_path is not None:
+        args += ["--source-path", str(layout.source_path)]
+    if layout.source_ref is not None:
+        args += ["--source-ref", layout.source_ref]
+    caller = dict(os.environ)
+    result = CliRunner().invoke(app, args)
+    assert result.exit_code == 0, (result.stderr, result.exception)
+    assert dict(os.environ) == caller
+    assert len(observed) == 1
+    env = observed[0]
+    assert all(env[name] == value for name, value in native.items())
+    assert "LOWER_PRIORITY" not in env
+    assert "NEW_VALUE" not in env
+    assert env.get("ADMITTED") == values.get("ADMITTED")
+    assert env["TOOLANG_ROOT"] == str(root)
+    assert env["TOOLANG_SANDBOX"] == "docker:test"
+    selected_path = caller["PATH"] if path is None else path
+    assert env["PATH"] == "/runtime/bin" + (
+        ":" + selected_path if selected_path else ""
+    )
+
+
+@pytest.mark.parametrize("root_policy", [None, "ADMITTED=root-value\n", ""])
+@pytest.mark.parametrize("internal", [False, True])
+def test_host_serve_reduces_environment_with_an_authored_home_dotenv(
+    tmp_path, monkeypatch, shell_environment, root_policy, internal
+):
+    from toolang.common.environment import current_environment
+    from toolang.setup.config import load_setup_envs
+    from toolang.up import sandbox, server
+
+    root = tmp_path / "root"
+    LocalAgents(root / "agents").create("alice", content="")
+    (root / "config.toml").write_text('[env]\nkeep=["PATH", "HOME"]\n')
+    (root / "agents/alice/.env").write_text("ADMITTED=home-value\n")
+    if root_policy is not None:
+        (root / ".alice.env").write_text(root_policy)
+    observed = []
+
+    def captured(spec, *, environ, **_kwargs):
+        assert dict(os.environ) == environ
+        active = current_environment()
+        assert active is not None
+        assert load_setup_envs(spec.layout) == environ
+        assert active.picked is None
+        observed.append(dict(environ))
+        child = json.loads(
+            subprocess.check_output(
+                [
+                    sys.executable,
+                    "-c",
+                    "import json,os; print(json.dumps(dict(os.environ)))",
+                ],
+                text=True,
+            )
+        )
+        assert "PRIVATE_SENTINEL" not in child
+        assert "OPENAI_API_KEY" not in child
+        assert "ANTHROPIC_API_KEY" not in child
+        return 0
+
+    monkeypatch.setattr(sandbox, "prepare_launch_state", lambda *_a, **_k: None)
+    monkeypatch.setattr(server, "_serve_captured", captured)
+    caller = dict(os.environ)
+    operands = ["_serve", "alice"] if internal else ["alice", "serve"]
+    result = CliRunner().invoke(app, ["--root", str(root), *operands])
+    assert result.exit_code == 0, (result.stderr, result.exception)
+    assert dict(os.environ) == caller
+    assert len(observed) == 1
+    env = observed[0]
+    assert env.get("ADMITTED") == (
+        "home-value" if root_policy is None else "root-value" if root_policy else None
+    )
+    assert "PRIVATE_SENTINEL" not in env
+    assert "OPENAI_API_KEY" not in env
+    assert "ANTHROPIC_API_KEY" not in env
+    assert env["PATH"] == caller["PATH"]
+
+
+@pytest.mark.parametrize("path", [None, "", "/authorized/bin"])
+@pytest.mark.parametrize("internal", [False, True])
+def test_host_serve_preserves_an_explicit_or_absent_path(
+    tmp_path, monkeypatch, shell_environment, path, internal
+):
+    from toolang.up import sandbox, server
+
+    root = tmp_path / "root"
+    LocalAgents(root / "agents").create("alice", content="")
+    (root / "config.toml").write_text('[env]\nkeep=["HOME"]\n')
+    (root / ".alice.env").write_text("" if path is None else f"PATH={path}\n")
+    observed = []
+
+    def captured(_spec, *, environ, **_kwargs):
+        observed.append(dict(environ))
+        return 0
+
+    monkeypatch.setattr(sandbox, "prepare_launch_state", lambda *_a, **_k: None)
+    monkeypatch.setattr(server, "_serve_captured", captured)
+    operands = ["_serve", "alice"] if internal else ["alice", "serve"]
+    result = CliRunner().invoke(app, ["--root", str(root), *operands])
+    assert result.exit_code == 0, (result.stderr, result.exception)
+    assert len(observed) == 1
+    assert observed[0].get("PATH") == path
+
+
+@pytest.mark.parametrize(
+    "changed", ["ADMITTED=changed\nNEW_SECRET=excluded\n", "", "BROKEN='\n"]
+)
+def test_managed_host_exec_uses_the_controller_environment_snapshot(
+    tmp_path, monkeypatch, shell_environment, changed
+):
+    from toolang.base.types.sandbox import SandboxRequest
+    from toolang.common.environment import (
+        resolve_agent_environment,
+        resolve_root_environment,
+    )
+    from toolang.common.layout import AgentLayout
+    from toolang.plugin.sandboxes.host import HostSandbox, HOST_LAUNCH_ENV
+    from toolang.setup.config import load_setup_envs
+    from toolang.up import server
+
+    root = tmp_path / "root"
+    LocalAgents(root / "agents").create("alice", content="")
+    layout = AgentLayout.resident(root, "alice")
+    policy = root / ".alice.env"
+    policy.write_text("ADMITTED=selected\n")
+    selected = resolve_agent_environment(
+        resolve_root_environment(root, dict(os.environ)), layout
+    )
+    spec = server.resolve_serve(layout=layout, port=8123, launch_id="managed-launch")
+    plan = HostSandbox({}).prepare(
+        None,
+        SandboxRequest(
+            local_place=root,
+            local_home=layout.home,
+            hosted_place=root,
+            hosted_home=layout.home,
+            agent_name="alice",
+            bind_host="127.0.0.1",
+            endpoint_host="localhost",
+            port=8123,
+            endpoint="http://localhost:8123",
+            command=("too", *server.build_serve_argv(spec)),
+            working_directory=layout.home,
+            output="inherit",
+            log_path=None,
+            envs={**selected.values, HOST_LAUNCH_ENV: "managed-launch"},
+        ),
+    )
+    policy.write_text(changed)
+    observed = []
+
+    def captured(spec, *, environ, **_kwargs):
+        observed.append(dict(environ))
+        assert load_setup_envs(spec.layout) == environ
+        return 0
+
+    monkeypatch.setattr(server, "_serve_captured", captured)
+    # Popen/exec replaces the inherited mapping, rather than overlaying it.
+    for name in tuple(os.environ):
+        monkeypatch.delenv(name)
+    for name, value in plan.envs.items():
+        monkeypatch.setenv(name, value)
+    result = CliRunner().invoke(app, list(plan.command[plan.command.index("--root") :]))
+    assert result.exit_code == 0, (result.stderr, result.exception)
+    assert len(observed) == 1
+    assert observed[0]["ADMITTED"] == "selected"
+    assert observed[0]["PATH"] == selected.values["PATH"]
+    assert "NEW_SECRET" not in observed[0]
+    assert "PRIVATE_SENTINEL" not in observed[0]
+    assert HOST_LAUNCH_ENV not in observed[0]

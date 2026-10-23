@@ -1,7 +1,10 @@
 #!/bin/sh
 
 set -eu
+umask 077
 
+# Image ENV names may collide with any shell variable used during installation.
+bootstrap() (
 UV_VERSION="0.12.6"
 PYTHON_VERSION="3.13"
 
@@ -11,21 +14,20 @@ fail() {
     exit "${2:-1}"
 }
 
-if [ "$#" -lt 9 ]; then
+if [ "$#" -lt 8 ]; then
     printf '%s\n' \
-        "usage: docker_guest.sh HELPER GUEST_ENV DIAGNOSTIC DISPLAY EVENTS PACKAGE LOG -- COMMAND..." \
+        "usage: docker_guest.sh HELPER DIAGNOSTIC DISPLAY EVENTS PACKAGE LOG -- COMMAND..." \
         >&2
     exit 64
 fi
 
 HELPER=$1
-GUEST_ENV=$2
-DIAGNOSTIC=$3
-DIAGNOSTIC_DISPLAY=$4
-PROGRESS_EVENTS=$5
-PACKAGE_SOURCE=$6
-WORKLOAD_LOG=$7
-shift 7
+DIAGNOSTIC=$2
+DIAGNOSTIC_DISPLAY=$3
+PROGRESS_EVENTS=$4
+PACKAGE_SOURCE=$5
+WORKLOAD_LOG=$6
+shift 6
 if [ "$1" != "--" ]; then
     printf '%s\n' "docker guest command separator is missing" >&2
     exit 64
@@ -215,8 +217,7 @@ if [ "$UV_MODE" = "module" ]; then
 else
     UV_EXECUTABLE=$UV_BIN
 fi
-exec "$PYTHON_BIN" "$HELPER" \
-    "$GUEST_ENV" \
+exec "$PYTHON_BIN" "$HELPER" --install \
     "$DIAGNOSTIC" \
     "$DIAGNOSTIC_DISPLAY" \
     "$PROGRESS_EVENTS" \
@@ -229,3 +230,11 @@ exec "$PYTHON_BIN" "$HELPER" \
     "$UV_MODULE_DIR" \
     -- \
     "$@"
+)
+
+# Bootstrap reports its Python on stdout; exec retains the original environment.
+set -- "$(bootstrap "$@" || printf 'toolang-bootstrap-failed:%s' "$?")" "$@"
+case "$1" in
+    toolang-bootstrap-failed:*) exit "${1#*:}" ;;
+esac
+exec "$@"

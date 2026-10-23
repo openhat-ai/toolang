@@ -7,6 +7,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 import errno
+from hashlib import sha256
 import logging
 import os
 from pathlib import Path
@@ -76,6 +77,25 @@ _HTTP_ENV_PREFIXES = tuple(
 )
 logger = logging.getLogger(__name__)
 
+# Concrete process facts belong to the launcher, not authored dotenv bindings.
+RUNTIME_ENV_NAMES = frozenset(
+    {
+        "HOSTNAME",
+        "TOOLANG_HOST_GATEWAY",
+        "TOOLANG_HOST_LAUNCH",
+        "TOOLANG_ROOT",
+        "TOOLANG_SANDBOX",
+        "TOOLANG_SANDBOX_DESCRIPTION",
+        "TOOLANG_SANDBOX_INSTANCE",
+        "TOOLANG_WORKSPACE_MOUNTS",
+        "TOOLANG_WORKSPACE_LOCATION",
+    }
+)
+
+
+def is_environment_name(name: str) -> bool:
+    return _NAME.fullmatch(name) is not None
+
 
 @dataclass(frozen=True, slots=True)
 class EnvironmentPolicy:
@@ -92,7 +112,7 @@ class EnvironmentPolicy:
         for key, default in (("keep", DEFAULT_KEEP), ("pick", DEFAULT_PICK)):
             raw = table.get(key, list(default))
             if not isinstance(raw, list) or not all(
-                isinstance(name, str) and _NAME.fullmatch(name) for name in raw
+                isinstance(name, str) and is_environment_name(name) for name in raw
             ):
                 raise ValueError(f"{path}: env.{key} must contain environment names")
             if len(raw) != len(set(raw)):
@@ -149,7 +169,7 @@ def apply_environment_file(path: Path, parent: Mapping[str, str]) -> dict[str, s
                 name = binding.key
                 if (
                     binding.error
-                    or (name is not None and not _NAME.fullmatch(name))
+                    or (name is not None and not is_environment_name(name))
                     or (binding.value is not None and "\x00" in binding.value)
                 ):
                     raise ValueError(
@@ -219,21 +239,39 @@ def resolve_root_environment(
     return ResolvedEnvironment(root, policy, values, source=source)
 
 
+def agent_environment_paths(
+    root: Path,
+    layout: AgentLayout,
+) -> tuple[Path, ...]:
+    """Return policy files in precedence order for one source identity."""
+
+    if layout.placement == "resident":
+        return (root / f".{layout.name}.env", layout.env)
+    if layout.placement == "roaming" and layout.source_path is not None:
+        source_path = layout.source_path.resolve()
+        return (
+            _source_environment_path(root, str(source_path)),
+            source_path.parent / ".toolang.env",
+        )
+    if layout.placement == "visiting" and layout.source_ref is not None:
+        return (_source_environment_path(root, layout.source_ref),)
+    return ()
+
+
+def _source_environment_path(root: Path, source: str) -> Path:
+    name = f".{encode_flatname(source)}.env"
+    # Keep policy filenames usable on both supported hosts and Linux guests.
+    if len(name) > 255:  # FN Encoding produces ASCII only.
+        digest = sha256(source.encode("utf-8", errors="surrogatepass")).hexdigest()
+        name = f".source-{digest}.env"
+    return root / name
+
+
 def resolve_agent_environment(
     root: ResolvedEnvironment,
     layout: AgentLayout,
 ) -> ResolvedEnvironment:
-    candidates: tuple[Path, ...] = ()
-    if layout.placement == "resident":
-        candidates = (root.root / f".{layout.name}.env", layout.env)
-    elif layout.placement == "roaming" and layout.source_path is not None:
-        source_path = layout.source_path.resolve()
-        candidates = (
-            root.root / f".{encode_flatname(str(source_path))}.env",
-            source_path.parent / ".toolang.env",
-        )
-    elif layout.placement == "visiting" and layout.source_ref is not None:
-        candidates = (root.root / f".{encode_flatname(layout.source_ref)}.env",)
+    candidates = agent_environment_paths(root.root, layout)
     source = next((path for path in candidates if _exists(path)), None)
     values = {
         name: root.values[name] for name in root.policy.keep if name in root.values
