@@ -196,6 +196,28 @@ def test_invalid_agent_file_fails_without_fallback_or_secret_output(
     assert dict(os.environ) == shell_environment
 
 
+def test_invalid_visiting_file_does_not_print_source_url_credentials(
+    tmp_path, shell_environment
+):
+    root = tmp_path / "root"
+    root.mkdir()
+    ref = "https://user:private-userinfo@example.invalid/alice.too?token=private-query#private-fragment"
+    (root / f".{encode_flatname(ref)}.env").write_text("TOKEN='private-value\n")
+    caller = dict(os.environ)
+    result = CliRunner().invoke(app, ["--root", str(root), ref, "tools"])
+    assert result.exit_code == 1
+    output = "".join(result.output.replace("│", "").split())
+    assert "HTTPsourceredacted" in output
+    for marker in (
+        "private-userinfo",
+        "private-query",
+        "private-fragment",
+        "private-value",
+    ):
+        assert marker not in output
+    assert dict(os.environ) == caller
+
+
 def test_shell_tool_child_receives_the_agent_snapshot(tmp_path):
     import asyncio
     from toolang.base.types.tool import ToolContext

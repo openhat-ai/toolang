@@ -6,6 +6,7 @@ from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
+import errno
 import logging
 import os
 from pathlib import Path
@@ -49,6 +50,9 @@ DEFAULT_PICK = (
     "XAI_API_KEY",
 )
 _NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
+_HTTP_ENV_PREFIXES = tuple(
+    f".{encode_flatname(scheme)}" for scheme in ("http://", "https://")
+)
 logger = logging.getLogger(__name__)
 
 
@@ -81,8 +85,8 @@ class ResolvedEnvironment:
     root: Path
     policy: EnvironmentPolicy
     values: Mapping[str, str] = field(repr=False)
-    identity: str | None = None
-    source: Path | None = None
+    identity: str | None = field(default=None, repr=False)
+    source: Path | None = field(default=None, repr=False)
     picked: str | None = None
 
     def __post_init__(self) -> None:
@@ -111,6 +115,7 @@ def apply_environment_file(path: Path, parent: Mapping[str, str]) -> dict[str, s
     """Parse bindings without expansion or diagnostics containing literal values."""
     result: dict[str, str] = {}
     seen: set[str] = set()
+    display_path = _display_path(path)
     try:
         with path.open(encoding="utf-8") as stream:
             for binding in parse_stream(stream):
@@ -121,22 +126,30 @@ def apply_environment_file(path: Path, parent: Mapping[str, str]) -> dict[str, s
                     or (binding.value is not None and "\x00" in binding.value)
                 ):
                     raise ValueError(
-                        f"{path}:{binding.original.line}: invalid environment binding"
+                        f"{display_path}:{binding.original.line}: invalid environment binding"
                     )
                 if name is None:
                     continue
                 if name in seen:
                     raise ValueError(
-                        f"{path}:{binding.original.line}: duplicate environment name"
+                        f"{display_path}:{binding.original.line}: duplicate environment name"
                     )
                 seen.add(name)
                 if binding.value is not None:
                     result[name] = binding.value
                 elif name in parent:
                     result[name] = parent[name]
-    except (OSError, UnicodeError) as exc:
-        raise ValueError(f"could not read environment file: {path}") from exc
+    except (OSError, UnicodeError):
+        raise ValueError(f"could not read environment file: {display_path}") from None
     return result
+
+
+def _display_path(path: Path) -> str:
+    # Encoded URLs can contain userinfo, signed queries, and fragments. Keep
+    # matching exact, but never print their reversible filename spelling.
+    if path.name.lower().startswith(_HTTP_ENV_PREFIXES):
+        return str(path.parent / ".[HTTP source redacted].env")
+    return str(path)
 
 
 def _exists(path: Path) -> bool:
@@ -145,7 +158,20 @@ def _exists(path: Path) -> bool:
     except (FileNotFoundError, NotADirectoryError):
         return False
     except OSError as exc:
-        raise ValueError(f"could not inspect environment file: {path}") from exc
+        # Only a component beyond the filesystem's limit proves absence;
+        # ENAMETOOLONG can also mean an uninspectable total path length.
+        if exc.errno == errno.ENAMETOOLONG:
+            try:
+                maximum = os.pathconf(path.parent, "PC_NAME_MAX")
+            except (FileNotFoundError, NotADirectoryError):
+                return False
+            except OSError:
+                maximum = -1
+            if 0 <= maximum < len(os.fsencode(path.name)):
+                return False
+        raise ValueError(
+            f"could not inspect environment file: {_display_path(path)}"
+        ) from None
     return True
 
 
@@ -207,8 +233,10 @@ def environment_scope(environment: ResolvedEnvironment) -> Iterator[None]:
     token = _CURRENT.set(environment)
     logger.info(
         "environment.selected identity=%s source=%s pick=%s",
-        environment.identity or "root",
-        environment.source or "none",
+        "visiting"
+        if environment.identity and environment.identity.startswith("visiting:")
+        else environment.identity or "root",
+        _display_path(environment.source) if environment.source is not None else "none",
         environment.picked or "none",
     )
     try:

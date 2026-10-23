@@ -266,13 +266,14 @@ def test_nonresident_root_file_errors_do_not_fall_back(tmp_path, placement, inva
     assert "do-not-print" not in str(error.value)
 
 
-def test_uninspectable_encoded_filename_fails_instead_of_using_automatic_policy(
-    tmp_path, monkeypatch
+@pytest.mark.parametrize("error_name", ["EACCES", "ENAMETOOLONG"])
+def test_uninspectable_environment_file_fails_instead_of_using_automatic_policy(
+    tmp_path, monkeypatch, error_name
 ):
     import errno
     from pathlib import Path
 
-    ref = "https://example.invalid/alice.too?version=" + "a" * 300
+    ref = "https://user:private-userinfo@example.invalid/alice.too?token=private-query"
     layout = AgentLayout.visiting(ref, "alice", root=tmp_path)
     root = resolve_root_environment(tmp_path, {"OPENAI_API_KEY": "excluded"})
     policy_file = tmp_path / f".{encode_flatname(ref)}.env"
@@ -280,12 +281,15 @@ def test_uninspectable_encoded_filename_fails_instead_of_using_automatic_policy(
 
     def inspect(path):
         if path == policy_file:
-            raise OSError(errno.ENAMETOOLONG, "File name too long")
+            raise OSError(getattr(errno, error_name), "Cannot inspect file")
         return original(path)
 
     monkeypatch.setattr(Path, "lstat", inspect)
-    with pytest.raises(ValueError, match="could not inspect environment file"):
+    with pytest.raises(ValueError, match="could not inspect environment file") as error:
         resolve_agent_environment(root, layout)
+    assert "private-userinfo" not in str(error.value)
+    assert "private-query" not in str(error.value)
+    assert error.value.__suppress_context__
 
 
 def test_configured_lists_replace_defaults_and_skip_blank_values(tmp_path):
@@ -384,3 +388,83 @@ def test_unreadable_agent_file_does_not_fall_back(tmp_path):
     (tmp_path / ".alice.env").symlink_to(tmp_path / "missing")
     with pytest.raises(ValueError, match="could not read environment file"):
         resolve_agent_environment(resolve_root_environment(tmp_path, {}), layout)
+
+
+@pytest.mark.parametrize("local_file", [False, True])
+def test_long_roaming_source_uses_local_or_automatic_policy(tmp_path, local_file):
+    source = tmp_path / ("a" * 120) / ("b" * 120) / "alice.too"
+    source.parent.mkdir(parents=True)
+    source.write_text("flow main():\n  pass\n")
+    if local_file:
+        (source.parent / ".toolang.env").write_text("LOCAL=selected\n")
+    root = resolve_root_environment(tmp_path, {"OPENAI_API_KEY": "automatic"})
+    agent = resolve_agent_environment(root, AgentLayout.roaming(source, root=tmp_path))
+    assert dict(agent.values) == (
+        {"LOCAL": "selected"} if local_file else {"OPENAI_API_KEY": "automatic"}
+    )
+
+
+@pytest.mark.parametrize("root_exists", [False, True])
+def test_long_visiting_url_uses_automatic_policy(tmp_path, root_exists):
+    ref = "https://example.invalid/alice.too?version=" + "a" * 300
+    root_path = tmp_path / "root"
+    if root_exists:
+        root_path.mkdir()
+    root = resolve_root_environment(root_path, {"OPENAI_API_KEY": "automatic"})
+    agent = resolve_agent_environment(
+        root, AgentLayout.visiting(ref, "alice", root=root_path)
+    )
+    assert dict(agent.values) == {"OPENAI_API_KEY": "automatic"}
+
+
+def test_source_url_credentials_are_private_in_environment_provenance(tmp_path, caplog):
+    import logging
+
+    ref = "https://user:private-userinfo@example.invalid/alice.too?token=private-query#private-fragment"
+    policy_file = tmp_path / f".{encode_flatname(ref)}.env"
+    policy_file.write_text("TOKEN=private-value\n")
+    root = resolve_root_environment(tmp_path, {})
+    agent = resolve_agent_environment(
+        root, AgentLayout.visiting(ref, "alice", root=tmp_path)
+    )
+    with caplog.at_level(logging.INFO), environment_scope(agent):
+        pass
+    for marker in (
+        "private-userinfo",
+        "private-query",
+        "private-fragment",
+        "private-value",
+    ):
+        assert marker not in caplog.text
+        assert marker not in repr(agent)
+    assert agent.identity == f"visiting:{ref}"
+    assert agent.source == policy_file
+
+
+@pytest.mark.parametrize("invalid", [False, True])
+def test_source_url_credentials_are_private_in_environment_file_errors(
+    tmp_path, invalid
+):
+    import traceback
+
+    ref = "https://user:private-userinfo@example.invalid/alice.too?token=private-query#private-fragment"
+    policy_file = tmp_path / f".{encode_flatname(ref)}.env"
+    if invalid:
+        policy_file.write_text("TOKEN='private-value\n")
+    else:
+        policy_file.symlink_to(tmp_path / "missing")
+    root = resolve_root_environment(tmp_path, {})
+    with pytest.raises(ValueError) as error:
+        resolve_agent_environment(
+            root, AgentLayout.visiting(ref, "alice", root=tmp_path)
+        )
+    output = "".join(traceback.format_exception_only(error.value))
+    if not invalid:
+        assert error.value.__suppress_context__
+    for marker in (
+        "private-userinfo",
+        "private-query",
+        "private-fragment",
+        "private-value",
+    ):
+        assert marker not in output

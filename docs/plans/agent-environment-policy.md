@@ -228,7 +228,9 @@ home dotenv hot reload need migration and restart.
 Use the approved [Flat Name Encoding contract](readable-filename-codec.md)
 without additional URL decoding or case normalization. Source parsing owns
 identity standardization; encoding consumes its result. Retain the full encoded
-identity without truncation, hashing, or an external mapping. Lookup errors,
-including filesystem filename limits, fail resolution rather than selecting a
-fallback. Case-distinct identities can share a file on case-insensitive
-filesystems, as accepted by the codec contract.
+identity without truncation, hashing, or an external mapping. Filenames exceeding
+the filesystem's component limit use the local or automatic fallback;
+other lookup/read errors fail resolution. Redact HTTP source filenames in
+diagnostics and omit visiting identity from selection logs, since reversible
+encoding can expose URL credentials. Case-distinct identities can share a file
+on case-insensitive filesystems, as accepted by the codec contract.

@@ -68,10 +68,11 @@ For example, `/work/aid.too` uses `ROOT/.%work%aid.too.env`, and
 `gh:owner/alice` uses `ROOT/.gh+3aowner%alice.env`.
 
 Encoding preserves case and produces the full filename without truncation or
-hash fallback. Filesystem lookup errors, including excessive filename length,
-fail resolution. Case-distinct identities may share a file on a case-insensitive
-filesystem. Nonresident agents never use same-name resident files, visiting home
-dotenv, project `.env`, or ancestor `.toolang.env` files.
+hash fallback. A filename exceeding the filesystem's component limit is treated
+as absent, allowing the local or automatic policy to work; other inspection/read
+errors fail resolution. Case-distinct identities may share a file on a
+case-insensitive filesystem. Nonresident agents never use same-name resident
+files, visiting home dotenv, project `.env`, or ancestor `.toolang.env` files.
 
 The first existing file replaces lower-priority agent files completely. Its
 bindings are applied after `keep`; explicit assignments can override kept names.
@@ -98,7 +99,9 @@ tools, child processes, inspection, and `cd` share it. Controller startup inputs
 such as ports, catalog paths, and policy overrides are captured separately and
 passed as concrete settings. Finite generated runtime facts take precedence over
 authored values. Selection logs report source paths and the picked name, never
-values. [Hosting](hosting.md) owns guest transport.
+values. HTTP source filenames are redacted in logs and errors because their
+reversible spelling may contain URL credentials; visiting identities are omitted
+from selection logs. [Hosting](hosting.md) owns guest transport.
 
 Setup captures its environment when created and retains it across refreshes.
 Changing dotenv or shell values requires a restart; attaching to a running server
