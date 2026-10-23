@@ -518,6 +518,10 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   without blocking, even while the workload stays alive.
   ([#936](https://github.com/openhat-ai/toolang/pull/936))
 
+- Chat terminal titles clip at 128 display columns instead of 32, so
+  longer conversation topics stay visible in terminal tabs.
+  ([#941](https://github.com/openhat-ai/toolang/pull/941))
+
 ### Security
 
 - The locked certifi trust store advances to 2026.10.19, resolving trust-store
