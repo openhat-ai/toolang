@@ -600,6 +600,16 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   launch environment snapshot.
   ([#946](https://github.com/openhat-ai/toolang/pull/946))
 
+- Host foreground launches and internal serving keep the selected `PATH`, while
+  only guest workloads prepend the Toolang bin and an empty guest `PATH` gains
+  no current-directory entry.
+  ([#946](https://github.com/openhat-ai/toolang/pull/946))
+
+- Source encodings beyond 255 bytes use stable SHA-256 root policy filenames,
+  leaving ordinary names unchanged and enabling Docker launches for long
+  roaming paths and visiting URLs.
+  ([#946](https://github.com/openhat-ai/toolang/pull/946))
+
 ### Security
 
 - The locked certifi trust store advances to 2026.10.19, resolving trust-store
