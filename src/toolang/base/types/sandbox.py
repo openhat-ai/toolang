@@ -42,7 +42,7 @@ class SandboxRequest:
     ``local_*`` paths belong to the controller host. ``hosted_*`` paths are the
     corresponding paths in the workload environment, which may be the host or a
     guest selected by the sandbox plugin. Place paths map the agent environment; the
-    selected Toolang root is passed separately as a control environment value.
+    selected Toolang root and agent address are explicit host-side identity inputs.
     """
 
     local_place: Path
@@ -63,6 +63,8 @@ class SandboxRequest:
     remove_on_exit: bool = False
     local_dev_artifact: Path | None = None
     dotenv_envs: dict[str, str] = field(default_factory=dict, repr=False)
+    agent_address: str | None = None
+    toolang_root: Path | None = None
 
     def __post_init__(self) -> None:
         _validate_output(self.output, self.log_path)

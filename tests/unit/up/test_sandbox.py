@@ -548,6 +548,8 @@ def test_launch_delegates_complete_spec_and_stop_releases_state(
     assert prepare[:2] == ("prepare", "value:with:colons")
     request = cast(SandboxRequest, prepare[2])
     assert request.hosted_place == Path("/runtime")
+    assert request.agent_address == spec.serve.layout.address
+    assert request.toolang_root == tmp_path.resolve()
     assert request.hosted_home == Path("/runtime/agents/alice")
     assert (
         SandboxMount(

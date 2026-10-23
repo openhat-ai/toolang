@@ -3,19 +3,190 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
+import json
 import os
 from collections.abc import Mapping
 from contextlib import suppress
 from pathlib import Path
 import subprocess
+import re
 import time
+from typing import cast
 import psutil
 
-from toolang.base.types.sandbox import SandboxMount
+from toolang.base.types.sandbox import SandboxMount, SandboxRef
+from toolang.common.layout import validate_agent_name
+from toolang.common.place_codes import decode_place_code
 
 DEFAULT_HOST_GATEWAY = "host.docker.internal"
 DOCKER_DIAGNOSTIC_TAIL_LINES = 2000
 DOCKER_REMOVE_TIMEOUT_SEC = 10.0
+_OWNED_INSPECT_FORMAT = (
+    "[{{json .Id}},{{json .Name}},{{json .State.Running}},{{json .Config.Labels}}]"
+)
+
+
+def docker_identity_labels(identity: object) -> dict[str, str]:
+    """Validate the persisted Docker identity before using it for ownership."""
+    if not isinstance(identity, dict):
+        raise ValueError("invalid docker identity metadata")
+    data = cast(dict[str, object], identity)
+    if (
+        set(data) != {"version", "root", "address", "launch_id"}
+        or type(data.get("version")) is not int
+        or data["version"] != 1
+    ):
+        raise ValueError("invalid docker identity metadata")
+    root_value, address, launch_id = data["root"], data["address"], data["launch_id"]
+    if (
+        not isinstance(root_value, str)
+        or not root_value
+        or not isinstance(address, str)
+        or not address
+        or not isinstance(launch_id, str)
+        or not launch_id
+    ):
+        raise ValueError("invalid docker identity metadata")
+    root = Path(root_value)
+    if not root.is_absolute() or str(root.resolve()) != root_value:
+        raise ValueError("docker identity requires a canonical Toolang root")
+    agent, separator, code = address.partition("@")
+    validate_agent_name(agent)
+    if separator:
+        decode_place_code(code)
+    return {
+        "io.toolang.root": root_value,
+        "io.toolang.address": address,
+        "io.toolang.launch-id": launch_id,
+    }
+
+
+@dataclass(frozen=True, slots=True)
+class _Container:
+    id: str
+    running: bool
+    labels: dict[str, str]
+
+
+def _inspect_containers(identities: tuple[str, ...]) -> dict[str, _Container | None]:
+    """Return only conclusive, exact-ID/name matches from one bounded inspection."""
+    if not identities:
+        return {}
+    try:
+        result = _docker(
+            "inspect",
+            "--type",
+            "container",
+            "--format",
+            _OWNED_INSPECT_FORMAT,
+            *identities,
+            check=False,
+            timeout=2.0,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError("docker inspect timed out") from exc
+    if result is None:
+        raise RuntimeError("docker command not found")
+    containers: dict[str, _Container | None] = {}
+    for line in result.stdout.splitlines():
+        try:
+            data = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(data, list) or len(data) != 4:
+            continue
+        container_id, name, running, labels = data
+        if (
+            not isinstance(container_id, str)
+            or re.fullmatch(r"[0-9a-f]{64}", container_id) is None
+            or not isinstance(name, str)
+            or type(running) is not bool
+            or not isinstance(labels, dict)
+            or any(
+                not isinstance(k, str) or not isinstance(v, str)
+                for k, v in labels.items()
+            )
+        ):
+            continue
+        for identity in identities:
+            if identity in {container_id, name.removeprefix("/")}:
+                containers[identity] = _Container(container_id, running, labels)
+    if result.returncode != 0:
+        for identity in identities:
+            if identity not in containers and _container_missing(
+                result.stderr, identity
+            ):
+                containers[identity] = None
+    return containers
+
+
+def _owned_container(
+    ref: SandboxRef, containers: Mapping[str, _Container | None]
+) -> _Container | None:
+    expected = docker_identity_labels(ref.meta["docker_identity"])
+    if ref.runtime_id not in containers:
+        raise RuntimeError(
+            f"cannot verify docker container ownership: {ref.runtime_id}"
+        )
+    container = containers[ref.runtime_id]
+    if container is not None and any(
+        container.labels.get(k) != v for k, v in expected.items()
+    ):
+        raise RuntimeError(f"docker container ownership mismatch: {ref.runtime_id}")
+    if (container is None or not container.running) and docker_launch_pending(
+        ref.runtime_name or ref.runtime_id
+    ):
+        raise RuntimeError("docker container creation is still pending")
+    return container
+
+
+def docker_reference_id(ref: SandboxRef) -> str | None:
+    """Resolve owned names once; subsequent operations must use the immutable ID."""
+    if "docker_identity" not in ref.meta:
+        return ref.runtime_id  # Existing references keep their original locators.
+    docker_identity_labels(ref.meta["docker_identity"])
+    container = _owned_container(ref, _inspect_containers((ref.runtime_id,)))
+    if docker_launch_pending(ref.runtime_name or ref.runtime_id):
+        raise RuntimeError("docker container creation is still pending")
+    return container.id if container is not None else None
+
+
+def docker_reference_running(ref: SandboxRef) -> bool:
+    if "docker_identity" not in ref.meta:
+        return docker_container_running(ref.runtime_id)
+    docker_identity_labels(ref.meta["docker_identity"])
+    container = _owned_container(ref, _inspect_containers((ref.runtime_id,)))
+    return container is not None and container.running
+
+
+def docker_reference_states(refs: tuple[SandboxRef, ...]) -> tuple[bool | None, ...]:
+    """Batch liveness without letting reused names satisfy stale generations."""
+    legacy = docker_container_states(
+        tuple(
+            dict.fromkeys(
+                ref.runtime_id for ref in refs if "docker_identity" not in ref.meta
+            )
+        )
+    )
+    identities = tuple(
+        dict.fromkeys(ref.runtime_id for ref in refs if "docker_identity" in ref.meta)
+    )
+    try:
+        containers = _inspect_containers(identities)
+    except (OSError, RuntimeError):
+        containers = {}
+    states: list[bool | None] = []
+    for ref in refs:
+        if "docker_identity" not in ref.meta:
+            states.append(legacy.get(ref.runtime_id))
+            continue
+        try:
+            container = _owned_container(ref, containers)
+            states.append(container is not None and container.running)
+        except (OSError, RuntimeError, ValueError):
+            states.append(None)
+    return tuple(states)
 
 
 def _container_missing(stderr: str, container_id: str) -> bool:
@@ -193,6 +364,7 @@ async def docker_run_detached(
     env_values: Mapping[str, str],
     log_path: Path | None,
     remove_on_exit: bool = False,
+    labels: Mapping[str, str] | None = None,
 ) -> str:
     args = [
         "docker",
@@ -209,6 +381,8 @@ async def docker_run_detached(
     ]
     if remove_on_exit:
         args.append("--rm")
+    for name, value in (labels or {}).items():
+        args.extend(["--label", f"{name}={value}"])
     for mount in mounts:
         suffix = ":ro" if mount.read_only else ""
         args.extend(["--volume", f"{mount.local_path}:{mount.hosted_path}{suffix}"])
