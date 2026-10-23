@@ -196,22 +196,37 @@ full-match regular expression:
 environment_allow_pattern = '^(?:COMPANY_CATALOG_TOKEN|HTTPS?_PROXY)$'
 ```
 
-Docker writes resolved values to a mode-`0600` staged dotenv file, bind-mounted
-read-only over `HOME/.env`. The controller does not separately reload authored
-dotenv files for staging. Public sandbox requests retain the legacy
-`dotenv_envs` input for trusted callers; those explicit names bypass the optional
-pattern. The original home `.env` remains hidden behind the nested mount.
-Bootstrap preserves only native `PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL`,
-`LANG`, `LC_ALL`, `LC_CTYPE`, `TZ`, `TMPDIR`, `TMP`, `TEMP`, `TERM`, `COLORTERM`,
-and `NO_COLOR`, then overlays the staged bindings and generated control/bootstrap
-paths. Host configuration cannot widen this native allowlist. The image or its
-entrypoint supplies runtime defaults; Toolang does not infer users, shells,
-locales, or terminal settings. Other image/entrypoint variables are discarded.
-Setup receives that final startup snapshot and never reloads staged
-or authored dotenv during refresh.
-Toolang passes gateway, Toolang-root, sandbox, and workspace control values
-through Docker's environment arguments; `TOOLANG_ROOT` retains the selected
-Toolang root, and `_serve` receives the mapped place explicitly. Docker maps
+Docker always writes resolved guest values to mode-`0600` `guest.env`, including
+an empty result. It mounts that file read-only at the ordinary loader's
+highest-priority root policy path: `ROOT/.<name>.env` for residents, or the
+existing source-identity filename for roaming/visiting agents. The guest launch
+uses the same source selector and dotenv parser as the host, before plugin
+construction. File presence naturally disables fallback and `pick`. The complete
+home mount retains any authored `HOME/.env` without masking or modification;
+the loader does not merge it with the selected root file. The controller does
+not separately reload authored dotenv files for staging. Public sandbox requests
+retain the trusted `dotenv_envs` input, whose names bypass the optional pattern;
+resolved process bindings win on duplicate names in the generated file.
+
+The guest preserves all native image/entrypoint environment variables, overlays
+the loaded bindings, and restores the finite launcher-owned control values.
+Host `keep` never removes image variables or automatically imports host
+`PATH`/`HOME`. Toolang prepends its private bin to the selected guest PATH.
+Shell tools use `/bin/sh -c`, preserving that environment without login profiles.
+Setup refreshes, model calls, tools, and child processes reuse the startup
+snapshot; file edits take effect after restart.
+
+Bootstrap installs in a child process using private `UV_CACHE_DIR`,
+`UV_PYTHON_INSTALL_DIR`, `UV_PYTHON_BIN_DIR`, `UV_TOOL_DIR`, `UV_TOOL_BIN_DIR`,
+and `UV_NO_PROGRESS` settings. Installation uses image-provided network settings.
+The final workload starts from the original image/entrypoint environment, so
+installer UV overrides, temporary module `PYTHONPATH`, and shell variable
+assignments do not replace workload values. Internal executable paths are
+absolute. Bootstrap does not parse authored or generated dotenv files.
+
+Toolang passes gateway, mapped Toolang-root, sandbox, and workspace control
+values through Docker's environment arguments; `_serve` receives the mapped
+root/place paths and original source identity explicitly. Docker maps
 `host.docker.internal` through the engine's `host-gateway`. The complete staging
 mount is read-only in the guest. Staged files are removed on release and after a
 failed Docker launch whose workload was removed successfully. If Docker cleanup

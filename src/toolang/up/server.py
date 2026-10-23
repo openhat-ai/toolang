@@ -183,6 +183,7 @@ def build_serve_argv(
     spec: ServeSpec,
     *,
     place: Path | None = None,
+    root: Path | None = None,
     host: str | None = None,
     sandbox: str = "host",
     location: str = "host",
@@ -193,7 +194,7 @@ def build_serve_argv(
 
     command = [
         "--root",
-        str(spec.toolang_root or spec.layout.root or spec.layout.place),
+        str(root or spec.toolang_root or spec.layout.root or spec.layout.place),
         "_serve",
         spec.layout.name,
         "--place",
@@ -237,6 +238,8 @@ def build_serve_argv(
                 str(source_edit_lock or spec.layout.place_edit_lock),
             ]
         )
+    if spec.layout.source_ref is not None:
+        command.extend(["--source-ref", spec.layout.source_ref])
     if spec.launch_id is not None:
         command.extend(["--launch-id", spec.launch_id])
     if spec.workspace_additions:

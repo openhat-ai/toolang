@@ -37,6 +37,10 @@ from toolang.cli.common.parameters import (
 )
 
 from toolang.common.layout import AgentLayout
+from toolang.common.environment import (
+    RUNTIME_ENV_NAMES,
+    environment_scope,
+)
 from toolang.up.types import ServerLifetime
 from toolang.up.config import parse_drivers
 from toolang.cli.common.agent_server import (
@@ -571,6 +575,7 @@ def serve(
     source_path: Annotated[
         Path | None, typer.Option("--source-path", hidden=True)
     ] = None,
+    source_ref: Annotated[str | None, typer.Option("--source-ref", hidden=True)] = None,
     store_schema: Annotated[int, typer.Option("--store-schema", hidden=True)] = 63,
     source_edit_lock: Annotated[
         Path | None, typer.Option("--source-edit-lock", hidden=True)
@@ -624,6 +629,7 @@ def serve(
         root=context_root(ctx),
         place_code=place_code,
         source_path=source_path,
+        source_ref=source_ref,
         source_edit_lock=source_edit_lock,
         project_inputs=source_policy == "project",
         managed_membership=membership == "managed",
@@ -631,51 +637,80 @@ def serve(
     environ = dict(os.environ)
     environ["TOOLANG_ROOT"] = str(context_root(ctx))
     environ["TOOLANG_SANDBOX"] = sandbox
+    # Dotenv selection is shared; host inheritance alone is reduced by keep/pick.
+    selected = user_call(load_runtime_environment, layout, base_environ=environ)
+    controls = {
+        name: value for name, value in environ.items() if name in RUNTIME_ENV_NAMES
+    }
+    environ = dict(selected.values) if location == "host" else environ
+    environ.update(selected.guest_values)
+    for name in RUNTIME_ENV_NAMES:
+        environ.pop(name, None)
+    environ.update(controls)
+    bin_dir = str(Path(sys.argv[0]).absolute().parent)
+    environ["PATH"] = os.pathsep.join(
+        [
+            bin_dir,
+            *(
+                part
+                for part in environ.get("PATH", "").split(os.pathsep)
+                if part != bin_dir
+            ),
+        ]
+    )
     if model_catalog := resolve_model_catalog_option(model_catalog):
         environ[MODEL_CATALOG_ENV] = str(model_catalog)
-    cors_origins = None
-    if cors_allowed_origins is not None:
-        parsed = user_call(json.loads, cors_allowed_origins)
-        if not isinstance(parsed, list) or not all(
-            isinstance(item, str) for item in parsed
-        ):
-            raise ClickException("invalid CORS origins startup input")
-        cors_origins = tuple(parsed)
-    spec = user_call(
-        resolve_serve,
-        layout=layout,
-        toolang_root=context_root(ctx),
-        launch_id=launch_id,
-        lifetime=lifetime,
-        drivers=user_call(parse_drivers, driver) if driver is not None else ALL_DRIVERS,
-        host=host,
-        endpoint_host=endpoint_host,
-        port=port,
-        ceiling_overrides=user_call(resolve_ceiling_overrides, {}, allows),
-        default_overrides=user_call(resolve_default_overrides, {}, defaults),
-        compact_override=user_call(resolve_compact_override, environ, compact_model),
-        limit_overrides=user_call(resolve_limit_overrides, {}, limits),
-        log_spec=log_spec,
-        cors_allowed_origins=cors_origins,
-        ui_base_url=ui_base_url,
-        workspace_additions=json.loads(workspace_bindings),
-        workdir=initial_workdir,
-    )
-    if location == "guest" and (registry_directory is None or registry_status is None):
-        raise ClickException("guest workload requires its registry binding")
-    spec = replace(
-        spec, registry_directory=registry_directory, registry_status=registry_status
-    )
-    raise typer.Exit(
-        user_call(
-            serve_agent,
-            spec,
-            environ=environ,
-            sandbox=sandbox,
+    environment = replace(selected, values=environ)
+    with environment_scope(environment):
+        cors_origins = None
+        if cors_allowed_origins is not None:
+            parsed = user_call(json.loads, cors_allowed_origins)
+            if not isinstance(parsed, list) or not all(
+                isinstance(item, str) for item in parsed
+            ):
+                raise ClickException("invalid CORS origins startup input")
+            cors_origins = tuple(parsed)
+        spec = user_call(
+            resolve_serve,
+            layout=layout,
+            toolang_root=context_root(ctx),
             launch_id=launch_id,
-            location=location,
+            lifetime=lifetime,
+            drivers=user_call(parse_drivers, driver)
+            if driver is not None
+            else ALL_DRIVERS,
+            host=host,
+            endpoint_host=endpoint_host,
+            port=port,
+            ceiling_overrides=user_call(resolve_ceiling_overrides, {}, allows),
+            default_overrides=user_call(resolve_default_overrides, {}, defaults),
+            compact_override=user_call(
+                resolve_compact_override, environ, compact_model
+            ),
+            limit_overrides=user_call(resolve_limit_overrides, {}, limits),
+            log_spec=log_spec,
+            cors_allowed_origins=cors_origins,
+            ui_base_url=ui_base_url,
+            workspace_additions=json.loads(workspace_bindings),
+            workdir=initial_workdir,
         )
-    )
+        if location == "guest" and (
+            registry_directory is None or registry_status is None
+        ):
+            raise ClickException("guest workload requires its registry binding")
+        spec = replace(
+            spec, registry_directory=registry_directory, registry_status=registry_status
+        )
+        raise typer.Exit(
+            user_call(
+                serve_agent,
+                spec,
+                environ=environ,
+                sandbox=sandbox,
+                launch_id=launch_id,
+                location=location,
+            )
+        )
 
 
 def resolve_startup(

@@ -76,7 +76,7 @@ class ShellToolset:
             launch = asyncio.create_task(
                 asyncio.create_subprocess_exec(
                     "/bin/sh",
-                    "-lc",
+                    "-c",
                     command,
                     cwd=str(resolved_cwd),
                     env=dict(os.environ),

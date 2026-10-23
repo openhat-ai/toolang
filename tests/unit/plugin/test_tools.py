@@ -202,6 +202,22 @@ def test_shell_tool_runs_one_command(tmp_path: Path) -> None:
     assert result["stdout"] == "hi"
 
 
+def test_shell_tool_preserves_a_native_toolchain_path(tmp_path, monkeypatch):
+    bin_dir = tmp_path / "image-bin"
+    bin_dir.mkdir()
+    executable = bin_dir / "image-toolchain"
+    executable.write_text('#!/bin/sh\nprintf "%s" "$CARGO_HOME"\n')
+    executable.chmod(0o755)
+    monkeypatch.setenv("PATH", str(bin_dir))
+    monkeypatch.setenv("CARGO_HOME", "/image/cargo")
+    tool = create_shell_tool({}).tools()["execute"]
+    result = _invoke(
+        tool, {"command": "image-toolchain"}, _tool_context(tmp_path, "shell")
+    )
+    assert result["exit_code"] == 0
+    assert result["stdout"] == "/image/cargo"
+
+
 @pytest.mark.parametrize("interruption", ["cancel", "timeout"])
 def test_shell_interruption_stops_the_command(
     tmp_path: Path, interruption: str, monkeypatch: pytest.MonkeyPatch

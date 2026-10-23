@@ -32,6 +32,7 @@ from toolang.base.types.progress import (
 )
 from toolang.base.types.sandbox import SandboxOutput, SandboxRef, SandboxRequest
 from toolang.common.files import file_lock_path
+from toolang.common.environment import agent_environment_paths
 from toolang.common.progress import emit_progress
 from toolang.common.layout import AgentLayout
 from toolang.common.config_sources import config_sources
@@ -346,6 +347,10 @@ async def _launch_locked(
         name, raw_spec = _split_sandbox(spec.sandbox)
         implementation = create_sandbox(name, config=spec.config)
         hosted_place = implementation.runtime_place(spec.serve.layout.place)
+        local_root = (
+            spec.serve.toolang_root or spec.serve.layout.root or spec.serve.layout.place
+        )
+        hosted_root = implementation.runtime_place(local_root)
         if implementation.location not in {"host", "guest"}:
             raise ValueError(
                 f"sandbox {name} returned invalid location: {implementation.location}"
@@ -381,6 +386,7 @@ async def _launch_locked(
             guest_edit_lock = hosted_place / ".state" / "root" / "edit.lock"
             edit_lock_mounts = (SandboxMount(local_guard, guest_edit_lock),)
         registry_mounts: tuple[SandboxMount, ...] = ()
+        environment_paths = agent_environment_paths(hosted_root, spec.serve.layout)
         guest_registry = None
         if not on_host:
             from .registry import registration_directory
@@ -419,6 +425,7 @@ async def _launch_locked(
                 *build_serve_argv(
                     spec.serve,
                     place=hosted_place,
+                    root=hosted_root,
                     sandbox=spec.sandbox,
                     location=implementation.location,
                     host=spec.serve.host if on_host else "0.0.0.0",
@@ -447,6 +454,9 @@ async def _launch_locked(
                 "TOOLANG_WORKSPACE_LOCATION": "host" if on_host else "guest",
             },
             dotenv_envs=spec.dotenv_envs,
+            environment_path=environment_paths[0]
+            if not on_host and environment_paths
+            else None,
             mounts=(
                 ()
                 if on_host

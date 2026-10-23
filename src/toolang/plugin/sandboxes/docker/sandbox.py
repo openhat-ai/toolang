@@ -28,6 +28,7 @@ from toolang.base.types.sandbox import (
     SandboxRequest,
 )
 from toolang.common.progress import emit_progress
+from toolang.common.environment import RUNTIME_ENV_NAMES
 from toolang.common.place_codes import root_code
 from toolang.plugin.catalogs.models_dev.path import MODEL_CATALOG_ENV
 
@@ -59,18 +60,7 @@ DEFAULT_IMAGE = "python:3.13-slim"
 # Requests already contain the resolved agent environment. Only an explicit
 # legacy pattern adds another restriction.
 DEFAULT_ENVIRONMENT_ALLOW_PATTERN = r".*"
-_CONTROL_ENV_NAMES = frozenset(
-    {
-        "TOOLANG_HOST_GATEWAY",
-        "TOOLANG_ROOT",
-        "TOOLANG_SANDBOX",
-        "TOOLANG_SANDBOX_DESCRIPTION",
-        "TOOLANG_SANDBOX_INSTANCE",
-        "TOOLANG_WORKSPACE_MOUNTS",
-        "TOOLANG_WORKSPACE_LOCATION",
-        "HOSTNAME",
-    }
-)
+_CONTROL_ENV_NAMES = RUNTIME_ENV_NAMES
 _STARTUP_EVENT_INTERVAL_SEC = 0.05
 _STARTUP_EVENT_MAX_BYTES = 1024
 _STARTUP_EVENT_MAP: dict[str, tuple[ProgressStage, str, ProgressStatus]] = {
@@ -339,6 +329,10 @@ class DockerSandbox:
                 shutil.copy2(artifact, staged)
             hosted_dev_artifact = runtime_dir / staged.name
         guest_env_path = stage_dir / "guest.env"
+        hosted_env_path = (
+            request.environment_path
+            or self._runtime_place / f".{request.agent_name}.env"
+        )
         write_guest_env(
             guest_env_path,
             dotenv_envs=dotenv_envs,
@@ -349,7 +343,7 @@ class DockerSandbox:
             *model_catalog_mounts,
             SandboxMount(
                 guest_env_path,
-                request.hosted_home / ".env",
+                hosted_env_path,
                 read_only=True,
             ),
             SandboxMount(stage_dir, runtime_dir, read_only=True),
@@ -366,7 +360,6 @@ class DockerSandbox:
                 "/bin/sh",
                 str(runtime_dir / "docker_guest.sh"),
                 str(runtime_dir / "docker_guest.py"),
-                str(request.hosted_home / ".env"),
                 str(hosted_diagnostic_path),
                 str(diagnostic_path),
                 str(request.hosted_home / ".runtime" / startup_events_path.name),
@@ -381,9 +374,7 @@ class DockerSandbox:
             endpoint=request.endpoint,
             envs={
                 "TOOLANG_HOST_GATEWAY": DEFAULT_HOST_GATEWAY,
-                "TOOLANG_ROOT": request.envs.get(
-                    "TOOLANG_ROOT", str(request.local_place)
-                ),
+                "TOOLANG_ROOT": str(hosted_env_path.parent),
                 "TOOLANG_SANDBOX": f"{self.name}:{image}",
                 "TOOLANG_WORKSPACE_MOUNTS": request.envs.get(
                     "TOOLANG_WORKSPACE_MOUNTS", "{}"

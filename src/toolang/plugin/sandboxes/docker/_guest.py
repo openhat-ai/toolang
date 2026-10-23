@@ -33,7 +33,14 @@ def write_guest_env(
 ) -> None:
     """Write the restricted generated dotenv consumed by the guest core."""
 
-    content = _dotenv_section("Explicit sandbox bindings", dotenv_envs)
+    content = _dotenv_section(
+        "Explicit sandbox bindings",
+        {
+            name: value
+            for name, value in dotenv_envs.items()
+            if name not in process_envs
+        },
+    )
     content += "\n"
     content += _dotenv_section("Resolved workload values", process_envs)
     atomic_write_text(path, content)

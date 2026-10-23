@@ -578,7 +578,7 @@ def test_docker_sandbox_prepares_and_launches(
     guest_env_mount = next(
         item
         for item in plan.mounts
-        if item.hosted_path == Path("/root/.toolang/agents/alice/.env")
+        if item.hosted_path == Path("/root/.toolang/.alice.env")
     )
     assert guest_env_mount.read_only is True
     assert dotenv_values(guest_env_mount.local_path, interpolate=False) == {
@@ -592,7 +592,7 @@ def test_docker_sandbox_prepares_and_launches(
     guest_env_source = guest_env_mount.local_path.read_text(encoding="utf-8")
     assert guest_env_source.startswith("# Explicit sandbox bindings\n")
     assert "\n# Resolved workload values\n" in guest_env_source
-    assert guest_env_source.count("OPENAI_API_KEY=") == 2
+    assert guest_env_source.count("OPENAI_API_KEY=") == 1
     # Direct sandbox callers supply an already selected environment.
     assert "AUTHORIZED_CUSTOM_KEY" in guest_env_source
     assert stat.S_IMODE(guest_env_mount.local_path.stat().st_mode) == 0o600
@@ -632,7 +632,6 @@ def test_docker_sandbox_prepares_and_launches(
         "/bin/sh",
         "/root/.toolang/agents/alice/.runtime/sandbox/docker_guest.sh",
         "/root/.toolang/agents/alice/.runtime/sandbox/docker_guest.py",
-        "/root/.toolang/agents/alice/.env",
         f"/root/.toolang/agents/alice/.runtime/{diagnostic_path.name}",
         str(diagnostic_path),
         f"/root/.toolang/agents/alice/.runtime/{startup_events_path.name}",
@@ -666,7 +665,7 @@ def test_docker_sandbox_prepares_and_launches(
     assert run_call["hosted_port"] == 8123
     assert run_call["env_values"] == {
         "TOOLANG_HOST_GATEWAY": "host.docker.internal",
-        "TOOLANG_ROOT": str(tmp_path),
+        "TOOLANG_ROOT": "/root/.toolang",
         "TOOLANG_SANDBOX": "docker:python:3.13-slim",
         "TOOLANG_WORKSPACE_MOUNTS": "{}",
         "TOOLANG_WORKSPACE_LOCATION": "guest",
@@ -692,7 +691,7 @@ def test_docker_sandbox_mounts_external_model_catalog_at_guest_path(
     guest_env_mount = next(
         mount
         for mount in plan.mounts
-        if mount.hosted_path == request.hosted_home / ".env"
+        if mount.hosted_path == Path("/root/.toolang/.alice.env")
     )
     guest_envs = dotenv_values(guest_env_mount.local_path, interpolate=False)
 
@@ -749,7 +748,7 @@ def test_docker_sandbox_rewrites_root_model_catalog_and_mounts_it_read_only(
     guest_env_mount = next(
         mount
         for mount in plan.mounts
-        if mount.hosted_path == request.hosted_home / ".env"
+        if mount.hosted_path == Path("/root/.toolang/.alice.env")
     )
 
     assert source_mount == SandboxMount(source.resolve(), expected, read_only=True)
@@ -773,8 +772,7 @@ def test_docker_background_sandbox_uses_docker_output_and_durable_diagnostics(
     stage_dir = Path(cast(str, plan.meta["stage_dir"]))
     shell = (stage_dir / "docker_guest.sh").read_text(encoding="utf-8")
     helper = (stage_dir / "docker_guest.py").read_text(encoding="utf-8")
-    assert 'exec "$PYTHON_BIN" "$HELPER"' in shell
-    assert 'TOOLANG_SANDBOX_INSTANCE"] = hostname' in helper
+    assert 'exec "$PYTHON_BIN" "$HELPER" --install' in shell
     assert "PROGRESS_EVENTS" in shell
     assert "report_progress" in helper
     assert 'source "$GUEST_ENV"' not in shell
@@ -872,36 +870,50 @@ def test_docker_background_attach_is_quiet_without_progress(
     assert followed == []
 
 
-def test_docker_guest_reuses_uv_and_preserves_generated_environment(
-    tmp_path: Path,
+@pytest.mark.parametrize("native_uv", [False, True])
+def test_docker_guest_preserves_image_environment_and_scopes_uv_overrides(
+    tmp_path: Path, native_uv: bool
 ) -> None:
     tools = tmp_path / "tools"
     tools.mkdir()
     _link_guest_utilities(tools)
     _write_fake_guest_tools(tools, python=sys.executable)
-    guest_env = tmp_path / "guest.env"
-    docker_guest.write_guest_env(
-        guest_env,
-        dotenv_envs={
-            "HTTPS_PROXY": "http://proxy/$literal",
-            "LITERAL": "${HOME}/`literal`\\tail",
-            "MULTILINE": "first\nsecond\rthird",
-        },
-        process_envs={
-            "LITERAL": "process ${HOME}",
-            "TOOLANG_TEST_INSTALL_ENV_LOG": str(tmp_path / "install-env"),
-            "TOOLANG_TEST_TOO": str(tools / "too-template"),
-        },
-    )
     diagnostic = tmp_path / "diagnostic.log"
-    diagnostic.touch()
-
+    runtime = tmp_path / "runtime"
+    uv_names = (
+        "UV_CACHE_DIR",
+        "UV_PYTHON_INSTALL_DIR",
+        "UV_PYTHON_BIN_DIR",
+        "UV_TOOL_DIR",
+        "UV_TOOL_BIN_DIR",
+        "UV_NO_PROGRESS",
+    )
+    uv_values = {name: f"image-{name}" for name in uv_names} if native_uv else {}
+    environ = {
+        "HOSTNAME": _CONTAINER_ID[:12],
+        "PATH": f"{tools}{os.pathsep}{os.environ['PATH']}",
+        "TOOLANG_TEST_PYTHON": sys.executable,
+        "TOOLANG_TEST_INSTALL_ENV_LOG": str(tmp_path / "install-env"),
+        "TOOLANG_TEST_TOO": str(tools / "too-template"),
+        "IMAGE_CUSTOM": "image-value",
+        "PYTHON_VERSION": "image-python-version",
+        "UV_VERSION": "image-uv-version",
+        "RUNTIME_ROOT": "image-runtime",
+        "CACHE_DIR": "image-cache",
+        "CARGO_HOME": "/usr/local/cargo",
+        "RUSTUP_HOME": "/usr/local/rustup",
+        "HOME": str(tmp_path / "container-home"),
+        "LANG": "C",
+        "HTTPS_PROXY": "http://image-proxy/$literal",
+        "TOOLANG_GUEST_RUNTIME": str(runtime),
+        "PYTHONPATH": str(tmp_path / "image-python"),
+        **uv_values,
+    }
     completed = subprocess.run(
         (
             "/bin/sh",
             str(Path(docker_guest.__file__).with_name("docker_guest.sh")),
             str(Path(docker_guest.__file__).with_name("docker_guest.py")),
-            str(guest_env),
             str(diagnostic),
             str(diagnostic),
             "-",
@@ -910,50 +922,30 @@ def test_docker_guest_reuses_uv_and_preserves_generated_environment(
             "--",
             sys.executable,
             "-c",
-            "import json, os; print(json.dumps({"
-            "'instance': os.environ['TOOLANG_SANDBOX_INSTANCE'], "
-            "'literal': os.environ['LITERAL'], "
-            "'multiline': os.environ['MULTILINE'], "
-            "'home': os.environ['HOME'], "
-            "'lang': os.environ['LANG'], "
-            "'image_secret': os.environ.get('IMAGE_SECRET')}))",
+            "import json, os; print(json.dumps(dict(os.environ)))",
         ),
         check=False,
         capture_output=True,
         text=True,
-        env={
-            "HOSTNAME": _CONTAINER_ID[:12],
-            "PATH": f"{tools}{os.pathsep}{os.environ['PATH']}",
-            "TOOLANG_TEST_PYTHON": sys.executable,
-            "TOOLANG_TEST_INSTALL_ENV_LOG": str(tmp_path / "install-env"),
-            "TOOLANG_TEST_TOO": str(tools / "too-template"),
-            "IMAGE_SECRET": "excluded-image-secret",
-            "HOME": str(tmp_path / "container-home"),
-            "LANG": "C",
-            "TOOLANG_GUEST_RUNTIME": str(tmp_path / "runtime"),
-        },
+        env=environ,
     )
-
     assert completed.returncode == 0, completed.stderr
-    assert json.loads(completed.stdout) == {
-        "instance": _CONTAINER_ID[:12],
-        "literal": "process ${HOME}",
-        "multiline": "first\nsecond\rthird",
-        "home": str(tmp_path / "container-home"),
-        "lang": "C",
-        "image_secret": None,
-    }
+    observed = json.loads(completed.stdout)
+    for name, value in environ.items():
+        assert observed[name] == (
+            str(runtime / "bin") + os.pathsep + value if name == "PATH" else value
+        )
+    assert observed["TOOLANG_SANDBOX_INSTANCE"] == _CONTAINER_ID[:12]
+    assert {name: observed[name] for name in uv_names if name in observed} == uv_values
+    assert (runtime / "bin/too").is_file()
     assert completed.stderr.splitlines() == [
         "Using uv · test",
-        f"Using Python · {sys.version_info.major}.{sys.version_info.minor}."
-        f"{sys.version_info.micro}",
+        f"Using Python · {sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
         "Installing Toolang · toolang-test.whl...",
         "Installed Toolang · toolang test",
         "Starting command...",
     ]
-    assert (tmp_path / "install-env").read_text(encoding="utf-8") == (
-        "http://proxy/$literal\n"
-    )
+    assert (tmp_path / "install-env").read_text() == "http://image-proxy/$literal\n"
     assert not diagnostic.exists()
 
 
@@ -993,7 +985,6 @@ def test_docker_guest_uses_python_and_pip_to_install_uv(tmp_path: Path) -> None:
             "/bin/sh",
             str(Path(docker_guest.__file__).with_name("docker_guest.sh")),
             str(Path(docker_guest.__file__).with_name("docker_guest.py")),
-            str(guest_env),
             str(diagnostic),
             str(diagnostic),
             "-",
@@ -1041,7 +1032,6 @@ def test_docker_guest_rejects_an_image_without_bootstrap_capabilities(
             "/bin/sh",
             str(Path(docker_guest.__file__).with_name("docker_guest.sh")),
             str(Path(docker_guest.__file__).with_name("docker_guest.py")),
-            str(guest_env),
             str(diagnostic),
             str(diagnostic),
             "-",
@@ -1085,7 +1075,6 @@ def test_docker_guest_requires_the_default_short_container_hostname(
             "/bin/sh",
             str(Path(docker_guest.__file__).with_name("docker_guest.sh")),
             str(Path(docker_guest.__file__).with_name("docker_guest.py")),
-            str(guest_env),
             str(diagnostic),
             str(diagnostic),
             "-",
@@ -1274,7 +1263,7 @@ def test_docker_sandbox_uses_a_configured_environment_allow_pattern(
     guest_env_mount = next(
         item
         for item in plan.mounts
-        if item.hosted_path == Path("/root/.toolang/agents/alice/.env")
+        if item.hosted_path == Path("/root/.toolang/.alice.env")
     )
     assert dotenv_values(guest_env_mount.local_path, interpolate=False) == {
         "CUSTOM_TOKEN": "custom",
@@ -2190,7 +2179,7 @@ def test_docker_preserves_already_mounted_catalog_input(tmp_path, shadowed):
     env_mount = next(
         mount
         for mount in plan.mounts
-        if mount.hosted_path == request.hosted_home / ".env"
+        if mount.hosted_path == Path("/root/.toolang/.alice.env")
     )
     assert dotenv_values(env_mount.local_path, interpolate=False)[
         MODEL_CATALOG_ENV
@@ -2213,9 +2202,46 @@ def test_docker_stages_only_resolved_agent_values(tmp_path):
     request = replace(_request(tmp_path), envs=dict(environment.values), dotenv_envs={})
     plan = create_sandbox("docker", config={}).prepare(None, request)
     mount = next(
-        item for item in plan.mounts if item.hosted_path == request.hosted_home / ".env"
+        item
+        for item in plan.mounts
+        if item.hosted_path == Path("/root/.toolang/.alice.env")
     )
     assert dotenv_values(mount.local_path, interpolate=False) == {"ADMITTED": "central"}
     assert "synthetic-excluded" not in mount.local_path.read_text()
     assert "central" not in repr(plan)
     assert "central" not in json.dumps(plan.meta)
+
+
+@pytest.mark.parametrize("home_env", [None, "", "PRIVATE=local\n"])
+def test_docker_mounts_generated_environment_at_root_without_touching_home(
+    tmp_path, home_env
+):
+    request = _request(tmp_path)
+    local_env = request.local_home / ".env"
+    if home_env is not None:
+        local_env.write_text(home_env)
+    plan = create_sandbox("docker", config={}).prepare(None, request)
+    mount = next(mount for mount in plan.mounts if mount.local_path.name == "guest.env")
+    assert mount.hosted_path == Path("/root/.toolang/.alice.env")
+    assert mount.read_only
+    assert all(item.hosted_path != request.hosted_home / ".env" for item in plan.mounts)
+    assert (
+        local_env.read_text() == home_env
+        if home_env is not None
+        else not local_env.exists()
+    )
+
+
+def test_generated_guest_environment_uses_the_common_parser(tmp_path):
+    from toolang.common.environment import apply_environment_file
+
+    path = tmp_path / "guest.env"
+    docker_guest.write_guest_env(
+        path,
+        dotenv_envs={"LITERAL": "overridden", "MULTILINE": "first\nsecond\rthird"},
+        process_envs={"LITERAL": '${HOME}/"quoted"/\\literal'},
+    )
+    assert apply_environment_file(path, {}) == {
+        "LITERAL": '${HOME}/"quoted"/\\literal',
+        "MULTILINE": "first\nsecond\rthird",
+    }

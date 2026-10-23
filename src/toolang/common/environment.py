@@ -76,6 +76,21 @@ _HTTP_ENV_PREFIXES = tuple(
 )
 logger = logging.getLogger(__name__)
 
+# Concrete process facts belong to the launcher, not authored dotenv bindings.
+RUNTIME_ENV_NAMES = frozenset(
+    {
+        "HOSTNAME",
+        "TOOLANG_HOST_GATEWAY",
+        "TOOLANG_HOST_LAUNCH",
+        "TOOLANG_ROOT",
+        "TOOLANG_SANDBOX",
+        "TOOLANG_SANDBOX_DESCRIPTION",
+        "TOOLANG_SANDBOX_INSTANCE",
+        "TOOLANG_WORKSPACE_MOUNTS",
+        "TOOLANG_WORKSPACE_LOCATION",
+    }
+)
+
 
 @dataclass(frozen=True, slots=True)
 class EnvironmentPolicy:
@@ -219,21 +234,30 @@ def resolve_root_environment(
     return ResolvedEnvironment(root, policy, values, source=source)
 
 
+def agent_environment_paths(
+    root: Path,
+    layout: AgentLayout,
+) -> tuple[Path, ...]:
+    """Return policy files in precedence order for one source identity."""
+
+    if layout.placement == "resident":
+        return (root / f".{layout.name}.env", layout.env)
+    if layout.placement == "roaming" and layout.source_path is not None:
+        source_path = layout.source_path.resolve()
+        return (
+            root / f".{encode_flatname(str(source_path))}.env",
+            source_path.parent / ".toolang.env",
+        )
+    if layout.placement == "visiting" and layout.source_ref is not None:
+        return (root / f".{encode_flatname(layout.source_ref)}.env",)
+    return ()
+
+
 def resolve_agent_environment(
     root: ResolvedEnvironment,
     layout: AgentLayout,
 ) -> ResolvedEnvironment:
-    candidates: tuple[Path, ...] = ()
-    if layout.placement == "resident":
-        candidates = (root.root / f".{layout.name}.env", layout.env)
-    elif layout.placement == "roaming" and layout.source_path is not None:
-        source_path = layout.source_path.resolve()
-        candidates = (
-            root.root / f".{encode_flatname(str(source_path))}.env",
-            source_path.parent / ".toolang.env",
-        )
-    elif layout.placement == "visiting" and layout.source_ref is not None:
-        candidates = (root.root / f".{encode_flatname(layout.source_ref)}.env",)
+    candidates = agent_environment_paths(root.root, layout)
     source = next((path for path in candidates if _exists(path)), None)
     values = {
         name: root.values[name] for name in root.policy.keep if name in root.values

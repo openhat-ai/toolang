@@ -5,7 +5,7 @@ Run with ``uv run pytest -m live_docker --live-docker``.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Generator, Iterator
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
@@ -169,11 +169,14 @@ def test_visiting_chat_reclaims_or_explicitly_stops_an_automatic_container(
 
 
 @pytest.mark.parametrize("placement", ["roaming", "visiting"])
-def test_docker_foreground_nonresident_uses_selected_root_and_cleans_reference(
+def test_nonresident_launch_uses_selected_root_environment_and_cleans_reference(
     tmp_path: Path, docker_wheel_dir: Path, local_model_port: int, placement: str
 ) -> None:
     from toolang.up.source import visiting_layout
     from toolang.up.instance import read_instance
+    from toolang.common.environment import agent_environment_paths
+    from toolang.common.place_codes import roaming_place_code
+    from toolang.up.identity import InstanceIdentity
 
     program = "flow complete:\n  let result = Done\n"
 
@@ -196,29 +199,40 @@ def test_docker_foreground_nonresident_uses_selected_root_and_cleans_reference(
         source = tmp_path / "local.too"
         source.write_text(program)
         selector = str(source)
-        layout = AgentLayout.roaming(source)
+        layout = AgentLayout.roaming(
+            source,
+            root=root,
+            place_code=roaming_place_code(str(source), time.time_ns() // 1_000_000),
+        )
+        agent_sources.materialize_roaming_program(source, layout=layout)
     else:
         selector = f"http://127.0.0.1:{source_server.server_port}/remote.too"
-        layout = visiting_layout(selector, toolang_root=root)
+        layout = agent_sources.prepare_visiting_layout(
+            visiting_layout(selector, toolang_root=root), toolang_root=root
+        )
     layout.home.mkdir(parents=True, exist_ok=True)
     _write_local_model_env(layout.place_env, local_model_port)
-    port = _available_port()
+    _write_local_model_env(agent_environment_paths(root, layout)[0], local_model_port)
     env = {**os.environ, "TOOLANG_ROOT": str(root)}
     base = (sys.executable, "-m", "toolang.cli.toolang")
     container_id = None
+    identity = tmp_path / "identity.json"
+    identity.write_text(json.dumps(InstanceIdentity.from_layout(layout).to_data()))
+    controller = """
+import json, signal, sys
+from pathlib import Path
+from toolang.cli.common.agent_server import acquire_agent_server
+from toolang.up.identity import layout_from_control
+layout = layout_from_control(json.loads(Path(sys.argv[1]).read_text()))
+try:
+    with acquire_agent_server(layout, sandbox='docker', dev=Path(sys.argv[2]), temporary=True, bound=True):
+        signal.pause()
+except KeyboardInterrupt:
+    raise SystemExit(130)
+"""
     with (tmp_path / "foreground.log").open("w+") as log:
         worker = subprocess.Popen(
-            (
-                *base,
-                selector,
-                "serve",
-                "--sandbox",
-                "docker",
-                "--dev",
-                str(docker_wheel_dir),
-                "--port",
-                str(port),
-            ),
+            (sys.executable, "-c", controller, str(identity), str(docker_wheel_dir)),
             env=env,
             stdin=subprocess.DEVNULL,
             stdout=log,
@@ -530,13 +544,17 @@ def _docker_agent(
     tmp_path_factory: pytest.TempPathFactory,
     docker_wheel_dir: Path,
     local_model_port: int,
-) -> Iterator[_RunningDockerAgent]:
+    *,
+    image: str = "python:3.13-slim",
+) -> Generator[_RunningDockerAgent, None, None]:
     workspace = tmp_path_factory.mktemp("docker-sandbox-lifecycle")
     root = workspace / "toolang"
     layout = AgentLayout.resident(root, "alice")
     layout.home.mkdir(parents=True)
     layout.program.write_text(_AGENT_SOURCE, encoding="utf-8")
     _write_local_model_env(layout.place_env, local_model_port)
+    # Agent policy explicitly grants the root's local-provider endpoints.
+    (root / ".alice.env").write_text("OLLAMA_HOST\nLLAMA_CPP_HOST\n")
     skill = layout.home / "skills" / "reviewer"
     skill.mkdir(parents=True)
     (skill / "SKILL.md").write_text(
@@ -567,7 +585,7 @@ def _docker_agent(
                 *base,
                 "start",
                 "--sandbox",
-                "docker",
+                f"docker:{image}",
                 "--dev",
                 str(docker_wheel_dir),
                 "--port",
@@ -617,6 +635,57 @@ def _docker_agent(
 @pytest.fixture(scope="module")
 def completed_docker_run(running_docker_agent: _RunningDockerAgent) -> str:
     return _create_authored_run(running_docker_agent)
+
+
+def test_rust_guest_shell_uses_image_toolchain_without_bootstrap_uv_leaks(
+    tmp_path_factory, docker_wheel_dir, local_model_port
+):
+    agents = _docker_agent(
+        tmp_path_factory, docker_wheel_dir, local_model_port, image="rust:1.75"
+    )
+    try:
+        agent = next(agents)
+        assert not agent.layout.env.exists()
+        code = """
+import asyncio, json, os
+from pathlib import Path
+from toolang.base.types.tool import ToolContext
+from toolang.plugin.toolsets.shell import ShellToolset
+environ = dict(item.split('=', 1) for item in Path('/proc/1/environ').read_bytes().decode().split('\\0') if item)
+os.environ.clear()
+os.environ.update(environ)
+home = Path(environ['TOOLANG_ROOT']) / 'agents/alice'
+assert (home.parent.parent / '.alice.env').is_file()
+context = ToolContext(home=home, room=home, workspaces={'repo': home}, cwd='repo://')
+tool = ShellToolset({}).tools()['execute']
+result = asyncio.run(tool.invoke({'command': 'cargo --version && rustc --version'}, context))
+assert result.error is None, result.error
+assert result.output['exit_code'] == 0, result.output
+print(json.dumps({'output': result.output['stdout'], 'cargo_home': environ.get('CARGO_HOME'), 'rustup_home': environ.get('RUSTUP_HOME'), 'uv': {name: value for name, value in environ.items() if name in ('UV_CACHE_DIR', 'UV_PYTHON_INSTALL_DIR', 'UV_PYTHON_BIN_DIR', 'UV_TOOL_DIR', 'UV_TOOL_BIN_DIR', 'UV_NO_PROGRESS')}}))
+"""
+        checked = subprocess.run(
+            (
+                "docker",
+                "exec",
+                agent.container_id,
+                "/tmp/toolang-runtime/tools/toolang/bin/python",
+                "-c",
+                code,
+            ),
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        assert checked.returncode == 0, checked.stderr
+        result = json.loads(checked.stdout)
+        assert result["output"].splitlines()[0].startswith("cargo 1.75.0 ")
+        assert result["output"].splitlines()[1].startswith("rustc 1.75.0 ")
+        assert result["cargo_home"] == "/usr/local/cargo"
+        assert result["rustup_home"] == "/usr/local/rustup"
+        assert result["uv"] == {}
+        assert not agent.layout.env.exists()
+    finally:
+        agents.close()
 
 
 def test_docker_agent_server_start_exposes_canonical_runtime_identity(
