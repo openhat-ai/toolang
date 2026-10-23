@@ -329,6 +329,11 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   preferred order.
   ([#940](https://github.com/openhat-ai/toolang/pull/940))
 
+- Docker guests take their environment from the resolved root policy file,
+  mounted read-only even when empty, while home dotenv files stay visible
+  without merging.
+  ([#946](https://github.com/openhat-ai/toolang/pull/946))
+
 ### Fixed
 
 - Failed preparation no longer leaves active registrations; runtime references
@@ -577,6 +582,23 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 - Visiting and roaming agents reach a Hub mounted at the selected Toolang
   root for presence, event export, conversations, and rules lookup.
   ([#947](https://github.com/openhat-ai/toolang/pull/947))
+
+- Docker guests keep image and entrypoint environment values, so native
+  toolchains work, while installer-only settings such as `UV_*` never reach
+  agent workloads.
+  ([#946](https://github.com/openhat-ai/toolang/pull/946))
+
+- Guest shell commands run in a non-login shell with the selected `PATH`, so
+  image toolchain commands stay resolvable.
+  ([#946](https://github.com/openhat-ai/toolang/pull/946))
+
+- Serving agents select dotenv values through the shared root policy instead of
+  retaining unrelated inherited variables.
+  ([#946](https://github.com/openhat-ai/toolang/pull/946))
+
+- Model discovery, startup refreshes, tools, and child runs reuse the final
+  launch environment snapshot.
+  ([#946](https://github.com/openhat-ai/toolang/pull/946))
 
 ### Security
 
