@@ -100,7 +100,7 @@ def _echo_chores(entries: Sequence[ChoreInfo], *, width: int) -> None:
     )
     rows = [
         (
-            item.name,
+            item.runtime.thread_id or item.name,
             item.title,
             (item.runtime.status or "-") if item.runtime.synced else "unsynced",
             item.runtime.last_run.status if item.runtime.last_run else "-",

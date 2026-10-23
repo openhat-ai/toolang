@@ -52,10 +52,10 @@ def _entry():
     "width,headers",
     [
         (240, "CHORE TITLE STATUS LAST RUN NEXT RUN SCHEDULE ERROR LOCATION"),
-        (145, "CHORE TITLE STATUS LAST RUN NEXT RUN SCHEDULE ERROR LOCATION"),
-        (144, "CHORE STATUS LAST RUN NEXT RUN SCHEDULE ERROR LOCATION"),
-        (131, "CHORE STATUS LAST RUN NEXT RUN SCHEDULE ERROR LOCATION"),
-        (130, "CHORE STATUS NEXT RUN SCHEDULE ERROR LOCATION"),
+        (152, "CHORE TITLE STATUS LAST RUN NEXT RUN SCHEDULE ERROR LOCATION"),
+        (151, "CHORE STATUS LAST RUN NEXT RUN SCHEDULE ERROR LOCATION"),
+        (138, "CHORE STATUS LAST RUN NEXT RUN SCHEDULE ERROR LOCATION"),
+        (137, "CHORE STATUS NEXT RUN SCHEDULE ERROR LOCATION"),
         (80, "CHORE STATUS NEXT RUN SCHEDULE ERROR LOCATION"),
     ],
 )
@@ -77,9 +77,10 @@ def test_column_omission_is_independent_of_display_order(
     lines = strip_ansi(stream.getvalue()).splitlines()
     assert len(lines) == 3
     assert " ".join(lines[0].split()) == headers
-    assert lines[0].startswith("CHORE") and lines[2].startswith("cleanup")
+    assert lines[0].startswith("CHORE")
+    assert lines[2].split()[0] == entries[0].runtime.thread_id
     assert set(lines[1]) == {"─"}
-    assert max(map(wcswidth, lines)) == max(width, 105)
+    assert max(map(wcswidth, lines)) == max(width, 112)
     assert "unsynced" in lines[2]
     assert "2026-10-22T17:30:00+08:00" in lines[2]
     assert entries[0].schedule in lines[2]
@@ -108,7 +109,7 @@ def test_optional_columns_yield_before_diagnostics_become_header_sized(capsys):
 
     lines = capsys.readouterr().out.splitlines()
     assert "TITLE" not in lines[0] and "LAST RUN" not in lines[0]
-    assert "Provider reques…" in lines[2]
+    assert "Provider…" in lines[2]
     assert "chore…nup.md" in lines[2]
     assert wcswidth(lines[1]) == 120
 
@@ -119,7 +120,7 @@ def test_diagnostics_shrink_further_after_all_optional_columns_yield(capsys, wid
 
     lines = capsys.readouterr().out.splitlines()
     assert "TITLE" not in lines[0] and "LAST RUN" not in lines[0]
-    assert max(map(wcswidth, lines)) == max(width, 105)
+    assert max(map(wcswidth, lines)) == max(width, 112)
     assert "Prov" in lines[2]
 
 
@@ -134,18 +135,25 @@ def test_short_values_keep_all_columns_without_extra_minimum_padding(capsys):
         ),
     )
 
-    _echo_chores([entry], width=80)
+    _echo_chores([entry], width=90)
 
     lines = capsys.readouterr().out.splitlines()
     assert "TITLE" in lines[0] and "LAST RUN" in lines[0]
     assert "Clean" in lines[2] and "…" not in lines[2]
-    assert wcswidth(lines[1]) == 79
+    assert wcswidth(lines[1]) == 86
 
 
 @pytest.mark.parametrize("identity", ["x" * 5000, "运维e\u0301👨‍👩‍👧‍👦" * 40])
 def test_fixed_fields_and_complete_line_suffix_can_exceed_width(capsys, identity):
+    entry = _entry()
     entry = replace(
-        _entry(), name=identity, path="chores/" + "维护e\u0301/" * 30, line=123456789
+        entry,
+        id=None,
+        name=identity,
+        path="chores/" + "维护e\u0301/" * 30,
+        line=123456789,
+        source_error="invalid chore name",
+        runtime=replace(entry.runtime, thread_id=None),
     )
 
     _echo_chores([entry], width=80)
@@ -188,13 +196,16 @@ def test_error_precedence_is_preserved(capsys, source, scheduler, run, expected)
 
 
 def test_display_controls_and_whitespace_are_safe_without_interpreting_markup(capsys):
+    entry = _entry()
     entry = replace(
-        _entry(),
+        entry,
+        id=None,
         name="维护e\u0301👨‍👩‍👧‍👦\x1b[2J",
         title="[bold]Review[/bold]\n\tchanges.",
         path="chores/project  folder/维护e\u0301.md",
         source_error="\x1b]0;bad-title\x07Request\n\tfailed.",
         schedule=None,
+        runtime=replace(entry.runtime, thread_id=None),
     )
 
     _echo_chores([entry], width=400)
