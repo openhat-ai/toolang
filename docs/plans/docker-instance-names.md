@@ -20,16 +20,16 @@ rename of existing containers is included.
 
 ## Decisions
 
-- Use `toolang-<agent_name>[-<place_code>]-<root_code>`. Preserve the full agent
+- Use `toolang-<root_code>-<agent_name>[-<place_code>]`. Preserve the full agent
   name and place code, and use the existing seven-character `root_code` derived
   from the canonical Toolang root. Resident names omit the place code. Do not add
   a launch suffix or silently choose another name on conflict.
 
   | Placement | Instance address | Container name |
   | --- | --- | --- |
-  | Resident | `alice` | `toolang-alice-<root_code>` |
-  | Visiting | `lex@<t_code>` | `toolang-lex-<t_code>-<root_code>` |
-  | Roaming | `aid@<s_code>` | `toolang-aid-<s_code>-<root_code>` |
+  | Resident | `alice` | `toolang-<root_code>-alice` |
+  | Visiting | `lex@<t_code>` | `toolang-<root_code>-lex-<t_code>` |
+  | Roaming | `aid@<s_code>` | `toolang-<root_code>-aid-<s_code>` |
 
   Angle-bracket terms denote complete codes, not literal characters. Docker's
   [container-name validation](https://github.com/moby/moby/blob/master/daemon/names/names.go)
