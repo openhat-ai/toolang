@@ -1,208 +1,232 @@
-# Agent status across `info`, `list`, and `hub`
+# Agent observation across `info`, `list`, `hub`, and `top`
 
-Status: Proposed on 2026-10-23; awaiting human confirmation. Definition only.
-Audit baseline: `origin/main` at `21fe16cd`; PR #931 and its uncommitted follow-up
-are proposals, not the current implementation.
+Status: Proposed on 2026-10-23. The user specified the command semantics,
+Watcher ownership, and host/guest cleanup requirements below; implementation
+details await review. Definition only; no product code changes.
+Audit baseline: `origin/main` at `e88d0539`.
 
 ## Goal and scope
 
-Make agent identity, lifecycle state, and resource provenance understandable across
-`too info AGENT`, `too list`, and `too hub` (`too` aliases `toolang`). A given
-workload must receive the same lifecycle classification from the same evidence,
-while each command retains its own membership scope.
+Give all four commands one understandable agent-membership and running-status
+contract. Reuse existing discovery, Watchers, identity checks, and shared-file
+primitives. Success means consistent observations, useful prepared agent details,
+and recovery after a process exits without withdrawing its registration.
 
-Success means a never-started resident remains useful to inspect, retained
-instances remain inspectable without source contents, and unavailable resources
-or failed inspection never masquerade as workload failure or confirmed shutdown.
-Change observation and these CLI projections only. Keep addressing, lifecycle
-operations, storage formats, Top/statistics scope, and resource APIs compatible.
-No new command, flag, status service, persistent snapshot format, or polling loop.
+Scope includes agent discovery, lifecycle observation, registration withdrawal,
+the required sandbox mount, and command integration. Preserve command names,
+flags, execution-store formats, Run/usage semantics, and hub-service observation.
+Do not add a daemon, heartbeat, expiry timer, history index, or duplicate scanner.
 
-## Verified implementation
+## Command semantics
 
-| Surface | Membership and data path | Current presentation |
+| Command | Membership | Result |
 | --- | --- | --- |
-| `list` | `agent_layouts(root)` scans named resident home directories, including homes without `agent.too`; `AgentProcess.list()` probes each with at most eight workers. | `AGENT STATUS SANDBOX PORT WEBUI`; only `stopped` becomes `not running`. Other phases remain visible; diagnostic messages are omitted. |
-| `info` | `select_agent_instance()` binds a known home. `AgentProcess.status()` supplies lifecycle; separate reads supply runtime metadata and process/container identity. Running resources come from five API requests; offline resources come from saved counts and prepared State. | Detailed identity, resources, status and running-only drivers. Resource-fetch errors abort the entire view. Missing saved counts become `-`; saved values have no provenance label. |
-| `hub` | `runtime_snapshot()` / `runtime_inventory()` follow active registrations for all placements, validate ownership/generations, batch Docker probes, and cap independent probes at eight. They do not enumerate installed resident homes or historical roots. | Headerless tree with status and recorded Talk selection. Agent states are reduced to `running`, `not running`, or `unknown`; the renderer prints unknown as `-`. Diagnostics follow the summary. |
+| `list` | Created resident homes in the selected Toolang root, including inactive residents. | Resident agents and their running status. |
+| `hub` | Those residents plus active visiting/roaming instances registered with this root. | Running status and the matching launch's Talk driver selection. |
+| `top` | The same membership as `hub`. | Agent counts, usage in `--period`, all active root Runs regardless of age, and completed root Runs in the independent `--recent` window. |
+| `info AGENT` | One home resolved from a name, URL, ref, path, or exact instance. | Placement, identity/home, prepared Agent Setup and Agent State summaries, and running status. |
 
-The hub service row is a separate observation: `HubProcess.current()`, `ready()`,
-and `version()` establish process identity, readiness and server version. The
-renderer currently converts every non-ready hub state to `not running`.
-The tree describes root-local discovery, not hub connection or messaging presence.
+Counts distinguish full instance addresses, not unique short names. Stopped
+residents retain their usage/history. When a visiting/roaming instance departs,
+its counts, usage, active Runs, and recent Runs leave the collection together,
+even if the usage/completion windows have not expired. Explicit `info` can
+inspect a known nonresident home without including it in collection commands.
+Keep the existing optional resident-scoped `top` behavior.
 
-Relevant paths:
+## Current implementation and gaps
 
-- [Agent commands](../../src/toolang/cli/toolang/commands/agent.py),
-  [process inspection](../../src/toolang/up/process.py), and
-  [resident discovery](../../src/toolang/up/discovery.py).
-- [Instance observation](../../src/toolang/up/observation.py),
-  [observation vocabulary](../../src/toolang/up/types.py),
-  [hub command](../../src/toolang/cli/toolang/commands/hub.py), and
-  [hub renderer](../../src/toolang/cli/toolang/commands/hub_status.py).
-
-### Why behavior changed
-
-- [#828](https://github.com/openhat-ai/toolang/pull/828) originally combined installed
-  residents and registered instances in the hub snapshot.
-- [#883](https://github.com/openhat-ai/toolang/pull/883) explicitly required retained
-  `info`/`inspect` without readable sources, refetching, preparation, or runtime
-  creation. [#884](https://github.com/openhat-ai/toolang/pull/884) implemented saved
-  resource summaries and changed the shared inventory to active registrations
-  only. This also removed never-started residents from hub and left their offline
-  `info` resources unavailable when no summary exists.
-- [#919](https://github.com/openhat-ai/toolang/pull/919) made `info` a home command
-  and added the full address as an `Agent` row to distinguish instances. That row
-  duplicates the title for residents, but carries an instance code for nonresidents.
-- [#897](https://github.com/openhat-ai/toolang/pull/897) gave Top its own resident-plus-
-  active-instance scope and read-only inventory access. Its scope must not be
-  inferred from the hub tree or changed by this work.
-
-### Problems to address
-
-The first three cases below were reproduced in isolated temporary homes.
-
-1. Membership is implicit. An installed `gus` can appear in `list` while hub says
-   `no agents`. Its totals count instances, including repeated agent names.
-2. Phase and observation quality are conflated. Preparing/starting agents become
-   unknown/partial in hub; unreadable status becomes `failed` in `AgentProcess`;
-   a starting or unavailable hub becomes `not running` in rendering.
-3. Probe policy differs: a live record marked `starting` can become `running`
-   through an incidental health request with `cache=False`, while hub's cached
-   probe retains `starting` and then projects it as unknown. Cache choice changes
-   classification rather than only cost.
-4. `info` couples basic status to optional resource inspection. It also rereads
-   metadata after the status probe, and its resource client has no launch binding;
-   restart races can mix observations. Five sequential resource requests each
-   default to 30 seconds. These are not one atomic resource-generation snapshot.
-5. Tests and comments can preserve obsolete intent: snapshot renderer fixtures
-   still include stopped residents, while integration tests explicitly exclude
-   unregistered residents. Product behavior must be established from actual callers.
-
-## Recommended contract
-
-### Membership and identity
-
-| Command | Question answered | Proposed membership |
+| Area | Current implementation | Assessment |
 | --- | --- | --- |
-| `list` | Which resident agents are installed here, and what is their state? | Keep the selected root's resident home discovery; show malformed homes with diagnostics rather than silently hiding them. No visiting/roaming history scan. |
-| `hub` | What is the hub service state, and which runtime instances are currently discovered here? | Keep active registrations across placements, including unresolved entries with recoverable identity. Exclude released historical instances and departed registrations; absence does not prove shutdown. |
-| `info` | What does this selected agent/home identify, and what can be observed about it? | Keep existing home selection, including retained paths and last-created roaming selection. Never allocate a home, refetch an agent, or refresh historical project configuration. |
+| `list` | `agent_layouts()` → `AgentProcess.list()` → `status()`. | Resident membership matches. The status implementation mixes probing, readiness, and repair. |
+| `hub` | `runtime_snapshot()` → `runtime_inventory()`, active references only. | Omits inactive residents. Reduces starting/preparing to unknown and actual failure to not running. |
+| `top` | `ScopeReader` combines resident homes and registered instances; `TopObserver` owns collection scheduling. | Scope and departure aggregation mostly match. Read-only inventory retains known-finished nonresidents; unregistered resident status is synthesized rather than inspected. |
+| `info` | Existing-home selection, direct process status, live resource HTTP requests or saved offline counts/State. | Does not prepare fresh sources or use the Setup/State Watchers. Missing offline values, omitted placement, redundant identity, and repeated runtime reads do not meet the specified detail contract. |
+| Cleanup | Normal workload exit, sandbox management, status reconciliation, and inventory filtering each handle part of retirement. | Generation checks exist, but cleanup policy is fragmented; unreleased sandbox references can keep dead instances registered. Guest exit does not withdraw the host reference. |
 
-Preserve complete nonresident addresses in the `info` title; keep the current
-resident title styling. Remove the duplicate `Agent` row. Keep the existing
-Root/Home meanings. A canonical instance code must survive wrapping unchanged.
-`hub` summaries say `instances`, and its empty leaf says `no active instances`.
-List summaries continue to say `agents`. Tree grouping remains independent of
-whether hub is running or an agent has Talk enabled.
+Six isolated reproductions confirmed: a never-started resident is absent from
+hub; failed unregistered residents lose their phase in top; top retains a
+finished visitor's registration; a dead visitor with a recovery reference remains
+registered after both views; cached and uncached observations disagree on a
+starting launch; corrupt runtime JSON becomes Agent failure. The existing 326
+focused tests pass, so several mismatches are established behavior rather than
+uncovered implementation accidents.
 
-### Lifecycle facts and presentation
+Relevant owners:
 
-Use the existing lifecycle vocabulary; do not add a new state machine.
+- [Resident discovery](../../src/toolang/up/discovery.py),
+  [single-instance status](../../src/toolang/up/process.py),
+  [runtime observation](../../src/toolang/up/observation.py), and
+  [scope composition](../../src/toolang/up/scope.py).
+- [SetupWatcher](../../src/toolang/setup/watcher.py),
+  [StateWatcher](../../src/toolang/state/watcher.py), and
+  [agent commands](../../src/toolang/cli/toolang/commands/agent.py).
+- [Registration](../../src/toolang/up/registry.py),
+  [workload lifecycle](../../src/toolang/up/workload.py),
+  [server shutdown](../../src/toolang/up/server.py),
+  [sandbox hosting](../../src/toolang/up/sandbox.py), and
+  [shared-file locking](../../src/toolang/common/files.py).
 
-| Evidence for the selected workload | Shared displayed status |
-| --- | --- |
-| Existing resident home with no launch, or verified stopped workload | `not running` (`stopped` internally) |
-| Verified preparation owner | `preparing` |
-| Verified live owner whose launch has not published readiness | `starting` |
-| Verified live owner with a matching published running launch | `running` |
-| Matching workload failure record | `failed` |
-| Unverifiable identity/liveness, corrupt or unreadable observation | `unknown`, with a diagnostic |
+## Simple design rules
 
-Known transitions are normal observations, not partial failures. Missing/invalid
-driver metadata affects that field only; it does not change a known running phase.
-Only a verified running launch can contribute to running/Talk-enabled totals.
-Read drivers from that launch, never from current config or an older launch.
-The Talk column displays `enabled`, `disabled`, or `-` under the existing driver rules.
-Use `-` for absent fields; spell out `unknown` for an uncertain lifecycle state.
+### 1. One observation owner, explicit scopes
 
-Default lifecycle observation performs identity/liveness checks without per-agent
-HTTP readiness probes. `cache` changes probe reuse only. Explicit startup/attach
-readiness checks keep their existing health policy. Resource API failure is a
-separate diagnostic and must not overwrite a verified lifecycle phase.
+The closest existing encapsulation is `ScopeReader`, not a missing new service.
+Rename/generalize it to `InstanceWatcher` and consolidate the current
+discovery/probe/repair pipeline behind it; do not wrap the existing competing
+paths with another facade. Support one-shot refresh/current access and observing
+one selected layout through the same per-instance implementation.
 
-For the hub service itself, retain its distinct readiness vocabulary and show
-`not running`, `starting`, `running`, `unavailable`, or `unknown` as observed.
-Version lookup failure changes the version to `unknown`, not the service state.
-Retain existing bounded hub HTTP checks, identity protection and terminal layout.
+`list` selects residents; hub and root top select residents plus active
+nonresidents; info observes its resolved home. Probe resident homes even without
+registrations. A registration is a discovery candidate, not proof of activity.
+Preparing/starting instances with verified live owners are active candidates too.
 
-### Resources in `info`
+Keep `RuntimeInventory` as the result/binding container rather than adding a
+second equivalent snapshot type. Reconcile `AgentStatus` and `RuntimeInstance`
+around one lifecycle classification. Keep `TopObserver`: its responsibility is
+Run/usage scheduling, not a second instance observer. Fold away redundant
+`ScopeReader` logic and duplicate registry scans as callers migrate.
 
-| Selected home | Resource source and label |
-| --- | --- |
-| Verified running, any placement | Actual runtime resources; `Resources: live`. |
-| Resident without a verified running owner | Current local configuration; `Resources: configured (local)`. |
-| Nonresident without a verified running owner | Existing saved summaries/State only; `Resources: saved`. |
-| No usable source for the applicable view | Missing values are `-`; use `Resources: unavailable` when the entire block is unavailable. |
+### 2. One lifecycle classification from the same evidence
 
-This is an explicit resident configuration preview and retains the historical
-instance contract for visiting/roaming homes. Local configuration is not a
-promise about a future guest environment. Preserve current effective/allowed
-resource count semantics; do not introduce new total/ready count categories.
-Saved values may be stale; do not describe startup counts as a current or atomic
-runtime snapshot. Retain available saved fields when other fields are missing.
+Use preparing, starting, running, stopped, failed, and unknown. Render stopped
+as "not running". A matching failure record means failed; an inspection failure
+means unknown with a diagnostic. Driver metadata affects driver information only.
+Read status, launch identity, endpoint, and drivers from one validated generation.
 
-Use existing inspection entry points for resident configuration:
-`load_setup(validate_defaults=False)`, `inspect_agent_caps`, `load_chores`, and
-`ConfiguredWorkspaces`. Count without preparing/publishing a complete Agent State,
-starting watch loops/executors, or requiring default/Talk/compaction models to be
-available. Existing rebuildable inspection caches may be written.
-Keep `--catalog` for this local configuration view; reject it for live/saved views
-instead of silently ignoring it. Current source resources for nonresidents remain
-available through existing source-oriented resource commands.
+Basic observation verifies workload identity/liveness; readiness requests belong
+to startup/attachment. Cache reuse may delay freshness within the existing bound,
+but must not switch readiness policy. Retain bounded probes, eight-worker
+batching, Docker batching, and generation rechecks after slow work.
 
-Render known identity/status even when the resource block fails, with unavailable
-values and a concise resource diagnostic. Unexpected inspection failures keep
-`info`'s nonzero exit; an expected missing saved summary remains successful.
-Retain `list`/hub's best-effort row/partial reporting and existing exit behavior.
-Use a two-second timeout per runtime resource request at the `info` call site;
-do not alter execution-client timeouts or add an aggregate API endpoint.
+A discovery failure cannot prove departure. Preserve uncertain bindings with
+diagnostics; an unrelated damaged peer must not prevent a confirmed departure.
+Diagnostic text alone must not control membership or turn known totals unknown.
+Exclude a confirmed-dead nonresident immediately even if durable cleanup must be
+retried; retain a resident row with its observed phase.
 
-### Ownership and implementation shape
+### 3. Prepare details through the existing Watchers
 
-- Extend/reuse `AgentStatus` for canonical phase, observed generation, recorded
-  drivers and diagnostic facts. `up.process` owns one-workload classification;
-  `up.observation` owns discovery, deduplication and bounded batch probing.
-  CLI code owns labels, field order, count units and formatting.
-- Preserve the existing `RuntimeInstance` classification used by Top/activity.
-  Carry the canonical observation alongside existing source bindings when hub
-  needs it; do not globally reinterpret that projection or change other consumers.
-- Bind a detail view to one validated status entry/launch. Derive metadata and
-  runtime identity from that entry, rather than independent rereads. Recheck the
-  launch after optional HTTP reads; discard obsolete resource results and report
-  replacement instead of combining generations. No atomicity claim across the
-  five resource revisions is introduced.
-- Preserve existing generation-fenced dead-owner reconciliation and registration
-  cleanup. Making every status read filesystem-pure is separate work. Add no
-  source preparation, historical projection updates, or new recovery behavior.
+For info, resolve/materialize the selected home through the existing source
+owner, then refresh `SetupWatcher` and `StateWatcher` once. Derive resource
+summaries from those returned objects and their public methods: tools/models
+from Agent Setup; caps, chores, and workspaces from Agent State. No CLI source
+scanning, independent configuration merging, direct State preparation, or saved
+startup-count substitute. No watcher loops, executor, or execution database are
+needed. Use `validate_defaults=False` for inspection.
+
+Keep exact-instance and latest-retained selection when applicable; a fresh
+path/ref/URL may prepare its source home. Inspection must not allocate/register
+a running workload or become visible as an active nonresident. Do not change
+the source-free contracts of execution-history commands.
+
+Use this static-detail path whether or not an instance is running; execution-time
+overrides are not silently presented as current authored Setup/State. Add
+Placement and preserve the full nonresident address in the title, removing the
+duplicate Agent row. Keep `--catalog` as the inspection Setup input.
+
+If preparation fails, still observe/report the known identity and running status,
+then report preparation diagnostics and a nonzero exit. Watcher last-valid
+publications must be labelled as such when refresh was rejected, never passed off
+as a successful current preparation.
+
+### 4. Registration is shared across processes and namespaces
+
+Keep the current reference payload: format, canonical host status path, and
+`launch_id`. The publisher need not be the eventual cleaner:
+
+| Path | Publisher | Normal withdrawal | Recovery |
+| --- | --- | --- | --- |
+| Host-launched Server | Host launch command, before workload startup. | Server on final exit, or host stop/release. | A later host observer. |
+| Direct host serve | Serving process. | Serving process. | A later host observer. |
+| Embedded script | Script CLI, including its preparation stage. | Foreground workload scope. | A later host observer. |
+| Sandbox Server | Host launch command. | Guest Server on final exit, or host stop/release. | A later host observer using sandbox identity/liveness. |
+
+Route every publication/withdrawal through `up.registry`. Preserve host
+status paths as identity values; pass the guest its mounted registry location and
+the expected host reference explicitly. Never reconstruct host paths from guest
+layout paths or interpret guest PIDs in the host namespace.
+
+To keep the flat registry format, mount only the selected root's active-registry
+directory read/write at an explicit guest control path, not the whole Toolang
+root. Directory access is required for unlinking entries; binding just the JSON
+file is insufficient. This grants directory write access, not filesystem-enforced
+per-agent isolation; protocol operations target only their expected reference.
+
+All publishers and cleaners must use the same shared-filesystem guard. Existing
+registry locking uses plain `flock`, which is insufficient across Docker
+Desktop kernels. Reuse `file_write_lock(shared_owner=...)` and its namespace-aware
+dead-owner rules; do not invent another lock protocol. Never hold the guard
+during probing, preparation, HTTP, or sandbox operations. Preserve lock ordering.
+
+Under the guard, reread and delete only the expected status-path/launch pair.
+Repeated cleanup succeeds harmlessly; delayed cleanup cannot delete a replacement
+launch. A mismatched old reference may be retired without editing a newer status
+record. Mount construction and Docker guest environment forwarding must carry
+the binding; graceful guest exit must use it on both success and failure.
+
+### 5. Repair discovery, preserve resources and history
+
+Normal exit withdraws promptly. Every instance observation also performs bounded,
+best-effort repair for its observed candidates, including top's existing discovery
+refresh. There is no command-specific read-only policy that preserves known-dead
+members. Info performs this observation even when static preparation fails.
+
+Retire only a reference proven obsolete, or a workload proven finished with no
+live management/preparation owner. Missing source files, health-request failure,
+timeout, permission error, or an unverifiable owner are not proof of death.
+Recheck generation before repairing authoritative status or withdrawing a reference.
+
+Keep cleanup decisions in the observation owner, reference compare/delete in
+registry, and process/container release in sandbox lifecycle management. Removing
+an expired active reference must not require deleting recovery references,
+containers, homes, prepared State, or Run/usage history. Failure to acquire a
+cleanup guard defers the write to a later observation; it does not invent activity.
 
 ## Implementation touchpoints and acceptance
 
-Likely files: the linked command/observation modules; existing
-`cli/common/client.py` for inspection timeout selection; resource inspection
-entry points remain package-owned. Update current CLI/hosting/messaging design
-only when the approved implementation lands. Generate its changelog through
-`too aid.too update_changelog` and require maintainer verification before merge.
+Likely changes: `up.scope`/the renamed watcher, `up.observation`,
+`up.process`, `up.types`, `up.registry`, workload/server finalization,
+sandbox mount/binding assembly, and the four command consumers. Keep parsing,
+Setup/State preparation, and stats calculations with their existing owners.
+
+Clean names while consolidating: remove descriptions restricting shared
+observation to top or hub, tests claiming failed residents remain while asserting an empty
+roster, and obsolete identity-label fallbacks where no current caller requires
+them. Use canonical addresses. Preserve external wire identities and documented
+compatibility rather than renaming public fields incidentally.
 
 | Scenario | Pass condition |
 | --- | --- |
-| Installed resident never started | List includes it as not running; info shows configured resources without publishing Agent State; hub's empty active roster is explicit. |
-| All lifecycle phases | `info`, `list`, and `hub` give the shared classification from identical evidence; starting/preparing do not become unknown or partial. The service's non-ready states remain distinct. |
-| Unavailable configured defaults | Missing credentials or unavailable default/Talk/compaction refs preserve the resident overview and computed resource counts. |
-| Retained instance with missing/edited source | Exact and last-created selectors keep their selected home and saved view; no refetch, allocation, configuration projection update, or source requirement. |
-| Observation/resource errors | Corrupt status is unknown with a reason; a recorded workload failure remains failed. Resource errors preserve identity/status, report their own diagnostic, and respect timeouts/exit policy. |
-| Same-name instances and drivers | Complete addresses distinguish rows; instance/agent count units are correct; stale or invalid driver data cannot enable Talk or change lifecycle. |
-| Replacement and discovery races | Departed/replaced generations cannot supply current metadata, resources or counts; missing registry entries do not prove death; peer failures remain isolated. |
-| Cost and compatibility | At most eight independent probes and batched Docker checks remain; no per-agent health requests for basic observation. Existing Top/read-only scope, lifecycle/API contracts, terminal widths, colors and ASCII/plain output remain intact. |
+| Never-started, stopped, and failed residents | All collection commands retain them; lifecycle observations agree; stopped history remains available to top. |
+| Active visiting/roaming membership | Include live preparing/starting/running instances. On confirmed departure, remove their complete statistical contribution at the next discovery refresh. |
+| Identical evidence and degraded peers | All views classify consistently; cache does not select health policy; unknown differs from failure; one bad peer cannot freeze confirmed departures. |
+| Watcher-based info | Names, refs, URLs, paths, and exact instances resolve correctly; changed inputs reach Watcher results; no custom scanners, active registration, executor, or Run database is created. |
+| Preparation rejection | Known identity/status survives with diagnostics; last-valid State is explicit; unavailable default credentials do not block inspection solely through execution validation. |
+| Normal host/guest exit and forced death | Both can withdraw their own reference; missing finalization is repaired by a later host info/list/hub/top observer without releasing unrelated resources. |
+| Concurrent cleanup and restart | Real subprocess barriers exercise two cleaners, old/new launches, and stale references. Neither cleanup nor status repair changes the replacement generation. |
+| Mounted guest cleanup | Verify directory mounting, explicit host/guest binding, shared guard use, read/write permissions, and host-visible deletion; a container restart cannot let an old guest remove the new launch. |
+| Bounded cost and retained data | Busy cleanup locks defer without hanging the UI; no periodic historical nonresident scan; cleanup preserves homes, State, recovery references, and Run history. |
 
-Extend existing `test_agent_info.py`, `test_process.py`,
-`test_runtime_observation.py`, `test_hub_commands.py`, `test_hub_status.py`, and
-the local CLI integration tests. Use real inspection paths with isolated plugin
-and network seams. Run the repository's default checks for implementation.
+Extend the existing process, registry, runtime-observation, scope, top-observer,
+agent-info, hub, mount, and sandbox lifecycle tests. Keep deterministic tests
+offline; verify the real host/guest mount and locking boundary in the opt-in
+Docker lifecycle suite and report platform coverage honestly. Run default code
+checks for implementation; update current designs and generate its changelog via
+`too aid.too update_changelog` before implementation handoff.
 
-## Risks and decisions requiring confirmation
+## Historical change and risk
 
-The resident configured view intentionally qualifies #883's uniform saved-view
-rule; retained nonresident inspection preserves it. Explicit provenance is needed
-because local and guest availability can differ. Clearer hub words, count units,
-and info title/provenance output affect human-output parsers.
+[#884](https://github.com/openhat-ai/toolang/pull/884) followed
+[#883](https://github.com/openhat-ai/toolang/pull/883)'s retained, source-free
+inspection contract and removed resident discovery from the shared inventory.
+[#919](https://github.com/openhat-ai/toolang/pull/919) made info an existing-home
+query; [#897](https://github.com/openhat-ai/toolang/pull/897) required read-only top
+discovery. The user-specified semantics here intentionally replace those rules
+for these observation commands; history commands remain separate.
+
+The deliberate compatibility changes are prepared info instead of live/saved
+resource switching, inactive residents in hub, and top's best-effort registration
+repair. Writable registry-directory exposure and actual shared-filesystem locking
+are part of the sandbox contract and require explicit verification. No product
+implementation or approval of the earlier info-only patch is implied.
