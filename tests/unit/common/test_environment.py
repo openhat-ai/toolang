@@ -14,6 +14,34 @@ from toolang.common.flatname import encode_flatname
 from toolang.common.layout import AgentLayout
 
 
+def test_default_environment_names_are_alphabetical():
+    assert DEFAULT_KEEP == tuple(sorted(DEFAULT_KEEP))
+    assert DEFAULT_PICK == tuple(sorted(DEFAULT_PICK))
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "ALIBABA_CODING_PLAN_API_KEY",
+        "DASHSCOPE_API_KEY",
+        "KIMI_API_KEY",
+        "LLAMA_API_KEY",
+        "META_MODEL_API_KEY",
+        "MINIMAX_API_KEY",
+        "MOONSHOT_API_KEY",
+        "ZHIPU_API_KEY",
+    ],
+)
+def test_default_pick_supports_additional_provider_credentials(tmp_path, name):
+    agent = resolve_agent_environment(
+        resolve_root_environment(tmp_path, {name: "synthetic-key"}),
+        AgentLayout.resident(tmp_path, "alice"),
+    )
+    assert dict(agent.values) == {name: "synthetic-key"}
+    assert dict(agent.guest_values) == {name: "synthetic-key"}
+    assert agent.picked == name
+
+
 def test_root_without_file_retains_shell_and_agent_selects_one_provider(tmp_path):
     shell = {
         "PATH": "/bin",
@@ -24,9 +52,9 @@ def test_root_without_file_retains_shell_and_agent_selects_one_provider(tmp_path
     root = resolve_root_environment(tmp_path, shell)
     assert dict(root.values) == shell
     agent = resolve_agent_environment(root, AgentLayout.resident(tmp_path, "alice"))
-    assert dict(agent.values) == {"PATH": "/bin", "OPENAI_API_KEY": "first"}
-    assert agent.picked == "OPENAI_API_KEY"
-    assert "first" not in repr(agent)
+    assert dict(agent.values) == {"PATH": "/bin", "ANTHROPIC_API_KEY": "second"}
+    assert agent.picked == "ANTHROPIC_API_KEY"
+    assert "second" not in repr(agent)
 
 
 @pytest.mark.parametrize(

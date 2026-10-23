@@ -34,12 +34,60 @@ Only the selected Toolang `ROOT/config.toml` accepts environment name lists:
 
 ```toml
 [env]
-keep = ["PATH", "HOME", "USER", "LOGNAME", "SHELL", "LANG", "LC_ALL", "LC_CTYPE",
-        "TZ", "TMPDIR", "TMP", "TEMP", "TERM", "COLORTERM", "NO_COLOR"]
-pick = ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "OPENROUTER_API_KEY",
-        "GOOGLE_API_KEY", "GOOGLE_GENERATIVE_AI_API_KEY", "GEMINI_API_KEY",
-        "DEEPSEEK_API_KEY", "MISTRAL_API_KEY", "GROQ_API_KEY", "XAI_API_KEY"]
+keep = [
+  "COLORTERM",
+  "HOME",
+  "LANG",
+  "LC_ALL",
+  "LC_CTYPE",
+  "LOGNAME",
+  "NO_COLOR",
+  "PATH",
+  "SHELL",
+  "TEMP",
+  "TERM",
+  "TMP",
+  "TMPDIR",
+  "TZ",
+  "USER",
+]
+pick = [
+  "ALIBABA_CODING_PLAN_API_KEY",
+  "ALIBABA_TOKEN_PLAN_API_KEY",
+  "ANTHROPIC_API_KEY",
+  "ARK_API_KEY",
+  "ARK_CODING_PLAN_API_KEY",
+  "CEREBRAS_API_KEY",
+  "COHERE_API_KEY",
+  "DASHSCOPE_API_KEY",
+  "DEEPSEEK_API_KEY",
+  "FIREWORKS_API_KEY",
+  "GEMINI_API_KEY",
+  "GOOGLE_API_KEY",
+  "GOOGLE_GENERATIVE_AI_API_KEY",
+  "GROQ_API_KEY",
+  "KIMI_API_KEY",
+  "LLAMA_API_KEY",
+  "META_MODEL_API_KEY",
+  "MINIMAX_API_KEY",
+  "MISTRAL_API_KEY",
+  "MOONSHOT_API_KEY",
+  "NVIDIA_API_KEY",
+  "OLLAMA_API_KEY",
+  "OPENAI_API_KEY",
+  "OPENROUTER_API_KEY",
+  "PERPLEXITY_API_KEY",
+  "SILICONFLOW_API_KEY",
+  "SILICONFLOW_CN_API_KEY",
+  "STEPFUN_API_KEY",
+  "TOGETHER_API_KEY",
+  "XAI_API_KEY",
+  "ZHIPU_API_KEY",
+]
 ```
+
+Built-in names are alphabetical. `pick` uses list order; configure an explicit
+list to change provider priority.
 
 These are the built-in defaults. Each present list replaces its default; `[]`
 clears it. Names are exact and case-sensitive. Invalid names, duplicates, wrong

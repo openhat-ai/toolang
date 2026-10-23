@@ -68,7 +68,7 @@ def test_tool_factories_and_children_receive_the_selected_environment(
     expected = (
         {**kept, "ANTHROPIC_API_KEY": "central"}
         if root_file
-        else {**kept, "OPENAI_API_KEY": "synthetic-first"}
+        else {**kept, "ANTHROPIC_API_KEY": "synthetic-second"}
         if agent
         else shell_environment
     )
@@ -91,7 +91,7 @@ def test_script_entry_uses_roaming_policy_before_execution(
     source = tmp_path / "main.too"
     source.write_text("flow main():\n  pass\n")
     if selected_file != "auto":
-        (source.parent / ".toolang.env").write_text("ANTHROPIC_API_KEY\n")
+        (source.parent / ".toolang.env").write_text("OPENAI_API_KEY\n")
     if selected_file == "root":
         root.mkdir()
         (root / f".{encode_flatname(str(source.resolve()))}.env").write_text(
@@ -109,8 +109,8 @@ def test_script_entry_uses_roaming_policy_before_execution(
     result = CliRunner().invoke(app, [str(source), "main"])
     assert result.exit_code == 0, result.stderr
     provider = {
-        "auto": "OPENAI_API_KEY",
-        "local": "ANTHROPIC_API_KEY",
+        "auto": "ANTHROPIC_API_KEY",
+        "local": "OPENAI_API_KEY",
         "root": "PRIVATE_SENTINEL",
     }[selected_file]
     assert observed == [
@@ -145,7 +145,7 @@ def test_visiting_factories_use_requested_identity_before_and_after_fetch(
         "PINNED=excluded\n"
     )
     if explicit:
-        (root / f".{encode_flatname(identity)}.env").write_text("ANTHROPIC_API_KEY\n")
+        (root / f".{encode_flatname(identity)}.env").write_text("OPENAI_API_KEY\n")
     monkeypatch.setattr(
         sources, "_resolve_github_agent_shorthand", lambda *_a, **_kw: pinned_ref
     )
@@ -168,7 +168,7 @@ def test_visiting_factories_use_requested_identity_before_and_after_fetch(
     caller = dict(os.environ)
     result = CliRunner().invoke(app, ["--root", str(root), selector, "tools", "--json"])
     assert result.exit_code == 0, result.stderr
-    provider = "ANTHROPIC_API_KEY" if explicit else "OPENAI_API_KEY"
+    provider = "OPENAI_API_KEY" if explicit else "ANTHROPIC_API_KEY"
     expected = {name: caller[name] for name in ("PATH", "HOME", provider)}
     assert len(fetched) == 1
     assert fetched[0][0] == (
