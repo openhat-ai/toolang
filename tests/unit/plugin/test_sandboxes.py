@@ -1966,6 +1966,74 @@ def test_docker_missing_owned_container_releases_only_after_creation_finishes(
     assert not removed
 
 
+def test_docker_missing_container_is_not_confused_with_a_same_name_volume(
+    tmp_path, monkeypatch
+):
+    sandbox = docker_sandbox.DockerSandbox({})
+    plan = sandbox.prepare(None, _request(tmp_path))
+    ref = sandbox.prepared_reference(plan)
+    monkeypatch.setattr(docker_cli, "docker_launch_pending", lambda _: False)
+
+    def inspect(*args, **kwargs):
+        container_only = (
+            "--type" in args and args[args.index("--type") + 1] == "container"
+        )
+        return subprocess.CompletedProcess(
+            args,
+            1,
+            stdout="",
+            stderr=(
+                f"Error: No such container: {ref.runtime_id}"
+                if container_only
+                else 'template parsing error: map has no entry for key "Id"'
+            ),
+        )
+
+    monkeypatch.setattr(docker_cli, "_docker", inspect)
+    assert asyncio.run(sandbox.running(ref)) is False
+    assert docker_cli.docker_reference_states((ref,)) == (False,)
+    asyncio.run(sandbox.release(ref))
+    assert not Path(plan.meta["stage_dir"]).exists()
+
+
+@pytest.mark.parametrize("terminal", [True, False])
+def test_docker_attach_reads_local_events_after_automatic_container_removal(
+    tmp_path, monkeypatch, terminal
+):
+    sandbox = docker_sandbox.DockerSandbox({})
+    plan = sandbox.prepare(None, replace(_request(tmp_path), remove_on_exit=True))
+    ref = replace(sandbox.prepared_reference(plan), runtime_id=_CONTAINER_ID)
+    content = "uv.use\npython.use\ntoolang.install.running\ntoolang.install.ok\ntoolang.check.running\n"
+    if terminal:
+        content += "toolang.check.failed\n"
+    Path(plan.meta["startup_events_path"]).write_text(content)
+    monkeypatch.setattr(docker_cli, "docker_launch_pending", lambda _: False)
+    monkeypatch.setattr(docker_sandbox, "_STARTUP_EVENT_INTERVAL_SEC", 0)
+    inspected = []
+
+    def inspect(*args, **kwargs):
+        inspected.append(args[-1])
+        return subprocess.CompletedProcess(
+            args, 1, stdout="", stderr=f"Error: No such container: {_CONTAINER_ID}"
+        )
+
+    monkeypatch.setattr(docker_cli, "_docker", inspect)
+    events = []
+
+    async def attach():
+        await asyncio.wait_for(
+            sandbox.attach(plan, ref, progress=events.append), timeout=1
+        )
+
+    asyncio.run(attach())
+    assert events[-1].status == ("failed" if terminal else "running")
+    assert (
+        "Checking Toolang" in events[-1].label
+        or events[-1].label == "Failed to check Toolang"
+    )
+    assert inspected == [_CONTAINER_ID]
+
+
 def test_docker_batch_keeps_generations_distinct_even_with_same_name(
     tmp_path, monkeypatch
 ):

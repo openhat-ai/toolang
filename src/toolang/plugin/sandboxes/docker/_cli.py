@@ -76,6 +76,8 @@ def _inspect_containers(identities: tuple[str, ...]) -> dict[str, _Container | N
     try:
         result = _docker(
             "inspect",
+            "--type",
+            "container",
             "--format",
             _OWNED_INSPECT_FORMAT,
             *identities,

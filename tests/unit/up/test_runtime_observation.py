@@ -73,7 +73,7 @@ def test_docker_batch_cache_preserves_ownership_for_reused_names(tmp_path, monke
         probe._alive(state, entry, cache=True) for probe, state, entry in owners
     ] == [None, True]
     assert len(inspected) == 1
-    assert inspected[0][3:] == (name,)
+    assert inspected[0][-1] == name and inspected[0].count(name) == 1
 
 
 @pytest.mark.parametrize("state", ["current", "removed", "replaced"])

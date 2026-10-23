@@ -507,14 +507,14 @@ class DockerSandbox:
             self._foreground_runtime_ids.add(ref.runtime_id)
         if progress is not None:
             runtime_id = await asyncio.to_thread(docker_reference_id, ref)
-            if runtime_id is None:
-                raise RuntimeError("docker container is missing")
+            # Automatic removal can precede attachment; drain host-side events too.
             await _observe_startup_events_safely(
                 Path(_plan_text(plan, "startup_events_path")),
                 progress=progress,
                 progress_id=progress_id or f"runtime:{ref.runtime_id}",
                 package_source=_plan_text(plan, "package_source"),
                 runtime_id=runtime_id,
+                runtime_stopped=runtime_id is None,
             )
 
     async def detach_output(self, ref: SandboxRef) -> None:
@@ -618,6 +618,7 @@ async def _observe_startup_events(
     progress_id: str,
     package_source: str,
     runtime_id: str | None = None,
+    runtime_stopped: bool = False,
 ) -> None:
     processed_lines = 0
     previous: str | None = None
@@ -665,9 +666,9 @@ async def _observe_startup_events(
             }:
                 return
         processed_lines = complete_count
-        if runtime_id is not None and not await asyncio.to_thread(
-            docker_container_running,
-            runtime_id,
+        if runtime_stopped or (
+            runtime_id is not None
+            and not await asyncio.to_thread(docker_container_running, runtime_id)
         ):
             if stopped_observed:
                 return
@@ -683,7 +684,8 @@ async def _observe_startup_events_safely(
     progress: ProgressSink,
     progress_id: str,
     package_source: str,
-    runtime_id: str,
+    runtime_id: str | None,
+    runtime_stopped: bool = False,
 ) -> None:
     with suppress(Exception):
         await _observe_startup_events(
@@ -692,6 +694,7 @@ async def _observe_startup_events_safely(
             progress_id=progress_id,
             package_source=package_source,
             runtime_id=runtime_id,
+            runtime_stopped=runtime_stopped,
         )
 
 
