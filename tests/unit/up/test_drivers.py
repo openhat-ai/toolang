@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from typing import Any
 
 from fastapi.testclient import TestClient
+from pydantic import TypeAdapter
 import pytest
 
 from toolang.api.app import create_app
@@ -15,7 +16,7 @@ from toolang.common.layout import AgentLayout
 from toolang.up.config import default_drivers, format_drivers, parse_drivers
 from toolang.up.core import AgentCore
 from toolang.up.server import build_serve_argv, resolve_serve
-from toolang.execution.types import ThreadKind
+from toolang.execution.types import DriverName, ThreadKind
 
 
 @pytest.mark.parametrize("prefix", ["web", "term", "spawn", "worker", "script"])
@@ -91,8 +92,44 @@ def test_driver_selection_roundtrips_host_guest_and_preserves_management(
     "value", ["", "none,chat", "chat,unknown", "chat,", "jobs", "messaging"]
 )
 def test_invalid_driver_selection(value):
-    with pytest.raises(ValueError, match="--enable"):
+    with pytest.raises(ValueError, match="--enable expects chat,chore,talk or none"):
         parse_drivers(value)
+
+
+@pytest.mark.parametrize(
+    ("drivers", "expected"),
+    [
+        ((), "none"),
+        (("chat",), "chat"),
+        (("chore",), "chore"),
+        (("talk",), "talk"),
+        (("chore", "chat"), "chat,chore"),
+        (("talk", "chat"), "chat,talk"),
+        (("talk", "chore"), "chore,talk"),
+        (("talk", "chore", "chat"), "chat,chore,talk"),
+    ],
+)
+def test_driver_display_and_serve_arguments_follow_complexity_order(
+    tmp_path, drivers, expected
+):
+    selection = frozenset(drivers)
+    assert format_drivers(selection) == expected
+    spec = resolve_serve(
+        layout=AgentLayout.resident(tmp_path, "alice"), drivers=selection
+    )
+    argv = build_serve_argv(spec)
+    assert argv[argv.index("--enable") + 1] == expected
+
+
+def test_driver_schema_lists_names_in_complexity_order():
+    assert TypeAdapter(DriverName).json_schema()["enum"] == ["chat", "chore", "talk"]
+    assert TypeAdapter(ThreadKind).json_schema()["enum"] == [
+        "chat",
+        "chore",
+        "talk",
+        "work",
+        "exec",
+    ]
 
 
 def test_placement_defaults():
@@ -204,6 +241,7 @@ def test_cli_enable_option_is_command_specific(tmp_path, capsys):
         assert main(["--root", str(tmp_path), *args]) == 0
         output = capsys.readouterr().out
         assert "--enable" in output
+        assert "chat,chore,talk" in output
         assert "--driver" not in output
     assert main(["--help"]) == 0
     assert "--enable" not in capsys.readouterr().out

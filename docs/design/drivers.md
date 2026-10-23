@@ -7,14 +7,14 @@ with a captured State/Setup snapshot.
 | Driver | Trigger | Thread |
 | --- | --- | --- |
 | `chat` | Interactive FastAPI requests from TUI/WebUI | `chat_` per conversation |
-| `talk` | Incoming hub message batches | One bound `talk_` per agent/backend/conversation |
 | `chore` | One-off, scheduled, or manual work | `chore_<8-character ID>` |
+| `talk` | Incoming hub message batches | One bound `talk_` per agent/backend/conversation |
 
 Fresh resident start/serve enable all three by default; visiting start/serve
 enable chat/talk. New servers for Chat, rerun, and `fork/rewind --chat` enable
 chat only in every placement. Standalone scripts default to none; offline
 fork/rewind starts no server.
-`--enable chat,talk,chore` replaces the defaults; `--enable none` disables all
+`--enable chat,chore,talk` replaces the defaults; `--enable none` disables all
 drivers. Only `serve`, `start`, and
 `chat` expose this option. `talk` sends hub messages; script execution owns its
 run lifecycle. Neither accepts a driver option.
@@ -51,8 +51,8 @@ fallback; an invalid selection or a selected handler's failure is reported.
 ```text
 script  explicit name, else unnamed entry, else file help
 chat    chat, else unnamed entry, else reported failure
-talk    user talk, else runtime talk
 chore   chore, else unnamed entry, else reported failure
+talk    user talk, else runtime talk
 ```
 
 The chosen user entry may be an agic or a flow. The builtin module ships a packaged

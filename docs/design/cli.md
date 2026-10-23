@@ -168,15 +168,16 @@ includes residents plus active registered visiting/roaming instances, with statu
 and effective Talk selection. Both use the shared `RuntimeWatcher` inventory.
 
 `too AGENT info` resolves one home without collecting an inventory. Its title
-identifies the agent; `Home` gives its location, followed by Tools, Models, Caps,
-Chores, Workspaces, and runtime status. Setup/State preparation creates no executor
-or Run store. `--catalog` selects the local catalog for either running or stopped
+shows the uppercase agent name, preserving any place code; `Home` gives its
+location, followed by Caps, Tools, Models, Chores, Workspaces, and runtime status.
+Setup/State preparation creates no executor or Run store. `--catalog` selects
+the local catalog for either running or stopped
 agents. Preparation failures preserve runtime ownership, show diagnostics, and
 return a nonzero exit; a watcher's last valid State is explicitly labeled.
 
 `too AGENT info` shows enabled `Drivers` immediately
 after `Status` while the agent is running. It reads existing runtime metadata
-and formats selections in `chat,talk,chore` order, with `none` for an empty set
+and formats selections in `chat,chore,talk` order, with `none` for an empty set
 and `-` for unavailable metadata. Nonrunning agents omit the row.
 
 `too [AGENT] caps`, kind-specific cap lists, `tools`, `models`, and `providers`

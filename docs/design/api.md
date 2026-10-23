@@ -353,7 +353,7 @@ these write routes require the chat driver. Noninteractive scripts use the
 Interactive thread creation at `POST /api/v0/threads` creates `chat_` contexts.
 Thread responses omit classification fields and `channel`; the ID prefix
 identifies the kind.
-Thread listing filters with `kind=chat|talk|chore|work|exec`; there is no Thread
+Thread listing filters with `kind=chat|chore|talk|work|exec`; there is no Thread
 `origin` or `channel` filter. Status `running` includes pending and running Runs;
 `active_run.status` retains the actual Run state. CLI steer/cancel use the same
 active-state definition as HTTP controls.
@@ -444,7 +444,7 @@ an explicit JSON `null` disables that field for the run.
 `POST /api/v0/runs/authored/stream` accepts the authored `RunRequest` wire
 shape:
 
-Authored requests may supply `driver` (`chat`, `talk`, or `chore`) with
+Authored requests may supply `driver` (`chat`, `chore`, or `talk`) with
 `runnable.ref: null` for automatic handler selection. Explicit refs keep their
 normal validation and take precedence. A displayed default does not pin an
 automatic request to that handler; input source-revision checks still apply.

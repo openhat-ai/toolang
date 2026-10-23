@@ -24,7 +24,7 @@ from .instance import (
     update_instance,
 )
 from .registry import RuntimeRegistration, remove_registration, finalize_runtime
-from .types import ExecutionDrivers
+from .types import ALL_DRIVERS, ExecutionDrivers
 
 
 def prepare_workload(
@@ -309,7 +309,7 @@ def write_runtime_state(
         "process_created": process_created,
         "sandbox": sandbox,
         "models": list(models or ()),
-        "drivers": list(drivers if drivers is not None else ("chat", "talk", "chore")),
+        "drivers": sorted(drivers if drivers is not None else ALL_DRIVERS),
         "workspace_additions": dict(workspace_additions or {}),
         "message": message,
     }

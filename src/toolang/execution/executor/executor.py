@@ -105,6 +105,7 @@ from ..store import RunStore
 from ..stream import CanonicalStream, Publication, TraceObserver, OBSERVER_DRAIN_SEC
 from ..schemas import RerunRequest, RunRequest
 from ..types import (
+    DriverName,
     RunReport,
     valid_run_id,
     value_for_type,
@@ -256,7 +257,7 @@ class RunSpec:
     all_tools: bool = False
     launch_context: LaunchContext | None = None
     resource_ceiling: AgentResources | None = None
-    driver: Literal["chat", "talk", "chore"] | None = None
+    driver: DriverName | None = None
     conversation: ConversationScope | None = None
     talk_batch: TalkBatch | None = None
 

@@ -5,7 +5,7 @@ Run, Thread, Chore, and conversation suffixes use eight lowercase Base32 charact
 [agent addresses](agent-addresses.md#short-codes) defines the separate
 root-code and place-code widths and composition.
 
-Thread IDs require one of `chat_`, `talk_`, `chore_`, `work_`, or `exec_` and a
+Thread IDs require one of `chat_`, `chore_`, `talk_`, `work_`, or `exec_` and a
 nonempty suffix. `ThreadKind` is derived from this prefix on references, records,
 and read schemas; classification is not stored separately. Creation selects
 `kind`. Unknown and obsolete Thread prefixes are rejected.

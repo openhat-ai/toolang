@@ -233,7 +233,10 @@ def info_agent(
             rows.append(("WebUI", status.webui_url))
     if preparation_error:
         rows.append(("Preparation", preparation_error))
-    echo_pairs_table(rows, avatar=agent_avatar(), title=layout.address)
+    title = layout.name.upper()
+    if layout.place_code:
+        title += f"@{layout.place_code}"
+    echo_pairs_table(rows, avatar=agent_avatar(), title=title)
     if preparation_error:
         raise typer.Exit(1)
 
@@ -311,9 +314,9 @@ def _local_resources(
         setup = await setup_watcher.refresh(progress=progress)
         state = await state_watcher.refresh(progress=progress)
         rows = [
+            ("Caps", _caps_summary(state)),
             ("Tools", _tools_summary(setup, progress=progress)),
             ("Models", _models_summary(setup, progress=progress)),
-            ("Caps", _caps_summary(state)),
             ("Chores", _count(len(state.chores), "chore")),
             ("Workspaces", ", ".join(setup.workspace_grants(state.workspaces)) or "-"),
         ]

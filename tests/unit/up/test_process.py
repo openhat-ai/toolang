@@ -16,6 +16,32 @@ from toolang.up import process, workload, observation
 from toolang.up.instance import SandboxState
 
 
+@pytest.mark.parametrize(
+    ("drivers", "expected"),
+    [
+        (None, ["chat", "chore", "talk"]),
+        (["talk", "chore", "chat"], ["chat", "chore", "talk"]),
+        (["talk", "chore"], ["chore", "talk"]),
+        ([], []),
+    ],
+)
+def test_runtime_state_records_drivers_in_complexity_order(tmp_path, drivers, expected):
+    from toolang.up.instance import read_instance
+
+    layout = AgentLayout.resident(tmp_path, "alice")
+    workload.write_runtime_state(
+        layout,
+        endpoint="http://localhost:8123",
+        started_at="now",
+        pid=None,
+        drivers=drivers,
+    )
+
+    entry = read_instance(layout.runtime_status)
+    assert entry is not None
+    assert entry["workload"]["drivers"] == expected
+
+
 @pytest.mark.parametrize("matching", [True, False])
 @pytest.mark.parametrize("running_loop", [True, False])
 def test_status_uses_saved_identity_not_live_pid_in_report(

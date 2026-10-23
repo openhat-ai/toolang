@@ -43,7 +43,7 @@ def parse_drivers(value: str) -> ExecutionDrivers:
         return frozenset()
     names = {part.strip() for part in value.split(",")}
     if not names or not names <= ALL_DRIVERS:
-        raise ValueError("--enable expects chat,talk,chore or none")
+        raise ValueError("--enable expects chat,chore,talk or none")
     return frozenset(cast(DriverName, name) for name in names)
 
 
@@ -54,7 +54,7 @@ def default_drivers(placement: AgentPlacement) -> ExecutionDrivers:
 
 def format_drivers(drivers: ExecutionDrivers) -> str:
     return (
-        ",".join(name for name in ("chat", "talk", "chore") if name in drivers)
+        ",".join(name for name in ("chat", "chore", "talk") if name in drivers)
         or "none"
     )
 

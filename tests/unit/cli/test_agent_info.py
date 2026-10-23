@@ -65,6 +65,7 @@ def test_info_shows_home_without_redundant_identity_or_footer(
 
     assert main(["--root", str(root), f"agent:{name}", "info"]) == 0
     output = capsys.readouterr().out
+    assert output.splitlines()[1].strip() == name.upper()
     assert "Home:" in output
     assert "Root:" not in output
     assert "Placement:" not in output
@@ -164,6 +165,13 @@ def test_info_prepares_current_resources_for_all_placements(
         assert "Tools:" in text and "0 tools" not in text
         assert "Models:" in text and "models" in text
         assert "Caps:" in text
+        labels = ("Home", "Caps", "Tools", "Models", "Chores", "Workspaces", "Status")
+        positions = [text.index(f"{label}:") for label in labels]
+        assert positions == sorted(positions)
+        title = layout.name.upper()
+        if layout.place_code:
+            title += f"@{layout.place_code}"
+        assert text.splitlines()[1].strip() == title
         assert ("Status: running" in text) is running
         assert layout.agent_state.exists()
         assert not layout.run_store.exists()
@@ -173,7 +181,7 @@ def test_info_prepares_current_resources_for_all_placements(
 @pytest.mark.parametrize(
     ("metadata", "expected"),
     [
-        ({"drivers": ["chore", "talk", "chat"]}, "chat,talk,chore"),
+        ({"drivers": ["chore", "talk", "chat"]}, "chat,chore,talk"),
         ({"drivers": ["chore", "chat"]}, "chat,chore"),
         ({"drivers": []}, "none"),
         ({}, "-"),
