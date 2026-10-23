@@ -89,8 +89,9 @@ on exit. Snapshot and JSON output do not publish titles or pane identity.
 
 Top reads persisted facts through `toolang.stats.recent` and current paths through
 LiveTree. `up.watcher.RuntimeWatcher` composes resident homes and active runtime
-registrations into `RuntimeInventory`; `up.observation` validates source identity
-and launch generations. Membership completeness is explicit and independent of
+registrations into `RuntimeInventory`; `up.discovery` validates registered
+identities and `up.observation` probes their launch-bound status. Membership
+completeness is explicit and independent of
 diagnostics: an unreadable resident status does not erase its known home count.
 A removed resident home leaves scope even if its registration remains. A broken
 peer cannot prevent unrelated confirmed departures.

@@ -1043,7 +1043,7 @@ def test_failed_docker_batch_keeps_membership_and_readable_history(
 ):
     from toolang.base.types.sandbox import SandboxRef
     from toolang.up.instance import SandboxState
-    from toolang.up.watcher import _RuntimeProbe as AgentProcess
+    from toolang.up.observation import RuntimeProbe as AgentProcess
     from toolang.up.types import AgentStatus
 
     layout = AgentLayout.resident(tmp_path, "alice")

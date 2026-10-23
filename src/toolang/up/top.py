@@ -16,10 +16,10 @@ from toolang.stats.types import seconds, timestamp
 from .activity import ActivityReader
 from .observation import (
     RuntimeInventory,
-    RuntimeInstanceSnapshot,
     RuntimeSource,
 )
 from .schemas import ActivitySnapshot, SourceActivity, TopSnapshot
+from .types import RuntimeInstanceSnapshot
 from .watcher import RuntimeWatcher
 
 

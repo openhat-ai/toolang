@@ -91,10 +91,10 @@ with registration_lock(Path(sys.argv[1]), AgentLayout.resident(Path(sys.argv[1])
 
 
 def test_guest_cannot_reap_a_host_claim_even_with_a_dead_local_pid(monkeypatch):
-    from toolang.up import registry
+    from toolang.up import instance
 
-    monkeypatch.setattr(registry, "process_alive", lambda *args: False)
-    recovery = registry.LockRecovery()
+    monkeypatch.setattr(instance, "process_alive", lambda *args: False)
+    recovery = instance.LockRecovery()
     assert not recovery.dead(
         {"location": "host", "pid": 1, "created": 0},
         {"location": "guest", "launch_id": "own"},
@@ -129,7 +129,7 @@ def test_repair_resolves_owner_liveness_before_either_mutation_guard(
     from contextlib import contextmanager
     from toolang.common.files import file_lock_path
     from toolang.common.layout import AgentLayout
-    from toolang.up import registry
+    from toolang.up import registry, instance
     from toolang.up.instance import read_instance
     from toolang.up.workload import ForegroundWorkload
 
@@ -171,12 +171,13 @@ def test_repair_resolves_owner_liveness_before_either_mutation_guard(
         )
         monkeypatch.setattr(registry, "_registration_guard", prepare)
         monkeypatch.setattr(registry, "process_alive", dead)
+        monkeypatch.setattr(instance, "process_alive", dead)
         assert (
             registry.repair_registration(
                 layout,
                 observed,
                 resource_dead=True,
-                recovery=registry.LockRecovery(),
+                recovery=instance.LockRecovery(),
                 reference_path=active.path,
             )
             == "retired"

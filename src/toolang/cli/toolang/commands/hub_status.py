@@ -9,7 +9,7 @@ from rich.cells import cell_len
 from rich.console import Console
 from rich.text import Text
 
-from toolang.up.observation import RuntimeInstance, RuntimeInstanceSnapshot
+from toolang.up.types import RuntimeInstance, RuntimeInstanceSnapshot
 
 
 @dataclass(frozen=True, slots=True)

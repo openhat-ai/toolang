@@ -514,6 +514,23 @@ def running_docker_agent(
     docker_wheel_dir: Path,
     local_model_port: int,
 ) -> Iterator[_RunningDockerAgent]:
+    yield from _docker_agent(tmp_path_factory, docker_wheel_dir, local_model_port)
+
+
+@pytest.fixture
+def isolated_docker_agent(
+    tmp_path_factory: pytest.TempPathFactory,
+    docker_wheel_dir: Path,
+    local_model_port: int,
+) -> Iterator[_RunningDockerAgent]:
+    yield from _docker_agent(tmp_path_factory, docker_wheel_dir, local_model_port)
+
+
+def _docker_agent(
+    tmp_path_factory: pytest.TempPathFactory,
+    docker_wheel_dir: Path,
+    local_model_port: int,
+) -> Iterator[_RunningDockerAgent]:
     workspace = tmp_path_factory.mktemp("docker-sandbox-lifecycle")
     root = workspace / "toolang"
     layout = AgentLayout.resident(root, "alice")
@@ -1232,22 +1249,27 @@ for line in sys.stdin:
         update_instance(status, clear)
 
 
+@pytest.mark.parametrize("terminal", [False, True])
 def test_killed_guest_writer_claim_is_recovered_by_query(
-    running_docker_agent: _RunningDockerAgent,
+    isolated_docker_agent: _RunningDockerAgent,
+    terminal: bool,
 ) -> None:
     from toolang.common.files import file_lock_path
     from toolang.up.instance import read_instance
 
-    agent = running_docker_agent
+    agent = isolated_docker_agent
     status = agent.layout.runtime_status
     marker = status.parent / "killed-writer.marker"
     script = """
 from pathlib import Path
-import time
-from toolang.up.instance import runtime_lock, read_instance
+import sys, time
+from toolang.up.instance import runtime_lock, read_instance, update_instance
 status = Path('/root/.toolang/agents/alice/.runtime/status.json')
-entry = read_instance(status)
+entry = read_instance(status, location='guest')
 with runtime_lock(status, location='guest', launch_id=entry['launch_id']):
+    if sys.argv[1] == 'terminal':
+        update_instance(status, lambda value: value['workload'].update(status='stopped', pid=None),
+                        launch_id=entry['launch_id'], location='guest')
     status.with_name('killed-writer.marker').write_text('owned')
     time.sleep(60)
 """
@@ -1259,6 +1281,7 @@ with runtime_lock(status, location='guest', launch_id=entry['launch_id']):
             "/tmp/toolang-runtime/tools/toolang/bin/python",
             "-c",
             script,
+            "terminal" if terminal else "active",
         ),
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -1307,11 +1330,12 @@ def test_guest_can_unlink_a_reference_through_the_shared_registry_directory(
     script = """
 from pathlib import Path
 from toolang.up.instance import read_instance
-from toolang.up.registry import _claim_owner, _registration_guard, LockRecovery
+from toolang.up.registry import _registration_guard
+from toolang.up.instance import runtime_lock_owner, LockRecovery
 home = Path('/root/.toolang/agents/alice')
 entry = read_instance(home / '.runtime/status.json', location='guest')
 registry = home / '.runtime/registration'
-with _registration_guard(registry, owner=_claim_owner(location='guest', entry=entry),
+with _registration_guard(registry, owner=runtime_lock_owner(location='guest', entry=entry),
                          recovery=LockRecovery(), blocking=True):
     (registry / 'mount_probe.json').unlink()
 """

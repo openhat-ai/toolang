@@ -16,7 +16,7 @@ from toolang.up.instance import (
 )
 
 from .types import AgentStatus as AgentStatus
-from .watcher import _runtime_report, _webui_url
+from .observation import RuntimeProbe, webui_url
 
 if TYPE_CHECKING:
     from toolang.up.sandbox import LaunchSpec, SandboxHandle
@@ -65,7 +65,7 @@ class AgentProcess:
         """Return descriptive data only for the referenced workload."""
 
         entry = read_instance(self.layout.runtime_status, self.layout.instance)
-        return self._report(entry, SandboxState.from_instance(entry))
+        return RuntimeProbe.report(entry, SandboxState.from_instance(entry))
 
     def wait_ready(
         self,
@@ -120,11 +120,6 @@ class AgentProcess:
         )
         return current
 
-    def _report(self, entry, reference):
-        from .watcher import _RuntimeProbe
-
-        return _RuntimeProbe(self.layout)._report(entry, reference)
-
     def status(
         self,
         *,
@@ -153,7 +148,7 @@ class AgentProcess:
         return tuple(
             replace(
                 source.observation,
-                webui_url=_webui_url(source.endpoint, ui_base_url=ui_base_url)
+                webui_url=webui_url(source.endpoint, ui_base_url=ui_base_url)
                 if source.instance.state == "running"
                 else None,
             )
@@ -177,10 +172,10 @@ def assigned_runtime_ports(
 ) -> set[int]:
     """Return peer ports reserved by active global registrations."""
 
-    from .observation import running_instances
+    from .discovery import active_runtime_endpoints
 
     ports: set[int] = set()
-    for entry in running_instances(toolang_root):
+    for entry in active_runtime_endpoints(toolang_root):
         if entry.get("address", entry.get("name")) == exclude_agent:
             continue
         port = _runtime_state_port(entry)
@@ -211,14 +206,17 @@ def runtime_identity_row(
     if layout is not None or (runtime_state or {}).get("ref") is not None:
         from toolang.base.types.sandbox import SandboxRef
 
-        state = (
-            SandboxState.load(layout.runtime_status, instance=layout.instance)
-            if layout is not None
-            else SandboxState(
-                str((runtime_state or {}).get("sandbox", "host")),
-                SandboxRef.from_data((runtime_state or {})["ref"]),
+        try:
+            state = (
+                SandboxState.load(layout.runtime_status, instance=layout.instance)
+                if layout is not None
+                else SandboxState(
+                    str((runtime_state or {}).get("sandbox", "host")),
+                    SandboxRef.from_data((runtime_state or {})["ref"]),
+                )
             )
-        )
+        except (OSError, KeyError, ValueError):
+            return None
         if state is not None:
             ref = state.ref
             if ref.runtime_kind == "process":
@@ -248,9 +246,3 @@ def runtime_identity_row(
     if isinstance(pid, int) and pid > 0:
         return "PID", str(pid)
     return None
-
-
-def _load_runtime_state(
-    path: Path, *, instance: str | None = None
-) -> dict[str, object] | None:
-    return _runtime_report(read_instance(path, instance))

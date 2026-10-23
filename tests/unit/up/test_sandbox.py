@@ -1494,7 +1494,7 @@ def test_failed_workload_withdraws_discovery_before_resource_release(
     tmp_path, monkeypatch
 ):
     from toolang.up.instance import patch_workload
-    from toolang.up.observation import runtime_inventory
+    from toolang.up.watcher import runtime_inventory
     from toolang.up.registry import instance_filename
 
     implementation = FakeSandbox()

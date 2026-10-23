@@ -7,9 +7,7 @@ import pytest
 
 from toolang.up.allocation import allocate_roaming, select_roaming
 from toolang.up.instance import read_instance, patch_workload
-from toolang.up.observation import (
-    runtime_inventory,
-)
+from toolang.up.watcher import runtime_inventory
 
 
 def test_parallel_allocations_are_isolated_and_keep_history(tmp_path, monkeypatch):

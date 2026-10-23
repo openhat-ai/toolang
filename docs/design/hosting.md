@@ -298,6 +298,15 @@ persisted phase; HTTP readiness is an explicit startup check. Endpoint, drivers,
 and display identity come from the same launch-bound snapshot. Inspection errors
 remain unknown; they are not recorded as workload failures.
 
+`up.discovery` enumerates resident homes and resolves registered identities;
+`up.observation.RuntimeProbe` reads and classifies one runtime without mutation.
+`up.watcher` owns scope selection and repair policy. `up.instance` owns status
+updates and shared-lock recovery; `up.registry` owns ordered publication and
+withdrawal. Lifecycle code owns workload exit and sandbox resource release.
+Port allocation reads registered endpoints only, reserving declared endpoints
+during preparation and startup before an API becomes available. Resident-only
+collection filters nonresident references before reading or probing their status.
+
 New publications retain the format-5 payload in a per-address directory:
 
 ```text
@@ -322,6 +331,12 @@ a guest namespace is dead only when its sandbox resource is proven absent. Guest
 recover only claims from their own launch/resource namespace, never host claims.
 Unknown ownership stays busy; time alone never expires a claim. Only hosts recover
 legacy empty registry guards through the shared primitive's native reaper lock.
+
+Both guards share one recovery budget during a repair. Either orphaned claim
+can spend the refresh's single additional namespace probe; the other guard
+reuses that evidence. Terminal reports need no ordinary sandbox liveness probe.
+Prepare recovery evidence in registry-then-status order before acquiring either
+guard, so recovery progresses even when their orphaned owners differ.
 
 Publication waits at most two seconds for the registry guard. Query repair is
 nonblocking. Liveness probes happen before mutation guards. Mutation order is

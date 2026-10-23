@@ -1,82 +1,20 @@
-"""Observe agent runtime status through authoritative files and discovery references."""
+"""Probe one runtime and bind its status to a local history source."""
 
 from __future__ import annotations
 
+import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-import re
+import json
 from pathlib import Path
-from typing import Any, TypeGuard, cast
+import time
+from urllib.parse import urlsplit
 
-
-from toolang.common import layout as paths
 from toolang.common.layout import AgentLayout
-from toolang.common.place_codes import root_code
-from toolang.up.identity import layout_from_control, verify_identity
-from toolang.up.instance import (
-    read_document,
-    read_instance,
-)
-from .registry import (
-    instance_filename,
-    read_reference,
-    registration_current,
-)
-from toolang.up.types import (
-    AgentStatus,
-    RuntimeInstance as RuntimeInstance,
-    RuntimeInstanceSnapshot as RuntimeInstanceSnapshot,
-)
-
-
-def instance_identity(layout: AgentLayout) -> str:
-    return layout.address
-
-
-def running_instances(root: Path) -> tuple[dict, ...]:
-    """Return running endpoints from the shared runtime inventory."""
-    from .watcher import RuntimeWatcher
-
-    return tuple(
-        {
-            **source.observation.entry["control"],
-            "agent": f"agent:{source.instance.label}",
-            "instance": source.instance.identity,
-            "endpoint": source.endpoint,
-        }
-        for source in RuntimeWatcher(root).refresh().sources
-        if source.instance.state == "running"
-        and source.observation is not None
-        and source.observation.entry is not None
-        and source.registration is not None
-        and source.is_current()
-    )
-
-
-def active_layout(root: Path, address: str) -> tuple[AgentLayout, str]:
-    """Resolve one exact active address without a historical or cross-root scan."""
-    root = root.expanduser().resolve()
-    path = root / ".runtime" / "active" / address / f"{address}.json"
-    if not path.is_file():
-        path = root / ".runtime" / "active" / f"{address}.json"
-    reference = read_reference(path)
-    if reference is None:
-        raise FileNotFoundError(
-            f"active instance not found: {address}; use a source path for offline access"
-        )
-    status_path = reference.status
-    entry = read_instance(status_path)
-    if entry is None or entry["launch_id"] != reference.launch_id:
-        raise ValueError("selected execution owner was replaced")
-    layout = _runtime_layout(entry["control"], status_path, root)
-    if layout.address != address:
-        raise ValueError("active instance does not match the selected agent")
-    if layout.placement != "resident":
-        from .private_paths import verify_root_namespace, verify_home_paths
-
-        verify_root_namespace(layout.place.parent, root)
-        verify_home_paths(layout.place, layout.name)
-    return layout, entry["launch_id"]
+from .identity import verify_identity
+from .instance import SandboxState, process_alive, read_instance
+from .registry import registration_current
+from .types import ALL_DRIVERS, AgentStatus, RuntimeInstance, RuntimeInstanceSnapshot
 
 
 @dataclass(frozen=True, slots=True)
@@ -112,425 +50,331 @@ class RuntimeInventory:
     registrations: frozenset[Path] | None = frozenset()
 
 
-@dataclass(slots=True)
-class _SnapshotCandidate:
-    registration: Path
-    status_path: Path
-    instance_key: str
-    launch_id: str | None
-    layout: AgentLayout | None
-    entry: dict[str, Any] | None
-    diagnostic: str | None = None
+_LIVENESS_CACHE: dict = {}
 
 
-_REFERENCE_NAME = re.compile(
-    r"(?P<name>[a-z][a-z0-9_]{0,63})(?:@(?P<instance>t[0-9abcdefghjkmnpqrstvwxyz]{10}|s[0-9abcdefghjkmnpqrstvwxyz]{17}))?\.json\Z"
-)
+class RuntimeProbe:
+    """Observe one runtime without preparation or registry mutation."""
 
+    def __init__(self, layout: AgentLayout) -> None:
+        self.layout = layout
 
-def _resolved(path: Path) -> Path:
-    path = path.expanduser()
-    try:
-        return path.resolve(strict=False)
-    except (OSError, RuntimeError):
-        return path.absolute()
-
-
-def _fallback_layout(
-    reference_path: Path, status_path: Path, toolang_root: Path
-) -> AgentLayout | None:
-    """Recover display identity from our stable registration filename."""
-    match = _REFERENCE_NAME.fullmatch(reference_path.name)
-    if match is None or len(status_path.parents) < 4:
-        return None
-    name = match.group("name")
-    place_code = match.group("instance")
-    placement = (
-        "resident"
-        if place_code is None
-        else "visiting"
-        if place_code.startswith("t")
-        else "roaming"
-    )
-    layout = AgentLayout(
-        status_path.parents[3],
-        name,
-        placement,
-        root=toolang_root,
-        place_code=place_code,
-    )
-    if placement == "resident" and layout.place != toolang_root:
-        return None
-    if placement == "visiting" and layout.place != paths.VISITING_BASE / root_code(
-        str(toolang_root)
-    ) / str(layout.place_code):
-        return None
-    if placement == "roaming" and (
-        layout.place.parent.name != root_code(str(toolang_root))
-        or layout.place.parent.parent.name != ".toolang"
-        or layout.place.name != layout.place_code
-    ):
-        return None
-    return (
-        layout if _resolved(layout.runtime_status) == _resolved(status_path) else None
-    )
-
-
-def _snapshot_entry(value: object) -> TypeGuard[dict[str, Any]]:
-    if not isinstance(value, dict):
-        return False
-    entry = cast(dict[str, Any], value)
-    return (
-        isinstance(entry.get("launch_id"), str)
-        and isinstance(entry.get("control"), dict)
-        and isinstance(entry.get("workload"), dict)
-    )
-
-
-def _runtime_layout(
-    control: dict, status_path: Path, toolang_root: Path
-) -> AgentLayout:
-    """Validate persisted identity before probing its runtime."""
-    layout = layout_from_control(control)
-    recorded_root_path = control.get("root")
-    if not isinstance(recorded_root_path, str):
-        raise ValueError("runtime identity has no Toolang root")
-    recorded_root = Path(recorded_root_path).expanduser()
-    if (
-        recorded_root.is_absolute()
-        and _resolved(recorded_root) != _resolved(toolang_root)
-    ) or _resolved(layout.runtime_status) != _resolved(status_path):
-        raise ValueError("runtime identity does not match its registration")
-    if layout.placement == "resident" and _resolved(layout.place) != _resolved(
-        toolang_root
-    ):
-        raise ValueError("resident runtime is outside the selected Toolang root")
-    return layout
-
-
-def runtime_snapshot(root: Path) -> RuntimeInstanceSnapshot:
-    return runtime_inventory(root).snapshot
-
-
-def runtime_inventory(root: Path, *, agent: str | None = None) -> RuntimeInventory:
-    """Collect the same scope used by the interactive runtime monitors."""
-    from .watcher import RuntimeWatcher
-
-    return RuntimeWatcher(root, agent=agent).refresh()
-
-
-def _registered_inventory(root: Path, *, agent: str | None = None) -> RuntimeInventory:
-    """Resolve and probe registered entries once; mutations belong to the watcher."""
-    from .watcher import _RuntimeProbe, _runtime_source
-
-    root = _resolved(root)
-    selected_status = (
-        _resolved(AgentLayout.resident(root, agent).runtime_status)
-        if agent is not None
-        else None
-    )
-    diagnostics: list[str] = []
-    membership_complete = True
-    enumerated = True
-    candidates: dict[tuple[Path, str, str | None], _SnapshotCandidate] = {}
-    documents: dict[Path, tuple[dict | None, str | None]] = {}
-
-    def read_once(path: Path) -> tuple[dict[str, Any] | None, str | None]:
-        resolved = _resolved(path)
-        if resolved not in documents:
-            try:
-                documents[resolved] = (read_document(resolved), None)
-            except (OSError, ValueError, TypeError) as exc:
-                detail = str(exc).strip() or type(exc).__name__
-                documents[resolved] = (None, detail[:180])
-        return documents[resolved]
-
-    def add(candidate: _SnapshotCandidate) -> None:
-        if (
-            agent is not None
-            and candidate.layout is not None
-            and (
-                candidate.layout.placement != "resident"
-                or candidate.layout.name != agent
-            )
-        ):
-            return
-        status_path = _resolved(candidate.status_path)
-        if candidate.launch_id is not None:
-            placeholder_key = (status_path, candidate.instance_key, None)
-            placeholder = candidates.pop(placeholder_key, None)
-            if placeholder is not None and placeholder.entry is None:
-                if candidate.layout is None:
-                    candidate.layout = placeholder.layout
-                if candidate.entry is None:
-                    candidate.entry = placeholder.entry
-                if candidate.diagnostic is None:
-                    candidate.diagnostic = placeholder.diagnostic
-        key = (status_path, candidate.instance_key, candidate.launch_id)
-        previous = candidates.get(key)
-        if previous is None:
-            candidates[key] = candidate
-            return
-        if previous.layout is None and candidate.layout is not None:
-            previous.layout = candidate.layout
-        if previous.entry is None and candidate.entry is not None:
-            previous.entry = candidate.entry
-        if previous.diagnostic is None:
-            previous.diagnostic = candidate.diagnostic
-
-    instance_dir = root / ".runtime" / "active"
-    try:
-        reference_paths = sorted(
-            (
-                path
-                for child in instance_dir.iterdir()
-                for path in (
-                    (child,)
-                    if child.suffix == ".json"
-                    else (child / f"{child.name}.json",)
-                    if child.is_dir() and not child.is_symlink()
-                    else ()
-                )
-                if path.is_file() and (agent is None or path.stem == agent)
-            ),
-            key=lambda path: str(path),
-        )
-    except FileNotFoundError:
-        reference_paths = []
-    except OSError as exc:
-        reference_paths = []
-        enumerated = membership_complete = False
-        diagnostics.append(
-            f"runtime registry: {str(exc).strip() or type(exc).__name__}"
-        )
-
-    registrations = set(reference_paths)
-    for reference_path in reference_paths:
-        fallback: AgentLayout | None = None
-        try:
-            reference = read_reference(reference_path)
-            if reference is None:
-                registrations.discard(reference_path)
-                continue
-            status_path = root / reference.status.expanduser()
-            if (
-                selected_status is not None
-                and status_path is not None
-                and _resolved(status_path) != selected_status
-            ):
-                name = _REFERENCE_NAME.fullmatch(reference_path.name)
-                if name is None or name.group("instance") is None:
-                    diagnostics.append(
-                        f"runtime registry {reference_path.name}: resident status does not match the selected agent"
-                    )
-                continue
-            launch_id = reference.launch_id
-            fallback = _fallback_layout(reference_path, status_path, root)
-            document, error = read_once(status_path)
-            if error is not None:
-                add(
-                    _SnapshotCandidate(
-                        reference_path,
-                        status_path,
-                        fallback.instance
-                        if fallback and fallback.instance
-                        else "default",
-                        launch_id,
-                        fallback,
-                        None,
-                        f"runtime status could not be read: {error}",
-                    )
-                )
-                continue
-            if document is None:
-                add(
-                    _SnapshotCandidate(
-                        reference_path,
-                        status_path,
-                        fallback.instance
-                        if fallback and fallback.instance
-                        else "default",
-                        launch_id,
-                        fallback,
-                        None,
-                        "runtime status record is missing or invalid",
-                    )
-                )
-                continue
-            entries = document["instances"]
-            matches = [
-                (key, value)
-                for key, value in entries.items()
-                if _snapshot_entry(value) and value["launch_id"] == launch_id
-            ]
-            if len(matches) != 1:
-                add(
-                    _SnapshotCandidate(
-                        reference_path,
-                        status_path,
-                        fallback.instance
-                        if fallback and fallback.instance
-                        else "default",
-                        launch_id,
-                        fallback,
-                        None,
-                        "runtime launch could not be matched",
-                    )
-                )
-                continue
-            instance_key, entry = matches[0]
-            try:
-                layout = _runtime_layout(entry["control"], status_path, root)
-                if (
-                    not isinstance(instance_key, str)
-                    or layout.instance
-                    != (None if instance_key == "default" else instance_key)
-                    or instance_filename(layout) != reference_path.name
-                ):
-                    raise ValueError("runtime identity does not match its registration")
-            except (KeyError, OSError, RuntimeError, TypeError, ValueError) as exc:
-                add(
-                    _SnapshotCandidate(
-                        reference_path,
-                        status_path,
-                        instance_key if isinstance(instance_key, str) else "default",
-                        launch_id,
-                        fallback,
-                        None,
-                        str(exc)[:180],
-                    )
-                )
-                continue
-            add(
-                _SnapshotCandidate(
-                    reference_path,
-                    status_path,
-                    instance_key,
-                    launch_id,
-                    layout,
-                    entry,
-                )
-            )
-        except (OSError, ValueError, TypeError) as exc:
-            membership_complete = False
-            diagnostics.append(
-                f"runtime registry {reference_path.name}: {str(exc).strip() or type(exc).__name__}"
-            )
-            if fallback is not None:
-                add(
-                    _SnapshotCandidate(
-                        reference_path,
-                        fallback.runtime_status,
-                        fallback.instance or "default",
-                        None,
-                        fallback,
-                        None,
-                        "runtime registration could not be read",
-                    )
-                )
-
-    candidates_list = list(candidates.values())
-    docker = []
-    from .instance import SandboxState
-
-    for candidate in candidates_list:
-        entry, layout = candidate.entry, candidate.layout
-        if entry is None or layout is None:
-            continue
-        if str(entry["control"].get("sandbox")).partition(":")[0] == "docker":
-            try:
-                reference = SandboxState.from_instance(entry)
-                if reference is not None:
-                    docker.append((_RuntimeProbe(layout), reference, entry))
-            except (TypeError, ValueError):
-                pass
-    try:
-        _RuntimeProbe.cache_docker_states(docker)
-    except (OSError, RuntimeError, ValueError):
-        pass  # Individual probes preserve uncertainty when the batch is unavailable.
-
-    def inspect(candidate: _SnapshotCandidate) -> RuntimeSource | None:
-        layout = candidate.layout
-        if layout is None:
+    @staticmethod
+    def report(entry, reference: SandboxState | None) -> dict[str, object] | None:
+        report = _runtime_report(entry)
+        if report is None or reference is None:
+            return report
+        if report.get("launch_id") and report["launch_id"] != reference.launch_id:
             return None
-        if candidate.diagnostic is not None or candidate.entry is None:
-            status = AgentStatus(
-                layout.name,
-                "unknown",
-                None,
-                None,
-                None,
-                None,
-                candidate.diagnostic or "runtime record is unavailable",
+        if report.get("status") in {"stopped", "failed"} and report.get("pid") is None:
+            return report
+        ref = reference.ref
+        if ref.runtime_kind == "process":
+            matches = (
+                (
+                    str(report.get("pid")) == ref.runtime_id
+                    or (
+                        report.get("pid") is None
+                        and report.get("status") in {"stopped", "failed"}
+                    )
+                )
+                and report.get("process_created") == ref.meta.get("created")
+                and isinstance(ref.meta.get("created"), (int, float))
             )
         else:
-            try:
-                status = _RuntimeProbe(layout).status(
-                    ui_base_url="", cache=True, snapshot=candidate.entry
+            if report.get("launch_id"):
+                return report
+            instance = report.get("sandbox_instance")
+            matches = isinstance(instance, str) and instance in {
+                ref.runtime_id,
+                ref.runtime_name,
+            }
+            if reference.sandbox.partition(":")[0] == "docker" and isinstance(
+                instance, str
+            ):
+                # Docker's guest bootstrap reports its default short hostname.
+                matches = matches or (
+                    len(instance) == 12
+                    and all(char in "0123456789abcdef" for char in instance)
+                    and ref.runtime_id.startswith(instance)
                 )
-            except (OSError, RuntimeError, TypeError, ValueError) as exc:
-                status = AgentStatus(
-                    layout.name,
-                    "unknown",
-                    None,
-                    None,
-                    None,
-                    None,
-                    f"inspection failed: {exc}",
+        return report if matches else None
+
+    def status(
+        self,
+        *,
+        ui_base_url: str,
+        check_health: bool = False,
+        cache: bool = False,
+        snapshot: dict | None = None,
+    ) -> AgentStatus | None:
+        """Inspect one authoritative snapshot without mutating it."""
+
+        try:
+            if not self.layout.home.is_dir():
+                return None
+        except OSError as exc:
+            return AgentStatus(
+                self.layout.name, "unknown", None, None, None, None, str(exc)
+            )
+        if check_health:
+            from .sandbox import _health_ready
+
+        endpoint = None
+        sandbox = None
+        message = None
+        status = "stopped"
+        observed = None
+        alive = None
+        try:
+            observed = (
+                snapshot
+                if snapshot is not None
+                else read_instance(self.layout.runtime_status, self.layout.instance)
+            )
+            # Resource-only records have no layout bindings. Partial identity
+            # records still require validation, even if their address is missing.
+            if observed is not None and any(
+                key in observed["control"] for key in ("address", "home", "place")
+            ):
+                try:
+                    verify_identity(self.layout, observed["control"])
+                except ValueError:
+                    observed = None
+                    raise
+            operation = (observed or {}).get("control", {}).get("operation")
+            if operation is not None and not isinstance(operation, dict):
+                raise ValueError("runtime operation must be a mapping")
+            reference = SandboxState.from_instance(observed)
+            report = self.report(observed, reference) or {}
+            if reference is not None:
+                sandbox = reference.sandbox
+                terminal = (
+                    report.get("status") in {"stopped", "failed"}
+                    and report.get("pid") is None
                 )
-            if status is None:
-                status = AgentStatus(
-                    layout.name,
-                    "unknown",
-                    None,
-                    None,
-                    None,
-                    None,
-                    "runtime home disappeared",
+                alive = (
+                    None if terminal else self._alive(reference, observed, cache=cache)
                 )
-        return _runtime_source(
-            layout,
-            status,
-            registration=candidate.registration,
-            launch_id=candidate.launch_id,
+                if (
+                    report.get("status") in {"stopped", "failed"}
+                    and report.get("pid") is None
+                ):
+                    status = str(report["status"])
+                elif alive:
+                    endpoint = reference.ref.endpoint
+                    status = (
+                        "running"
+                        if (not check_health and report.get("status") == "running")
+                        or (
+                            check_health
+                            and _health_ready(f"{endpoint.rstrip('/')}/healthz")
+                        )
+                        else "starting"
+                    )
+                elif alive is False:
+                    if (
+                        operation is not None
+                        and process_alive(
+                            operation.get("pid"), operation.get("created")
+                        )
+                        is not False
+                    ):
+                        status = "preparing"
+                    if status != "preparing" and report.get("status") == "failed":
+                        status = "failed"
+                else:
+                    status, message = (
+                        "unknown",
+                        "workload identity could not be verified",
+                    )
+            elif report.get("status") in {"preparing", "starting", "running"}:
+                entry = observed
+                native = (entry or {}).get("control", {}).get(
+                    "sandbox", "host"
+                ) == "host"
+                alive = (
+                    process_alive(report.get("pid"), report.get("process_created"))
+                    if native
+                    else None
+                )
+                if (
+                    operation is not None
+                    and process_alive(operation.get("pid"), operation.get("created"))
+                    is not False
+                    and alive is not True
+                ):
+                    status = "preparing"
+                elif not native:
+                    # A guest PID has no meaning in this host namespace. Without
+                    # its resource reference there is no valid liveness probe.
+                    status = "unknown"
+                else:
+                    if alive is False:
+                        pass
+                    elif alive is True:
+                        status = str(report.get("status"))
+                        live_endpoint = report.get("endpoint")
+                        if (
+                            report.get("api_version") is not None
+                            and isinstance(live_endpoint, str)
+                            and live_endpoint.strip()
+                        ):
+                            endpoint = live_endpoint.strip()
+                            sandbox = "host"
+                            if check_health and not _health_ready(
+                                f"{endpoint}/healthz"
+                            ):
+                                status = "starting"
+                    else:
+                        status = "unknown"
+            elif report.get("status") == "failed":
+                status = "failed"
+            raw_message = report.get("message")
+            if isinstance(raw_message, str):
+                message = raw_message
+            if self.layout.legacy_sandbox_state.is_file():
+                raise ValueError("legacy sandbox state requires manual cleanup")
+        except (ImportError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            status, message = "unknown", str(exc)
+        return AgentStatus(
+            name=self.layout.name,
+            status=status,
+            endpoint=endpoint,
+            api_url=_api_docs_url(endpoint) if endpoint else None,
+            webui_url=webui_url(endpoint, ui_base_url=ui_base_url)
+            if endpoint and status == "running"
+            else None,
+            sandbox=sandbox,
+            message=message,
+            entry=observed,
+            alive=alive,
         )
 
-    with ThreadPoolExecutor(max_workers=8) as executor:
-        inspected = tuple(executor.map(inspect, candidates_list))
-    sources = []
-    for candidate, source in zip(candidates_list, inspected, strict=True):
-        if source is None:
-            membership_complete = False
-            diagnostics.append(
-                f"runtime registry {candidate.registration.name}: {candidate.diagnostic or 'runtime identity is unavailable'}"
-            )
-            continue
-        try:
-            if not source.is_current():
-                reference = read_reference(source.registration)
-                if reference is None:
-                    registrations.discard(source.registration)
-                elif reference.launch_id == source.launch_id:
-                    diagnostics.append(
-                        f"runtime registry {source.registration.name}: status path does not match the agent home"
-                    )
-                continue
-        except (OSError, ValueError, TypeError) as exc:
-            diagnostics.append(f"runtime registry {source.instance.label}: {exc}")
-            membership_complete = False
-            continue
+    def _alive(self, reference, entry, *, cache: bool):
+        key = self._cache_key(reference)
+        now = time.monotonic()
+        fingerprint = json.dumps(entry, sort_keys=True)
+        previous = _LIVENESS_CACHE.get(key) if cache else None
         if (
-            source.instance.placement != "resident"
-            and source.instance.state == "unknown"
+            previous is not None
+            and previous[0] + 1 > now
+            and previous[1] == fingerprint
         ):
-            membership_complete = False
-        sources.append(source)
-    return RuntimeInventory(
-        RuntimeInstanceSnapshot(
-            tuple(source.instance for source in sources),
-            tuple(sorted(set(diagnostics))),
-            membership_complete,
-        ),
-        tuple(sources),
-        frozenset(registrations) if enumerated else None,
+            return previous[2]
+
+        async def probe():
+            from .sandbox import load_state_sandbox
+
+            implementation = load_state_sandbox(self.layout, reference)
+            return await asyncio.wait_for(
+                implementation.running(reference.ref), timeout=2
+            )
+
+        try:
+            try:
+                asyncio.get_running_loop()
+            except RuntimeError:
+                alive = asyncio.run(probe())
+            else:
+                # Synchronous status reads also run during async launch resolution.
+                with ThreadPoolExecutor(max_workers=1) as pool:
+                    alive = pool.submit(lambda: asyncio.run(probe())).result()
+        except TimeoutError:
+            alive = None
+        if cache:
+            if len(_LIVENESS_CACHE) > 256:
+                _LIVENESS_CACHE.clear()
+            _LIVENESS_CACHE[key] = (now, fingerprint, alive)
+        return alive
+
+    def _cache_key(self, reference):
+        return (
+            self.layout.runtime_status,
+            self.layout.instance,
+            reference.launch_id,
+            repr(reference.ref.to_data()),
+        )
+
+    @classmethod
+    def cache_docker_states(cls, owners):
+        from toolang.plugin.sandboxes.docker._cli import docker_container_states
+
+        pending = []
+        now = time.monotonic()
+        for owner, reference, entry in owners:
+            key = owner._cache_key(reference)
+            fingerprint = json.dumps(entry, sort_keys=True)
+            cached = _LIVENESS_CACHE.get(key)
+            if cached is None or cached[0] + 1 <= now or cached[1] != fingerprint:
+                pending.append((key, fingerprint, reference.ref.runtime_id))
+        states = docker_container_states(
+            tuple(dict.fromkeys(identity for _, _, identity in pending))
+        )
+        if len(_LIVENESS_CACHE) > 256:
+            _LIVENESS_CACHE.clear()
+        for key, fingerprint, identity in pending:
+            _LIVENESS_CACHE[key] = (now, fingerprint, states.get(identity))
+
+
+def _runtime_report(entry) -> dict[str, object] | None:
+    if entry is None:
+        return None
+    control = entry["control"]
+    return {
+        **control.get("last_successful", {}),
+        **entry["workload"],
+        "launch_id": entry["launch_id"],
+    }
+
+
+def webui_url(endpoint: str | None, *, ui_base_url: str) -> str | None:
+    if endpoint is None or not endpoint.strip():
+        return None
+    try:
+        port = urlsplit(endpoint).port
+    except ValueError:
+        return None
+    if port is None:
+        return None
+    return f"{ui_base_url.rstrip('/')}/{port}"
+
+
+def _api_docs_url(endpoint: str | None) -> str | None:
+    if endpoint is None or not endpoint.strip():
+        return None
+    return f"{endpoint.rstrip('/')}/docs"
+
+
+def runtime_source(layout, status, *, registration=None, launch_id=None):
+    entry = status.entry
+    drivers = None
+    diagnostic = status.message
+    if status.status == "running" and entry is not None:
+        raw = entry["control"].get("drivers")
+        if (
+            isinstance(raw, list)
+            and all(isinstance(item, str) and item in ALL_DRIVERS for item in raw)
+            and len(set(raw)) == len(raw)
+        ):
+            drivers = tuple(raw)
+        else:
+            diagnostic = "effective launch drivers are missing or invalid"
+    instance = RuntimeInstance(
+        layout.name,
+        layout.placement,
+        layout.instance,
+        layout.address,
+        status.status,
+        drivers,
+        str(entry["workload"].get("status")) if diagnostic and entry else None,
+        diagnostic,
+    )
+    return RuntimeSource(
+        instance,
+        layout,
+        status.endpoint,
+        registration,
+        launch_id or (entry["launch_id"] if entry else None),
+        status,
     )

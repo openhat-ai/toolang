@@ -6,6 +6,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 import os
 import psutil
+import time
 from toolang.common.layout import AgentLayout
 import json
 from pathlib import Path
@@ -98,6 +99,7 @@ def runtime_lock(
     on_wait=None,
     dead_guest_launch: str | None = None,
     snapshot: dict[str, Any] | None = None,
+    recovery: LockRecovery | None = None,
 ):
     entry: dict[str, Any] = (
         snapshot
@@ -107,11 +109,10 @@ def runtime_lock(
             "launch_id": "",
         }
     )
-    from .registry import LockRecovery, _claim_owner
-
-    owner = _claim_owner(location=location, entry=entry)
+    owner = runtime_lock_owner(location=location, entry=entry)
     owner["launch_id"] = launch_id or entry["launch_id"]
-    recovery = LockRecovery(probes=1 if blocking else 0)
+    if recovery is None:
+        recovery = LockRecovery(probes=1 if blocking else 0)
     if dead_guest_launch == entry["launch_id"]:
         recovery.remember(entry, False)
     claim = file_lock_path(path)
@@ -297,8 +298,11 @@ class SandboxState:
         if entry is None or entry["control"].get("ref") is None:
             return None
         control = entry["control"]
+        sandbox = control.get("sandbox")
+        if not isinstance(sandbox, str):
+            raise ValueError("runtime resource requires a sandbox selector")
         return cls(
-            sandbox=control["sandbox"],
+            sandbox=sandbox,
             ref=SandboxRef.from_data(control["ref"]),
             launch_id=entry["launch_id"],
         )
@@ -358,3 +362,83 @@ def sandbox_alive(layout: AgentLayout, state: SandboxState) -> bool | None:
             return pool.submit(lambda: asyncio.run(probe())).result()
     except (OSError, RuntimeError, ValueError, TimeoutError):
         return None
+
+
+class LockRecovery:
+    """One refresh's bounded recovery evidence, independent of active references."""
+
+    def __init__(self, *, probes: int = 1) -> None:
+        self.probes = probes
+        self.dead_resources: set[str] = set()
+
+    def remember(self, entry: dict, alive: bool | None) -> None:
+        ref = entry["control"].get("ref")
+        if alive is False and isinstance(ref, dict):
+            self.dead_resources.add(
+                self._resource_key(entry["control"], entry["launch_id"])
+            )
+
+    @staticmethod
+    def _resource_key(control: dict, launch_id: object) -> str:
+        return json.dumps(
+            (control.get("sandbox"), control.get("ref"), launch_id), sort_keys=True
+        )
+
+    def dead(self, previous: dict, owner: dict) -> bool:
+        if not previous:
+            return owner["location"] == "host"
+        location = previous.get("location")
+        if (
+            location == owner.get("location")
+            and previous.get("pid") == owner.get("pid")
+            and previous.get("created") == owner.get("created")
+        ):
+            return False
+        if location == "host":
+            return (
+                owner["location"] == "host"
+                and process_alive(previous.get("pid"), previous.get("created")) is False
+            )
+        if location != "guest":
+            return False
+        saved = previous.get("control", {})
+        if not isinstance(saved, dict):
+            return False
+        ref = saved.get("ref")
+        if owner["location"] == "guest":
+            return (
+                previous.get("launch_id") == owner.get("launch_id")
+                and ref == owner.get("control", {}).get("ref")
+                and process_alive(previous.get("pid"), previous.get("created")) is False
+            )
+        if not isinstance(ref, dict):
+            return False
+        key = self._resource_key(saved, previous.get("launch_id"))
+        if key in self.dead_resources:
+            return True
+        if self.probes <= 0:
+            return False
+        self.probes -= 1
+        try:
+            from .identity import layout_from_control
+
+            layout = layout_from_control(saved)
+            state = SandboxState(
+                saved["sandbox"], SandboxRef.from_data(ref), previous["launch_id"]
+            )
+            dead = sandbox_alive(layout, state) is False
+        except (ImportError, KeyError, OSError, RuntimeError, TypeError, ValueError):
+            dead = False
+        if dead:
+            self.dead_resources.add(key)
+        return dead
+
+
+def runtime_lock_owner(*, location: str = "host", entry: dict | None = None) -> dict:
+    return {
+        "location": location,
+        **control_owner(),
+        "acquired_at": time.time(),
+        "launch_id": (entry or {}).get("launch_id", ""),
+        "control": (entry or {}).get("control", {}),
+    }

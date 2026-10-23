@@ -2,6 +2,7 @@
 
 from contextlib import contextmanager, ExitStack
 import os
+import json
 import shutil
 import subprocess
 import sys
@@ -10,9 +11,10 @@ import pytest
 
 from toolang.base.types.sandbox import SandboxRef
 from toolang.common.layout import AgentLayout
-from toolang.up import registry, watcher
+from toolang.up import registry, observation
 from toolang.up.identity import identity_bindings
 from toolang.up.instance import (
+    LockRecovery,
     patch_workload,
     read_instance,
     SandboxState,
@@ -54,6 +56,278 @@ def test_scope_includes_inactive_residents_and_only_active_visitors(
     assert [item.name for item in final.snapshot.instances] == ["alice"]
 
 
+def test_resident_inventory_does_not_probe_visitors(tmp_path, monkeypatch):
+    home = AgentLayout.resident(tmp_path, "alice")
+    home.home.mkdir(parents=True)
+    visitor = AgentLayout.visiting(
+        "https://example.com/worker.too", "worker", root=tmp_path
+    )
+    original = observation.RuntimeProbe.status
+    calls = []
+
+    def inspect(self, **kwargs):
+        calls.append(self.layout.address)
+        return original(self, **kwargs)
+
+    with ForegroundWorkload(visitor, toolang_root=tmp_path, drivers=frozenset()):
+        monkeypatch.setattr(observation.RuntimeProbe, "status", inspect)
+        result = RuntimeWatcher(tmp_path, residents_only=True).refresh()
+        assert [item.name for item in result.snapshot.instances] == ["alice"]
+        assert calls == [home.address]
+
+
+@pytest.mark.parametrize("phase", ["preparing", "starting", "running"])
+def test_port_allocation_reserves_active_launches_before_the_api_is_ready(
+    tmp_path, monkeypatch, phase
+):
+    from toolang.up import discovery, server
+
+    home = AgentLayout.resident(tmp_path, "alice")
+    with ForegroundWorkload(
+        home,
+        toolang_root=tmp_path,
+        drivers=frozenset(),
+        endpoint="http://localhost:7002",
+    ) as active:
+        patch_workload(home.runtime_status, active.token, {"status": phase})
+
+        def no_roster(*args, **kwargs):
+            pytest.fail(
+                "port allocation must inspect registrations, not resident homes"
+            )
+
+        monkeypatch.setattr(server, "_port_is_available", lambda *args: True)
+        assert (
+            server.resolve_runtime_port(
+                host="127.0.0.1",
+                explicit_port=None,
+                layout=AgentLayout.resident(tmp_path, "bob"),
+                temporary=False,
+            )
+            == 7003
+        )
+        monkeypatch.setattr(discovery, "agent_layouts", no_roster)
+        assert (
+            server.resolve_runtime_port(
+                host="127.0.0.1",
+                explicit_port=None,
+                layout=AgentLayout.resident(tmp_path, "bob"),
+                temporary=False,
+            )
+            == 7003
+        )
+
+
+def test_owner_cleanup_preserves_the_original_error_if_status_is_unreadable(tmp_path):
+    home = AgentLayout.resident(tmp_path, "alice")
+    with pytest.raises(RuntimeError, match="work failed"):
+        with ForegroundWorkload(home, toolang_root=tmp_path, drivers=frozenset()):
+            home.runtime_status.write_text("invalid json")
+            raise RuntimeError("work failed")
+
+
+@pytest.mark.parametrize("claims", ["status", "both"])
+@pytest.mark.parametrize("alive", [False, True, None])
+def test_terminal_guest_claims_share_one_recovery_probe(
+    tmp_path, monkeypatch, claims, alive
+):
+    from toolang.common.files import file_lock_path
+    from toolang.up import instance
+
+    probes = []
+
+    def inspect(*args):
+        probes.append(args)
+        return alive
+
+    monkeypatch.setattr(instance, "sandbox_alive", inspect)
+    home = AgentLayout.resident(tmp_path, "alice")
+    with ForegroundWorkload(home, toolang_root=tmp_path, drivers=frozenset()) as active:
+        SandboxState(
+            "docker:image",
+            SandboxRef("container", "http://localhost:7002", runtime_kind="container"),
+            active.token,
+        ).save(home.runtime_status)
+        patch_workload(
+            home.runtime_status, active.token, {"status": "stopped", "pid": None}
+        )
+        entry = required_entry(home)
+        claim = {
+            "location": "guest",
+            "pid": 1,
+            "created": 0,
+            "launch_id": active.token,
+            "control": entry["control"],
+        }
+        status_guard = file_lock_path(home.runtime_status)
+        status_guard.write_text(json.dumps(claim))
+        registry_guard = active.path.parent / "register.lock"
+        if claims == "both":
+            registry_guard.write_text(json.dumps(claim))
+        result = RuntimeWatcher(tmp_path).refresh()
+        assert result.snapshot.instances[0].state == "stopped"
+        assert len(probes) == 1
+        assert active.path.exists() == (alive is not False)
+        assert status_guard.exists() == (alive is not False)
+        if claims == "both":
+            assert registry_guard.exists() == (alive is not False)
+
+
+def test_terminal_docker_status_needs_no_liveness_probe_without_orphaned_claims(
+    tmp_path, monkeypatch
+):
+    home = AgentLayout.resident(tmp_path, "alice")
+
+    def batch(cls, owners):
+        assert not owners, "terminal status does not need sandbox liveness"
+
+    with ForegroundWorkload(home, toolang_root=tmp_path, drivers=frozenset()) as active:
+        SandboxState(
+            "docker:image",
+            SandboxRef("container", "http://localhost:7002", runtime_kind="container"),
+            active.token,
+        ).save(home.runtime_status)
+        patch_workload(
+            home.runtime_status, active.token, {"status": "stopped", "pid": None}
+        )
+        monkeypatch.setattr(
+            observation.RuntimeProbe, "cache_docker_states", classmethod(batch)
+        )
+        result = RuntimeWatcher(tmp_path).refresh()
+        assert result.snapshot.instances[0].state == "stopped"
+        assert not active.path.exists()
+
+
+def test_different_orphaned_guest_claims_make_progress_with_one_probe_per_refresh(
+    tmp_path, monkeypatch
+):
+    from toolang.common.files import file_lock_path
+    from toolang.up import instance
+
+    probes = []
+
+    def absent(layout, state):
+        probes.append(state.ref.runtime_id)
+        return False
+
+    monkeypatch.setattr(instance, "sandbox_alive", absent)
+    home = AgentLayout.resident(tmp_path, "alice")
+    with ForegroundWorkload(home, toolang_root=tmp_path, drivers=frozenset()) as active:
+        SandboxState(
+            "docker:image",
+            SandboxRef("container", "http://localhost:7002", runtime_kind="container"),
+            active.token,
+        ).save(home.runtime_status)
+        patch_workload(
+            home.runtime_status, active.token, {"status": "stopped", "pid": None}
+        )
+        entry = required_entry(home)
+        claim = {
+            "location": "guest",
+            "pid": 1,
+            "created": 0,
+            "launch_id": active.token,
+            "control": entry["control"],
+        }
+        status_guard = file_lock_path(home.runtime_status)
+        status_guard.write_text(json.dumps(claim))
+        other = {
+            **claim,
+            "launch_id": "old",
+            "control": {
+                **entry["control"],
+                "ref": SandboxRef(
+                    "other-container", "http://localhost:7002", runtime_kind="container"
+                ).to_data(),
+            },
+        }
+        registry_guard = active.path.parent / "register.lock"
+        registry_guard.write_text(json.dumps(other))
+        monitor = RuntimeWatcher(tmp_path)
+        monitor.refresh()
+        assert probes == ["other-container"]
+        assert not registry_guard.exists() and status_guard.exists()
+        assert active.path.exists()
+        monitor.refresh()
+        assert probes == ["other-container", "container"]
+        assert not active.path.exists() and not status_guard.exists()
+
+
+def test_recovery_probe_rotates_past_a_live_guest_claim(tmp_path, monkeypatch):
+    from toolang.common.files import file_lock_path
+    from toolang.up import instance
+
+    probes = []
+
+    def inspect(layout, state):
+        probes.append(state.ref.runtime_id)
+        return state.ref.runtime_id == "live"
+
+    monkeypatch.setattr(instance, "sandbox_alive", inspect)
+    with ExitStack() as owners:
+        active = []
+        for name, resource in (("alice", "live"), ("bob", "dead")):
+            home = AgentLayout.resident(tmp_path, name)
+            owner = owners.enter_context(
+                ForegroundWorkload(home, toolang_root=tmp_path, drivers=frozenset())
+            )
+            active.append(owner)
+            SandboxState(
+                "docker:image",
+                SandboxRef(resource, "http://localhost:7002", runtime_kind="container"),
+                owner.token,
+            ).save(home.runtime_status)
+            patch_workload(
+                home.runtime_status, owner.token, {"status": "stopped", "pid": None}
+            )
+            entry = required_entry(home)
+            file_lock_path(home.runtime_status).write_text(
+                json.dumps(
+                    {
+                        "location": "guest",
+                        "pid": 1,
+                        "created": 0,
+                        "launch_id": owner.token,
+                        "control": entry["control"],
+                    }
+                )
+            )
+        monitor = RuntimeWatcher(tmp_path)
+        monitor.refresh()
+        assert probes == ["live"] and all(owner.path.exists() for owner in active)
+        monitor.refresh()
+        assert probes == ["live", "dead"]
+        assert active[0].path.exists() and not active[1].path.exists()
+
+
+@pytest.mark.parametrize("fault", ["missing_sandbox", "invalid_operation"])
+def test_invalid_runtime_metadata_does_not_break_a_healthy_peer(tmp_path, fault):
+    home = AgentLayout.resident(tmp_path, "alice")
+    peer = AgentLayout.resident(tmp_path, "bob")
+    with (
+        ForegroundWorkload(home, toolang_root=tmp_path, drivers=frozenset()),
+        ForegroundWorkload(peer, toolang_root=tmp_path, drivers=frozenset()),
+    ):
+
+        def corrupt(entry):
+            if fault == "missing_sandbox":
+                entry["control"]["ref"] = SandboxRef(
+                    "broken", "http://localhost:7002"
+                ).to_data()
+                entry["control"].pop("sandbox")
+            else:
+                entry["control"]["operation"] = "invalid"
+
+        update_instance(home.runtime_status, corrupt)
+        before = home.runtime_status.read_bytes()
+        states = {
+            source.instance.name: source.instance.state
+            for source in RuntimeWatcher(tmp_path).refresh().sources
+        }
+        assert states == {"alice": "unknown", "bob": "running"}
+        assert home.runtime_status.read_bytes() == before
+
+
 def test_bad_registration_does_not_preserve_an_unrelated_departure(tmp_path):
     one = AgentLayout.visiting("https://example.com/one.too", "one", root=tmp_path)
     two = AgentLayout.visiting("https://example.com/two.too", "two", root=tmp_path)
@@ -81,29 +355,29 @@ def test_bad_registration_does_not_preserve_an_unrelated_departure(tmp_path):
 def test_departure_during_discovery_does_not_restore_the_previous_binding(
     tmp_path, monkeypatch, stage
 ):
-    from toolang.up import observation
+    from toolang.up import discovery
 
     home = AgentLayout.visiting("https://example.com/alice.too", "alice", root=tmp_path)
     monitor = RuntimeWatcher(tmp_path)
     with ForegroundWorkload(home, toolang_root=tmp_path, drivers=frozenset()) as active:
         assert len(monitor.refresh().sources) == 1
         if stage == "reference_read":
-            original_read = observation.read_reference
+            original_read = discovery.read_reference
 
             def read(path):
                 active.close()
                 return original_read(path)
 
-            monkeypatch.setattr(observation, "read_reference", read)
+            monkeypatch.setattr(discovery, "read_reference", read)
         else:
-            original_probe = watcher._RuntimeProbe.status
+            original_probe = observation.RuntimeProbe.status
 
             def probe(self, **kwargs):
                 status = original_probe(self, **kwargs)
                 active.close()
                 return status
 
-            monkeypatch.setattr(watcher._RuntimeProbe, "status", probe)
+            monkeypatch.setattr(observation.RuntimeProbe, "status", probe)
         result = monitor.refresh()
         assert not result.sources and result.snapshot.membership_complete
         assert result.registrations == frozenset()
@@ -143,7 +417,7 @@ def test_registration_cannot_keep_a_removed_resident_home_in_scope(
 def test_repair_contention_does_not_keep_a_proven_dead_visitor(tmp_path, monkeypatch):
     home = AgentLayout.visiting("https://example.com/alice.too", "alice", root=tmp_path)
     with ForegroundWorkload(home, toolang_root=tmp_path, drivers=frozenset()) as active:
-        monkeypatch.setattr(watcher, "process_alive", lambda *args: False)
+        monkeypatch.setattr(observation, "process_alive", lambda *args: False)
 
         @contextmanager
         def busy(*args, **kwargs):
@@ -165,7 +439,7 @@ def test_refresh_repairs_at_most_eight_and_rotates_attempts(tmp_path, monkeypatc
                 home, toolang_root=tmp_path, drivers=frozenset()
             ).__enter__()
         )
-    monkeypatch.setattr(watcher, "process_alive", lambda *args: False)
+    monkeypatch.setattr(observation, "process_alive", lambda *args: False)
     monitor = RuntimeWatcher(tmp_path)
     try:
         first = monitor.refresh()
@@ -185,7 +459,7 @@ def test_repair_cannot_remove_a_launch_that_bound_after_its_probe(
 ):
     home = AgentLayout.resident(tmp_path, "alice")
     with ForegroundWorkload(home, toolang_root=tmp_path, drivers=frozenset()) as active:
-        monkeypatch.setattr(watcher, "process_alive", lambda *args: False)
+        monkeypatch.setattr(observation, "process_alive", lambda *args: False)
         original = registry.runtime_lock
 
         @contextmanager
@@ -193,7 +467,7 @@ def test_repair_cannot_remove_a_launch_that_bound_after_its_probe(
             patch_workload(
                 home.runtime_status, active.token, {"started_at": "bound after probe"}
             )
-            monkeypatch.setattr(watcher, "process_alive", lambda *args: True)
+            monkeypatch.setattr(observation, "process_alive", lambda *args: True)
             with original(*args, **kwargs):
                 yield
 
@@ -230,7 +504,7 @@ def test_deferred_repair_rechecks_changed_liveness_before_publishing_membership(
         original = registry.repair_registration
 
         with monkeypatch.context() as patch:
-            patch.setattr(watcher, "process_alive", lambda *args: False)
+            patch.setattr(observation, "process_alive", lambda *args: False)
 
             def bind():
                 patch_workload(
@@ -238,7 +512,7 @@ def test_deferred_repair_rechecks_changed_liveness_before_publishing_membership(
                     target.token,
                     {"started_at": "bound after probe"},
                 )
-                patch.setattr(watcher, "process_alive", lambda *args: alive)
+                patch.setattr(observation, "process_alive", lambda *args: alive)
 
             if cleanup == "busy":
 
@@ -305,17 +579,17 @@ with runtime_lock(path):
             commands, output = child.stdin, child.stdout
             assert output.readline().strip() == "ready"
             original_guard = registry._registration_guard
-            process_alive = watcher.process_alive
+            process_alive = observation.process_alive
 
             with monkeypatch.context() as patch:
-                patch.setattr(watcher, "process_alive", lambda *args: False)
+                patch.setattr(observation, "process_alive", lambda *args: False)
 
                 @contextmanager
                 def bind_before_repair(*args, **kwargs):
                     commands.write("bind\n")
                     commands.flush()
                     assert output.readline().strip() == "bound"
-                    patch.setattr(watcher, "process_alive", process_alive)
+                    patch.setattr(observation, "process_alive", process_alive)
                     with original_guard(*args, **kwargs):
                         yield
 
@@ -346,7 +620,7 @@ def test_status_loss_during_deferred_repair_keeps_membership_unknown(
     home = AgentLayout.visiting("https://example.com/alice.too", "alice", root=tmp_path)
     with ForegroundWorkload(home, toolang_root=tmp_path, drivers=frozenset()) as active:
         with monkeypatch.context() as patch:
-            patch.setattr(watcher, "process_alive", lambda *args: False)
+            patch.setattr(observation, "process_alive", lambda *args: False)
 
             @contextmanager
             def busy(*args, **kwargs):
@@ -365,7 +639,7 @@ def test_status_loss_during_deferred_repair_keeps_membership_unknown(
 def test_delayed_child_cannot_reactivate_a_retired_launch(tmp_path, monkeypatch):
     home = AgentLayout.resident(tmp_path, "alice")
     with ForegroundWorkload(home, toolang_root=tmp_path, drivers=frozenset()) as active:
-        monkeypatch.setattr(watcher, "process_alive", lambda *args: False)
+        monkeypatch.setattr(observation, "process_alive", lambda *args: False)
         status = runtime_status(home)
         assert status is not None and status.status == "stopped"
         assert not active.path.exists()
@@ -414,7 +688,7 @@ def test_guest_lock_recovery_does_not_need_a_registration_or_status(
         ).to_data(),
     }
     claim = {"location": "guest", "launch_id": "old", "control": control}
-    recovery = registry.LockRecovery()
+    recovery = LockRecovery()
     probes = []
 
     def absent(*args):
@@ -437,7 +711,6 @@ def test_membership_failure_recovers_without_freezing_known_departures(
     tmp_path, monkeypatch
 ):
     from toolang.up import discovery
-    from toolang.up import observation
     from toolang.up.observation import RuntimeInventory
     from toolang.up.types import RuntimeInstanceSnapshot
 
@@ -454,8 +727,8 @@ def test_membership_failure_recovers_without_freezing_known_departures(
         active.close()
         with monkeypatch.context() as patch:
             patch.setattr(
-                observation,
-                "_registered_inventory",
+                discovery,
+                "registered_inventory",
                 lambda *args, **kwargs: RuntimeInventory(
                     RuntimeInstanceSnapshot((), ("registry unreadable",), False),
                     (),

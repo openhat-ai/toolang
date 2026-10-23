@@ -15,7 +15,8 @@ from toolang.cli.common.help import CliCommand, CliGroup
 from toolang.setup.teaming import load_teaming_root
 from toolang.up.config import resolve_port_override
 from toolang.up.hub import HubProcess, serve as serve_hub
-from toolang.up.observation import RuntimeInstanceSnapshot, runtime_snapshot
+from toolang.up.types import RuntimeInstanceSnapshot
+from toolang.up.watcher import runtime_snapshot
 from .hub_status import HubSnapshot, render_hub_snapshot
 
 PortOption = Annotated[

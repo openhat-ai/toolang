@@ -5,18 +5,18 @@ from __future__ import annotations
 from contextlib import contextmanager, ExitStack
 from dataclasses import dataclass, replace
 import json
-import os
 import time
 import psutil
 from pathlib import Path
 from typing import cast
-from toolang.base.types.sandbox import SandboxRef
 
 from toolang.common.files import atomic_write_text, file_write_lock, file_read_snapshot
 from toolang.common.layout import AgentLayout
 from .identity import layout_from_control, verify_identity
 from .instance import (
     RUNTIME_STATUS_FORMAT,
+    LockRecovery,
+    runtime_lock_owner,
     read_instance,
     runtime_lock,
     update_instance,
@@ -107,87 +107,6 @@ def registration_current(
     )
 
 
-class LockRecovery:
-    """One refresh's bounded recovery evidence, independent of active references."""
-
-    def __init__(self, *, probes: int = 1) -> None:
-        self.probes = probes
-        self.dead_resources: set[str] = set()
-
-    def remember(self, entry: dict, alive: bool | None) -> None:
-        ref = entry["control"].get("ref")
-        if alive is False and isinstance(ref, dict):
-            self.dead_resources.add(
-                self._resource_key(entry["control"], entry["launch_id"])
-            )
-
-    @staticmethod
-    def _resource_key(control: dict, launch_id: object) -> str:
-        return json.dumps(
-            (control.get("sandbox"), control.get("ref"), launch_id), sort_keys=True
-        )
-
-    def dead(self, previous: dict, owner: dict) -> bool:
-        if not previous:
-            return owner["location"] == "host"
-        location = previous.get("location")
-        if (
-            location == owner.get("location")
-            and previous.get("pid") == owner.get("pid")
-            and previous.get("created") == owner.get("created")
-        ):
-            return False
-        if location == "host":
-            return (
-                owner["location"] == "host"
-                and process_alive(previous.get("pid"), previous.get("created")) is False
-            )
-        if location != "guest":
-            return False
-        saved = previous.get("control", {})
-        if not isinstance(saved, dict):
-            return False
-        ref = saved.get("ref")
-        if owner["location"] == "guest":
-            return (
-                previous.get("launch_id") == owner.get("launch_id")
-                and ref == owner.get("control", {}).get("ref")
-                and process_alive(previous.get("pid"), previous.get("created")) is False
-            )
-        if not isinstance(ref, dict):
-            return False
-        key = self._resource_key(saved, previous.get("launch_id"))
-        if key in self.dead_resources:
-            return True
-        if self.probes <= 0:
-            return False
-        self.probes -= 1
-        try:
-            from .instance import SandboxState, sandbox_alive
-
-            layout = layout_from_control(saved)
-            state = SandboxState(
-                saved["sandbox"], SandboxRef.from_data(ref), previous["launch_id"]
-            )
-            dead = sandbox_alive(layout, state) is False
-        except (ImportError, KeyError, OSError, RuntimeError, TypeError, ValueError):
-            dead = False
-        if dead:
-            self.dead_resources.add(key)
-        return dead
-
-
-def _claim_owner(*, location: str = "host", entry: dict | None = None) -> dict:
-    return {
-        "location": location,
-        "pid": os.getpid(),
-        "created": psutil.Process().create_time(),
-        "acquired_at": time.time(),
-        "launch_id": (entry or {}).get("launch_id", ""),
-        "control": (entry or {}).get("control", {}),
-    }
-
-
 def _registration_guard(
     directory: Path, *, owner: dict, recovery: LockRecovery, blocking: bool
 ):
@@ -241,7 +160,7 @@ def registration_lock(toolang_root: Path, layout: AgentLayout):
     """Prepare one bounded publication guard without acquiring it yet."""
     return _registration_guard(
         registration_directory(layout, toolang_root=toolang_root),
-        owner=_claim_owner(),
+        owner=runtime_lock_owner(),
         recovery=LockRecovery(),
         blocking=True,
     )
@@ -285,7 +204,7 @@ class RuntimeRegistration:
         legacy_guard = (
             _registration_guard(
                 legacy.parent,
-                owner=_claim_owner(),
+                owner=runtime_lock_owner(),
                 recovery=LockRecovery(probes=0),
                 blocking=False,
             )
@@ -352,7 +271,7 @@ def _remove_reference(
             return
         with _registration_guard(
             path.parent,
-            owner=owner or _claim_owner(),
+            owner=owner or runtime_lock_owner(),
             recovery=recovery or LockRecovery(),
             blocking=False,
         ):
@@ -406,6 +325,12 @@ def repair_registration(
         return "deferred"
     try:
         expected = read_reference(path)
+        guard = _registration_guard(
+            directory,
+            owner=runtime_lock_owner(entry=observed),
+            recovery=recovery,
+            blocking=False,
+        )
         status_guard = runtime_lock(
             layout.runtime_status,
             instance=layout.instance,
@@ -413,12 +338,7 @@ def repair_registration(
             blocking=False,
             dead_guest_launch=observed["launch_id"] if resource_dead else None,
             snapshot=observed,
-        )
-        guard = _registration_guard(
-            directory,
-            owner=_claim_owner(entry=observed),
             recovery=recovery,
-            blocking=False,
         )
         with guard:
             with status_guard:
@@ -467,7 +387,10 @@ def finalize_runtime(
     status_path: Path | None = None,
 ) -> bool:
     """An owner terminates its launch and withdraws its discovery reference together."""
-    entry = read_instance(layout.runtime_status, layout.instance, location=location)
+    try:
+        entry = read_instance(layout.runtime_status, layout.instance, location=location)
+    except (OSError, ValueError):
+        return False
     if entry is None or entry["launch_id"] != launch_id:
         return False
     if location == "guest":
@@ -481,9 +404,17 @@ def finalize_runtime(
             return False
         directory = registration_directory(layout, toolang_root=Path(root))
         status_path = layout.runtime_status
+    assert directory is not None and status_path is not None
     path = directory / instance_filename(layout)
     try:
         created = psutil.Process(expected_pid).create_time()
+        recovery = LockRecovery()
+        guard = _registration_guard(
+            directory,
+            owner=runtime_lock_owner(location=location, entry=entry),
+            recovery=recovery,
+            blocking=True,
+        )
         status_guard = runtime_lock(
             layout.runtime_status,
             instance=layout.instance,
@@ -491,12 +422,7 @@ def finalize_runtime(
             location=location,
             blocking=False,
             snapshot=entry,
-        )
-        guard = _registration_guard(
-            directory,
-            owner=_claim_owner(location=location, entry=entry),
-            recovery=LockRecovery(),
-            blocking=True,
+            recovery=recovery,
         )
         with guard:
             with status_guard:

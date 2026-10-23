@@ -210,7 +210,8 @@ def test_query_skips_contended_or_changed_snapshot(tmp_path):
     layout = AgentLayout.resident(tmp_path, "alice")
     begin(layout)
     patch_workload(layout.runtime_status, "first", {"status": "running", "pid": 123})
-    from toolang.up.registry import repair_registration, LockRecovery
+    from toolang.up.registry import repair_registration
+    from toolang.up.instance import LockRecovery
 
     observed = required_instance(layout)
     with runtime_lock(layout.runtime_status):

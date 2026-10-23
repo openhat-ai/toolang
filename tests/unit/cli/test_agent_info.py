@@ -18,6 +18,35 @@ from toolang.plugin.toolsets.collections import ToolCollection
 from toolang.setup import AgentSetup
 
 
+def test_info_preserves_details_when_the_runtime_reference_is_invalid(
+    tmp_path, monkeypatch, capsys
+):
+    from toolang.up.instance import update_instance
+    from toolang.up.workload import ForegroundWorkload
+
+    layout = AgentLayout.resident(tmp_path, "alice")
+    layout.home.mkdir(parents=True)
+    layout.program.write_text("flow main():\n  pass\n")
+    monkeypatch.setattr(
+        agent,
+        "_local_resources",
+        lambda *args, **kwargs: ([("Tools", "configured")], None),
+    )
+    with ForegroundWorkload(
+        layout, toolang_root=tmp_path, drivers=frozenset()
+    ) as active:
+        update_instance(
+            layout.runtime_status,
+            lambda entry: entry["control"].update(ref={"runtime_id": "broken"}),
+        )
+        before = layout.runtime_status.read_bytes()
+        assert main(["--root", str(tmp_path), "alice", "info"]) == 0
+        text = capsys.readouterr().out
+        assert "Home:" in text and "Tools: configured" in text
+        assert "Status: unknown" in text and "PID:" not in text
+        assert active.path.exists() and layout.runtime_status.read_bytes() == before
+
+
 @pytest.mark.parametrize("name", ["alice", "info", "top", "run", "more"])
 @pytest.mark.parametrize("width", [44, 80])
 def test_info_shows_home_without_redundant_identity_or_footer(
