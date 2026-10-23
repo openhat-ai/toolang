@@ -4,9 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from contextlib import contextmanager
 import os
-import time
 import psutil
 from toolang.common.layout import AgentLayout
 import json
@@ -90,7 +88,6 @@ def read_instance(
     return entry
 
 
-@contextmanager
 def runtime_lock(
     path: Path,
     *,
@@ -110,82 +107,39 @@ def runtime_lock(
             "launch_id": "",
         }
     )
-    control = entry["control"]
-    if not isinstance(control, dict):
-        raise ValueError(f"invalid runtime control: {path}")
-    owner = {
-        "location": location,
-        "pid": os.getpid(),
-        "created": psutil.Process().create_time(),
-        "launch_id": launch_id or entry["launch_id"],
-        "acquired_at": time.time(),
-        "control": {
-            key: control[key]
-            for key in ("root", "place", "name", "placement", "sandbox", "ref")
-            if key in control
-        },
-        "instance": instance,
-    }
+    from .registry import LockRecovery, _claim_owner
 
-    def dead(previous):
-        if not previous:
-            return location == "host"  # Only the host may claim an empty guard.
-        previous_location = previous.get("location")
-        if previous_location == location and (
-            location == "host" or previous.get("launch_id") == launch_id
-        ):
-            return process_alive(previous.get("pid"), previous.get("created")) is False
-        if location != "host" or previous_location != "guest":
-            return False  # Guests cannot inspect a different PID namespace.
-        if (
-            dead_guest_launch is not None
-            and previous.get("launch_id") == dead_guest_launch
-        ):
-            return True  # The query already proved this guest launch absent.
-        acquired_at = previous.get("acquired_at")
-        if not isinstance(acquired_at, (int, float)):
-            return False
-        if not blocking or 0 <= time.time() - acquired_at < 1:
-            return False
-        try:
-            saved = previous["control"]
-            ref = SandboxState(
-                saved["sandbox"],
-                SandboxRef.from_data(saved["ref"]),
-                previous["launch_id"],
-            )
-            layout = AgentLayout(
-                Path(saved["place"]),
-                saved["name"],
-                saved["placement"],
-                instance=previous.get("instance"),
-            )
-            from toolang.up.sandbox import load_state_sandbox
-            import asyncio
+    owner = _claim_owner(location=location, entry=entry)
+    owner["launch_id"] = launch_id or entry["launch_id"]
+    recovery = LockRecovery(probes=1 if blocking else 0)
+    if dead_guest_launch == entry["launch_id"]:
+        recovery.remember(entry, False)
+    claim = file_lock_path(path)
+    try:
+        with file_read_snapshot(claim) as stream:
+            content = stream.read()
+        previous = json.loads(content) if content.strip() else {}
+    except FileNotFoundError:
+        previous = None
+    except (OSError, ValueError):
+        previous = {}  # Legacy empty guards can only be recovered by the host.
+    known_dead = isinstance(previous, dict) and recovery.dead(previous, owner)
 
-            from concurrent.futures import ThreadPoolExecutor
+    def dead(current):
+        return (
+            recovery.dead(current, owner)
+            if blocking
+            else known_dead and current == previous
+        )
 
-            async def probe():
-                return await asyncio.wait_for(
-                    load_state_sandbox(layout, ref).running(ref.ref), timeout=2
-                )
-
-            with ThreadPoolExecutor(max_workers=1) as pool:
-                return (
-                    pool.submit(lambda: asyncio.run(probe())).result(timeout=3) is False
-                )
-        except (KeyError, OSError, RuntimeError, TypeError, ValueError):
-            return False
-
-    with file_write_lock(
+    return file_write_lock(
         file_lock_path(path),
         inherit_owner=True,
         blocking=blocking,
         on_wait=on_wait,
         shared_owner=owner,
         owner_dead=dead,
-    ):
-        yield
+    )
 
 
 def update_instance(
@@ -225,7 +179,16 @@ def update_instance(
         if launch_id is not None and entry["launch_id"] != launch_id:
             return False
         before = json.dumps(payload, sort_keys=True)
+        previous_launch = entry["launch_id"]
+        previous_phase = entry["workload"].get("status")
         update(entry)
+        if (
+            previous_launch
+            and entry["launch_id"] == previous_launch
+            and previous_phase in {"stopped", "failed"}
+            and entry["workload"].get("status") in {"preparing", "starting", "running"}
+        ):
+            raise ValueError("terminal runtime launch cannot be reactivated")
         if json.dumps(payload, sort_keys=True) != before or not path.exists():
             atomic_write_text(
                 path,
@@ -307,6 +270,8 @@ class SandboxState:
         def bind(entry: dict[str, Any]) -> None:
             if self.launch_id and entry["launch_id"] not in {"", self.launch_id}:
                 raise ValueError("runtime launch ownership changed")
+            if entry["workload"].get("status") in {"stopped", "failed"}:
+                raise ValueError("terminal runtime launch cannot bind a resource")
             if not entry["launch_id"]:
                 entry["launch_id"] = self.launch_id or str(
                     self.ref.meta.get("launch_id") or uuid4().hex
@@ -375,3 +340,21 @@ def recover_control_write_lock(path: Path) -> None:
         )
     except (OSError, ValueError):
         pass
+
+
+def sandbox_alive(layout: AgentLayout, state: SandboxState) -> bool | None:
+    """Bound namespace liveness probes, including synchronous callers in a loop."""
+    import asyncio
+    from concurrent.futures import ThreadPoolExecutor
+    from .sandbox import load_state_sandbox
+
+    async def probe():
+        return await asyncio.wait_for(
+            load_state_sandbox(layout, state).running(state.ref), timeout=2
+        )
+
+    try:
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            return pool.submit(lambda: asyncio.run(probe())).result()
+    except (OSError, RuntimeError, ValueError, TimeoutError):
+        return None

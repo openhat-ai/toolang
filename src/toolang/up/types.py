@@ -6,6 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Literal
+from urllib.parse import urlsplit
 
 from toolang.common.layout import AgentPlacement
 from toolang.execution.types import DriverName
@@ -69,8 +70,34 @@ class AgentServerRef:
 
 
 @dataclass(frozen=True, slots=True)
+class AgentStatus:
+    """One runtime observation bound to its authoritative instance entry."""
+
+    name: str
+    status: str
+    endpoint: str | None
+    api_url: str | None
+    webui_url: str | None
+    sandbox: str | None
+    message: str | None = None
+    entry: dict | None = field(default=None, repr=False)
+    alive: bool | None = None
+
+    @property
+    def port(self) -> int | None:
+        """Return the runtime endpoint port when one is known."""
+
+        if self.endpoint is None:
+            return None
+        try:
+            return urlsplit(self.endpoint).port
+        except ValueError:
+            return None
+
+
+@dataclass(frozen=True, slots=True)
 class RuntimeInstance:
-    """One installed or registered runtime visible to the Hub snapshot."""
+    """One agent in the runtime inventory, including inactive residents."""
 
     name: str
     placement: AgentPlacement
@@ -84,9 +111,7 @@ class RuntimeInstance:
     @property
     def needs_live_observation(self) -> bool:
         """Whether active roots cannot be ruled out from the observed state."""
-        return self.state != "not running" and not (
-            self.state == "unknown" and self.observed_state in ("preparing", "starting")
-        )
+        return self.state not in {"not running", "stopped", "failed"}
 
     @property
     def label(self) -> str:
@@ -107,9 +132,12 @@ class RuntimeInstanceSnapshot:
 
     instances: tuple[RuntimeInstance, ...]
     diagnostics: tuple[str, ...] = ()
+    membership_complete: bool = True
 
     @property
     def partial(self) -> bool:
-        return bool(self.diagnostics) or any(
-            item.diagnostic is not None for item in self.instances
+        return (
+            not self.membership_complete
+            or bool(self.diagnostics)
+            or any(item.diagnostic is not None for item in self.instances)
         )

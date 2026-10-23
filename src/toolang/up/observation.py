@@ -21,10 +21,9 @@ from .registry import (
     instance_filename,
     read_reference,
     registration_current,
-    remove_registration,
 )
 from toolang.up.types import (
-    ALL_DRIVERS,
+    AgentStatus,
     RuntimeInstance as RuntimeInstance,
     RuntimeInstanceSnapshot as RuntimeInstanceSnapshot,
 )
@@ -35,96 +34,31 @@ def instance_identity(layout: AgentLayout) -> str:
 
 
 def running_instances(root: Path) -> tuple[dict, ...]:
-    """Follow references and reconcile only definitively dead workload identities."""
-    from toolang.up.process import AgentProcess
+    """Return running endpoints from the shared runtime inventory."""
+    from .watcher import RuntimeWatcher
 
-    root = root.expanduser().resolve()
-    candidates = []
-    status_entries: dict[Path, dict] = {}
-    for path in sorted((root / ".runtime" / "active").glob("*.json")):
-        try:
-            reference = read_reference(path)
-            if reference is None:
-                continue
-            status_path = reference.status
-            if status_path not in status_entries:
-                document = read_document(status_path)
-                status_entries[status_path] = (
-                    {
-                        entry["launch_id"]: entry
-                        for entry in document["instances"].values()
-                        if isinstance(entry, dict)
-                        and isinstance(entry.get("launch_id"), str)
-                        and isinstance(entry.get("control"), dict)
-                        and isinstance(entry.get("workload"), dict)
-                    }
-                    if document is not None
-                    else {}
-                )
-            entry = status_entries[status_path].get(reference.launch_id)
-            if entry is None:
-                continue
-            control = entry["control"]
-            layout = _runtime_layout(control, status_path, root)
-            if (
-                layout.runtime_status != status_path
-                or instance_filename(layout) != path.name
-            ):
-                continue
-            candidates.append((path, entry, layout))
-        except (OSError, ValueError, KeyError, TypeError):
-            continue
-    docker = []
-    for _, entry, layout in candidates:
-        control = entry["control"]
-        if (
-            control.get("ref") is not None
-            and control.get("sandbox", "").partition(":")[0] == "docker"
-        ):
-            from toolang.up.instance import SandboxState
-
-            reference = SandboxState.from_instance(entry)
-            if reference is not None:
-                docker.append((AgentProcess(layout), reference, entry))
-    AgentProcess.cache_docker_states(docker)
-    instances = []
-    for path, entry, layout in candidates:
-        try:
-            control = entry["control"]
-            status = AgentProcess(layout).status(
-                ui_base_url="", check_health=False, cache=True, snapshot=entry
-            )
-            if status is None or status.status != "running":
-                continue
-            if not registration_current(
-                path, entry["launch_id"], layout.runtime_status
-            ):
-                continue
-            agent = f"agent:{layout.name}"
-            if (
-                layout.placement != "resident"
-                or layout.instance is not None
-                or root != layout.place
-            ):
-                agent = f"agent:{layout.address}"
-            instances.append(
-                {
-                    **control,
-                    "agent": agent,
-                    "instance": instance_identity(layout),
-                    "drivers": control.get("drivers", []),
-                    "endpoint": status.endpoint,
-                }
-            )
-        except (OSError, ValueError, KeyError, TypeError):
-            continue
-    return tuple(instances)
+    return tuple(
+        {
+            **source.observation.entry["control"],
+            "agent": f"agent:{source.instance.label}",
+            "instance": source.instance.identity,
+            "endpoint": source.endpoint,
+        }
+        for source in RuntimeWatcher(root).refresh().sources
+        if source.instance.state == "running"
+        and source.observation is not None
+        and source.observation.entry is not None
+        and source.registration is not None
+        and source.is_current()
+    )
 
 
 def active_layout(root: Path, address: str) -> tuple[AgentLayout, str]:
     """Resolve one exact active address without a historical or cross-root scan."""
     root = root.expanduser().resolve()
-    path = root / ".runtime" / "active" / f"{address}.json"
+    path = root / ".runtime" / "active" / address / f"{address}.json"
+    if not path.is_file():
+        path = root / ".runtime" / "active" / f"{address}.json"
     reference = read_reference(path)
     if reference is None:
         raise FileNotFoundError(
@@ -154,6 +88,7 @@ class RuntimeSource:
     endpoint: str | None
     registration: Path | None
     launch_id: str | None
+    observation: AgentStatus | None = None
 
     def validate_history_identity(self) -> None:
         """Residents have fixed homes; nonresidents require full source ownership."""
@@ -174,6 +109,7 @@ class RuntimeSource:
 class RuntimeInventory:
     snapshot: RuntimeInstanceSnapshot
     sources: tuple[RuntimeSource, ...]
+    registrations: frozenset[Path] | None = frozenset()
 
 
 @dataclass(slots=True)
@@ -273,15 +209,19 @@ def _runtime_layout(
 
 
 def runtime_snapshot(root: Path) -> RuntimeInstanceSnapshot:
-    """Return the existing public roster without exposing local source bindings."""
     return runtime_inventory(root).snapshot
 
 
-def runtime_inventory(
-    root: Path, *, agent: str | None = None, read_only: bool = False
-) -> RuntimeInventory:
-    """Discover registrations; read-only consumers retain stopped references."""
-    from toolang.up.process import AgentProcess, AgentStatus
+def runtime_inventory(root: Path, *, agent: str | None = None) -> RuntimeInventory:
+    """Collect the same scope used by the interactive runtime monitors."""
+    from .watcher import RuntimeWatcher
+
+    return RuntimeWatcher(root, agent=agent).refresh()
+
+
+def _registered_inventory(root: Path, *, agent: str | None = None) -> RuntimeInventory:
+    """Resolve and probe registered entries once; mutations belong to the watcher."""
+    from .watcher import _RuntimeProbe, _runtime_source
 
     root = _resolved(root)
     selected_status = (
@@ -290,6 +230,8 @@ def runtime_inventory(
         else None
     )
     diagnostics: list[str] = []
+    membership_complete = True
+    enumerated = True
     candidates: dict[tuple[Path, str, str | None], _SnapshotCandidate] = {}
     documents: dict[Path, tuple[dict | None, str | None]] = {}
 
@@ -341,17 +283,23 @@ def runtime_inventory(
         reference_paths = sorted(
             (
                 path
-                for path in instance_dir.iterdir()
-                if path.suffix == ".json"
-                and (agent is None or path.stem == agent)
-                and path.is_file()
+                for child in instance_dir.iterdir()
+                for path in (
+                    (child,)
+                    if child.suffix == ".json"
+                    else (child / f"{child.name}.json",)
+                    if child.is_dir() and not child.is_symlink()
+                    else ()
+                )
+                if path.is_file() and (agent is None or path.stem == agent)
             ),
-            key=lambda path: path.name,
+            key=lambda path: str(path),
         )
     except FileNotFoundError:
         reference_paths = []
     except OSError as exc:
         reference_paths = []
+        enumerated = membership_complete = False
         diagnostics.append(
             f"runtime registry: {str(exc).strip() or type(exc).__name__}"
         )
@@ -462,6 +410,7 @@ def runtime_inventory(
                 )
             )
         except (OSError, ValueError, TypeError) as exc:
+            membership_complete = False
             diagnostics.append(
                 f"runtime registry {reference_path.name}: {str(exc).strip() or type(exc).__name__}"
             )
@@ -479,247 +428,105 @@ def runtime_inventory(
                 )
 
     candidates_list = list(candidates.values())
-    probes: list[tuple[_SnapshotCandidate, AgentLayout, dict[str, Any]]] = []
-    result: list[RuntimeInstance] = []
+    docker = []
+    from .instance import SandboxState
+
     for candidate in candidates_list:
-        if candidate.layout is None:
+        entry, layout = candidate.entry, candidate.layout
+        if entry is None or layout is None:
             continue
-        if candidate.diagnostic is not None:
-            result.append(
-                RuntimeInstance(
-                    candidate.layout.name,
-                    candidate.layout.placement,
-                    candidate.layout.instance,
-                    instance_identity(candidate.layout),
-                    "unknown",
-                    None,
-                    None,
-                    candidate.diagnostic,
-                )
-            )
-            continue
-        entry = candidate.entry
-        if entry is None:
-            if candidate.layout.placement == "resident":
-                result.append(
-                    RuntimeInstance(
-                        candidate.layout.name,
-                        candidate.layout.placement,
-                        candidate.layout.instance,
-                        instance_identity(candidate.layout),
-                        "not running",
-                        None,
-                    )
-                )
-            else:
-                result.append(
-                    RuntimeInstance(
-                        candidate.layout.name,
-                        candidate.layout.placement,
-                        candidate.layout.instance,
-                        instance_identity(candidate.layout),
-                        "unknown",
-                        None,
-                        "unresolved",
-                        "registered instance has no matching runtime record",
-                    )
-                )
-            continue
-        workload = entry["workload"]
-        state = workload.get("status")
-        if (
-            isinstance(state, str)
-            and state in {"stopped", "failed"}
-            and workload.get("pid") is None
-            and entry["control"].get("operation") is None
-            and entry["control"].get("ref") is None
-        ):
-            if not read_only:
-                remove_registration(candidate.layout, entry["launch_id"])
-            else:
-                result.append(
-                    RuntimeInstance(
-                        candidate.layout.name,
-                        candidate.layout.placement,
-                        candidate.layout.instance,
-                        instance_identity(candidate.layout),
-                        "not running",
-                        None,
-                    )
-                )
-            continue
-        probes.append((candidate, candidate.layout, entry))
-
-    docker_owners = []
-    from toolang.up.instance import SandboxState
-
-    for candidate, layout, entry in probes:
-        sandbox_name = entry["control"].get("sandbox")
-        if (
-            entry["control"].get("ref") is not None
-            and isinstance(sandbox_name, str)
-            and sandbox_name.partition(":")[0] == "docker"
-        ):
+        if str(entry["control"].get("sandbox")).partition(":")[0] == "docker":
             try:
                 reference = SandboxState.from_instance(entry)
+                if reference is not None:
+                    docker.append((_RuntimeProbe(layout), reference, entry))
             except (TypeError, ValueError):
-                reference = None
-            if reference is not None:
-                docker_owners.append((AgentProcess(layout), reference, entry))
+                pass
     try:
-        AgentProcess.cache_docker_states(docker_owners)
-    except Exception:
-        # Individual probes below report failures without invalidating membership.
-        pass
+        _RuntimeProbe.cache_docker_states(docker)
+    except (OSError, RuntimeError, ValueError):
+        pass  # Individual probes preserve uncertainty when the batch is unavailable.
 
-    def inspect(
-        item: tuple[_SnapshotCandidate, AgentLayout, dict[str, Any]],
-    ) -> tuple[
-        _SnapshotCandidate, AgentLayout, dict[str, Any], AgentStatus | None, str | None
-    ]:
-        candidate, layout, entry = item
-        try:
-            status = AgentProcess(layout).status(
-                ui_base_url="",
-                check_health=False,
-                cache=True,
-                snapshot=entry,
-                read_only=read_only,
-            )
-            return candidate, layout, entry, status, None
-        except Exception as exc:
-            return (
-                candidate,
-                layout,
-                entry,
+    def inspect(candidate: _SnapshotCandidate) -> RuntimeSource | None:
+        layout = candidate.layout
+        if layout is None:
+            return None
+        if candidate.diagnostic is not None or candidate.entry is None:
+            status = AgentStatus(
+                layout.name,
+                "unknown",
                 None,
-                str(exc).strip() or type(exc).__name__,
+                None,
+                None,
+                None,
+                candidate.diagnostic or "runtime record is unavailable",
             )
-
-    with ThreadPoolExecutor(max_workers=8) as executor:
-        inspected = tuple(executor.map(inspect, probes))
-
-    for candidate, layout, entry, status, error in inspected:
-        if error is not None or status is None:
-            result.append(
-                RuntimeInstance(
+        else:
+            try:
+                status = _RuntimeProbe(layout).status(
+                    ui_base_url="", cache=True, snapshot=candidate.entry
+                )
+            except (OSError, RuntimeError, TypeError, ValueError) as exc:
+                status = AgentStatus(
                     layout.name,
-                    layout.placement,
-                    layout.instance,
-                    instance_identity(layout),
                     "unknown",
                     None,
-                    str(entry["workload"].get("status") or "unknown"),
-                    f"inspection failed: {(error or 'agent is unavailable')[:180]}",
+                    None,
+                    None,
+                    None,
+                    f"inspection failed: {exc}",
                 )
-            )
-            continue
-        workload_state = entry["workload"].get("status")
-        reported_state = status.status
-        diagnostic = None
-        drivers: tuple[str, ...] | None = None
-        if reported_state == "running":
-            raw_drivers = entry["control"].get("drivers")
-            if (
-                isinstance(raw_drivers, list)
-                and all(
-                    isinstance(driver, str) and driver in ALL_DRIVERS
-                    for driver in raw_drivers
+            if status is None:
+                status = AgentStatus(
+                    layout.name,
+                    "unknown",
+                    None,
+                    None,
+                    None,
+                    None,
+                    "runtime home disappeared",
                 )
-                and len(raw_drivers) == len(set(raw_drivers))
-            ):
-                drivers = tuple(raw_drivers)
-                normalized_state = "running"
-            else:
-                normalized_state = "running"
-                diagnostic = "effective launch drivers are missing or invalid"
-        elif reported_state == "stopped" or (
-            reported_state == "failed" and workload_state == "failed"
-        ):
-            normalized_state = "not running"
-        else:
-            normalized_state = "unknown"
-            observed = str(workload_state or reported_state)
-            detail = status.message or f"observed {observed}"
-            diagnostic = f"{detail[:180]}"
-        if normalized_state == "not running" and not read_only:
-            if entry["control"].get("ref") is None:
-                remove_registration(layout, entry["launch_id"])
-                continue
-            normalized_state = "unknown"
-            diagnostic = "runtime resources have not been released"
-        if diagnostic is not None:
-            observed_state = str(workload_state or reported_state)
-        else:
-            observed_state = None
-        result.append(
-            RuntimeInstance(
-                layout.name,
-                layout.placement,
-                layout.instance,
-                instance_identity(layout),
-                normalized_state,
-                drivers,
-                observed_state,
-                diagnostic,
-            )
+        return _runtime_source(
+            layout,
+            status,
+            registration=candidate.registration,
+            launch_id=candidate.launch_id,
         )
 
-    def sort_key(item: RuntimeInstance) -> tuple[int, str, str]:
-        if item.state == "running":
-            priority = (
-                0
-                if item.drivers is not None and "talk" in item.drivers
-                else 1
-                if item.drivers is not None
-                else 2
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        inspected = tuple(executor.map(inspect, candidates_list))
+    sources = []
+    for candidate, source in zip(candidates_list, inspected, strict=True):
+        if source is None:
+            membership_complete = False
+            diagnostics.append(
+                f"runtime registry {candidate.registration.name}: {candidate.diagnostic or 'runtime identity is unavailable'}"
             )
-        elif item.state == "unknown":
-            priority = 3
-        else:
-            priority = 4
-        return priority, item.label.casefold(), item.identity
-
-    # Discovery references are observations, not leases. A completed probe or
-    # read failure cannot speak for a registration that departed or was replaced.
-    current: dict[str, _SnapshotCandidate] = {}
-    for candidate in candidates_list:
+            continue
         try:
-            if not registration_current(
-                candidate.registration, candidate.launch_id, candidate.status_path
-            ):
+            if not source.is_current():
+                reference = read_reference(source.registration)
+                if reference is not None and reference.launch_id == source.launch_id:
+                    diagnostics.append(
+                        f"runtime registry {source.registration.name}: status path does not match the agent home"
+                    )
                 continue
         except (OSError, ValueError, TypeError) as exc:
-            diagnostics.append(f"runtime registry {candidate.registration.name}: {exc}")
-        if candidate.layout is None:
-            diagnostics.append(
-                candidate.diagnostic or "runtime identity is unavailable"
-            )
-        else:
-            current[instance_identity(candidate.layout)] = candidate
-    result = [item for item in result if item.identity in current]
-    result.sort(key=sort_key)
-    diagnostics = sorted(set(diagnostics), key=str.casefold)
-    layouts = {
-        instance_identity(candidate.layout): candidate.layout
-        for candidate in candidates_list
-        if candidate.layout is not None
-    }
-    endpoints = {
-        instance_identity(layout): status.endpoint
-        for _, layout, _, status, _ in inspected
-        if status is not None and status.status == "running"
-    }
+            diagnostics.append(f"runtime registry {source.instance.label}: {exc}")
+            membership_complete = False
+            continue
+        if (
+            source.instance.placement != "resident"
+            and source.instance.state == "unknown"
+        ):
+            membership_complete = False
+        sources.append(source)
     return RuntimeInventory(
-        RuntimeInstanceSnapshot(tuple(result), tuple(diagnostics)),
-        tuple(
-            RuntimeSource(
-                item,
-                layouts[item.identity],
-                endpoints.get(item.identity),
-                current[item.identity].registration,
-                current[item.identity].launch_id,
-            )
-            for item in result
+        RuntimeInstanceSnapshot(
+            tuple(source.instance for source in sources),
+            tuple(sorted(set(diagnostics))),
+            membership_complete,
         ),
+        tuple(sources),
+        frozenset(reference_paths) if enumerated else None,
     )

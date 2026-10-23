@@ -92,6 +92,8 @@ class ServeSpec:
     workspace_additions: Mapping[str, str] = field(default_factory=dict)
     workdir: str | None = None
     automatic_port: bool = False
+    registry_directory: Path | None = None
+    registry_status: Path | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -179,6 +181,7 @@ def build_serve_argv(
     sandbox: str = "host",
     location: str = "host",
     source_edit_lock: Path | None = None,
+    registry_directory: Path | None = None,
 ) -> tuple[str, ...]:
     """Build explicit argv for the hidden AgentServer entrypoint."""
 
@@ -206,6 +209,15 @@ def build_serve_argv(
         "--enable",
         format_drivers(spec.drivers),
     ]
+    if registry_directory is not None:
+        command.extend(
+            [
+                "--registry-directory",
+                str(registry_directory),
+                "--registry-status",
+                str(spec.layout.runtime_status),
+            ]
+        )
     command.extend(["--lifetime", spec.lifetime])
     command.extend(["--placement", spec.layout.placement, "--store-schema", "63"])
     if spec.layout.place_code is not None:
@@ -590,21 +602,17 @@ def _serve_once(
         try:
             asyncio.run(close_core())
         finally:
-            if failure is not None:
-                workloads.fail_workload(
-                    spec.layout,
-                    launch_id,
-                    failure,
-                    updated_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                    location=location,
-                )
-            else:
-                workloads.stop_runtime_state(
-                    spec.layout,
-                    expected_pid=os.getpid(),
-                    launch_id=launch_id,
-                    location=location,
-                )
+            from .registry import finalize_runtime
+
+            finalize_runtime(
+                spec.layout,
+                launch_id,
+                expected_pid=os.getpid(),
+                failure=failure,
+                location=location,
+                directory=spec.registry_directory,
+                status_path=spec.registry_status,
+            )
             if owns_control and failure is None and host_ref is not None:
                 from toolang.up.sandbox import _clear_state
                 from toolang.up.instance import SandboxState

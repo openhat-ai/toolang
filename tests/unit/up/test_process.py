@@ -12,7 +12,7 @@ import pytest
 
 from toolang.base.types.sandbox import SandboxRef
 from toolang.common.layout import AgentLayout
-from toolang.up import process, workload
+from toolang.up import process, workload, watcher
 from toolang.up.instance import SandboxState
 
 
@@ -78,7 +78,7 @@ def test_status_keeps_one_snapshot_when_a_restart_changes_the_file(
         process_created=state.ref.meta["created"],
         launch_id="first",
     )
-    read = process.read_instance
+    read = watcher.read_instance
     reads = 0
 
     def restart_after_snapshot(path, instance=None):
@@ -101,7 +101,7 @@ def test_status_keeps_one_snapshot_when_a_restart_changes_the_file(
             )
         return entry
 
-    monkeypatch.setattr(process, "read_instance", restart_after_snapshot)
+    monkeypatch.setattr(watcher, "read_instance", restart_after_snapshot)
     result = process.AgentProcess(layout).status(ui_base_url="")
     assert result is not None and result.status == "running"
     assert result.endpoint == state.ref.endpoint
@@ -121,7 +121,7 @@ def test_status_keeps_unknown_without_leaking_when_worker_rejects_probe(
     def reject_worker(*args, **kwargs):
         raise RuntimeError("cannot start worker thread")
 
-    monkeypatch.setattr(process.ThreadPoolExecutor, "submit", reject_worker)
+    monkeypatch.setattr(watcher.ThreadPoolExecutor, "submit", reject_worker)
 
     async def inspect():
         return process.AgentProcess(layout).status(ui_base_url="")
@@ -158,7 +158,7 @@ def test_status_recovers_readiness_from_health_endpoint(
     monkeypatch.setattr(
         sandbox, "_health_ready", lambda url: url == "http://localhost:8123/healthz"
     )
-    status = process.AgentProcess(layout).status(ui_base_url="")
+    status = process.AgentProcess(layout).status(ui_base_url="", check_health=True)
     assert status is not None and status.status == "running"
 
 
@@ -304,7 +304,8 @@ def test_runtime_registration_waits_for_conditional_stop(tmp_path, monkeypatch):
         finally:
             finish_stop.set()
         assert stopping.result(timeout=5)
-        registering.result(timeout=5)
+        with pytest.raises(ValueError, match="terminal"):
+            registering.result(timeout=5)
     state = process._load_runtime_state(layout.runtime_status)
-    assert state is not None and state["pid"] == 2 and state["status"] == "running"
+    assert state is not None and state["pid"] is None and state["status"] == "stopped"
     assert not workload.stop_runtime_state(layout, expected_pid=1)

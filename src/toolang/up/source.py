@@ -259,15 +259,8 @@ def materialize_roaming_program(
     if resolved_source.suffix != ".too":
         raise ValueError(f"agent program must point to a .too file: {resolved_source}")
     layout = layout or roaming_layout(resolved_source)
-    try:
-        _link_roaming_program(layout, resolved_source)
-        _sync_roaming_project(layout, resolved_source)
-    except BaseException as exc:
-        if layout.place_code is not None:
-            from .workload import fail_preparation
-
-            fail_preparation(layout, exc)
-        raise
+    _link_roaming_program(layout, resolved_source)
+    _sync_roaming_project(layout, resolved_source)
     return layout
 
 

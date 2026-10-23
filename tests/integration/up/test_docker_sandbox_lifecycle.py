@@ -242,7 +242,7 @@ def test_docker_foreground_nonresident_uses_selected_root_and_cleans_reference(
             assert entry is not None and entry["control"]["placement"] == placement
             assert entry["control"]["root"] == str(root)
             assert entry["control"]["source_id"] == layout.source_id
-            references = tuple((root / ".runtime" / "active").glob("*.json"))
+            references = tuple((root / ".runtime" / "active").glob("*/*.json"))
             assert len(references) == 1
             assert references[0].name == f"{layout.address}.json"
             assert json.loads(references[0].read_text())["status"] == str(
@@ -260,7 +260,7 @@ def test_docker_foreground_nonresident_uses_selected_root_and_cleans_reference(
             worker.send_signal(signal.SIGINT)
             assert worker.wait(timeout=30) == 130
             assert SandboxState.load(layout.runtime_status) is None
-            assert not tuple((root / ".runtime" / "active").glob("*.json"))
+            assert not tuple((root / ".runtime" / "active").glob("*/*.json"))
             assert not (layout.place_runtime / "instances").exists()
             assert not layout.previous_sandbox_state.exists()
             assert layout.runtime_status.exists() and layout.run_store.exists()
@@ -1295,3 +1295,71 @@ with runtime_lock(status, location='guest', launch_id=entry['launch_id']):
             worker.kill()
             worker.wait(timeout=5)
         marker.unlink(missing_ok=True)
+
+
+def test_guest_can_unlink_a_reference_through_the_shared_registry_directory(
+    running_docker_agent: _RunningDockerAgent,
+) -> None:
+    agent = running_docker_agent
+    directory = agent.layout.place / ".runtime" / "active" / agent.layout.address
+    probe = directory / "mount_probe.json"
+    probe.write_text('{"probe": true}')
+    script = """
+from pathlib import Path
+from toolang.up.instance import read_instance
+from toolang.up.registry import _claim_owner, _registration_guard, LockRecovery
+home = Path('/root/.toolang/agents/alice')
+entry = read_instance(home / '.runtime/status.json', location='guest')
+registry = home / '.runtime/registration'
+with _registration_guard(registry, owner=_claim_owner(location='guest', entry=entry),
+                         recovery=LockRecovery(), blocking=True):
+    (registry / 'mount_probe.json').unlink()
+"""
+    try:
+        result = subprocess.run(
+            (
+                "docker",
+                "exec",
+                agent.container_id,
+                "/tmp/toolang-runtime/tools/toolang/bin/python",
+                "-c",
+                script,
+            ),
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        assert result.returncode == 0, result.stderr
+        assert not probe.exists()
+        assert (directory / "alice.json").exists()
+        assert not (directory / "register.lock").exists()
+    finally:
+        probe.unlink(missing_ok=True)
+
+
+def test_guest_exit_withdraws_discovery_before_host_resource_release(
+    running_docker_agent: _RunningDockerAgent,
+) -> None:
+    from toolang.up.instance import read_instance
+
+    agent = running_docker_agent
+    entry = read_instance(agent.layout.runtime_status)
+    assert entry is not None
+    pid = entry["workload"]["pid"]
+    assert isinstance(pid, int) and pid > 0
+    reference = agent.layout.place / ".runtime" / "active" / "alice" / "alice.json"
+    assert reference.exists()
+    signaled = subprocess.run(
+        ("docker", "exec", agent.container_id, "sh", "-c", f"kill -TERM {pid}"),
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert signaled.returncode == 0, signaled.stderr
+    deadline = time.monotonic() + 10
+    while reference.exists() and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert not reference.exists(), "guest left its host registration behind"
+    entry = read_instance(agent.layout.runtime_status)
+    assert entry is not None and entry["workload"]["status"] == "stopped"
+    assert SandboxState.load(agent.layout.runtime_status) is not None

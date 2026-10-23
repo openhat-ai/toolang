@@ -12,6 +12,7 @@ from toolang.up.allocation import allocate_roaming
 from toolang.execution.store import RunStore
 from tests.support.runtime_observation import binding
 from toolang.up.observation import (
+    _registered_inventory,
     running_instances,
     runtime_inventory,
     runtime_snapshot,
@@ -360,7 +361,7 @@ def test_short_lived_scripts_keep_local_status_and_share_registry_lock(tmp_path)
             assert registration.path.name == f"{layout.address}.json"
         entry = read_instance(layout.runtime_status)
         assert entry is not None and entry["workload"]["status"] == "stopped"
-    assert tuple(path.name for path in directory.iterdir()) == ("register.lock",)
+    assert tuple(directory.iterdir()) == ()
 
 
 @pytest.mark.parametrize("legacy_guard", ["update.lock", None])
@@ -377,16 +378,16 @@ def test_cleanup_creates_register_guard_for_an_existing_reference(
     stop_runtime_state(layout, expected_pid=os.getpid(), launch_id=registration.token)
     guard = registration.path.parent / "register.lock"
     if legacy_guard is None:
-        guard.unlink()
+        guard.unlink(missing_ok=True)
     else:
-        guard.rename(guard.with_name(legacy_guard))
+        guard.with_name(legacy_guard).touch()
     assert running_instances(tmp_path) == ()
     assert not guard.exists()
 
     registration.close()
 
     assert not registration.path.exists()
-    assert guard.exists()
+    assert not guard.exists()
     if legacy_guard is not None:
         assert guard.with_name(legacy_guard).exists()
 
@@ -521,7 +522,7 @@ def test_runtime_snapshot_lists_residents_and_registered_placements_once(tmp_pat
         snapshot = runtime_snapshot(root)
 
     assert not snapshot.partial
-    assert len(snapshot.instances) == 3
+    assert len(snapshot.instances) == 4
     running = [item for item in snapshot.instances if item.state == "running"]
     assert len(running) == 3
     assert (
@@ -535,7 +536,10 @@ def test_runtime_snapshot_lists_residents_and_registered_placements_once(tmp_pat
     )
     assert len({item.label for item in running}) == 3
     assert len({item.identity for item in running}) == 3
-    assert all(item.name != "bob" for item in snapshot.instances)
+    assert (
+        next(item for item in snapshot.instances if item.name == "bob").state
+        == "stopped"
+    )
 
 
 def test_runtime_snapshot_reports_starting_and_invalid_drivers_as_partial(tmp_path):
@@ -554,10 +558,10 @@ def test_runtime_snapshot_reports_starting_and_invalid_drivers_as_partial(tmp_pa
         )
         starting = runtime_snapshot(root)
         row = starting.instances[0]
-        assert row.state == "unknown"
-        assert row.observed_state == "starting"
-        assert row.drivers is None and row.diagnostic is not None
-        assert starting.partial
+        assert row.state == "starting"
+        assert row.observed_state is None
+        assert row.drivers is None and row.diagnostic is None
+        assert not starting.partial
 
         update_instance(
             layout.runtime_status,
@@ -597,14 +601,18 @@ def test_runtime_snapshot_reads_a_shared_status_document_once(tmp_path, monkeypa
         assert reads.count(layout.runtime_status.resolve()) == 1
 
 
-def test_unregistered_residents_do_not_enter_inventory(tmp_path):
+def test_unregistered_residents_enter_inventory_with_their_status(tmp_path):
     valid = AgentLayout.resident(tmp_path, "alice")
     valid.home.mkdir(parents=True)
     malformed = AgentLayout.resident(tmp_path, "bob")
     malformed.runtime_status.parent.mkdir(parents=True)
     malformed.runtime_status.write_text("not json")
     snapshot = runtime_snapshot(tmp_path)
-    assert snapshot.instances == () and not snapshot.partial
+    assert {row.name: row.state for row in snapshot.instances} == {
+        "alice": "stopped",
+        "bob": "unknown",
+    }
+    assert snapshot.partial and snapshot.membership_complete
 
 
 def test_registration_can_disappear_between_listing_and_reading(tmp_path, monkeypatch):
@@ -625,7 +633,7 @@ def test_registration_can_disappear_between_listing_and_reading(tmp_path, monkey
             return original(path, *args, **kwargs)
 
         monkeypatch.setattr(Path, "read_text", read)
-        inventory = runtime_inventory(tmp_path)
+        inventory = _registered_inventory(tmp_path)
         assert departed
         assert not inventory.snapshot.instances and not inventory.snapshot.partial
         assert not inventory.sources
@@ -651,7 +659,7 @@ def test_departure_during_status_read_is_not_an_observation_failure(
             return snapshot if outcome == "stale" else None
 
         monkeypatch.setattr(observation, "read_document", read)
-        inventory = runtime_inventory(tmp_path)
+        inventory = _registered_inventory(tmp_path)
         assert not inventory.snapshot.instances and not inventory.snapshot.partial
         assert not inventory.sources
 
@@ -661,7 +669,7 @@ def test_departure_during_status_read_is_not_an_observation_failure(
 def test_departed_probe_cannot_publish_failure_or_a_replacement_generation(
     tmp_path, monkeypatch, outcome, restart
 ):
-    from toolang.up.process import AgentProcess
+    from toolang.up.watcher import _RuntimeProbe as AgentProcess
 
     layout = AgentLayout.resident(tmp_path, "alice")
     with (
@@ -683,11 +691,11 @@ def test_departed_probe_cannot_publish_failure_or_a_replacement_generation(
 
         monkeypatch.setattr(AgentProcess, "status", inspect)
         try:
-            inventory = runtime_inventory(tmp_path)
+            inventory = _registered_inventory(tmp_path)
             assert not inventory.snapshot.instances and not inventory.snapshot.partial
             assert not inventory.sources
             monkeypatch.setattr(AgentProcess, "status", original)
-            following = runtime_inventory(tmp_path)
+            following = _registered_inventory(tmp_path)
             assert len(following.sources) == int(restart)
             if restart:
                 assert following.snapshot.instances[0].drivers == ("chat",)
@@ -702,7 +710,8 @@ def test_runtime_snapshot_caps_independent_liveness_probes_at_eight(
     from threading import Lock
     import time
 
-    from toolang.up.process import AgentProcess, AgentStatus
+    from toolang.up.watcher import _RuntimeProbe as AgentProcess
+    from toolang.up.types import AgentStatus
 
     root = tmp_path / "toolang"
     registrations = []
@@ -745,7 +754,8 @@ def test_runtime_snapshot_batches_docker_liveness_references(tmp_path, monkeypat
     import time
 
     from toolang.base.types.sandbox import SandboxRef
-    from toolang.up.process import AgentProcess, AgentStatus
+    from toolang.up.watcher import _RuntimeProbe as AgentProcess
+    from toolang.up.types import AgentStatus
     from toolang.up.instance import SandboxState
 
     root = tmp_path / "toolang"
@@ -846,14 +856,17 @@ def test_runtime_snapshot_keeps_failed_residents_and_excludes_finished_visitors(
             )
         snapshot = runtime_snapshot(root)
 
-    assert snapshot.instances == ()
+    assert len(snapshot.instances) == 1
+    assert snapshot.instances[0].name == "alice"
+    assert snapshot.instances[0].state == terminal_state
 
 
 @pytest.mark.parametrize("placement", ["visiting", "roaming"])
 def test_first_liveness_probe_excludes_a_departed_temporary_instance(
     tmp_path, monkeypatch, placement
 ):
-    from toolang.up.process import AgentProcess, AgentStatus
+    from toolang.up.watcher import _RuntimeProbe as AgentProcess
+    from toolang.up.types import AgentStatus
 
     resident = AgentLayout.resident(tmp_path, "alice")
     resident.home.mkdir(parents=True)
@@ -871,7 +884,8 @@ def test_first_liveness_probe_excludes_a_departed_temporary_instance(
     )
     with ForegroundWorkload(temporary, toolang_root=tmp_path, drivers=frozenset()):
         snapshot = runtime_snapshot(tmp_path)
-        assert snapshot.instances == ()
+        assert len(snapshot.instances) == 1
+        assert snapshot.instances[0].name == "alice"
 
 
 @pytest.mark.parametrize("fault", ["foreign_status", "unsupported"])
@@ -935,7 +949,7 @@ def test_foreign_root_references_cannot_supply_a_fallback_home_or_hub_member(tmp
         copied.write_bytes(registration.path.read_bytes())
         before = layout.runtime_status.read_bytes()
         assert running_instances(foreign) == ()
-        inventory = runtime_inventory(foreign, read_only=True)
+        inventory = runtime_inventory(foreign)
         assert inventory.snapshot.partial
         assert not inventory.sources
         assert layout.runtime_status.read_bytes() == before
@@ -960,7 +974,7 @@ def test_invalid_identity_is_isolated_from_a_healthy_discovery_peer(tmp_path, fa
         broken.runtime_status.write_text(json.dumps(document))
         before = broken.runtime_status.read_bytes()
         try:
-            snapshot = runtime_inventory(tmp_path, read_only=True).snapshot
+            snapshot = runtime_inventory(tmp_path).snapshot
             states = {item.name: item for item in snapshot.instances}
             assert states["bob"].state == "running"
             assert states["alice"].state == "unknown"

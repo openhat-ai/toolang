@@ -148,4 +148,4 @@ def test_shared_foreground_api_observes_and_cancels_the_owning_executor(
 
     asyncio.run(scenario())
     assert layout.run_store.exists()
-    assert not list((tmp_path / ".runtime" / "active").glob("*.json"))
+    assert not list((tmp_path / ".runtime" / "active").glob("*/*.json"))

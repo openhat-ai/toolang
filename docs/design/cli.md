@@ -148,10 +148,10 @@ resource commands reject instance operands. There is no `--instance`/`-i` option
 - For home commands, a bare roaming path selects its last-created retained home.
   Completion time, restart time, and mtime never reorder it. Each Toolang root has
   its own root-code directory.
-- `info`/`inspect` do not prepare sources. Known paths/refs locate homes directly;
-  short roaming names require active registration. `info` uses live resource
-  summaries when available, otherwise saved summaries/State. Source contents may
-  be unavailable.
+- `inspect` reads retained history without preparing sources. `info` prepares the
+  selected home and reads current Setup/State through their watchers, then adds
+  runtime status. A fresh URL/ref or source path needs no retained execution;
+  an existing source path selects its newest retained home when available.
 - A command pins its root/identity/generation once; controls attach only to that
   live owner. Offline fork/rewind edit history under verified stopped ownership.
 - Instance and Thread/Run selection bind the home for Chat, rerun, fork, rewind,
@@ -162,6 +162,17 @@ resource commands reject instance operands. There is no `--instance`/`-i` option
 
 
 ## Resource and plugin inspection
+
+`too list` includes all resident homes and their running status. `too hub`
+includes residents plus active registered visiting/roaming instances, with status
+and effective Talk selection. Both use the shared `RuntimeWatcher` inventory.
+
+`too AGENT info` resolves one home without collecting an inventory. Its title
+identifies the agent; `Home` gives its location, followed by Tools, Models, Caps,
+Chores, Workspaces, and runtime status. Setup/State preparation creates no executor
+or Run store. `--catalog` selects the local catalog for either running or stopped
+agents. Preparation failures preserve runtime ownership, show diagnostics, and
+return a nonzero exit; a watcher's last valid State is explicitly labeled.
 
 `too AGENT info` shows enabled `Drivers` immediately
 after `Status` while the agent is running. It reads existing runtime metadata

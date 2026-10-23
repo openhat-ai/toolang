@@ -138,7 +138,7 @@ def test_registry_publication_failure_retains_a_failed_selectable_identity(
     assert entry["workload"]["status"] == "failed"
     assert entry["workload"]["pid"] is None
     assert "registry is read-only" in entry["workload"]["message"]
-    assert not list((root / ".runtime" / "active").glob("*.json"))
+    assert not list((root / ".runtime" / "active").glob("*/*.json"))
 
 
 def test_clock_rollback_and_other_sources_do_not_reorder_one_source(
@@ -179,7 +179,7 @@ def test_roaming_full_id_collision_fails_once_and_preserves_owner(
         first_source.parent if scope == "local" else tmp_path / "two"
     ) / "a id.too"
     first = allocate_roaming(first_source, toolang_root=root)
-    reference = root / ".runtime" / "active" / instance_filename(first)
+    reference = root / ".runtime" / "active" / first.address / instance_filename(first)
     before = (first.runtime_status.read_bytes(), reference.read_bytes())
     with pytest.raises((ValueError, FileExistsError), match="collision"):
         allocate_roaming(second_source, toolang_root=root)
@@ -263,7 +263,7 @@ def test_parallel_source_allocators_fence_a_global_full_id_collision(
         )
     failures = [item for item in outcomes if isinstance(item, ValueError)]
     assert len(failures) == 1 and "collision" in str(failures[0])
-    assert len(list((root / ".runtime" / "active").glob("*.json"))) == 1
+    assert len(list((root / ".runtime" / "active").glob("*/*.json"))) == 1
     assert len(list(tmp_path.glob("*/.toolang/*/s*"))) == 1
 
 
@@ -323,7 +323,9 @@ def test_new_roaming_allocation_rejects_a_dangling_reference_to_its_candidate(
         ),
         root=root,
     )
-    reference = root / ".runtime" / "active" / instance_filename(candidate)
+    reference = (
+        root / ".runtime" / "active" / candidate.address / instance_filename(candidate)
+    )
     reference.parent.mkdir(parents=True)
     reference.write_text(
         json.dumps(

@@ -34,7 +34,7 @@ def test_roaming_path_survives_exit_and_source_removal_but_short_name_does_not(
     assert resolve_address(root, path)[0] == layout
     with pytest.raises(FileNotFoundError, match="source path for offline"):
         resolve_address(root, short)
-    assert not list((root / ".runtime" / "active").glob("*.json"))
+    assert not list((root / ".runtime" / "active").glob("*/*.json"))
 
 
 def test_one_source_has_separate_root_namespaces_and_defaults(tmp_path, monkeypatch):

@@ -446,9 +446,12 @@ def test_roaming_queries_reject_normalized_home_owned_by_another_source(
     args = [str(other), *command]
     result = cli.main(args)
     assert result == 1
+    output = capsys.readouterr()
     assert (
-        "already belongs" if command[0] == "workspace" else "no retained instance"
-    ) in " ".join(capsys.readouterr().err.split())
+        "already belongs"
+        if command[0] in {"workspace", "info"}
+        else "no retained instance"
+    ) in " ".join((output.out + output.err).split())
     assert layout.program.resolve() == original
 
 

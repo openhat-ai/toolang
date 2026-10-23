@@ -20,7 +20,7 @@ from .observation import (
     RuntimeSource,
 )
 from .schemas import ActivitySnapshot, SourceActivity, TopSnapshot
-from .scope import ScopeReader
+from .watcher import RuntimeWatcher
 
 
 @dataclass
@@ -65,7 +65,7 @@ class TopObserver:
     ) -> None:
         self.root, self.agent = root, agent
         self.period, self.recent, self.refresh = period, recent, refresh
-        self.scope_reader = ScopeReader(root, agent=agent)
+        self.runtime_watcher = RuntimeWatcher(root, agent=agent)
         self.inventory = RuntimeInstanceSnapshot(())
         self.sources: dict[str, _Source] = {}
         self.discovery = ThreadPoolExecutor(
@@ -128,6 +128,7 @@ class TopObserver:
                 self.inventory = RuntimeInstanceSnapshot(
                     tuple(current.values()),
                     result.snapshot.diagnostics,
+                    result.snapshot.membership_complete,
                 )
                 for binding in unique.values():
                     identity = binding.instance.identity
@@ -153,12 +154,12 @@ class TopObserver:
                 self.discovered = True
             except (OSError, ValueError, RuntimeError) as exc:
                 self.inventory = RuntimeInstanceSnapshot(
-                    self.inventory.instances, (str(exc),)
+                    self.inventory.instances, (str(exc),), False
                 )
             self.discovery_job = None
             self.next_discovery = now + 5
         if self.discovery_job is None and now >= self.next_discovery:
-            self.discovery_job = self.discovery.submit(self.scope_reader.read)
+            self.discovery_job = self.discovery.submit(self.runtime_watcher.refresh)
 
     def _merge_roots(
         self, source: _Source, roots: tuple[RunNode, ...], now: float

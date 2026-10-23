@@ -30,9 +30,14 @@ from toolang.up.sandbox import resolve_selection, _clear_state
 
 
 def begin(layout, identity="first"):
+    from toolang.up.identity import identity_bindings
+
     update_instance(
         layout.runtime_status,
-        lambda entry: entry.update(launch_id=identity),
+        lambda entry: entry.update(
+            launch_id=identity,
+            control=identity_bindings(replace(layout, root=layout.place)),
+        ),
         instance=layout.instance,
     )
 
@@ -205,13 +210,28 @@ def test_query_skips_contended_or_changed_snapshot(tmp_path):
     layout = AgentLayout.resident(tmp_path, "alice")
     begin(layout)
     patch_workload(layout.runtime_status, "first", {"status": "running", "pid": 123})
-    owner = AgentProcess(layout)
-    observed = read_instance(layout.runtime_status)
+    from toolang.up.registry import repair_registration, LockRecovery
+
+    observed = required_instance(layout)
     with runtime_lock(layout.runtime_status):
         with ThreadPoolExecutor(max_workers=1) as pool:
-            assert not pool.submit(owner.reconcile, observed).result(timeout=1)
+            assert (
+                pool.submit(
+                    repair_registration,
+                    layout,
+                    observed,
+                    resource_dead=True,
+                    recovery=LockRecovery(),
+                ).result(timeout=1)
+                == "deferred"
+            )
     patch_workload(layout.runtime_status, "first", {"updated_at": "changed"})
-    assert not owner.reconcile(observed)
+    assert (
+        repair_registration(
+            layout, observed, resource_dead=True, recovery=LockRecovery()
+        )
+        == "changed"
+    )
     assert required_instance(layout)["workload"]["status"] == "running"
 
 
@@ -448,11 +468,14 @@ def test_foreign_guest_claim_requires_a_definite_dead_probe(
     from toolang.up import instance as instances, sandbox
 
     layout = AgentLayout.resident(tmp_path, "alice")
+    from toolang.up.identity import identity_bindings
+
     previous = {
         "location": "guest",
         "launch_id": "guest",
         "acquired_at": time.time() - 2,
         "control": {
+            **identity_bindings(layout),
             "place": str(layout.place),
             "name": layout.name,
             "placement": layout.placement,
@@ -477,6 +500,8 @@ def test_foreign_guest_claim_requires_a_definite_dead_probe(
 
     if not worker_available:
         monkeypatch.setattr(ThreadPoolExecutor, "submit", reject_worker)
+    layout.runtime_status.parent.mkdir(parents=True, exist_ok=True)
+    file_lock_path(layout.runtime_status).write_text(json.dumps(previous))
     monkeypatch.setattr(instances, "file_write_lock", claim)
     monkeypatch.setattr(sandbox, "load_state_sandbox", lambda *args: Backend())
     with runtime_lock(layout.runtime_status):

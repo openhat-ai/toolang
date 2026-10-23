@@ -91,7 +91,7 @@ def _talk_label(instance: RuntimeInstance) -> str:
 
 
 def _status_label(instance: RuntimeInstance) -> str:
-    return "-" if instance.state == "unknown" else instance.state
+    return "not running" if instance.state == "stopped" else instance.state
 
 
 def _hub_fields(snapshot: HubSnapshot) -> tuple[str, str]:

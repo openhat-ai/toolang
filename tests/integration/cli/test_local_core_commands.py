@@ -3948,8 +3948,11 @@ def test_agent_info_builds_state_and_setup_without_server(
     )
 
     class _SetupWatcher:
-        def __init__(self, layout: AgentLayout) -> None:
+        def __init__(self, layout: AgentLayout, **kwargs) -> None:
             self.layout = layout
+
+        def diagnostics(self):
+            return ()
 
         async def refresh(self, *, progress=None) -> AgentSetup:
             return materialized_setup(
@@ -3967,7 +3970,14 @@ def test_agent_info_builds_state_and_setup_without_server(
     result = _invoke(root, *(["alice", "info"] if agent_first else ["info", "alice"]))
 
     assert result.exit_code == 0
-    assert "ALICE" in result.stdout
+    assert (
+        next(
+            line.strip()
+            for line in strip_ansi(result.stdout).splitlines()
+            if line.strip()
+        )
+        == "alice"
+    )
     assert "Caps" in result.stdout
     assert "Models" in result.stdout
     assert "Tools" in result.stdout
@@ -4010,32 +4020,14 @@ def test_agent_info_fields_follow_the_compact_layout(
             )
 
     monkeypatch.setattr("toolang.setup.SetupWatcher", _SetupWatcher)
-    from toolang.up.instance import update_instance
-
-    update_instance(
-        AgentLayout.resident(root, "alice").runtime_status,
-        lambda entry: entry["workload"].update(
-            resource_counts={
-                "models": 2,
-                "providers": 1,
-                "tools": 0,
-                "toolsets": 0,
-                "caps": {
-                    kind: 0 for kind in ("psyches", "skills", "services", "prompts")
-                },
-                "chores": 0,
-                "workspaces": ["lab"],
-            }
-        ),
-    )
     monkeypatch.setattr(
         query,
         "match_model_branches",
         lambda *args, **kwargs: pytest.fail("info must use effective setup models"),
     )
     monkeypatch.setattr(
-        agents.AgentProcess,
-        "status",
+        agent_commands,
+        "runtime_status",
         lambda self, **kwargs: agents.AgentStatus(
             name="alice",
             status=status,
@@ -4044,37 +4036,14 @@ def test_agent_info_fields_follow_the_compact_layout(
             webui_url="http://localhost:8123/ui",
             sandbox="host",
             message="runtime failed" if status == "failed" else None,
+            entry={
+                "launch_id": "internal-launch-id",
+                "control": {"drivers": ["chat", "chore", "talk"]},
+                "workload": {"started_at": "2026-01-01T00:00:00Z"},
+            },
         ),
     )
-    monkeypatch.setattr(
-        agents.AgentProcess,
-        "state",
-        lambda self: {
-            "started_at": "2026-01-01T00:00:00Z",
-            "updated_at": "2026-01-02T00:00:00Z",
-            "drivers": ["chat", "chore", "talk"],
-            "lifetime": "persistent",
-            "launch_id": "internal-launch-id",
-            "models": ["test/first"],
-            "workspace_additions": {
-                "extra": str(tmp_path),
-                "runtime": str(tmp_path),
-                "invalid": None,
-            },
-        },
-    )
     monkeypatch.setattr(agents, "runtime_identity_row", lambda *a, **kw: ("PID", "123"))
-    monkeypatch.setattr(
-        agent_commands,
-        "_running_resources",
-        lambda _client, **_kwargs: [
-            ("Tools", "0 tools, 0 toolsets"),
-            ("Models", "2 models, 1 provider"),
-            ("Caps", "0 psyches, 0 skills, 0 services, 0 prompts"),
-            ("Chores", "0 chores"),
-            ("Workspaces", "lab, extra, runtime"),
-        ],
-    )
     captured: list[tuple[str, str]] = []
     monkeypatch.setattr(
         agent_commands, "echo_pairs_table", lambda rows, **kwargs: captured.extend(rows)
@@ -4084,9 +4053,7 @@ def test_agent_info_fields_follow_the_compact_layout(
 
     assert result.exit_code == 0, result.stderr
     expected = [
-        "Root",
         "Home",
-        "Agent",
         "Tools",
         "Models",
         "Caps",
@@ -4101,11 +4068,9 @@ def test_agent_info_fields_follow_the_compact_layout(
     assert [key for key, _value in captured] == expected
     assert result.stdout == ""
     rows = dict(captured)
-    assert rows["Root"] == str(root)
+    assert "Root" not in rows and "Agent" not in rows and "Placement" not in rows
     assert rows["Models"] == "2 models, 1 provider"
     workspace_names = ["lab"]
-    if status == "running":
-        workspace_names.extend(("extra", "runtime"))
     assert rows["Workspaces"] == ", ".join(workspace_names)
     status_value = rows["Status"]
     if status == "stopped":
@@ -4138,8 +4103,11 @@ def test_agent_info_reports_only_state_published_caps(
     )
 
     class _SetupWatcher:
-        def __init__(self, layout: AgentLayout) -> None:
+        def __init__(self, layout: AgentLayout, **kwargs) -> None:
             self.layout = layout
+
+        def diagnostics(self):
+            return ()
 
         async def refresh(self, *, progress=None) -> AgentSetup:
             return materialized_setup(
@@ -4212,7 +4180,7 @@ def test_roaming_agent_info_uses_the_source_layout(
     capsys.readouterr()
 
     assert result == 0
-    assert captured["title"] == "DEMO"
+    assert captured["title"] == selected.address
     rows = cast(dict[str, str], captured["rows"])
     assert shortened == [selected.home]
     assert rows["Home"] == "compact home"
@@ -4258,7 +4226,7 @@ def test_visiting_agent_info_uses_the_materialized_layout(
     capsys.readouterr()
 
     assert result == 0
-    assert captured["title"] == "RESEARCHER"
+    assert captured["title"] == layout.address
     rows = cast(dict[str, str], captured["rows"])
     assert rows["Home"] == shorten_home_path(layout.home)
 
@@ -4301,7 +4269,10 @@ def _create_agent(root: Path, name: str = "alice") -> None:
 
 
 class _EmptySetupWatcher:
-    def __init__(self, layout: AgentLayout) -> None:
+    def diagnostics(self):
+        return ()
+
+    def __init__(self, layout: AgentLayout, **kwargs) -> None:
         self.layout = layout
 
     async def refresh(self, *, progress=None) -> AgentSetup:
@@ -4461,54 +4432,31 @@ def test_non_execution_commands_reject_workspace_options(
     assert f"No such option: {option}" in strip_ansi(result.stderr)
 
 
-def test_running_roaming_inspection_preserves_runtime_workspaces(
+def test_running_roaming_info_reads_current_workspace_configuration(
     tmp_path, monkeypatch, capsys
 ):
-    monkeypatch.setenv("TOOLANG_ROOT", str(tmp_path))
     from toolang.cli.common.client import RuntimeClient
-
-    source = tmp_path / "demo.too"
-    source.write_text(templates.load_template("agent").raw_text)
-    monkeypatch.setattr("toolang.setup.SetupWatcher", _EmptySetupWatcher)
-    monkeypatch.setattr(
-        agents.AgentProcess,
-        "status",
-        lambda self, **kwargs: agents.AgentStatus(
-            name="demo",
-            status="running",
-            endpoint="http://runtime.test",
-            api_url=None,
-            webui_url=None,
-            sandbox="docker",
-        ),
-    )
+    from toolang.up.workload import ForegroundWorkload
     from toolang.up.allocation import allocate_roaming
 
-    allocate_roaming(source, toolang_root=tmp_path)
-    requests = []
-
-    def get(self, path):
-        requests.append(path)
-        if path in {"/api/v0/models", "/api/v0/tools"}:
-            return {"items": []}
-        if path == "/api/v0/caps":
-            return {kind: [] for kind in ("psyches", "skills", "services", "prompts")}
-        if path in {"/api/v0/chores", "/api/v0/tasks"}:
-            return []
-        assert path == "/api/v0/workspaces"
-        return {
-            "revision": "a" * 64,
-            "items": [{"name": "lab", "path": "/host/lab", "available": True}],
-            "workdir": "lab://",
-        }
-
-    monkeypatch.setattr(RuntimeClient, "get", get)
-    result = cli.main([str(source), "info"])
-    output = capsys.readouterr()
-
+    monkeypatch.setenv("TOOLANG_ROOT", str(tmp_path))
+    source = tmp_path / "demo.too"
+    source.write_text(templates.load_template("agent").raw_text)
+    (tmp_path / "toolang.toml").write_text(
+        '[workspaces]\nrepo = "' + str(tmp_path) + '"\n'
+    )
+    monkeypatch.setattr("toolang.setup.SetupWatcher", _EmptySetupWatcher)
+    monkeypatch.setattr(
+        RuntimeClient,
+        "get",
+        lambda *args, **kwargs: pytest.fail("info fetched executor resources"),
+    )
+    layout = allocate_roaming(source, toolang_root=tmp_path)
+    with ForegroundWorkload(layout, toolang_root=tmp_path, drivers=frozenset()):
+        result = cli.main([str(source), "info"])
+        output = capsys.readouterr()
     assert result == 0, output.err
-    assert requests[-1] == "/api/v0/workspaces"
-    assert len(requests) == 5
+    assert "Workspaces: lab, repo" in output.out
 
 
 @pytest.mark.parametrize("command", ["models", "providers", "tools"])

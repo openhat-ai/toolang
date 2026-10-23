@@ -79,9 +79,10 @@ on every access; hash collisions cannot overwrite or select another owner.
 ROOT/                                     # Resident place
   agents/alice/                           # Resident home
   .runtime/active/
-    alice.json
-    lex@<place_code>.json                  # t...
-    aid@<place_code>.json                  # s...
+    alice/alice.json
+    lex@<place_code>/lex@<place_code>.json  # t...
+    aid@<place_code>/aid@<place_code>.json  # s...
+    <address>/register.lock                # Exists only while owned
 
 /tmp/toolang/<root_code>/
   root.json                               # Canonical ROOT
@@ -166,7 +167,7 @@ follows the committed edit; Chat failure reports and preserves that edit.
 
 ## Discovery and copyable output
 
-Active records live only at `ROOT/.runtime/active/`, one filename per address, fenced
+Active records live at `ROOT/.runtime/active/<address>/<address>.json`, fenced
 by `launch_id`. They may describe startup/shutdown and do not prove liveness.
 Remove them on exit; preserve places/history. Known-path lookup is independent of
 registration. A later runtime at that home reuses the address with a new generation.

@@ -6,9 +6,7 @@ import pytest
 from toolang.up import source as agent_sources
 
 from toolang.cli.toolang.main import main
-from toolang.cli.common.client import RuntimeClient
-from toolang.cli.common.errors import RuntimeClientError
-from toolang.up.process import AgentProcess, AgentStatus
+from toolang.up.types import AgentStatus
 
 from tests.support.setup import materialized_setup
 from toolang.base.types.model import Model, ModelToolang, Provider
@@ -22,7 +20,7 @@ from toolang.setup import AgentSetup
 
 @pytest.mark.parametrize("name", ["alice", "info", "top", "run", "more"])
 @pytest.mark.parametrize("width", [44, 80])
-def test_info_shows_one_root_without_a_command_footer(
+def test_info_shows_home_without_redundant_identity_or_footer(
     tmp_path, monkeypatch, capsys, name, width
 ):
     from rich.console import Console
@@ -38,7 +36,10 @@ def test_info_shows_one_root_without_a_command_footer(
 
     assert main(["--root", str(root), f"agent:{name}", "info"]) == 0
     output = capsys.readouterr().out
-    assert "Root:" in output
+    assert "Home:" in output
+    assert "Root:" not in output
+    assert "Placement:" not in output
+    assert "Agent:" not in output
     assert "Toolang root:" not in output
     assert "Agent root:" not in output
     assert "Command:" not in output
@@ -95,117 +96,49 @@ def test_model_summary_counts_effective_setup_resources(
     assert agent._models_summary(_setup(tmp_path, refs)) == expected
 
 
-@pytest.mark.parametrize("sandbox", ["host", "docker:python:3.13-slim"])
 @pytest.mark.parametrize("placement", ["resident", "roaming", "visiting"])
-def test_running_info_uses_runtime_resources_without_loading_local_sources(
-    tmp_path, monkeypatch, capsys, sandbox, placement
+@pytest.mark.parametrize("running", [False, True])
+def test_info_prepares_current_resources_for_all_placements(
+    tmp_path, monkeypatch, capsys, placement, running
 ):
+    from toolang.up.workload import ForegroundWorkload
+    from contextlib import nullcontext
     from rich.console import Console
-    from toolang.cli.common import output as cli_output
+    from toolang.cli.common import output
 
-    monkeypatch.setattr(
-        cli_output, "_INFO_CONSOLE", Console(width=3000, color_system=None)
-    )
-    monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("TOOLANG_ROOT", str(tmp_path))
-    selector = "alice"
-    global_args = ["--root", str(tmp_path)]
-    layout = AgentLayout.resident(tmp_path, "alice")
-    if placement == "roaming":
+    monkeypatch.setattr(output, "_INFO_CONSOLE", Console(width=300, color_system=None))
+    content = "flow main():\n  pass\n"
+    if placement == "resident":
+        layout = AgentLayout.resident(tmp_path, "alice")
+        layout.home.mkdir(parents=True)
+        layout.program.write_text(content)
+        selector = "alice"
+    elif placement == "roaming":
         source = tmp_path / "alice.too"
-        source.write_text("invalid Toolang!!!")
-        (tmp_path / "toolang.toml").write_text("invalid TOML!!!")
+        source.write_text(content)
         layout = allocate_roaming(source, toolang_root=tmp_path)
-        selector, global_args = str(source), []
-        monkeypatch.setattr(
-            agent_sources,
-            "materialize_roaming_program",
-            lambda *_: pytest.fail("running info must not project sources"),
-        )
-    elif placement == "visiting":
-        selector, global_args = "gh:acme/alice", []
-        layout = agent_sources.visiting_layout(selector, toolang_root=tmp_path)
-        from toolang.up.identity import visiting_home_guard
-
-        with visiting_home_guard(layout):
-            pass
-        monkeypatch.setattr(
-            agent_sources, "visiting_layout", lambda _, **kwargs: layout
-        )
-        monkeypatch.setattr(
-            agent_sources,
-            "resolve_visiting_layout",
-            lambda *a, **kw: pytest.fail("running info must not fetch sources"),
-        )
-    arguments = [*global_args, selector, "info"]
-    layout.home.mkdir(parents=True, exist_ok=True)
-    if placement == "roaming":
-        layout.program.symlink_to(source)
+        selector = str(source)
     else:
-        layout.program.write_text("invalid Toolang!!!")
-    monkeypatch.setattr(
-        AgentProcess,
-        "status",
-        lambda *_args, **_kwargs: AgentStatus(
-            name="alice",
-            status="running",
-            endpoint="http://localhost:8123",
-            api_url=None,
-            webui_url=None,
-            sandbox=sandbox,
-        ),
-    )
-    monkeypatch.setattr(
-        AgentProcess, "state", lambda _self: {"drivers": ["chore", "talk", "chat"]}
-    )
-    payloads = {
-        "/api/v0/models": {"items": [{"provider": "guest"}]},
-        "/api/v0/tools": {"items": [{"toolset": "guest"}, {"toolset": "guest"}]},
-        "/api/v0/caps": {"psyches": [], "skills": [{}], "services": [], "prompts": []},
-        "/api/v0/chores": [{}],
-        "/api/v0/workspaces": {
-            "revision": "a" * 64,
-            "items": [{"name": "guest", "path": "/guest", "available": True}],
-            "workdir": "guest://",
-        },
-    }
-    calls = []
-
-    def get(_self, path, **_kwargs):
-        if not calls:
-            assert "Loading runtime resources..." in capsys.readouterr().err
-        calls.append(path)
-        return payloads[path]
-
-    monkeypatch.setattr(RuntimeClient, "get", get)
-    assert main(arguments) == 0
-    output = capsys.readouterr()
-    assert "1 model, 1 provider" in output.out
-    assert "2 tools, 1 toolset" in output.out
-    assert "1 skill" in output.out
-    assert "1 chore" in output.out
-    assert "guest" in output.out
-    assert "Drivers: chat,talk,chore" in output.out
-    normalized = " ".join(output.out.split())
-    assert f"Root: {layout.place}" in normalized
-    assert "Toolang root:" not in output.out
-    assert "Agent root:" not in output.out
-    assert "Command:" not in output.out
-    assert "Place:" not in output.out
-    assert set(calls) == set(payloads)
-    assert not layout.agent_state.exists()
-
-    calls.clear()
-    assert main([*arguments, "--catalog", "other.json"]) == 1
-    assert "--catalog" in capsys.readouterr().err
-    assert not calls
-
-    def failed(_self, _path, **_kwargs):
-        raise RuntimeClientError("runtime request failed: unavailable")
-
-    monkeypatch.setattr(RuntimeClient, "get", failed)
-    assert main(arguments) == 1
-    assert "runtime request failed: unavailable" in capsys.readouterr().err
+        selector = "https://example.com/alice.too"
+        layout = agent_sources.visiting_layout(selector, toolang_root=tmp_path)
+        monkeypatch.setattr(
+            agent_sources, "fetch_agent_ref", lambda *args, **kwargs: content
+        )
+    with (
+        ForegroundWorkload(layout, toolang_root=tmp_path, drivers=frozenset({"talk"}))
+        if running
+        else nullcontext()
+    ):
+        assert main([selector, "info"]) == 0
+        text = capsys.readouterr().out
+        assert "Tools:" in text and "0 tools" not in text
+        assert "Models:" in text and "models" in text
+        assert "Caps:" in text
+        assert ("Status: running" in text) is running
+        assert layout.agent_state.exists()
+        assert not layout.run_store.exists()
+        assert "Root:" not in text and "Agent:" not in text and "Placement:" not in text
 
 
 @pytest.mark.parametrize(
@@ -229,10 +162,10 @@ def test_running_info_formats_driver_metadata(
 ):
     layout = AgentLayout.resident(tmp_path, "alice")
     layout.home.mkdir(parents=True)
-    layout.program.write_text("invalid Toolang!!!")
+    layout.program.write_text("flow main():\n  pass\n")
     monkeypatch.setattr(
-        AgentProcess,
-        "status",
+        agent,
+        "runtime_status",
         lambda *_args, **_kwargs: AgentStatus(
             name="alice",
             status="running",
@@ -240,38 +173,10 @@ def test_running_info_formats_driver_metadata(
             api_url=None,
             webui_url=None,
             sandbox="host",
+            entry={"control": metadata, "workload": {}, "launch_id": "launch"},
         ),
     )
-    monkeypatch.setattr(AgentProcess, "state", lambda _self: metadata)
-    monkeypatch.setattr(agent, "_running_resources", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(agent, "_local_resources", lambda *_args, **_kwargs: ([], None))
 
     assert main(["--root", str(tmp_path), "alice", "info"]) == 0
     assert f"Drivers: {expected}" in capsys.readouterr().out
-
-
-@pytest.mark.parametrize("placement", ["roaming", "visiting"])
-def test_offline_info_does_not_materialize_a_fresh_nonresident_target(
-    tmp_path, monkeypatch, capsys, placement
-):
-    source = tmp_path / "alice.too"
-    source.write_text("flow run():\n  pass\n")
-    selector = str(source)
-    layout = AgentLayout.roaming(source)
-    if placement == "visiting":
-        selector = "https://example.com/alice.too"
-        layout = AgentLayout.visiting(selector, "alice", root=tmp_path)
-        monkeypatch.setattr(
-            agent_sources, "visiting_layout", lambda *args, **kwargs: layout
-        )
-    monkeypatch.setattr(
-        agent_sources,
-        "resolve_visiting_layout",
-        lambda *args, **kwargs: pytest.fail("history query fetched source"),
-    )
-    monkeypatch.setattr(
-        agent_sources,
-        "materialize_roaming_program",
-        lambda *args, **kwargs: pytest.fail("history query materialized source"),
-    )
-    assert main([selector, "info"]) == 1
-    assert not layout.agent_state.exists()

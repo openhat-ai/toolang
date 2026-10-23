@@ -510,7 +510,7 @@ def test_sandbox_status_reports_plugin_recovery_failure(
     monkeypatch.setattr(sandbox, "load_state_sandbox", fail_recovery)
 
     status = process_runtime.AgentProcess(layout).status(ui_base_url="")
-    assert status is not None and status.status == "failed"
+    assert status is not None and status.status == "unknown"
     assert status.message == "plugin is unavailable"
 
 
@@ -625,6 +625,16 @@ def test_guest_roaming_mounts_the_shared_project_edit_guard(monkeypatch, tmp_pat
     assert SandboxMount(guard, Path("/runtime/.state/root/edit.lock")) in request.mounts
     position = request.command.index("--source-edit-lock")
     assert request.command[position + 1] == "/runtime/.state/root/edit.lock"
+    registry = tmp_path / "global" / ".runtime" / "active" / layout.address
+    guest_registry = Path("/runtime/agents/aid/.runtime/registration")
+    assert SandboxMount(registry, guest_registry) in request.mounts
+    assert not any(mount.local_path == registry.parent for mount in request.mounts)
+    assert request.command[request.command.index("--registry-directory") + 1] == str(
+        guest_registry
+    )
+    assert request.command[request.command.index("--registry-status") + 1] == str(
+        layout.runtime_status
+    )
     assert asyncio.run(sandbox.stop(layout, force=True))
     assert ("release", handle.state.ref) in implementation.calls
 
@@ -941,7 +951,7 @@ def test_legacy_guest_state_blocks_launch_stop_and_removal(
 
     status = process_runtime.AgentProcess(spec.serve.layout).status(ui_base_url="")
     assert status is not None
-    assert status.status == "failed"
+    assert status.status == "unknown"
 
 
 def test_unreferenced_staging_blocks_launch_and_removal(
@@ -1461,7 +1471,9 @@ def test_local_prepare_failure_never_creates_a_workload_and_allows_retry(
     )
     failure = next(e for e in events if e.subject == "state" and e.status == "failed")
     assert failure.label == "Failed to prepare agent state"
-    assert not (spec.serve.layout.place / ".runtime" / "active" / "alice.json").exists()
+    assert not (
+        spec.serve.layout.place / ".runtime" / "active" / "alice" / "alice.json"
+    ).exists()
     monkeypatch.setattr(state_prepare, "prepare_agent_state", original)
 
     async def ready(*_args, **_kwargs):
@@ -1478,7 +1490,7 @@ def test_local_prepare_failure_never_creates_a_workload_and_allows_retry(
     )
 
 
-def test_failed_workload_stays_registered_until_its_resources_are_released(
+def test_failed_workload_withdraws_discovery_before_resource_release(
     tmp_path, monkeypatch
 ):
     from toolang.up.instance import patch_workload
@@ -1501,11 +1513,18 @@ def test_failed_workload_stays_registered_until_its_resources_are_released(
         handle.state.launch_id,
         {"status": "failed", "pid": None},
     )
-    reference = tmp_path / ".runtime" / "active" / instance_filename(spec.serve.layout)
+    reference = (
+        tmp_path
+        / ".runtime"
+        / "active"
+        / spec.serve.layout.address
+        / instance_filename(spec.serve.layout)
+    )
     inventory = runtime_inventory(tmp_path)
-    assert reference.exists()
-    assert inventory.snapshot.instances[0].state == "unknown"
-    assert inventory.snapshot.instances[0].diagnostic
+    assert not reference.exists()
+    assert inventory.snapshot.instances[0].state == "failed"
+    assert not inventory.snapshot.instances[0].needs_live_observation
+    assert SandboxState.load(spec.serve.layout.runtime_status) == handle.state
     assert asyncio.run(sandbox.stop(spec.serve.layout))
     assert not reference.exists()
     assert spec.serve.layout.runtime_status.exists()

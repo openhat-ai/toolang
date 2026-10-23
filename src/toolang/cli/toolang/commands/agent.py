@@ -11,31 +11,29 @@ from typing import Annotated, cast
 
 import typer
 
-from ...common.execution import select_agent_instance
 from toolang.cli.common.agent_argument import AgentArgument, AgentNameType
 from typer._click.exceptions import ClickException
 
 from toolang.cli.common.parameters import TextType
 
-from toolang.catalog.chore import AuthoredChores
 from toolang.catalog.agent import LocalAgents
 from toolang.common.layout import AgentLayout, validate_agent_name
+from toolang.base.errors import ToolangError
 from toolang.common.progress import ProgressSink
 from toolang.common.time import format_duration
 from toolang.up import source as agent_sources
 from toolang.up import process as agents
 from toolang.up.config import format_drivers
+from toolang.up.watcher import runtime_status
 from toolang.up.types import ALL_DRIVERS, ExecutionDrivers
 from toolang.catalog import templates
 from toolang.setup import AgentSetup
 from toolang.state.state import AgentState
-from toolang.state.schemas import WorkspaceInspection
-from ...common.client import RuntimeClient
-from ...common.errors import RuntimeClientError
 from ...common.context import (
     ModelCatalogOption,
     cli_context,
     context_root,
+    context_layout,
     require_runtime_agent,
     resolve_model_catalog_option,
     ui_base_url,
@@ -182,42 +180,32 @@ def info_agent(
     agent: Annotated[str, AgentArgument("home", both_orders=True)],
     model_catalog: ModelCatalogOption = None,
 ) -> None:
-    agent_name = require_runtime_agent(ctx, agent)
-    layout = select_agent_instance(ctx)
-    agent_name = layout.name
-    process = agents.AgentProcess(layout)
-    status = user_call(process.status, ui_base_url=ui_base_url())
-    if status is None and layout.placement == "resident":
-        raise ClickException(f"Agent {agent_name} not found")
+    require_runtime_agent(ctx, agent)
+    layout = context_layout(ctx)
+    resources = []
+    preparation_error = None
     try:
-        runtime_state = process.state() or {}
-        runtime_identity = agents.runtime_identity_row(runtime_state, layout=layout)
-    except (OSError, ValueError):
-        runtime_state, runtime_identity = {}, None
-    if status is not None and status.status == "running":
-        if model_catalog is not None:
-            raise ClickException("--catalog only applies when the agent is not running")
-        if status.endpoint is None:
-            raise ClickException("running agent has no endpoint")
-        try:
-            with make_cli_progress() as progress:
-                resources = _running_resources(
-                    RuntimeClient(status.endpoint), progress=progress.sink
-                )
-        except (OSError, RuntimeClientError, ValueError) as exc:
-            raise ClickException(str(exc)) from exc
-    else:
-        resources = _local_resources(
-            layout,
-            toolang_root=context_root(ctx),
-            model_catalog=resolve_model_catalog_option(model_catalog),
-            source=cli_context(ctx).source,
-            selector=agent if layout.placement == "visiting" else None,
-        )
-        if status is None:
-            status = user_call(process.status, ui_base_url=ui_base_url())
-            if status is None:
-                raise ClickException(f"Agent {agent_name} not found")
+        with make_cli_progress(preparation=True) as progress:
+            layout = _prepare_info_layout(ctx, progress=progress.sink)
+            resources, preparation_error = _local_resources(
+                layout,
+                model_catalog=resolve_model_catalog_option(model_catalog),
+                progress=progress.sink,
+            )
+            progress.complete_preparation()
+    except (OSError, RuntimeError, ToolangError, ValueError, ClickException) as exc:
+        preparation_error = str(exc)
+        layout = context_layout(ctx)
+    status = user_call(runtime_status, layout, ui_base_url=ui_base_url())
+    if status is None:
+        if not preparation_error:
+            raise ClickException(f"Agent {layout.name} not found")
+        from toolang.up.types import AgentStatus
+
+        status = AgentStatus(layout.name, "unknown", None, None, None, None)
+    entry = status.entry or {}
+    runtime_state = {**entry.get("control", {}), **entry.get("workload", {})}
+    runtime_identity = agents.runtime_identity_row(runtime_state)
     started_at = runtime_value(runtime_state.get("started_at"))
     status_value = "not running" if status.status == "stopped" else status.status
     if status.status == "running" and started_at != "-":
@@ -228,9 +216,7 @@ def info_agent(
     if status.status not in {"running", "stopped"} and message != "-":
         status_value = f"{status_value}: {message}"
     rows = [
-        ("Root", str(layout.place)),
         ("Home", shorten_home_path(layout.home)),
-        ("Agent", layout.address),
         *resources,
         ("Status", status_value),
     ]
@@ -245,7 +231,11 @@ def info_agent(
             rows.append(("API", status.endpoint))
         if status.webui_url:
             rows.append(("WebUI", status.webui_url))
-    echo_pairs_table(rows, avatar=agent_avatar(), title=agent_name.upper())
+    if preparation_error:
+        rows.append(("Preparation", preparation_error))
+    echo_pairs_table(rows, avatar=agent_avatar(), title=layout.address)
+    if preparation_error:
+        raise typer.Exit(1)
 
 
 def _drivers_summary(value: object) -> str:
@@ -270,99 +260,72 @@ def _caps_summary(state: AgentState) -> str:
     return _cap_counts_summary(counts)
 
 
+def _prepare_info_layout(
+    ctx: typer.Context, *, progress: ProgressSink | None
+) -> AgentLayout:
+    """Prepare one selected home without allocating or registering an execution."""
+    from dataclasses import replace
+    from toolang.up.allocation import retained_roaming
+
+    state = cli_context(ctx)
+    layout = context_layout(ctx)
+    if layout.placement == "resident":
+        if not layout.home.is_dir():
+            raise ClickException(f"Agent {layout.name} not found")
+    elif state.source is not None:
+        if not state.instance_selected and layout.place_code is None:
+            retained = retained_roaming(state.source, toolang_root=state.root)
+            if retained:
+                layout = retained[0]
+        state.layout = layout
+        layout = replace(
+            agent_sources.materialize_roaming_program(state.source, layout=layout),
+            root=state.root,
+        )
+    else:
+        layout = agent_sources.prepare_visiting_layout(
+            layout,
+            toolang_root=state.root,
+            source_ref=state.selector,
+            progress=progress,
+        )
+    state.layout = layout
+    state.prepared = True
+    return layout
+
+
 def _local_resources(
     layout: AgentLayout,
     *,
-    toolang_root: Path,
     model_catalog: Path | None,
-    source: Path | None = None,
-    selector: str | None = None,
-) -> list[tuple[str, str]]:
-    from toolang.up.instance import read_instance
-    from toolang.state.prepare import load_agent_state
+    progress: ProgressSink | None = None,
+) -> tuple[list[tuple[str, str]], str | None]:
+    from toolang.setup import SetupWatcher
+    from toolang.state.watcher import StateWatcher
 
-    entry = read_instance(layout.runtime_status) or {}
-    counts = entry.get("workload", {}).get("resource_counts", {})
-    if not isinstance(counts, dict):
-        counts = {}
+    async def inspect():
+        setup_watcher = SetupWatcher(
+            layout, model_catalog=model_catalog, validate_defaults=False
+        )
+        state_watcher = StateWatcher(layout)
+        setup = await setup_watcher.refresh(progress=progress)
+        state = await state_watcher.refresh(progress=progress)
+        rows = [
+            ("Tools", _tools_summary(setup, progress=progress)),
+            ("Models", _models_summary(setup, progress=progress)),
+            ("Caps", _caps_summary(state)),
+            ("Chores", _count(len(state.chores), "chore")),
+            ("Workspaces", ", ".join(setup.workspace_grants(state.workspaces)) or "-"),
+        ]
+        diagnostics = (*setup_watcher.diagnostics(), *state_watcher.diagnostics())
+        error = (
+            "Last valid state: " + "; ".join(item.message for item in diagnostics)
+            if diagnostics
+            else None
+        )
+        return rows, error
 
-    def count(key, singular):
-        value = counts.get(key)
-        return _count(value, singular) if isinstance(value, int) else "-"
-
-    caps = workspaces = chores = "-"
-    if isinstance(counts.get("caps"), dict):
-        caps = _cap_counts_summary(counts["caps"])
-    if isinstance(counts.get("workspaces"), list):
-        workspaces = ", ".join(counts["workspaces"])
-    if isinstance(counts.get("chores"), int):
-        chores = count("chores", "chore")
-    try:
-        state = load_agent_state(layout)
-    except (OSError, ValueError, RuntimeError):
-        pass
-    else:
-        if caps == "-":
-            caps = _caps_summary(state)
-        if chores == "-":
-            chores = _count(len(state.chores), "chore")
-    return [
-        ("Tools", f"{count('tools', 'tool')}, {count('toolsets', 'toolset')}"),
-        ("Models", f"{count('models', 'model')}, {count('providers', 'provider')}"),
-        ("Caps", caps),
-        ("Chores", chores),
-        ("Workspaces", workspaces),
-    ]
-
-
-def _running_resources(
-    client: RuntimeClient, *, progress: ProgressSink | None = None
-) -> list[tuple[str, str]]:
-    """Inspect the executor's published resources, including its startup overrides."""
-    resources = client.inspect_resources(progress=progress)
-    models = _resource_items(resources["models"], "models")
-    tools = _resource_items(resources["tools"], "tools")
-    caps = resources["caps"]
-    if not isinstance(caps, Mapping):
-        raise ValueError("runtime returned invalid caps")
-    cap_counts = {
-        kind: len(_resource_list(caps.get(kind), kind))
-        for kind in ("psyches", "skills", "services", "prompts")
-    }
-    chores = _resource_list(resources["chores"], "chores")
-    workspaces = WorkspaceInspection.model_validate(resources["workspaces"])
-    return [
-        (
-            "Tools",
-            f"{_count(len(tools), 'tool')}, {_count(len(_resource_groups(tools, 'toolset')), 'toolset')}",
-        ),
-        (
-            "Models",
-            f"{_count(len(models), 'model')}, {_count(len(_resource_groups(models, 'provider')), 'provider')}",
-        ),
-        ("Caps", _cap_counts_summary(cap_counts)),
-        ("Chores", _count(len(chores), "chore")),
-        ("Workspaces", ", ".join(item.name for item in workspaces.items)),
-    ]
-
-
-def _resource_items(value: object, label: str) -> list[dict[str, object]]:
-    if not isinstance(value, dict):
-        raise ValueError(f"runtime returned invalid {label}")
-    return _resource_list(cast(dict[str, object], value).get("items"), label)
-
-
-def _resource_list(value: object, label: str) -> list[dict[str, object]]:
-    if not isinstance(value, list) or any(not isinstance(item, dict) for item in value):
-        raise ValueError(f"runtime returned invalid {label}")
-    return cast(list[dict[str, object]], value)
-
-
-def _resource_groups(items: list[dict[str, object]], field: str) -> set[str]:
-    values = [item.get(field) for item in items]
-    if any(not isinstance(value, str) or not value for value in values):
-        raise ValueError(f"runtime returned invalid {field}")
-    return set(cast(list[str], values))
+    return asyncio.run(inspect())
 
 
 def _count(value: int, singular: str) -> str:
@@ -374,15 +337,6 @@ def _cap_counts_summary(counts: Mapping[str, int]) -> str:
         _count(counts[kind + "s"], kind)
         for kind in ("psyche", "skill", "service", "prompt")
     )
-
-
-def _chores_summary(layout: AgentLayout) -> str:
-    catalog = AuthoredChores(
-        layout.home,
-        lock_path=layout.home_edit_lock,
-        agent_name=layout.name,
-    )
-    return _count(len(catalog.list()), "chore")
 
 
 def _models_summary(setup: AgentSetup, *, progress: ProgressSink | None = None) -> str:

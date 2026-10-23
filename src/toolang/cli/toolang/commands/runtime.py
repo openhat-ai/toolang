@@ -569,6 +569,12 @@ def serve(
     source_edit_lock: Annotated[
         Path | None, typer.Option("--source-edit-lock", hidden=True)
     ] = None,
+    registry_directory: Annotated[
+        Path | None, typer.Option("--registry-directory", hidden=True)
+    ] = None,
+    registry_status: Annotated[
+        Path | None, typer.Option("--registry-status", hidden=True)
+    ] = None,
     workspace_bindings: Annotated[
         str, typer.Option("--workspace-bindings", hidden=True)
     ] = "{}",
@@ -637,6 +643,11 @@ def serve(
         log_spec=log_spec,
         workspace_additions=json.loads(workspace_bindings),
         workdir=initial_workdir,
+    )
+    if location == "guest" and (registry_directory is None or registry_status is None):
+        raise ClickException("guest workload requires its registry binding")
+    spec = replace(
+        spec, registry_directory=registry_directory, registry_status=registry_status
     )
     raise typer.Exit(
         user_call(

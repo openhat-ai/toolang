@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 from pathlib import Path
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
@@ -442,11 +443,21 @@ def test_workload_startup_failure_records_error_and_retains_control_reference(
     from unittest.mock import AsyncMock
     from toolang.base.types.sandbox import SandboxRef
     from toolang.up.instance import SandboxState, read_instance, update_instance
+    from toolang.up.identity import identity_bindings
 
     layout = AgentLayout.resident(tmp_path, "alice")
     spec = resolve_serve(layout=layout, port=8123, launch_id="launch")
+    spec = replace(
+        spec,
+        registry_directory=tmp_path / ".runtime" / "active",
+        registry_status=layout.runtime_status,
+    )
     update_instance(
-        layout.runtime_status, lambda entry: entry.update(launch_id="launch")
+        layout.runtime_status,
+        lambda entry: entry.update(
+            launch_id="launch",
+            control=identity_bindings(replace(layout, root=tmp_path)),
+        ),
     )
     reference = SandboxState(
         "host" if location == "host" else "docker:image",
@@ -497,7 +508,8 @@ def test_cleanup_failure_retains_reference_and_reports_error(
 ):
     from unittest.mock import AsyncMock
     from toolang.plugin.sandboxes.host import process_ref
-    from toolang.up.instance import SandboxState, read_instance
+    from toolang.up.instance import SandboxState, read_instance, update_instance
+    from toolang.up.identity import identity_bindings
 
     layout = AgentLayout.resident(tmp_path, "alice")
     reference = SandboxState(
@@ -506,6 +518,12 @@ def test_cleanup_failure_retains_reference_and_reports_error(
         "launch",
     )
     reference.save(layout.runtime_status)
+    update_instance(
+        layout.runtime_status,
+        lambda entry: entry["control"].update(
+            identity_bindings(replace(layout, root=tmp_path))
+        ),
+    )
     core = SimpleNamespace(close=AsyncMock(side_effect=RuntimeError("cleanup failed")))
 
     async def register(*args, **kwargs):
