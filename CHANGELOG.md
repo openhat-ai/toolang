@@ -549,6 +549,10 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   selection diagnostics.
   ([#940](https://github.com/openhat-ai/toolang/pull/940))
 
+- Restricted agent environments keep configured CORS origins and custom Web UI
+  URLs for foreground, detached, and Docker server startup.
+  ([#940](https://github.com/openhat-ai/toolang/pull/940))
+
 ### Security
 
 - The locked certifi trust store advances to 2026.10.19, resolving trust-store
