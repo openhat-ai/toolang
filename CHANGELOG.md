@@ -449,6 +449,11 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   vulnerability GHSA-6q48-6c7w-9gw2.
   ([#884](https://github.com/openhat-ai/toolang/pull/884))
 
+- The locked `opentelemetry-api` dependency advances to 1.45.1, bounding
+  `tracestate` header parsing to remove a quadratic CPU cost tracked as
+  CVE-2026-114603.
+  ([#932](https://github.com/openhat-ai/toolang/pull/932))
+
 ## [0.4.0a11] - 2026-10-20
 
 ### Fixed
