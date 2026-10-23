@@ -483,6 +483,14 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   as unknown instead of exposing or repairing foreign runtime state.
   ([#936](https://github.com/openhat-ai/toolang/pull/936))
 
+- `too list`, `too hub`, and `too top` stop showing a resident agent whose home is
+  removed, even when its runtime registration remains.
+  ([#936](https://github.com/openhat-ai/toolang/pull/936))
+
+- Deferred runtime cleanup rechecks status before removing visiting or roaming
+  agents from `too hub` and `too top`.
+  ([#936](https://github.com/openhat-ai/toolang/pull/936))
+
 ### Security
 
 - The locked certifi trust store advances to 2026.10.19, resolving trust-store
