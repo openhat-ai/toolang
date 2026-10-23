@@ -25,10 +25,10 @@ second listener, guest discovery format, proxy, or capability-token system.
 This supersedes the sandbox-network exclusion in the previous
 [Hub transport definition](agent-hub-transport.md).
 
-This definition covers local Docker Hub access and mount mapping. Rust shell and
-image-environment bugs require separate minimal fixes and regression tests.
-Historical State cleanup requires a separate retention decision; this work does
-not delete or migrate retained data.
+This definition covers local Docker Hub access, mount mapping, and the shared
+host/guest launch environment contract. The shell login/PATH bug requires a
+separate minimal fix and regression test. Historical State cleanup requires a
+separate retention decision; this work does not delete or migrate retained data.
 
 ## Hub connection
 
@@ -75,7 +75,7 @@ specific owning base, preserve its suffix, and retain current read/write intent.
 | `ROOT/config.toml` and root capability directories | Same suffix below guest root; do not substitute place/home inputs. |
 | `PLACE/config.toml`, capability directories, and State | Same suffix below guest place; coalesce with root when equal. |
 | `HOME/` | Same `agents/<name>/` layout below guest place, read-write. |
-| Launch-generated `.<name>.env` | Always mount read-only as `guest_ROOT/.<name>.env`; use the generated-environment contract below. |
+| Launch-generated `guest.env` | Always mount read-only at the guest agent's highest-priority root dotenv path (`guest_ROOT/.<name>.env` for a resident); use the common loading contract below. |
 | Root/place `catalog.json` | Same filename and owning-root/place suffix, read-only; remove the extra home `.runtime/model-catalog.json` alias. |
 | Home `catalog.json` | Reuse the home mount at `HOME/catalog.json`; preserve selected source priority. |
 | External or bundled selected catalog | One read-only mapping under `guest_PLACE/.inputs/models/<path-hash>/<original-basename>` only when no existing mount covers it. |
@@ -99,7 +99,7 @@ ROOT/.runtime/active/
   lex@<t_code>.json
   check@<s_code>.json
   hak/                     # Temporary Docker inputs, only when needed.
-    .hak.env
+    guest.env
     docker_guest.sh
     docker_guest.py
     <development-wheel>.whl # Only for development launches.
@@ -111,6 +111,20 @@ and the concrete `sandbox` selection. Derive address from the filename and
 validate it against the referenced runtime identity. `status` still locates
 authoritative `HOME/.runtime/status.json`; do not duplicate changing status here.
 Keep the generation fence in the content, not in the directory hierarchy.
+
+Store `status` as a normalized POSIX path relative to the selected canonical
+host ROOT, not to cwd or the registry file's directory. For resident `hak`, use
+`agents/hak/.runtime/status.json`. Visiting and roaming status files may be
+outside ROOT, so relative paths may contain `..`; resolve them against that same
+explicit host ROOT and validate the resulting home/address/launch ownership
+before use. These host-owned locators are not guest paths: use the explicit
+PLACE/HOME mapping when a guest path is needed, rather than substituting guest
+ROOT into a nonresident locator.
+
+Use reference format 6 for this path contract. Read existing format-5 absolute
+locators for normal stop/recovery without rewriting live references. Keep the
+authoritative home status format unchanged; reference decoding belongs to the
+registry, with the selected ROOT supplied explicitly by its caller.
 
 The host publishes and retires references under a per-address host file guard.
 Guests update only their mounted home runtime status and do not write the root
@@ -139,30 +153,42 @@ needed to resolve an external host path; do not rename logical config files.
 
 ### Generated guest environment
 
-Resolve host root/agent dotenv inputs once using the existing
-[environment policy](agent-environment-policy.md#agent-environment), including
-source priority, explicit empty files, and ordered `pick`. Preserve its
-host-side source identity for resident, roaming, and visiting agents. Stage only
-the resolved guest grants and existing mapped workload values, never the whole
-host root environment or host-only `keep` values.
+Host and guest launches use the same dotenv source selection and binding parser.
+For a resident, `ROOT/.<name>.env` takes precedence over `HOME/.env`; the first
+existing file is a complete rule set, including when empty. Preserve the
+[environment policy's source identities](agent-environment-policy.md#agent-environment)
+and highest-priority root filenames for roaming and visiting agents as well.
+Do not add a Docker-specific dotenv loader or fallback rule.
 
-Always create `.<name>.env` in the temporary Docker input directory and mount
-that file read-only as `guest_ROOT/.<name>.env`, including when there are no granted
-variables. This is a generated runtime input for the current agent in its own
-container; it does not change host policy filenames or source selection. Pass
-its concrete guest path to bootstrap and use it as the sole guest dotenv input.
-Merge its resolved bindings with the native image/entrypoint environment under
-the guest environment policy; keep runtime controls authoritative. Guest startup
-must not rerun `pick`, merge lower-priority dotenv files, or lose the captured
-environment during setup refreshes, model calls, or tool subprocess launches.
+All managed launch requests originate on the host. Resolve its root/agent inputs
+with `keep` and ordered `pick` before execution. Direct host execution installs
+the reduced host mapping. For guest execution, always serialize resolved guest
+grants and existing mapped workload values into `guest.env` in the temporary
+Docker input directory, even when no variables are granted. Never serialize the
+whole host root environment or host-only `keep` values.
 
-Keep the complete home mount. An authored `HOME/.env` may remain visible and
-writable through that mount, but contributes no additional guest environment
-values. Do not mask it with generated data or an empty file. Do not directly
-mount authored root dotenv inputs. In particular, never create an absent host
-`HOME/.env` as a mount target; preserve PR #942's fix for that side effect.
-This contract deliberately permits tools to read an existing home dotenv file;
-it controls environment selection, not file secrecy.
+Mount `guest.env` read-only at the root file selected first by that guest agent's
+ordinary loader: `guest_ROOT/.<name>.env` for a resident. Resolve nonresident
+targets from their existing source identity and mapped paths, rather than
+introducing a display-name policy alias. Do not change host policy filenames.
+The guest launch then uses the common loading rules before plugin creation.
+The guaranteed file's presence naturally prevents local dotenv fallback and
+`pick`, including for an empty result; bootstrap needs no independent parser or
+special instruction to skip either branch.
+
+The guest process baseline remains the native image/entrypoint environment;
+overlay the loaded bindings and authoritative runtime controls. Host inheritance
+filtering must not discard arbitrary image variables or copy host `PATH`/`HOME`
+defaults into the guest. Installation-only environment overrides stay scoped to
+bootstrap. Keep the captured final mapping through setup refreshes, model calls,
+and tool subprocesses; do not reload authored files during an existing run.
+
+Keep the complete home mount, including any authored `HOME/.env`, without masking
+or additional dotenv mounts there. Its contents remain visible and writable but
+are not merged with the higher-priority file. Do not directly mount authored
+root dotenv inputs or create an absent host dotenv file as a mount target;
+preserve PR #942's fix for that side effect. Environment selection does not
+provide file secrecy.
 
 ## Acceptance checks
 
@@ -175,12 +201,16 @@ it controls environment selection, not file secrecy.
 | Mapping table | Every listed source preserves its owning-base suffix and filename; covered catalogs/lab have no duplicate aliases. |
 | Runtime root ownership | Docker inputs belong to the selected root and full address; different places with the same agent name do not collide. Direct host execution creates no Docker input directory. |
 | Current execution record | Each full address has one flat JSON reference with explicit location/sandbox and an in-content launch ID; no registry launch hierarchy. Existing formats remain discoverable and stoppable without duplicate publication. |
+| Relative status locator | All three placements round-trip status paths relative to an explicit host ROOT regardless of cwd; nonresident `..` paths retain ownership validation and use PLACE/HOME mapping for guest access. Format-5 absolute references remain recoverable. |
 | Registry ownership | Guests have no root registry write mount. Host stop removes only the matching reference; guest self-exit is retired on the next verified host refresh and is never reported alive merely because its record exists. |
 | Input lifetime and permissions | Docker inputs are read-only in the guest. Fixed paths are reused only after verified release; failed startup and delayed cleanup preserve replacement inputs and references. |
 | Existing resource recovery | An existing recorded staging path remains stoppable; neither live mounts nor unverified orphan directories are moved or deleted. |
 | Source priority | Root, home, explicit external, and packaged catalogs select the same data on host and guest. |
-| Generated dotenv entry | With a picked variable, explicit agent file, explicit empty file, or no available credential, a read-only `guest_ROOT/.<name>.env` always exists and contains only the resolved guest values. Resident and nonresident launches retain their host policy identity. |
-| Home dotenv precedence | A conflicting or lower-priority `HOME/.env` remains unchanged and visible but adds no values during guest startup, setup refresh, model calls, or tool launches. An empty generated root file never falls back to it or reruns `pick`. |
+| Common dotenv loading | Host and guest use the same source selector and binding parser. Root agent files win over local fallbacks; an existing empty file disables fallback and `pick` through the ordinary rules. |
+| Dotenv round trip | Generated values with quoting, newlines, backslashes, or expansion syntax survive the common parser unchanged and are never evaluated by a shell. |
+| Generated dotenv entry | With a picked variable, explicit agent file, explicit empty file, or no available credential, `guest.env` is mounted read-only at the ordinary loader's first-choice root path and contains only the resolved guest values. Resident and nonresident launches retain the correct source identity. |
+| Home dotenv precedence | A conflicting or lower-priority `HOME/.env` remains unchanged and visible but adds no values during guest startup, setup refresh, model calls, or tool launches. |
+| Process baseline | Host execution exposes only the resolved host mapping. Guest execution preserves image/entrypoint variables and overlays guest grants without importing host `keep` defaults or leaking installation-only overrides. |
 | No host dotenv artifacts | Starting, stopping, failing, and restarting a guest never creates an absent host home/root agent dotenv file and never modifies an existing authored one. |
 | Existing contracts | Nested workspaces, symlinks, config rebasing, dotenv restrictions, historical workspace URIs, and bounded shutdown still pass. |
 
@@ -192,7 +222,8 @@ the user-facing changelog through `too aid.too update_changelog`.
 ## Touchpoints and remaining boundaries
 
 Likely files: `up/{hub,sandbox,mounts,server,registry,discovery,watcher,workload}.py`,
-`common/layout.py`, `base/types/sandbox.py`, Docker sandbox/bootstrap,
+`common/{environment,layout}.py`, `cli/common/context.py`,
+`cli/toolang/commands/runtime.py`, `base/types/sandbox.py`, Docker sandbox/bootstrap,
 `teaming/{config,discovery,agent_client}.py`, `setup/teaming.py`, `convo` tool
 factory, a neutral URL helper, and focused unit/integration tests.
 
