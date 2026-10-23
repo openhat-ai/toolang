@@ -96,6 +96,71 @@ def test_rules_reads_pin_backend_across_target_resolution(
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("placement", ["resident", "visiting", "roaming"])
+@pytest.mark.parametrize("operation", ["target", "source"])
+def test_rules_discovery_uses_selected_root(
+    tmp_path, monkeypatch, placement, operation
+):
+    from toolang.common.layout import AgentLayout
+    from toolang.execution.executor import conversations
+    from toolang.execution.types import ConversationScope
+    from toolang.teaming.agent_client import AgentClient
+    from toolang.teaming.discovery import HubDiscovery
+
+    root = tmp_path / "root"
+    layout = AgentLayout(
+        place=root if placement == "resident" else tmp_path / "place",
+        name="alice",
+        placement=placement,
+        root=root,
+    )
+    HubDiscovery(
+        pid=1, created=1.0, port=7123, human="human:owner", identity=CONFIG.identity
+    ).save(root / "hub" / "hub.json")
+    monkeypatch.setenv("TOOLANG_HOST_GATEWAY", "host.docker.internal")
+    requests = []
+
+    def dispatch(request):
+        requests.append(request)
+        if request.url.path.endswith("/resolve"):
+            return httpx.Response(
+                200,
+                json={
+                    "conversation": "gc_00000001",
+                    "participants": [],
+                    "exists": True,
+                },
+            )
+        return httpx.Response(
+            200,
+            json=ConversationRules.create("gc_00000001", "Root rules.").model_dump(),
+        )
+
+    monkeypatch.setattr(
+        conversations,
+        "AgentClient",
+        lambda root, **kwargs: AgentClient(
+            root, transport=httpx.MockTransport(dispatch), **kwargs
+        ),
+    )
+    if operation == "target":
+        access = asyncio.run(conversations.load_target(layout, "gc_00000001"))
+        assert access.scope.backend == CONFIG.identity
+    else:
+        asyncio.run(
+            conversations.load_source(
+                layout, ConversationScope(CONFIG.identity, "gc_00000001")
+            )
+        )
+    assert requests
+    assert all(
+        request.url.host == "host.docker.internal"
+        and request.url.port == 7123
+        and request.headers["X-Toolang-Backend"] == CONFIG.identity
+        for request in requests
+    )
+
+
 def test_rules_exact_content_observer_access_clear_and_stale_noop():
     async def scenario():
         server = FakeServer(server_type="valkey")

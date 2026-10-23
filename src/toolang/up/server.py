@@ -541,7 +541,7 @@ def _serve_once(
                 messaging_setup = current_setup().teaming
                 if messaging_setup is not None and messaging_setup.home.enabled:
                     hub_client = AgentClient(
-                        spec.layout.place,
+                        spec.toolang_root or spec.layout.root or spec.layout.place,
                         actor=f"agent:{spec.layout.name}",
                         managed=bool(spec.layout.managed_membership),
                     )

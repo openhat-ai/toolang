@@ -37,7 +37,7 @@ async def load_tool_setup(
         teaming = resolve_teaming_setup(
             sources, root=layout.place_config, home=layout.config
         )
-        toolsets["convo"] = teaming.toolset_config(root=layout.place)
+        toolsets["convo"] = teaming.toolset_config(root=layout.root or layout.place)
         allowed = resolve_tool_allow(configs)
         revision = digest(
             {

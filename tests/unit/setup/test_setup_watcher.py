@@ -602,6 +602,37 @@ def test_teaming_consumers_share_scoped_configuration(tmp_path, monkeypatch, ena
     assert resolved.human == setup.teaming.root.human
 
 
+@pytest.mark.parametrize("placement", ["visiting", "roaming"])
+@pytest.mark.parametrize("view", ["agent", "tools"])
+def test_nonresident_conversation_tools_use_selected_root(
+    tmp_path, monkeypatch, placement, view
+):
+    from toolang.plugin.toolsets.convo import ConvoToolset
+    from toolang.plugin.types import LoadedPlugin
+    from toolang.setup.tools import load_tool_setup
+
+    watcher, _ = _watcher(monkeypatch, tmp_path)
+    selected_root = tmp_path / "selected-root"
+    watcher.layout = AgentLayout(
+        place=tmp_path, name="alice", placement=placement, root=selected_root
+    )
+
+    def load_toolsets(*, config):
+        return {
+            "convo": LoadedPlugin(
+                "convo", "convo", ConvoToolset(config["convo"]), "built-in"
+            )
+        }
+
+    monkeypatch.setattr("toolang.setup.tools.load_toolsets_with_sources", load_toolsets)
+    setup = asyncio.run(
+        watcher.refresh() if view == "agent" else load_tool_setup(watcher.layout)
+    )
+    toolset = setup.toolsets()["convo"]
+    assert isinstance(toolset, ConvoToolset)
+    assert toolset.root == selected_root
+
+
 def test_loaded_progress_observer_can_read_the_published_models(tmp_path, monkeypatch):
     watcher, counts = _watcher(monkeypatch, tmp_path)
     setup = asyncio.run(watcher.refresh())

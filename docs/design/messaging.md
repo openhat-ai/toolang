@@ -28,7 +28,9 @@ source version and `api_version: 0`; `HUB_API_VERSION` also versions publication
 staging, and event wires. The one-shot hub roster describes discovered instances
 and recorded launches, not delivery or live presence.
 
-Agent clients read `ROOT/hub/hub.json`. When `TOOLANG_HOST_GATEWAY` is set,
+Agent clients read `ROOT/hub/hub.json`, including when their place is outside
+the selected Toolang root. Presence, event export, conversation tools, and rule
+lookups use that same root. When `TOOLANG_HOST_GATEWAY` is set,
 they route the discovered loopback endpoint through that gateway using the same
 URL transformation as local model catalogs. The recorded port, human, and
 backend identity remain unchanged; record refresh and batch identity pinning
