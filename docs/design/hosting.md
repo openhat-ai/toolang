@@ -388,7 +388,7 @@ and source identity, retaining its startup settings. Resident implicit servers
 remain running; visiting implicit servers exit once no client leases or accepted
 work remain.
 Fresh implicit servers enable chat only. Fresh start/serve keep placement
-defaults: resident chat,talk,chore; visiting chat,talk. Source-only roaming Chat
+defaults: resident chat,chore,talk; visiting chat,talk. Source-only roaming Chat
 allocates a fresh home; instance/Thread continuation reuses its bound home.
 A roaming client stops the server it created on exit; attachment retains the
 existing lifetime owner. Standalone scripts use embedded host execution or stop

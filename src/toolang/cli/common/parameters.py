@@ -75,6 +75,6 @@ DriverOption = Annotated[
     typer.Option(
         "--enable",
         metavar="DRIVERS",
-        help="Enable only these drivers, replacing defaults: chat,talk,chore or none",
+        help="Enable only these drivers, replacing defaults: chat,chore,talk or none",
     ),
 ]

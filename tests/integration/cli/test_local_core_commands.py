@@ -3976,7 +3976,7 @@ def test_agent_info_builds_state_and_setup_without_server(
             for line in strip_ansi(result.stdout).splitlines()
             if line.strip()
         )
-        == "alice"
+        == "ALICE"
     )
     assert "Caps" in result.stdout
     assert "Models" in result.stdout
@@ -4054,9 +4054,9 @@ def test_agent_info_fields_follow_the_compact_layout(
     assert result.exit_code == 0, result.stderr
     expected = [
         "Home",
+        "Caps",
         "Tools",
         "Models",
-        "Caps",
         "Chores",
         "Workspaces",
         "Status",
@@ -4077,7 +4077,7 @@ def test_agent_info_fields_follow_the_compact_layout(
         assert status_value == "not running"
     elif status == "running":
         assert status_value.startswith("running (up ")
-        assert rows["Drivers"] == "chat,talk,chore"
+        assert rows["Drivers"] == "chat,chore,talk"
     elif status == "failed":
         assert status_value == "failed: runtime failed"
     else:
@@ -4180,7 +4180,7 @@ def test_roaming_agent_info_uses_the_source_layout(
     capsys.readouterr()
 
     assert result == 0
-    assert captured["title"] == selected.address
+    assert captured["title"] == f"DEMO@{selected.place_code}"
     rows = cast(dict[str, str], captured["rows"])
     assert shortened == [selected.home]
     assert rows["Home"] == "compact home"
@@ -4226,7 +4226,7 @@ def test_visiting_agent_info_uses_the_materialized_layout(
     capsys.readouterr()
 
     assert result == 0
-    assert captured["title"] == layout.address
+    assert captured["title"] == f"RESEARCHER@{layout.place_code}"
     rows = cast(dict[str, str], captured["rows"])
     assert rows["Home"] == shorten_home_path(layout.home)
 

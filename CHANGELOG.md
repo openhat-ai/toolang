@@ -292,6 +292,13 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 - `too top` shows a shorter current-time caption.
   ([#935](https://github.com/openhat-ai/toolang/pull/935))
 
+- `too AGENT info` titles use uppercase agent names while keeping placement
+  codes unchanged, and place `Caps` directly after `Home`, before `Tools` and
+  `Models`.
+
+- Help, `too AGENT info`, validation errors, logs, persisted runtime lists, and
+  API schema enums order drivers as `chat`, `chore`, `talk`.
+
 ### Fixed
 
 - Failed preparation no longer leaves active registrations; runtime references
