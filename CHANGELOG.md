@@ -569,6 +569,10 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   guest loopback, matching local-model endpoint routing.
   ([#947](https://github.com/openhat-ai/toolang/pull/947))
 
+- Host gateway URL rewriting preserves original credentials so catalog checks
+  still reject them, and implicit local-model IPv6 gateway defaults gain
+  brackets.
+
 ### Security
 
 - The locked certifi trust store advances to 2026.10.19, resolving trust-store
