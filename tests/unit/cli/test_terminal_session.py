@@ -174,17 +174,20 @@ def test_resident_and_root_only_sources(tmp_path, terminal_io, placement):
     layout.place_env.write_text('TOOLANG_TITLE_PREFIX_CHAT="root-env "\n')
     layout.env.write_text('TOOLANG_TITLE_PREFIX_CHAT="home-env "\n')
     for kwargs, expected in [
-        ({"layout": layout}, "home-env alice"),
+        (
+            {"layout": layout},
+            ("home-env alice" if placement == "resident" else "home alice"),
+        ),
         (
             {
                 "layout": layout,
                 "environment": {"TOOLANG_TITLE_PREFIX_CHAT": "process "},
             },
-            "process alice",
+            "home-env alice" if placement == "resident" else "process alice",
         ),
         (
             {"layout": layout, "environment": {"TOOLANG_TITLE_PREFIX_CHAT": ""}},
-            "alice",
+            "home-env alice" if placement == "resident" else "alice",
         ),
         ({"root": tmp_path}, "root-env alice"),
     ]:

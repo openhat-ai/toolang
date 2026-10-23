@@ -264,12 +264,11 @@ mapping loader cannot infer whether an arbitrary string is sensitive.
 Sandbox-specific dotenv materialization is runtime transport and does not
 change or resolve a plugin's configuration mapping.
 
-The Docker sandbox exposes all names explicitly authored in `PLACE/.env` or
-`HOME/.env`. Host-process-only names must match `environment_allow_pattern`, which is
-a configurable full-match regular expression with a built-in allowlist for
-Toolang, bootstrap, proxy, certificate, and common model-provider variables.
-The concrete plugin still resolves any exposed secret-reference name from its
-guest process environment.
+Plugins share the [selected agent environment](setup.md#environments), installed
+before their factories load. Docker transports the resolved mapping without
+another default allowlist; an explicitly configured `environment_allow_pattern`
+can narrow it. Secret references resolve only from the environment admitted to
+the workload. There is no separate tool/adapter environment policy.
 
 Only configured external model catalogs are instantiated; the three built-in
 catalogs are always loaded. After snapshots are merged, the resolver maps raw

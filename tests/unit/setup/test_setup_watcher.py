@@ -441,7 +441,7 @@ def test_model_defaults_are_validated_when_models_are_first_loaded(
         setup.models_effective()
 
 
-def test_environment_changes_publish_a_new_lazy_setup_and_pin_old_values(
+def test_environment_changes_require_a_new_watcher(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     envs: dict[str, str] = {}
@@ -452,16 +452,17 @@ def test_environment_changes_publish_a_new_lazy_setup_and_pin_old_values(
     assert not first_all[0]._toolang.routable
 
     envs["TEST_API_KEY"] = "synthetic"
-    second = asyncio.run(watcher.refresh())
-    assert second is not first
+    assert asyncio.run(watcher.refresh()) is first
     assert counts["adapters"] == 1
+    restarted, _counts = _watcher(monkeypatch, tmp_path, envs=envs)
+    second = asyncio.run(restarted.refresh())
     assert {model.ref for model in second.models_effective()} == {
         "test/one",
         "test/two",
     }
     assert not first.models_effective()
     assert first.models() is first_all
-    assert counts["adapters"] == 2
+    assert _counts["adapters"] == 1
 
 
 def test_full_routes_are_resolved_before_effective_adapter_policy(

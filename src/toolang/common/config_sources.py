@@ -120,6 +120,7 @@ def script_sources(source: Path) -> tuple[ConfigSource, ...]:
         if not any(item.exists() or item.is_symlink() for item in (path, companion)):
             continue
         config = read_config(path, include_workspaces=directory == directories[0])
+        _reject_local_environment(config, path)
         # Catalog-only layers retain their position without requiring TOML.
         sources.append(ConfigSource(path, config))
     return tuple(sources)
@@ -131,20 +132,34 @@ def config_sources(
     """Load normal root/home layers or captured roaming project layers."""
     if layout.project_inputs:
         config = read_config(layout.config)
+        _reject_local_environment(config, layout.config)
         raw = config.get(PROJECTION_KEY)
         if isinstance(raw, list):
-            return tuple(
+            sources = tuple(
                 ConfigSource(
                     Path(str(item["path"])), cast(dict[str, object], item["config"])
                 )
                 for item in cast(list[dict[str, object]], raw)
             )
+            for source in sources:
+                _reject_local_environment(source.config, source.path)
+            return sources
         return (ConfigSource(layout.config, config),)
     paths = (layout.place_config, *((layout.config,) if include_agent else ()))
-    return tuple(
+    sources = tuple(
         ConfigSource(path, read_config(path, include_workspaces=path == layout.config))
         for path in paths
     )
+    root = layout.root or (layout.place if layout.placement == "resident" else None)
+    for source in sources:
+        if root is None or source.path != root / "config.toml":
+            _reject_local_environment(source.config, source.path)
+    return sources
+
+
+def _reject_local_environment(config: Mapping[str, object], path: Path) -> None:
+    if "env" in config:
+        raise ValueError(f"{path}: env is supported only in the Toolang root config")
 
 
 def merge_mappings(layers: Sequence[Mapping[str, object]]) -> dict[str, object]:

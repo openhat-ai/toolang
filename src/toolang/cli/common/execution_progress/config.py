@@ -11,6 +11,9 @@ PROGRESS_MAX_WIDTH_ENV = "TOOLANG_PROGRESS_MAX_WIDTH"
 def resolve_progress_max_width(environ: Mapping[str, str]) -> int:
     """Resolve the positive maximum progress width from one environment."""
 
+    from toolang.cli.common.context import startup_environ
+
+    environ = startup_environ(environ)
     raw = environ.get(PROGRESS_MAX_WIDTH_ENV)
     if raw is None:
         return DEFAULT_MAX_PROGRESS_WIDTH

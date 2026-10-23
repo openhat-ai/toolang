@@ -25,11 +25,162 @@ owns those contracts and [Models](models.md) owns catalogs and connection routes
 Resident and visiting layouts read the
 [root/home authored scopes](layout.md#root-place-and-home). Roaming layouts use
 the captured project layers described in [Scripts](scripts.md#directories-and-configuration),
-with relative paths bound to the declaring file. Project execution uses process
-environment rather than resident configuration or project dotenv. For ordinary
-layouts, `PLACE/.env` defaults are overlaid by `HOME/.env` and then the process
-environment. Each generation keeps its own copied environment map.
-[Hosting](hosting.md) owns transport into a guest process.
+with relative paths bound to the declaring file. Environment selection is
+independent of these TOML layers.
+
+## Environments
+
+Only the selected Toolang `ROOT/config.toml` accepts environment name lists:
+
+```toml
+[env]
+keep = [
+  "COLORTERM",
+  "HOME",
+  "LANG",
+  "LC_ALL",
+  "LC_CTYPE",
+  "LOGNAME",
+  "NO_COLOR",
+  "PATH",
+  "SHELL",
+  "TEMP",
+  "TERM",
+  "TMP",
+  "TMPDIR",
+  "TZ",
+  "USER",
+]
+pick = [
+  "ALIBABA_CODING_PLAN_API_KEY",
+  "ALIBABA_TOKEN_PLAN_API_KEY",
+  "ANTHROPIC_API_KEY",
+  "ARK_API_KEY",
+  "ARK_CODING_PLAN_API_KEY",
+  "CEREBRAS_API_KEY",
+  "COHERE_API_KEY",
+  "DASHSCOPE_API_KEY",
+  "DEEPSEEK_API_KEY",
+  "FIREWORKS_API_KEY",
+  "GEMINI_API_KEY",
+  "GOOGLE_API_KEY",
+  "GOOGLE_GENERATIVE_AI_API_KEY",
+  "GROQ_API_KEY",
+  "KIMI_API_KEY",
+  "LLAMA_API_KEY",
+  "META_MODEL_API_KEY",
+  "MINIMAX_API_KEY",
+  "MISTRAL_API_KEY",
+  "MOONSHOT_API_KEY",
+  "NVIDIA_API_KEY",
+  "OLLAMA_API_KEY",
+  "OPENAI_API_KEY",
+  "OPENROUTER_API_KEY",
+  "PERPLEXITY_API_KEY",
+  "SILICONFLOW_API_KEY",
+  "SILICONFLOW_CN_API_KEY",
+  "STEPFUN_API_KEY",
+  "TOGETHER_API_KEY",
+  "XAI_API_KEY",
+  "ZHIPU_API_KEY",
+]
+```
+
+Built-in names are alphabetical. `pick` uses list order; configure an explicit
+list to change provider priority.
+
+These are the built-in defaults. Each present list replaces its default; `[]`
+clears it. Names are exact and case-sensitive. Invalid names, duplicates, wrong
+types, unknown fields, and `[env]` in home/project TOML are rejected. TOML accepts
+names only; keep secret values in dotenv files outside Git.
+Add `.env` and `.*.env` to `.gitignore` in repositories containing these files.
+
+Without `ROOT/.env`, root commands inherit the caller's complete environment.
+With it, they receive `keep` from the caller plus the file's bindings. Agent
+host processes start from that root result and receive `keep` plus one selected agent
+file, or the first nonblank variable in `pick` when no file exists.
+
+`keep` applies only to host inheritance. Guests receive the selected file's
+bindings or the single picked variable, including names that also occur in
+`keep`. An empty file forwards no host variables. Guests use their own limited
+base environment; their image or entrypoint owns any runtime defaults.
+Explicit file bindings can override native guest base values.
+
+| Placement | Selected agent file |
+| --- | --- |
+| Resident | `ROOT/.alice.env`, then `HOME/.env` |
+| Roaming | `ROOT/.{encode_flatname(canonical_source_path)}.env`, then `SOURCE_DIR/.toolang.env` |
+| Visiting | `ROOT/.{encode_flatname(canonical_requested_ref_or_url)}.env` |
+
+Nonresident root filenames use `toolang.common.flatname.encode_flatname`.
+Roaming identity is the canonical absolute `.too` path, resolving symlinks;
+visiting identity is the requested source standardized by the source parser,
+not the fetched content or resolved commit. GitHub URL/ref aliases share a
+canonical ref, while a shorthand such as `gh:owner/alice` remains a shorthand.
+Other HTTP URLs retain their requested spelling, including query and escapes.
+For example, `/work/aid.too` uses `ROOT/.%work%aid.too.env`, and
+`gh:owner/alice` uses `ROOT/.gh+3aowner%alice.env`.
+
+Encoding preserves case and produces the full filename without truncation or
+hash fallback. A filename exceeding the filesystem's component limit is treated
+as absent, allowing the local or automatic policy to work; other inspection/read
+errors fail resolution. Case-distinct identities may share a file on a
+case-insensitive filesystem. Nonresident agents never use same-name resident
+files, visiting home dotenv, project `.env`, or ancestor `.toolang.env` files.
+
+The first existing file replaces lower-priority agent files completely. Its
+bindings are applied after `keep`; explicit assignments can override kept names.
+Even an empty agent file disables `pick` and lower-priority files.
+
+```dotenv
+# Bare names inherit from the supplied parent, if present.
+ANTHROPIC_API_KEY
+# Assignments are literal; an empty assignment preserves an empty string.
+HTTP_PROXY=http://localhost:8080
+OPTION=
+LITERAL='${HOME}/literal'
+```
+
+Ordinary comments and quoting are supported without interpolation. Malformed or
+duplicate bindings fail with path/line diagnostics that omit values. Unreadable
+or nonregular files also fail without falling back. A bare agent binding cannot
+recover a caller variable excluded by the root file. Centralize values in
+`ROOT/.env` and normally use bare names in agent
+files. Root agent files are independent of generated homes and runtime instances,
+so policy survives home removal and is reused for the same stable identity.
+
+The CLI installs the selected environment before user plugin loading; adapters,
+tools, child processes, inspection, and `cd` share it. Controller startup inputs
+such as ports, catalog paths, policy overrides, CORS origins, and UI URLs are
+captured separately and passed as concrete settings. Finite generated runtime
+facts take precedence over authored values. Selection logs report source paths
+and the picked name, never values. HTTP source filenames are redacted in logs and
+errors because their reversible spelling may contain URL credentials; visiting
+identities are omitted from selection logs. [Hosting](hosting.md) owns guest
+transport.
+
+Dotenv retains comments, quoting, literal assignments, empty values, and the
+resident `HOME/.env` fallback. Its role changes from supplying defaults to
+selecting and assigning the environment that every execution path shares:
+
+| Behavior | Previous | Current |
+| --- | --- | --- |
+| `ROOT/.env` | Defaults below the full process environment | `keep(shell)` plus file bindings |
+| Agent inheritance | Full process environment | `keep` plus one automatic credential or the selected file |
+| Agent file precedence | Merge `PLACE/.env` and `HOME/.env`; process values win | First agent file only; explicit assignments win |
+| Bare `NAME` | Discarded | Inherit that name from the resolved parent |
+| Duplicate names | Last assignment wins | Configuration error |
+| Refresh | Reread dotenv during Setup refresh | Startup snapshot; restart to apply edits |
+
+Roaming previously used process variables without loading project dotenv; it
+now follows the source-specific policy above. Setup retains its startup mapping
+across refreshes, and attachment keeps the running server's environment. List
+required credentials, proxy/certificate variables, and other dependencies in an
+agent file, then restart existing servers after migration.
+
+This controls initial propagation, without adding filesystem, memory, or OS
+isolation. User code and shell startup files can load other values; admitted
+credentials are available to the entire agent, including its tools.
 
 ## Policy
 

@@ -47,9 +47,6 @@ from toolang.plugin.config import (
     resolve_sandbox_binding,
 )
 from toolang.plugin.loading import create_sandbox
-from toolang.setup.config import (
-    load_setup_dotenvs,
-)
 from toolang.state.config import CAP_ALLOW_FIELDS
 from toolang.up.mounts import (
     prepare_source_mounts,
@@ -88,7 +85,7 @@ class LaunchSpec:
     serve: ServeSpec
     sandbox: str
     config: dict[str, object]
-    environ: dict[str, str]
+    environ: dict[str, str] = field(repr=False)
     progress_id: str = field(
         default_factory=lambda: f"runtime:{uuid4().hex}",
         compare=False,
@@ -97,7 +94,8 @@ class LaunchSpec:
     output: SandboxOutput = "inherit"
     log_path: Path | None = None
     dev_artifact: Path | None = None
-    dotenv_envs: dict[str, str] = field(default_factory=dict)
+    dotenv_envs: dict[str, str] = field(default_factory=dict, repr=False)
+    guest_environ: dict[str, str] | None = field(default=None, repr=False)
 
 
 @dataclass(slots=True)
@@ -121,6 +119,7 @@ async def resolve_launch(
     *,
     layout: AgentLayout,
     environ: Mapping[str, str],
+    guest_environ: Mapping[str, str] | None = None,
     sandbox: str | None = None,
     host: str = "127.0.0.1",
     endpoint_host: str | None = None,
@@ -130,6 +129,8 @@ async def resolve_launch(
     default_overrides: Mapping[str, ModelOverride | str | None] | None = None,
     limit_overrides: Mapping[str, int | float | None] | None = None,
     compact_override: ModelOverride | None = None,
+    cors_allowed_origins: tuple[str, ...] | None = None,
+    ui_base_url: str | None = None,
     dev: Path | None = None,
     log_spec: str | None = None,
     output: SandboxOutput = "inherit",
@@ -161,6 +162,8 @@ async def resolve_launch(
         default_overrides=default_overrides,
         limit_overrides=limit_overrides,
         compact_override=compact_override,
+        cors_allowed_origins=cors_allowed_origins,
+        ui_base_url=ui_base_url,
         log_spec=log_spec,
         temporary_port=temporary_port,
         workspace_additions=workspace_additions,
@@ -171,8 +174,8 @@ async def resolve_launch(
         sandbox=selected,
         config=config,
         environ=dict(environ),
+        guest_environ=dict(guest_environ) if guest_environ is not None else None,
         output=output,
-        dotenv_envs=load_setup_dotenvs(layout),
         log_path=log_path,
         dev_artifact=artifact,
     )
@@ -419,7 +422,11 @@ async def _launch_locked(
             output=spec.output,
             log_path=spec.log_path,
             envs={
-                **spec.environ,
+                **(
+                    spec.environ
+                    if on_host or spec.guest_environ is None
+                    else spec.guest_environ
+                ),
                 **catalog_env,
                 "TOOLANG_HOST_LAUNCH": launch_id,
                 "TOOLANG_ROOT": str(
@@ -1091,7 +1098,6 @@ async def register_host_server(
                     explicit="host",
                 )[1],
                 dict(environ or {}),
-                dotenv_envs=load_setup_dotenvs(layout),
             )
             _begin_launch(
                 replace(

@@ -120,7 +120,10 @@ class _AgentType(StringParamType):
                 resolve_root(Path(explicit) if explicit is not None else None)
             )
         try:
-            selected = target_context(cli_context(ctx).root, parse_agent_selector(text))
+            previous = cli_context(ctx)
+            selected = target_context(previous.root, parse_agent_selector(text))
+            selected.root_environment = previous.root_environment
+            selected.shell_environment = previous.shell_environment
         except (OSError, RuntimeError, ValueError) as exc:
             self.fail(str(exc), param, ctx)
         if selected.address is not None and self.contract.role == "source":

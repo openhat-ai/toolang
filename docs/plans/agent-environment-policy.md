@@ -1,8 +1,8 @@
 # Define Root and Agent Environments
 
-Status: Draft for review. Environment rules discussed on 2026-10-23;
-path/ref/URL filename encoding is intentionally reserved for a later decision.
-Work type: feature definition. This PR ships no implementation.
+Status: Approved in #937; implementation includes nonresident root-file lookup
+using the Flat Name Encoding codec merged in #938.
+Work type: feature implementation.
 
 ## Goal and Scope
 
@@ -16,11 +16,11 @@ Tools and adapters share the resulting agent environment; this feature adds no
 separate permissions for them. Keychain support, credential brokers, plugin
 process isolation, and a new environment-management CLI are outside this scope.
 
-Success means every covered boundary receives the same resolved environment,
+Success means every covered boundary receives its resolved environment,
 unselected shell variables cannot reappear through Toolang's loaders, and common
 provider credentials work automatically when no explicit agent file exists.
 
-## Verified Current Behavior
+## Behavior Before Implementation
 
 - [CLI context](../../src/toolang/cli/common/context.py) and
   [Setup configuration](../../src/toolang/setup/config.py) independently merge
@@ -46,23 +46,59 @@ proposed built-in defaults:
 ```toml
 [env]
 keep = [
-  "PATH", "HOME", "USER", "LOGNAME", "SHELL", "LANG",
-  "LC_ALL", "LC_CTYPE", "TZ", "TMPDIR", "TMP", "TEMP",
-  "TERM", "COLORTERM", "NO_COLOR",
+  "COLORTERM",
+  "HOME",
+  "LANG",
+  "LC_ALL",
+  "LC_CTYPE",
+  "LOGNAME",
+  "NO_COLOR",
+  "PATH",
+  "SHELL",
+  "TEMP",
+  "TERM",
+  "TMP",
+  "TMPDIR",
+  "TZ",
+  "USER",
 ]
 pick = [
-  "OPENAI_API_KEY",
+  "ALIBABA_CODING_PLAN_API_KEY",
+  "ALIBABA_TOKEN_PLAN_API_KEY",
   "ANTHROPIC_API_KEY",
-  "OPENROUTER_API_KEY",
+  "ARK_API_KEY",
+  "ARK_CODING_PLAN_API_KEY",
+  "CEREBRAS_API_KEY",
+  "COHERE_API_KEY",
+  "DASHSCOPE_API_KEY",
+  "DEEPSEEK_API_KEY",
+  "FIREWORKS_API_KEY",
+  "GEMINI_API_KEY",
   "GOOGLE_API_KEY",
   "GOOGLE_GENERATIVE_AI_API_KEY",
-  "GEMINI_API_KEY",
-  "DEEPSEEK_API_KEY",
-  "MISTRAL_API_KEY",
   "GROQ_API_KEY",
+  "KIMI_API_KEY",
+  "LLAMA_API_KEY",
+  "META_MODEL_API_KEY",
+  "MINIMAX_API_KEY",
+  "MISTRAL_API_KEY",
+  "MOONSHOT_API_KEY",
+  "NVIDIA_API_KEY",
+  "OLLAMA_API_KEY",
+  "OPENAI_API_KEY",
+  "OPENROUTER_API_KEY",
+  "PERPLEXITY_API_KEY",
+  "SILICONFLOW_API_KEY",
+  "SILICONFLOW_CN_API_KEY",
+  "STEPFUN_API_KEY",
+  "TOGETHER_API_KEY",
   "XAI_API_KEY",
+  "ZHIPU_API_KEY",
 ]
 ```
+
+Built-in names are alphabetical. `pick` uses list order; configure an explicit
+list to change provider priority.
 
 Each present list replaces its built-in default; an omitted list retains its
 default, and `[]` clears it. Names are exact, case-sensitive environment names,
@@ -154,14 +190,20 @@ passing a filtered adapter dictionary while leaving ambient `os.environ` intact
 is insufficient. Root commands and temporary agent commands use their respective
 environments, including inspection and `cd`.
 
-Carry the final agent mapping through host/guest startup, model calls, tool
+Carry the final host or guest mapping through startup, model calls, tool
 execution, and subprocess launch. Setup refreshes must retain this startup
 snapshot instead of rereading raw dotenv files or recovering the controller's
 environment. Environment changes take effect on restart; attachment to an
 existing server retains that server's environment.
 
-Guest staging must contain only resolved values, and bootstrap must not re-add
-unselected controller or image variables to the agent workload. Docker's default
+Following the guest-boundary refinement, `keep` is host-only. Guest staging
+contains only selected agent-file bindings or the picked variable, even when
+those names also occur in `keep`. Preserve that distinction in the startup
+snapshot rather than rereading files. Bootstrap takes a fixed allowlist of
+native base variables, overlays staged bindings and existing generated controls,
+and discards other image/entrypoint variables. Images and entrypoints own missing
+runtime defaults; Toolang does not infer users, shells, locales, or terminal
+settings. Explicit bindings can override native base values. Docker's default
 provider pattern must not independently veto a name admitted by this policy;
 retain an explicitly configured legacy pattern only as an additional narrowing
 filter. Preserve public sandbox factories and entry points.
@@ -181,21 +223,23 @@ values, and an agent can read a credential explicitly admitted to its environmen
 
 ## Implementation Plan
 
-- [ ] Add a shared, explicit environment binding/resolution helper; parse the
-  root lists in `cli/config.py`, and resolve root/layout inputs in
+- [x] Add a shared, explicit environment binding/resolution helper; parse the
+  root-only lists there, and resolve root/layout inputs in
   `cli/common/context.py`.
-- [ ] Route agent startup, root/agent inspection, and `cd` through the resolver
+- [x] Use `encode_flatname` on canonical source paths and requested refs for
+  nonresident root files, preserving the source parser's identity rules.
+- [x] Route agent startup, root/agent inspection, and `cd` through the resolver
   using existing CLI entry points and lifecycle ownership.
-- [ ] Thread the captured mapping through `up/sandbox.py`, `up/server.py`, and
+- [x] Thread the captured mapping through `up/sandbox.py`, `up/server.py`, and
   Setup configuration/watcher inputs; remove independent dotenv reload paths.
-- [ ] Align host/Docker startup, guest staging/bootstrap, and subprocess
+- [x] Align host/Docker startup, guest staging/bootstrap, and subprocess
   environments; preserve trusted generated controls without ambient widening.
-- [ ] Add the acceptance tests below and verify diagnostics expose provenance
+- [x] Add the acceptance tests below and verify diagnostics expose provenance
   without values. Use existing CLI, Setup, sandbox, and toolset test modules.
-- [ ] Update the focused Setup, Hosting, Plugins, Scripts, and CLI design docs
+- [x] Update the focused Setup, Hosting, Plugins, Scripts, and CLI design docs
   and migration guidance; generate the user-visible changelog through `aid.too`
   according to repository policy.
-- [ ] Run focused tests, then `uv run ruff check .`, `uv run ruff format --check .`,
+- [x] Run focused tests, then `uv run ruff check .`, `uv run ruff format --check .`,
   `uv run ty check`, and `uv run pytest -n auto` before implementation commits.
 
 ## Acceptance Tests
@@ -208,13 +252,14 @@ values, and an agent can read a credential explicitly admitted to its environmen
 | Explicit agent file | Kept names remain; bare names use root values; assignments win; `pick` and lower-priority files contribute nothing. |
 | Empty explicit file | Only kept names remain; no fallback file or provider is selected. |
 | Placement precedence | Root file wins over resident home/roaming local files; repeated source runs and same-name resident recreation reuse root policy. |
+| Stable source identity | Path symlinks and GitHub aliases reuse their canonical grant; different same-name sources and distinct HTTP URL escapes remain separate; fetched commit grants do not replace requested refs or shorthands. |
 | Root authority | A bare agent binding cannot recover an excluded shell value, including through Setup refresh or guest bootstrap. |
 | Configuration safety | Missing lists use defaults; empty lists disable them; invalid TOML/env bindings fail without leaking values. |
 | Execution parity | Root/agent commands, foreground/background servers, `cd`, host/guest workloads, adapters, and tool subprocesses receive their expected mapping. |
 | Runtime lifetime | Refresh and attachment retain the captured environment; restart applies changed policy. |
 | Secret handling | Resolution/staging never copies a credential sentinel into generated TOML, diagnostics, provenance, or runtime metadata; this does not sanitize output deliberately produced by user code. |
 
-## Risks and Deferred Encoding
+## Risks and Filename Encoding
 
 Defaults intentionally admit one common provider credential to the whole agent,
 including its tools. Selecting an unavailable provider or needing several
@@ -222,10 +267,12 @@ providers requires an explicit agent file or a changed `pick` order. Existing
 deployments that rely on full inheritance, process-over-dotenv precedence, or
 home dotenv hot reload need migration and restart.
 
-**Reserved: path/ref/URL filename encoding.** Define the exact reversible,
-readable codec separately before implementing nonresident root-file lookup.
-Its contract must preserve resident names, operate on standardized stable
-identities, and specify escaping, case/Unicode handling, filename limits, and
-invalid/colliding names. This plan deliberately chooses no slug, hash, or other
-encoding algorithm. Complete that section and obtain definition approval before
-shipping the corresponding implementation.
+Use the approved [Flat Name Encoding contract](readable-filename-codec.md)
+without additional URL decoding or case normalization. Source parsing owns
+identity standardization; encoding consumes its result. Retain the full encoded
+identity without truncation, hashing, or an external mapping. Filenames exceeding
+the filesystem's component limit use the local or automatic fallback;
+other lookup/read errors fail resolution. Redact HTTP source filenames in
+diagnostics and omit visiting identity from selection logs, since reversible
+encoding can expose URL credentials. Case-distinct identities can share a file
+on case-insensitive filesystems, as accepted by the codec contract.

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import errno
+import os
 from pathlib import Path
 import subprocess
 from types import SimpleNamespace
@@ -19,6 +20,12 @@ from toolang.common.layout import AgentLayout, AgentPlacement
 from toolang.cli.common.context import CliContext
 import toolang.cli.toolang.commands.cd as cd_command
 import toolang.cli.toolang.main as cli
+
+
+@pytest.fixture(autouse=True)
+def isolated_shell_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Shell assertions must never capture credentials from the test runner.
+    monkeypatch.setattr(os, "environ", {"PATH": "/usr/bin:/bin", "HOME": "/test/home"})
 
 
 class _Stream:
@@ -143,7 +150,8 @@ def test_cd_opens_root_without_an_agent_and_respects_root_precedence(
     assert [kwargs["cwd"].resolve() for _, kwargs in calls] == [*roots, roots[2]]
     assert all(
         args == ["/custom/shell", "-i"]
-        and kwargs == {"cwd": kwargs["cwd"], "check": False}
+        and kwargs["check"] is False
+        and kwargs["env"]["ROOT_ONLY"] == "secret"
         for args, kwargs in calls
     )
     assert all(not (root / "agents").exists() for root in roots)
@@ -187,7 +195,12 @@ def test_cd_path_display_failure_preserves_shell_launch(
 
     cd_command.cd(context)
 
-    assert calls == [(["/custom/shell", "-i"], {"cwd": directory, "check": False})]
+    assert calls == [
+        (
+            ["/custom/shell", "-i"],
+            {"cwd": directory, "check": False, "env": dict(os.environ)},
+        )
+    ]
     output = capsys.readouterr()
     assert f": {directory}\nType exit to return.\n" in output.out
     assert output.err == ""
@@ -262,7 +275,7 @@ def test_cd_rejects_unsupported_targets_without_launching(
 
 
 @pytest.mark.parametrize("agent_first", [False, True])
-def test_cd_uses_root_selection_and_inherits_the_process_environment(
+def test_cd_uses_root_selection_and_filtered_agent_environment(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, agent_first: bool
 ) -> None:
     environment_root = tmp_path / "environment-root"
@@ -298,7 +311,21 @@ def test_cd_uses_root_selection_and_inherits_the_process_environment(
         explicit_home,
     ]
     assert all(kwargs["check"] is False for _args, kwargs in calls)
-    assert all("env" not in kwargs for _args, kwargs in calls)
+    assert [kwargs["env"] for _args, kwargs in calls] == [
+        {"PATH": "/usr/bin:/bin", "HOME": "/test/home", "SHELL": "/custom/shell"},
+        {
+            "PATH": "/usr/bin:/bin",
+            "HOME": "/test/home",
+            "SHELL": "/custom/shell",
+            "AGENT_ONLY": "secret",
+        },
+        {
+            "PATH": "/usr/bin:/bin",
+            "HOME": "/test/home",
+            "SHELL": "/custom/shell",
+            "AGENT_ONLY": "secret",
+        },
+    ]
     assert all(
         not {"stdin", "stdout", "stderr"}.intersection(kwargs)
         for _args, kwargs in calls
@@ -330,7 +357,9 @@ def test_cd_falls_back_to_sh_when_shell_is_unset(
 
     cd_command.cd(context)
 
-    assert calls == [(["/bin/sh", "-i"], {"cwd": home, "check": False})]
+    assert calls == [
+        (["/bin/sh", "-i"], {"cwd": home, "check": False, "env": dict(os.environ)})
+    ]
 
 
 @pytest.mark.parametrize(
@@ -466,9 +495,18 @@ def test_cd_prepares_nonresident_home_and_reuses_it(
     assert cli.main([selector, "cd"]) == 0
     assert cli.main([selector, "cd", "--"]) == 0
 
-    assert (
-        calls == [(["/custom/shell", "-i"], {"cwd": layout.home, "check": False})] * 2
-    )
+    assert len(calls) == 2
+    for args, kwargs in calls:
+        assert args == ["/custom/shell", "-i"]
+        assert kwargs == {
+            "cwd": layout.home,
+            "check": False,
+            "env": {
+                "PATH": "/usr/bin:/bin",
+                "HOME": "/test/home",
+                "SHELL": "/custom/shell",
+            },
+        }
     assert not (tmp_path / "unrelated").exists()
     if selector_kind == "roaming":
         assert not layout.runtime.exists()

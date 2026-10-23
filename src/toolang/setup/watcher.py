@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections import Counter
 from collections.abc import AsyncIterator, Mapping, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 import logging
 from pathlib import Path
@@ -69,7 +69,7 @@ _LOCAL_CATALOG_ENV = frozenset(
 class _LoadedInputs:
     sources: tuple[ConfigSource, ...]
     configs: tuple[dict[str, object], ...]
-    envs: dict[str, str]
+    envs: dict[str, str] = field(repr=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,11 +107,19 @@ class SetupWatcher:
         compact_override: ModelOverride | None = None,
         agent_context: bool = True,
         validate_defaults: bool = True,
+        environ: Mapping[str, str] | None = None,
     ) -> None:
         self.layout = layout
         self._sandbox = sandbox
         self._agent_context = agent_context
         self._validate_defaults = validate_defaults
+        self._environ = dict(
+            environ
+            if environ is not None
+            else load_setup_envs(layout)
+            if agent_context
+            else load_place_setup_envs(layout)
+        )
         self._model_catalog_override = model_catalog
         self._allow_overrides = dict(allow_overrides or {})
         self._default_overrides = dict(default_overrides or {})
@@ -308,11 +316,7 @@ class SetupWatcher:
         return _LoadedInputs(
             sources=sources,
             configs=tuple(source.config for source in sources),
-            envs=dict(
-                load_setup_envs(self.layout)
-                if self._agent_context
-                else load_place_setup_envs(self.layout)
-            ),
+            envs=dict(self._environ),
         )
 
     def _runtime_catalog_configs(

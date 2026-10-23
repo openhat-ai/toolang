@@ -8,6 +8,27 @@ import subprocess
 import sys
 
 
+# Only native runtime variables may survive the container/entrypoint boundary.
+# User-defined keep names apply to host inheritance, never to this allowlist.
+_BASE_ENV_NAMES = (
+    "PATH",
+    "HOME",
+    "USER",
+    "LOGNAME",
+    "SHELL",
+    "LANG",
+    "LC_ALL",
+    "LC_CTYPE",
+    "TZ",
+    "TMPDIR",
+    "TMP",
+    "TEMP",
+    "TERM",
+    "COLORTERM",
+    "NO_COLOR",
+)
+
+
 def load_generated_dotenv(path: Path) -> dict[str, str]:
     """Read the restricted dotenv format without shell evaluation."""
 
@@ -212,8 +233,17 @@ def main() -> None:
         raise ValueError("docker guest command is missing")
 
     hostname = os.environ["HOSTNAME"]
-    environ = dict(os.environ)
+    environ = {name: os.environ[name] for name in _BASE_ENV_NAMES if name in os.environ}
     environ.update(load_generated_dotenv(guest_env))
+    for name in (
+        "TOOLANG_HOST_GATEWAY",
+        "TOOLANG_ROOT",
+        "TOOLANG_SANDBOX",
+        "TOOLANG_WORKSPACE_MOUNTS",
+        "TOOLANG_WORKSPACE_LOCATION",
+    ):
+        if name in os.environ:
+            environ[name] = os.environ[name]
     environ["HOSTNAME"] = hostname
     environ["TOOLANG_SANDBOX_INSTANCE"] = hostname
     for name in (

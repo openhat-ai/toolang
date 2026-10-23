@@ -33,6 +33,16 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   in the root footer.
   ([#921](https://github.com/openhat-ai/toolang/pull/921))
 
+- Root and agent environments resolve exact-name keep and ordered pick lists
+  from `ROOT/config.toml`, keeping secret values in `.env` and agent dotenv
+  files installed before plugin factories run.
+  ([#940](https://github.com/openhat-ai/toolang/pull/940))
+
+- Roaming and visiting agents read optional values from root dotenv files named
+  `.<encoded-source>.env`, keyed by the canonical source path or requested ref
+  or URL, while residents keep `ROOT/.<agent>.env`.
+  ([#940](https://github.com/openhat-ai/toolang/pull/940))
+
 ### Changed
 
 - `too AGENT chore list` shows complete `chore_<ID>` thread identities in its
@@ -295,9 +305,29 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 - `too AGENT info` titles use uppercase agent names while keeping placement
   codes unchanged, and place `Caps` directly after `Home`, before `Tools` and
   `Models`.
+  ([#939](https://github.com/openhat-ai/toolang/pull/939))
 
 - Help, `too AGENT info`, validation errors, logs, persisted runtime lists, and
   API schema enums order drivers as `chat`, `chore`, `talk`.
+  ([#939](https://github.com/openhat-ai/toolang/pull/939))
+
+- **Breaking:** Agents no longer inherit the caller's full environment, so list
+  required extra names in their dotenv file, such as `ROOT/.name.env`, and
+  restart running servers. Process values no longer override dotenv assignments,
+  and dotenv edits need a restart.
+  ([#940](https://github.com/openhat-ai/toolang/pull/940))
+
+- **Breaking:** Docker guests keep native `PATH`, `HOME`, and locale values and
+  receive only the selected API credential or explicit agent dotenv bindings,
+  so move guest-only dependencies previously admitted through `keep` into an
+  agent dotenv file. Missing runtime defaults must come from images or
+  entrypoints.
+  ([#940](https://github.com/openhat-ai/toolang/pull/940))
+
+- Automatic provider credentials recognize 31 names and choose alphabetically
+  when several exist; set `[env].pick` in `ROOT/config.toml` to keep a
+  preferred order.
+  ([#940](https://github.com/openhat-ai/toolang/pull/940))
 
 ### Fixed
 
@@ -522,6 +552,19 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   longer conversation topics stay visible in terminal tabs.
   ([#941](https://github.com/openhat-ai/toolang/pull/941))
 
+- Roaming and visiting commands no longer fail when a flattened source path or
+  URL exceeds the filesystem's component limit.
+  ([#940](https://github.com/openhat-ai/toolang/pull/940))
+
+- Startup rejects selected dotenv files that are not regular files instead of
+  opening a FIFO and blocking, and installs the scoped environment before
+  selection diagnostics.
+  ([#940](https://github.com/openhat-ai/toolang/pull/940))
+
+- Restricted agent environments keep configured CORS origins and custom Web UI
+  URLs for foreground, detached, and Docker server startup.
+  ([#940](https://github.com/openhat-ai/toolang/pull/940))
+
 ### Security
 
 - The locked certifi trust store advances to 2026.10.19, resolving trust-store
@@ -532,6 +575,11 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   `tracestate` header parsing to remove a quadratic CPU cost tracked as
   CVE-2026-114603.
   ([#932](https://github.com/openhat-ai/toolang/pull/932))
+
+- HTTP source credentials are redacted from displayed environment filenames,
+  selection logs, reprs, and low-level exception context, while exact matching
+  and on-disk encoded filenames stay unchanged.
+  ([#940](https://github.com/openhat-ai/toolang/pull/940))
 
 ## [0.4.0a11] - 2026-10-20
 

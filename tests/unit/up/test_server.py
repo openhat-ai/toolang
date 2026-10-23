@@ -352,6 +352,8 @@ def test_serve_argv_contains_only_server_inputs(tmp_path: Path) -> None:
             "time": None,
         },
         log_spec="toolang.up=debug",
+        cors_allowed_origins=(),
+        ui_base_url="https://ui.example",
     )
 
     argv = build_serve_argv(
@@ -375,6 +377,8 @@ def test_serve_argv_contains_only_server_inputs(tmp_path: Path) -> None:
     assert _option_values(argv, "--store-schema") == ["63"]
     assert "--sandbox-child" not in argv
     assert _option_values(argv, "--compact-model") == ["ref=test/compact effort=low"]
+    assert _option_values(argv, "--cors-allowed-origins") == ["[]"]
+    assert _option_values(argv, "--ui-base-url") == ["https://ui.example"]
     assert _option_values(argv, "--allow") == [
         "models=openai/gpt-5",
         "tools=none",
@@ -633,3 +637,30 @@ def test_server_owns_statistics_and_joins_worker_before_closing_source(
     )
     assert server.serve(spec, environ={}, sandbox="host", location="guest") == 0
     core.close.assert_awaited_once()
+
+
+def test_server_installs_supplied_environment_before_core_loading(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("PRIVATE_SENTINEL", "excluded")
+    layout = AgentLayout.resident(tmp_path, "alice")
+    spec = server.ServeSpec(
+        layout=layout, host="127.0.0.1", endpoint_host="localhost", port=8123
+    )
+    supplied = {"TOKEN": "startup", "TOOLANG_ROOT": "/spoofed"}
+    before = dict(os.environ)
+    observed = []
+
+    def run(spec, *, environ, **_kwargs):
+        assert dict(os.environ) == environ
+        assert "PRIVATE_SENTINEL" not in environ
+        assert environ["TOOLANG_ROOT"] == str(tmp_path)
+        assert environ["TOOLANG_WORKSPACE_LOCATION"] == "host"
+        observed.append(environ["TOKEN"])
+        return 0
+
+    monkeypatch.setattr(server, "_serve_captured", run)
+    assert server.serve(spec, environ=supplied, sandbox="host") == 0
+    assert supplied == {"TOKEN": "startup", "TOOLANG_ROOT": "/spoofed"}
+    assert observed == ["startup"]
+    assert dict(os.environ) == before

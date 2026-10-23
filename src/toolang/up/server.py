@@ -88,6 +88,8 @@ class ServeSpec:
     )
     limit_overrides: Mapping[str, int | float | None] = field(default_factory=dict)
     compact_override: ModelOverride | None = None
+    cors_allowed_origins: tuple[str, ...] | None = None
+    ui_base_url: str | None = None
     log_spec: str | None = None
     workspace_additions: Mapping[str, str] = field(default_factory=dict)
     workdir: str | None = None
@@ -133,6 +135,8 @@ def resolve_serve(
     default_overrides: Mapping[str, ModelOverride | str | None] | None = None,
     limit_overrides: Mapping[str, int | float | None] | None = None,
     compact_override: ModelOverride | None = None,
+    cors_allowed_origins: tuple[str, ...] | None = None,
+    ui_base_url: str | None = None,
     log_spec: str | None = None,
     temporary_port: bool = False,
     workspace_additions: Mapping[str, str] | None = None,
@@ -167,6 +171,8 @@ def resolve_serve(
         default_overrides=dict(default_overrides or {}),
         limit_overrides=dict(limit_overrides or {}),
         compact_override=compact_override,
+        cors_allowed_origins=cors_allowed_origins,
+        ui_base_url=ui_base_url,
         log_spec=log_spec.strip()
         if isinstance(log_spec, str) and log_spec.strip()
         else None,
@@ -254,6 +260,12 @@ def build_serve_argv(
         command.extend(["--compact-model", format_model_body(spec.compact_override)])
     for name, value in spec.limit_overrides.items():
         command.extend(["--limit", f"{name}={_format_value(value)}"])
+    if spec.cors_allowed_origins is not None:
+        command.extend(
+            ["--cors-allowed-origins", json.dumps(spec.cors_allowed_origins)]
+        )
+    if spec.ui_base_url is not None:
+        command.extend(["--ui-base-url", spec.ui_base_url])
     if spec.log_spec is not None:
         command.extend(["--log", spec.log_spec])
     return tuple(command)
@@ -266,6 +278,54 @@ def serve(
     sandbox: str,
     launch_id: str | None = None,
     location: str = "host",
+) -> int:
+    from toolang.common.environment import (
+        EnvironmentPolicy,
+        ResolvedEnvironment,
+        current_environment,
+        environment_identity,
+        environment_scope,
+    )
+
+    active = current_environment()
+    environ = dict(environ)
+    environ.update(
+        {
+            "TOOLANG_ROOT": str(
+                spec.toolang_root or spec.layout.root or spec.layout.place
+            ),
+            "TOOLANG_SANDBOX": sandbox,
+        }
+    )
+    if location == "host":
+        environ["TOOLANG_WORKSPACE_LOCATION"] = "host"
+        environ["TOOLANG_WORKSPACE_MOUNTS"] = "{}"
+    environment = ResolvedEnvironment(
+        spec.toolang_root or spec.layout.root or spec.layout.place,
+        active.policy if active is not None else EnvironmentPolicy(),
+        environ,
+        identity=environment_identity(spec.layout),
+        source=active.source if active is not None else None,
+        picked=active.picked if active is not None else None,
+        guest_values=active.guest_values if active is not None else environ,
+    )
+    with environment_scope(environment):
+        return _serve_captured(
+            spec,
+            environ=environ,
+            sandbox=sandbox,
+            launch_id=launch_id,
+            location=location,
+        )
+
+
+def _serve_captured(
+    spec: ServeSpec,
+    *,
+    environ: Mapping[str, str],
+    sandbox: str,
+    launch_id: str | None,
+    location: str,
 ) -> int:
     """Retry automatic host binds only after releasing each failed generation."""
     owns_control = location == "host" and not (launch_id or spec.launch_id)
@@ -397,6 +457,7 @@ def _serve_once(
         )
         core = AgentCore(
             spec.layout,
+            environ=environ,
             lifecycle=lifecycle,
             drivers=spec.drivers,
             sandbox=sandbox,
@@ -418,9 +479,11 @@ def _serve_once(
             workdir=spec.workdir,
             inherit_thread_workdir=False,
         )
-        cors_allowed_origins = resolve_cors_allowed_origins(
-            load_setup_config(spec.layout),
-            environ=environ,
+        web_config = load_setup_config(spec.layout)
+        cors_allowed_origins = (
+            spec.cors_allowed_origins
+            if spec.cors_allowed_origins is not None
+            else resolve_cors_allowed_origins(web_config, environ=environ)
         )
         started_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
@@ -560,8 +623,9 @@ def _serve_once(
         app.state.shutdown_signal = shutdown_signal
         webui_url = _runtime_webui_url(
             spec.endpoint,
-            config=load_setup_config(spec.layout),
+            config=web_config,
             environ=environ,
+            base_url=spec.ui_base_url,
         )
         _run_uvicorn_app(
             app,
@@ -805,12 +869,13 @@ def _runtime_webui_url(
     *,
     config: Mapping[str, object],
     environ: Mapping[str, str],
+    base_url: str | None = None,
 ) -> str:
     try:
         port = urlsplit(endpoint).port
     except ValueError:
         port = None
-    base_url = resolve_ui_base_url(config, environ=environ).rstrip("/")
+    base_url = (base_url or resolve_ui_base_url(config, environ=environ)).rstrip("/")
     return base_url if port is None else f"{base_url}/{port}"
 
 

@@ -540,6 +540,12 @@ def test_public_dual_orders_bind_the_same_selector(
     from importlib import import_module
 
     owner = import_module(f"toolang.cli.toolang.commands.{module}")
+    # This test isolates native binding; invocation policy resolves live addresses.
+    from contextlib import nullcontext
+
+    monkeypatch.setattr(
+        "toolang.cli.common.context.command_environment", lambda _ctx: nullcontext()
+    )
     monkeypatch.chdir(tmp_path)
     selector = selector.format(root=tmp_path)
     seen = []

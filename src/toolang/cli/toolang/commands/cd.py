@@ -38,7 +38,9 @@ def cd(
     typer.echo(f"Opening a shell in {destination}: {display_path}")
     typer.echo("Type exit to return.")
     try:
-        result = subprocess.run([executable, "-i"], cwd=directory, check=False)
+        result = subprocess.run(
+            [executable, "-i"], cwd=directory, check=False, env=dict(os.environ)
+        )
     except OSError as exc:
         raise ClickException(f"could not start shell {executable!r}: {exc}") from exc
 

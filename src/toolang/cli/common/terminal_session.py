@@ -13,7 +13,7 @@ from toolang.cli.config import resolve_title_prefix
 from toolang.common.config_sources import ConfigSource, config_sources, read_config
 from toolang.common.layout import AgentLayout
 
-from .context import load_root_environ, load_runtime_environ, user_call
+from .context import load_root_environ, load_runtime_environ, startup_environ, user_call
 from .terminal_title import TerminalTitle
 from .tmux import PaneMarks
 
@@ -121,7 +121,7 @@ def prepare_terminal(
         resolve_title_prefix,
         kind,
         sources=sources,
-        environment=environ,
+        environment=startup_environ({**process, **environ}),
     )
     output = stream if stream is not None else sys.stdout
     enabled = (
@@ -133,7 +133,7 @@ def prepare_terminal(
         enabled=enabled,
         stream=output,
         marks=PaneMarks(
-            environment=process,
+            environment=startup_environ(process),
             fields={
                 "kind": kind,
                 "root": str(root.resolve()),

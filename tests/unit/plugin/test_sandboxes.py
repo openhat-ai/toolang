@@ -196,7 +196,7 @@ def _request(
             "HTTP_PROXY": "http://proxy.test:8080",
             "LITERAL": "${HOME}/literal",
             "OPENAI_API_KEY": "provider-secret",
-            "UNRELATED_HOST_SECRET": "must-not-be-exposed",
+            "AUTHORIZED_CUSTOM_KEY": "admitted-by-caller",
             "TOOLANG_HOST_GATEWAY": "wrong-gateway",
             "TOOLANG_ROOT": str(root),
             "TOOLANG_SANDBOX": "host",
@@ -546,12 +546,14 @@ def test_docker_sandbox_prepares_and_launches(
         "HTTP_PROXY": "http://proxy.test:8080",
         "LITERAL": "${HOME}/literal",
         "OPENAI_API_KEY": "provider-secret",
+        "AUTHORIZED_CUSTOM_KEY": "admitted-by-caller",
     }
     guest_env_source = guest_env_mount.local_path.read_text(encoding="utf-8")
-    assert guest_env_source.startswith("# Agent root and home dotenv values\n")
-    assert "\n# Filtered host process values\n" in guest_env_source
+    assert guest_env_source.startswith("# Explicit sandbox bindings\n")
+    assert "\n# Resolved workload values\n" in guest_env_source
     assert guest_env_source.count("OPENAI_API_KEY=") == 2
-    assert "UNRELATED_HOST_SECRET" not in guest_env_source
+    # Direct sandbox callers supply an already selected environment.
+    assert "AUTHORIZED_CUSTOM_KEY" in guest_env_source
     assert stat.S_IMODE(guest_env_mount.local_path.stat().st_mode) == 0o600
     stage_dir = Path(cast(str, plan.meta["stage_dir"]))
     diagnostic_path = Path(cast(str, plan.meta["diagnostic_path"]))
@@ -838,7 +840,11 @@ def test_docker_guest_reuses_uv_and_preserves_generated_environment(
             "LITERAL": "${HOME}/`literal`\\tail",
             "MULTILINE": "first\nsecond\rthird",
         },
-        process_envs={"LITERAL": "process ${HOME}"},
+        process_envs={
+            "LITERAL": "process ${HOME}",
+            "TOOLANG_TEST_INSTALL_ENV_LOG": str(tmp_path / "install-env"),
+            "TOOLANG_TEST_TOO": str(tools / "too-template"),
+        },
     )
     diagnostic = tmp_path / "diagnostic.log"
     diagnostic.touch()
@@ -860,7 +866,10 @@ def test_docker_guest_reuses_uv_and_preserves_generated_environment(
             "import json, os; print(json.dumps({"
             "'instance': os.environ['TOOLANG_SANDBOX_INSTANCE'], "
             "'literal': os.environ['LITERAL'], "
-            "'multiline': os.environ['MULTILINE']}))",
+            "'multiline': os.environ['MULTILINE'], "
+            "'home': os.environ['HOME'], "
+            "'lang': os.environ['LANG'], "
+            "'image_secret': os.environ.get('IMAGE_SECRET')}))",
         ),
         check=False,
         capture_output=True,
@@ -871,6 +880,9 @@ def test_docker_guest_reuses_uv_and_preserves_generated_environment(
             "TOOLANG_TEST_PYTHON": sys.executable,
             "TOOLANG_TEST_INSTALL_ENV_LOG": str(tmp_path / "install-env"),
             "TOOLANG_TEST_TOO": str(tools / "too-template"),
+            "IMAGE_SECRET": "excluded-image-secret",
+            "HOME": str(tmp_path / "container-home"),
+            "LANG": "C",
             "TOOLANG_GUEST_RUNTIME": str(tmp_path / "runtime"),
         },
     )
@@ -880,6 +892,9 @@ def test_docker_guest_reuses_uv_and_preserves_generated_environment(
         "instance": _CONTAINER_ID[:12],
         "literal": "process ${HOME}",
         "multiline": "first\nsecond\rthird",
+        "home": str(tmp_path / "container-home"),
+        "lang": "C",
+        "image_secret": None,
     }
     assert completed.stderr.splitlines() == [
         "Using uv · test",
@@ -913,7 +928,15 @@ def test_docker_guest_uses_python_and_pip_to_install_uv(tmp_path: Path) -> None:
         "exit 1\n",
     )
     guest_env = tmp_path / "guest.env"
-    docker_guest.write_guest_env(guest_env, dotenv_envs={}, process_envs={})
+    docker_guest.write_guest_env(
+        guest_env,
+        dotenv_envs={},
+        process_envs={
+            "PATH": str(tools),
+            "TOOLANG_TEST_TOO": str(tools / "too-template"),
+            "TOOLANG_TEST_UV": str(driver),
+        },
+    )
     diagnostic = tmp_path / "diagnostic.log"
     diagnostic.touch()
     workload_log = tmp_path / "workload.log"
@@ -1693,3 +1716,27 @@ def test_docker_preserves_already_mounted_catalog_input(tmp_path, shadowed):
     assert dotenv_values(env_mount.local_path, interpolate=False)[
         MODEL_CATALOG_ENV
     ] == str(mounted.hosted_path)
+
+
+def test_docker_stages_only_resolved_agent_values(tmp_path):
+    from toolang.common.environment import (
+        resolve_root_environment,
+        resolve_agent_environment,
+    )
+
+    (tmp_path / ".env").write_text("ADMITTED=central\n")
+    (tmp_path / ".alice.env").write_text("EXCLUDED\nADMITTED\n")
+    shell = {"EXCLUDED": "synthetic-excluded", "OPENAI_API_KEY": "synthetic-excluded"}
+    environment = resolve_agent_environment(
+        resolve_root_environment(tmp_path, shell),
+        AgentLayout.resident(tmp_path, "alice"),
+    )
+    request = replace(_request(tmp_path), envs=dict(environment.values), dotenv_envs={})
+    plan = create_sandbox("docker", config={}).prepare(None, request)
+    mount = next(
+        item for item in plan.mounts if item.hosted_path == request.hosted_home / ".env"
+    )
+    assert dotenv_values(mount.local_path, interpolate=False) == {"ADMITTED": "central"}
+    assert "synthetic-excluded" not in mount.local_path.read_text()
+    assert "central" not in repr(plan)
+    assert "central" not in json.dumps(plan.meta)

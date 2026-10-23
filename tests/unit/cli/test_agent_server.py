@@ -1162,7 +1162,7 @@ def test_inactive_launch_wraps_environment_errors(
     layout = AgentLayout.resident(tmp_path, "alice")
     monkeypatch.setattr(
         agent_server,
-        "load_runtime_environ",
+        "load_runtime_environment",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(
             OSError("could not read dotenv")
         ),
@@ -1184,6 +1184,8 @@ def test_inactive_launch_uses_fresh_environment_and_file_logging(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from toolang.common.environment import EnvironmentPolicy, ResolvedEnvironment
+
     layout = AgentLayout.resident(tmp_path, "alice")
     catalog = tmp_path / "models.json"
     development = tmp_path / "toolang.whl"
@@ -1193,17 +1195,22 @@ def test_inactive_launch_uses_fresh_environment_and_file_logging(
         selected: AgentLayout,
         *,
         base_environ: object,
-    ) -> dict[str, str]:
+    ) -> ResolvedEnvironment:
         assert selected == layout
         assert base_environ == {"PROCESS": "value"}
-        return {
-            "PROCESS": "value",
-            "DOTENV": "agent",
-            "TOOLANG_ALLOW_MODELS": "test/*",
-            "TOOLANG_DEFAULT_MODEL": "test/chat effort=high",
-            "TOOLANG_LIMIT_TOKENS": "12000",
-            "TOOLANG_COMPACT_MODEL": "test/compact effort=low",
-        }
+        return ResolvedEnvironment(
+            tmp_path,
+            EnvironmentPolicy(),
+            {
+                "PROCESS": "value",
+                "DOTENV": "agent",
+                "TOOLANG_ALLOW_MODELS": "test/*",
+                "TOOLANG_DEFAULT_MODEL": "test/chat effort=high",
+                "TOOLANG_LIMIT_TOKENS": "12000",
+                "TOOLANG_COMPACT_MODEL": "test/compact effort=low",
+            },
+            guest_values={"DOTENV": "agent"},
+        )
 
     def logging_plan(**kwargs: object) -> LoggingPlan:
         captured["logging"] = kwargs
@@ -1218,7 +1225,7 @@ def test_inactive_launch_uses_fresh_environment_and_file_logging(
         captured["launch"] = kwargs
         return SimpleNamespace(sandbox="docker")
 
-    monkeypatch.setattr(agent_server, "load_runtime_environ", load_environ)
+    monkeypatch.setattr(agent_server, "load_runtime_environment", load_environ)
     monkeypatch.setattr(startup, "resolve_agent_logging", logging_plan)
     monkeypatch.setattr(agent_server.sandbox_runtime, "resolve_launch", resolve_launch)
 
@@ -1260,8 +1267,11 @@ def test_inactive_launch_uses_fresh_environment_and_file_logging(
         "output": "file",
         "log_path": layout.runtime_log,
         "log_spec": "error",
+        "cors_allowed_origins": (),
+        "ui_base_url": "https://too.run",
         "temporary_port": False,
-        "environ": {"LOGGED": "yes"},
+        "environ": captured["logging"]["environ"],
+        "guest_environ": {"DOTENV": "agent"},
         "ceiling_overrides": {"models": ("test/*",)},
         "default_overrides": {
             "model": ModelOverride(identity="test/chat", effort="high")

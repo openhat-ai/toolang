@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
+from contextlib import contextmanager
+from contextvars import ContextVar
 import os
+import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any
 
-from dotenv import dotenv_values
 import typer
 from typer._click import Context
 from typer._click.exceptions import ClickException
@@ -17,6 +19,14 @@ from ...catalog.agent import LocalAgents
 from ...common.errors import ToolangError
 from ...common.config import resolve_ui_base_url
 from ...common.layout import AgentLayout
+from ...common.environment import (
+    ResolvedEnvironment,
+    current_environment,
+    environment_identity,
+    environment_scope,
+    resolve_agent_environment,
+    resolve_root_environment,
+)
 from ..config import load_config
 from ...catalog.errors import CatalogError
 from .help import show_help
@@ -25,6 +35,69 @@ if TYPE_CHECKING:
     from toolang.up.addresses import AgentAddress
     from toolang.common.progress import ProgressSink
     from toolang.up.source import AgentTarget
+
+
+# Controller settings are parsed by CLI call sites, never added to a workload.
+_STARTUP_NAMES = frozenset(
+    {
+        "TOOLANG_MODEL_CATALOG",
+        "TOOLANG_AGENT_PORT",
+        "PY_LOG",
+        "TOOLANG_UI_BASE_URL",
+        "TOOLANG_WEBUI_BASE_URL",
+        "TOOLANG_CORS_ALLOWED_ORIGINS",
+        "TOOLANG_CORS_ORIGINS",
+        "TOOLANG_COMPACT_MODEL",
+        "TOOLANG_DEFAULT_MODEL",
+        "TOOLANG_PROGRESS_MAX_WIDTH",
+        "TOOLANG_INPUTBOX_MAX_WIDTH",
+        "TOOLANG_COLOR_SCHEME",
+        "TOOLANG_TMUX",
+        "TOOLANG_TMUX_DEBUG",
+        "TMUX",
+        "TMUX_PANE",
+        "COLUMNS",
+        "LINES",
+        *(
+            f"TOOLANG_ALLOW_{name}"
+            for name in ("MODELS", "TOOLS", "PSYCHES", "SKILLS", "SERVICES", "PROMPTS")
+        ),
+        *(
+            f"TOOLANG_LIMIT_{name}"
+            for name in (
+                "AGIC_MODEL_CALLS",
+                "AGIC_TOOL_CALLS",
+                "TOKENS",
+                "COST",
+                "TIME",
+            )
+        ),
+        *(
+            f"TOOLANG_TITLE_PREFIX_{name}"
+            for name in ("CHAT", "TALK", "TOP", "SERVE", "RUN", "RERUN", "RETRY")
+        ),
+    }
+)
+_STARTUP: ContextVar[Mapping[str, str]] = ContextVar("toolang_startup", default={})
+
+
+def startup_environ(environ: Mapping[str, str]) -> dict[str, str]:
+    """Read captured controller inputs only while resolving concrete CLI settings."""
+    return {**_STARTUP.get(), **environ}
+
+
+def get_terminal_size(fallback: tuple[int, int] = (120, 24)) -> os.terminal_size:
+    """Keep controller terminal geometry out of the workload environment."""
+    detected = shutil.get_terminal_size(fallback=fallback)
+    settings = startup_environ(os.environ)
+    dimensions = []
+    for name, default in zip(("COLUMNS", "LINES"), detected, strict=True):
+        try:
+            value = int(settings.get(name, "0"))
+        except ValueError:
+            value = 0
+        dimensions.append(value if value > 0 else default)
+    return os.terminal_size(dimensions)
 
 
 @dataclass(slots=True)
@@ -38,6 +111,8 @@ class CliContext:
     prepared: bool = False
     instance_selected: bool = False
     address: AgentAddress | None = None
+    root_environment: ResolvedEnvironment | None = field(default=None, repr=False)
+    shell_environment: Mapping[str, str] | None = field(default=None, repr=False)
 
 
 def target_context(root: Path, target: AgentTarget | Path | AgentAddress) -> CliContext:
@@ -78,6 +153,8 @@ def context_root(ctx: Context) -> Path:
 def resolve_model_catalog_option(value: Path | None) -> Path | None:
     """Resolve one command-level model catalog override."""
 
+    if value is None and (configured := _STARTUP.get().get("TOOLANG_MODEL_CATALOG")):
+        value = Path(configured)
     return value.expanduser().resolve(strict=False) if value is not None else None
 
 
@@ -164,6 +241,9 @@ def resolve_root(
 ) -> Path:
     if explicit is not None:
         return explicit.expanduser().resolve()
+    active = current_environment()
+    if environ is None and active is not None:
+        return active.root
     values = os.environ if environ is None else environ
     return (
         Path(values.get("TOOLANG_ROOT", str(Path.home() / ".toolang")))
@@ -173,10 +253,36 @@ def resolve_root(
 
 
 def ui_base_url(*, environ: Mapping[str, str] | None = None) -> str:
-    values = os.environ if environ is None else environ
-    root = resolve_root(None, environ=values)
+    values = startup_environ(os.environ if environ is None else environ)
+    root = resolve_root(None) if environ is None else resolve_root(None, environ=values)
     config = load_config(root / "config.toml")
     return resolve_ui_base_url(config, environ=values)
+
+
+def load_runtime_environment(
+    layout: AgentLayout,
+    *,
+    base_environ: Mapping[str, str],
+) -> ResolvedEnvironment:
+    """Resolve once at the command boundary; reuse an active startup snapshot."""
+    active = current_environment()
+    root = layout.root or (
+        layout.place
+        if layout.placement == "resident"
+        else resolve_root(None, environ=base_environ)
+    )
+    if (
+        active is not None
+        and active.root == root
+        and active.identity == environment_identity(layout)
+    ):
+        return active
+    parent = (
+        active
+        if active is not None and active.root == root and active.identity is None
+        else resolve_root_environment(root, base_environ)
+    )
+    return resolve_agent_environment(parent, layout)
 
 
 def load_runtime_environ(
@@ -184,12 +290,8 @@ def load_runtime_environ(
     *,
     base_environ: Mapping[str, str],
 ) -> dict[str, str]:
-    """Load place and home dotenv defaults below explicit process values."""
-
-    merged = {} if layout.project_inputs else _load_dotenv(layout.place_env)
-    if not layout.project_inputs:
-        merged.update(_load_dotenv(layout.env))
-    merged.update(base_environ)
+    """Read the host mapping from the invocation's resolved snapshot."""
+    merged = dict(load_runtime_environment(layout, base_environ=base_environ).values)
     if merged.get("TOOLANG_MODEL_CATALOG"):
         merged["TOOLANG_MODEL_CATALOG"] = str(
             Path(merged["TOOLANG_MODEL_CATALOG"]).expanduser().resolve()
@@ -198,18 +300,53 @@ def load_runtime_environ(
 
 
 def load_root_environ(root: Path, *, base_environ: Mapping[str, str]) -> dict[str, str]:
-    """Load root-only presentation defaults below the process environment."""
-    return {**_load_dotenv(root / ".env"), **base_environ}
+    """Resolve root defaults without selecting an agent or provider."""
+    active = current_environment()
+    if active is not None and active.root == root:
+        return dict(active.values)
+    return dict(resolve_root_environment(root, base_environ).values)
 
 
-def _load_dotenv(path: Path) -> dict[str, str]:
-    if not path.is_file():
-        return {}
-    return {
-        key: value
-        for key, value in dotenv_values(path, interpolate=False).items()
-        if isinstance(key, str) and isinstance(value, str)
+@contextmanager
+def command_environment(ctx: Context):
+    """Install the selected command's environment before invoking user plugins."""
+    state = ctx.obj
+    if not isinstance(state, CliContext) or ctx.info_name == "_serve":
+        yield
+        return
+    try:
+        root = state.root_environment or resolve_root_environment(
+            state.root,
+            state.shell_environment
+            if state.shell_environment is not None
+            else os.environ,
+        )
+        state.root_environment = root
+        selected = root
+        if (
+            state.agent is not None
+            or state.layout is not None
+            or state.address is not None
+        ):
+            selected = resolve_agent_environment(root, context_layout(ctx))
+    except (OSError, ValueError) as exc:
+        raise ClickException(str(exc)) from exc
+    settings = {
+        name: root.values[name] for name in _STARTUP_NAMES if name in root.values
     }
+    settings.update(
+        {
+            name: selected.values[name]
+            for name in _STARTUP_NAMES
+            if name in selected.values
+        }
+    )
+    token = _STARTUP.set(settings)
+    try:
+        with environment_scope(selected):
+            yield
+    finally:
+        _STARTUP.reset(token)
 
 
 def user_call(function: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:

@@ -75,6 +75,9 @@ def resolve_terminal_surfaces(
     if not math.isfinite(timeout) or not 0.01 <= timeout <= 3:
         raise ValueError("timeout must be between 0.01 and 3 seconds")
     environ = os.environ if environment is None else environment
+    from toolang.cli.common.context import startup_environ
+
+    environ = startup_environ(environ)
     configured = environ.get(COLOR_SCHEME_ENV, "").strip()
     if configured:
         return _configured_surfaces(configured)

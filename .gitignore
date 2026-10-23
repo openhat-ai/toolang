@@ -18,6 +18,7 @@ wheels/
 
 # Local secrets
 .env
+.*.env
 .sandbox/
 .toolang/
 
