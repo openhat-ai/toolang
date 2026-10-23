@@ -266,6 +266,12 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 - `info`, `chat`, `cd`, `start`, `stop`, and `serve` accept AGENT before or
   after the command, so both `too AGENT COMMAND` and `too COMMAND AGENT` work.
 
+- **Breaking:** Derived Agent State moves to per-format stores in
+  `<agent root>/.state/root/v24/`, `<home>/.state/home/v24/`, and
+  `<home>/.state/agent/v24/`; missing State rebuilds from authored inputs and
+  older caches are neither migrated nor loaded.
+  ([#932](https://github.com/openhat-ai/toolang/pull/932))
+
 ### Fixed
 
 - Failed preparation no longer leaves active registrations; runtime references
@@ -442,6 +448,11 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 - The locked certifi trust store advances to 2026.10.19, resolving trust-store
   vulnerability GHSA-6q48-6c7w-9gw2.
   ([#884](https://github.com/openhat-ai/toolang/pull/884))
+
+- The locked `opentelemetry-api` dependency advances to 1.45.1, bounding
+  `tracestate` header parsing to remove a quadratic CPU cost tracked as
+  CVE-2026-114603.
+  ([#932](https://github.com/openhat-ai/toolang/pull/932))
 
 ## [0.4.0a11] - 2026-10-20
 

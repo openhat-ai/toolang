@@ -11,6 +11,8 @@ import pytest
 from toolang.common.layout import AgentLayout
 from toolang.state import collections as state_collections
 from toolang.state import watcher as state_watcher
+from toolang.state.cache import agent_revision_dir, state_root
+from toolang.state.format import AGENT_STATE_FORMAT
 from toolang.state.prepare import prepare_agent_state
 
 
@@ -98,6 +100,66 @@ def test_initial_state_timeout_hashes_once_without_preparing_again(
         ]
 
         assert observed == []
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("legacy", [False, True])
+def test_foreign_state_activity_is_ignored_until_authored_source_changes(
+    tmp_path, monkeypatch, legacy
+):
+    layout = AgentLayout.resident(tmp_path, "alice")
+    layout.home.mkdir(parents=True)
+    layout.program.write_text("flow work():\n  pass\n")
+    prompt = layout.place / "prompts/style.md"
+    prompt.parent.mkdir()
+    prompt.write_text("First style.\n")
+    watcher = state_watcher.StateWatcher(layout)
+
+    async def run():
+        first = await watcher.refresh()
+        prepare = state_watcher.prepare_agent_state
+        calls = []
+
+        def counted_prepare(*args, **kwargs):
+            calls.append(True)
+            return prepare(*args, **kwargs)
+
+        async def foreign_then_source(*_args, **_kwargs):
+            for anchor in (layout.place_state, layout.home_state, layout.agent_state):
+                foreign = anchor if legacy else anchor / f"v{AGENT_STATE_FORMAT + 1}"
+                foreign.mkdir(parents=True, exist_ok=True)
+                current = foreign / "current"
+                current.write_text("a" * 64)
+                yield {(state_watcher.Change.modified, str(current))}
+                yield set()
+                assert calls == []
+                assert watcher.current() is first
+            layout.program.write_text("# Changed\nflow work():\n  pass\n")
+            prompt.write_text("Changed style.\n")
+            yield {
+                (state_watcher.Change.modified, str(layout.program)),
+                (state_watcher.Change.modified, str(prompt)),
+            }
+            yield set()
+
+        monkeypatch.setattr(state_watcher, "prepare_agent_state", counted_prepare)
+        monkeypatch.setattr(state_watcher, "awatch", foreign_then_source)
+        observed = [
+            state async for state in watcher.updates(stop_signal=asyncio.Event())
+        ]
+        assert len(observed) == 1
+        assert len(calls) == 1
+        changed = observed[0]
+        assert changed.root_revision != first.root_revision
+        assert changed.home_revision != first.home_revision
+        assert changed.revision != first.revision
+        stores = (
+            state_root(layout, "root"),
+            state_root(layout, "home"),
+            agent_revision_dir(layout, changed.revision).parent.parent,
+        )
+        assert all(len(list((store / "revs").iterdir())) == 2 for store in stores)
 
     asyncio.run(run())
 

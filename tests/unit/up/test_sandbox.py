@@ -21,6 +21,7 @@ from toolang.base.types.sandbox import (
 )
 from toolang.common.layout import AgentLayout
 from toolang.state import prepare as state_prepare
+from toolang.state.cache import agent_current_path
 from toolang.up import sandbox
 from toolang.up.instance import SandboxState
 from toolang.up import process as process_runtime
@@ -1415,7 +1416,7 @@ def test_launch_prepares_state_once_before_workload_with_state_overrides(
 
     async def launch(plan):
         assert len(captured) == 1
-        assert spec.serve.layout.agent_state.joinpath("current").exists()
+        assert agent_current_path(spec.serve.layout).exists()
         return await original_launch(plan)
 
     async def ready(*_args, **_kwargs):

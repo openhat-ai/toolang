@@ -19,6 +19,7 @@ from toolang.common.layout import AgentLayout
 from toolang.execution.tools.state.handlers import execute
 from toolang.execution.tools.state.schemas import ResourceRequest
 from toolang.execution.tools.state.types import StateToolContext
+from toolang.state.cache import _agent_publish_lock_path, layer_build_lock_path
 from toolang.state.config import ConfiguredWorkspaces
 from toolang.state.prepare import prepare_agent_state
 from toolang.state.watcher import StateWatcher
@@ -416,9 +417,9 @@ def test_watcher_ignores_edit_lock_and_lock_activity_keeps_revision(tmp_path):
                 timeout=10
             )
     assert refreshed.revision == initial.revision
-    assert (layout.place_state / "build.lock").is_file()
-    assert (layout.home_state / "build.lock").is_file()
-    assert (layout.agent_state / "publish.lock").is_file()
+    assert layer_build_lock_path(layout, "root").is_file()
+    assert layer_build_lock_path(layout, "home").is_file()
+    assert _agent_publish_lock_path(layout).is_file()
     assert not tuple(layout.place.rglob("prepare.lock"))
     assert not tuple(layout.place.rglob("check.lock"))
 

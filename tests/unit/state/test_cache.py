@@ -10,10 +10,14 @@ import pytest
 from toolang.common.layout import AgentLayout
 from toolang.lang.ast import Program, RepeatStmt, ReduceStmt, SortStmt
 from toolang.state.cache import (
+    _agent_publish_lock_path,
     _persist_agent_revision,
     _agent_publish_lock,
+    agent_current_path,
     agent_revision_dir,
     canonical_json,
+    layer_build_lock_path,
+    layer_current_path,
     layer_revision_dir,
     load_agent_revisions,
     load_current_agent_revision,
@@ -33,6 +37,27 @@ from toolang.state.state import agent_state_revision
 
 def _layout(root: Path) -> AgentLayout:
     return AgentLayout.resident(root, "alice")
+
+
+def test_state_stores_and_derived_locks_use_the_running_format(tmp_path):
+    layout = _layout(tmp_path)
+    version = f"v{AGENT_STATE_FORMAT}"
+    revision = "a" * 64
+    for scope, anchor in (("root", layout.place_state), ("home", layout.home_state)):
+        assert layer_current_path(layout, scope) == anchor / version / "current"
+        assert layer_build_lock_path(layout, scope) == anchor / version / "build.lock"
+        assert layer_revision_dir(layout, scope, revision) == (
+            anchor / version / "revs" / revision
+        )
+    assert agent_current_path(layout) == layout.agent_state / version / "current"
+    assert _agent_publish_lock_path(layout) == (
+        layout.agent_state / version / "publish.lock"
+    )
+    assert agent_revision_dir(layout, revision) == (
+        layout.agent_state / version / "revs" / revision
+    )
+    assert layout.place_edit_lock == layout.place_state / "edit.lock"
+    assert layout.home_edit_lock == layout.home_state / "edit.lock"
 
 
 def _write_root(layout: AgentLayout) -> str:
@@ -83,7 +108,10 @@ def test_layer_json_exact_bytes_are_the_revision(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("owner", ["root", "home", "agent"])
-@pytest.mark.parametrize("version", [22, 24, 23.0])
+@pytest.mark.parametrize(
+    "version",
+    [AGENT_STATE_FORMAT - 1, AGENT_STATE_FORMAT + 1, float(AGENT_STATE_FORMAT)],
+)
 def test_noncurrent_state_format_is_rejected_and_preparation_rebuilds(
     tmp_path: Path, owner: str, version: int | float
 ) -> None:
@@ -151,7 +179,7 @@ def test_agent_state_revision_round_trips_exact_layers(tmp_path: Path) -> None:
         {},
         load_agent_revisions(layout, revision)[-1],
     )
-    layers = layout.agent_state / "revs" / revision / "layers.json"
+    layers = agent_revision_dir(layout, revision) / "layers.json"
     assert sha256(layers.read_bytes()).hexdigest() == revision
     validate_agent_revision(layout, revision)
 
@@ -350,7 +378,7 @@ def test_republishing_current_revision_does_not_rewrite_pointer(
     layout = _layout(tmp_path)
     revision = _write_root(layout)
     publish_layer_current(layout, "root", revision)
-    current = layout.place_state / "current"
+    current = layer_current_path(layout, "root")
     inode = current.stat().st_ino
 
     publish_layer_current(layout, "root", revision)
