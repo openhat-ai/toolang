@@ -7,6 +7,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 import errno
+from hashlib import sha256
 import logging
 import os
 from pathlib import Path
@@ -245,12 +246,21 @@ def agent_environment_paths(
     if layout.placement == "roaming" and layout.source_path is not None:
         source_path = layout.source_path.resolve()
         return (
-            root / f".{encode_flatname(str(source_path))}.env",
+            _source_environment_path(root, str(source_path)),
             source_path.parent / ".toolang.env",
         )
     if layout.placement == "visiting" and layout.source_ref is not None:
-        return (root / f".{encode_flatname(layout.source_ref)}.env",)
+        return (_source_environment_path(root, layout.source_ref),)
     return ()
+
+
+def _source_environment_path(root: Path, source: str) -> Path:
+    name = f".{encode_flatname(source)}.env"
+    # Keep policy filenames usable on both supported hosts and Linux guests.
+    if len(name) > 255:  # FN Encoding produces ASCII only.
+        digest = sha256(source.encode("utf-8", errors="surrogatepass")).hexdigest()
+        name = f".source-{digest}.env"
+    return root / name
 
 
 def resolve_agent_environment(

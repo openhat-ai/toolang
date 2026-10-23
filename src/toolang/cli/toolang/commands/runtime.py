@@ -647,17 +647,14 @@ def serve(
     for name in RUNTIME_ENV_NAMES:
         environ.pop(name, None)
     environ.update(controls)
-    bin_dir = str(Path(sys.argv[0]).absolute().parent)
-    environ["PATH"] = os.pathsep.join(
-        [
-            bin_dir,
-            *(
-                part
-                for part in environ.get("PATH", "").split(os.pathsep)
-                if part != bin_dir
-            ),
-        ]
-    )
+    if location == "guest":
+        bin_dir = str(Path(sys.argv[0]).absolute().parent)
+        path = environ.get("PATH", "")
+        environ["PATH"] = os.pathsep.join(
+            [bin_dir, *(part for part in path.split(os.pathsep) if part != bin_dir)]
+            if path
+            else [bin_dir]
+        )
     if model_catalog := resolve_model_catalog_option(model_catalog):
         environ[MODEL_CATALOG_ENV] = str(model_catalog)
     environment = replace(selected, values=environ)

@@ -256,10 +256,10 @@ def test_shell_tool_child_receives_the_agent_snapshot(tmp_path):
     assert result.output["exit_code"] == 0
 
 
-@pytest.mark.parametrize("empty", [False, True])
+@pytest.mark.parametrize("path", [None, "", "/authorized/bin"])
 @pytest.mark.parametrize("placement", ["resident", "roaming", "visiting"])
 def test_guest_launch_uses_common_dotenv_priority_and_preserves_native_environment(
-    tmp_path, monkeypatch, shell_environment, empty, placement
+    tmp_path, monkeypatch, shell_environment, path, placement
 ):
     from dataclasses import replace
     from toolang.common.environment import agent_environment_paths, current_environment
@@ -289,10 +289,10 @@ def test_guest_launch_uses_common_dotenv_priority_and_preserves_native_environme
     selected_file = agent_environment_paths(root, layout)[0]
     values = (
         {}
-        if empty
+        if path is None
         else {
             "ADMITTED": '${HOME}/"literal"/\\tail\nnext',
-            "PATH": "/authorized/bin",
+            "PATH": path,
             "TOOLANG_ROOT": "/spoofed/root",
             "HOSTNAME": "spoofed",
             "TOOLANG_SANDBOX_INSTANCE": "spoofed",
@@ -373,8 +373,9 @@ def test_guest_launch_uses_common_dotenv_priority_and_preserves_native_environme
     assert env.get("ADMITTED") == values.get("ADMITTED")
     assert env["TOOLANG_ROOT"] == str(root)
     assert env["TOOLANG_SANDBOX"] == "docker:test"
-    assert env["PATH"] == "/runtime/bin:" + (
-        caller["PATH"] if empty else "/authorized/bin"
+    selected_path = caller["PATH"] if path is None else path
+    assert env["PATH"] == "/runtime/bin" + (
+        ":" + selected_path if selected_path else ""
     )
 
 
@@ -432,3 +433,30 @@ def test_host_serve_reduces_environment_with_an_authored_home_dotenv(
     assert "PRIVATE_SENTINEL" not in env
     assert "OPENAI_API_KEY" not in env
     assert "ANTHROPIC_API_KEY" not in env
+    assert env["PATH"] == caller["PATH"]
+
+
+@pytest.mark.parametrize("path", [None, "", "/authorized/bin"])
+@pytest.mark.parametrize("internal", [False, True])
+def test_host_serve_preserves_an_explicit_or_absent_path(
+    tmp_path, monkeypatch, shell_environment, path, internal
+):
+    from toolang.up import sandbox, server
+
+    root = tmp_path / "root"
+    LocalAgents(root / "agents").create("alice", content="")
+    (root / "config.toml").write_text('[env]\nkeep=["HOME"]\n')
+    (root / ".alice.env").write_text("" if path is None else f"PATH={path}\n")
+    observed = []
+
+    def captured(_spec, *, environ, **_kwargs):
+        observed.append(dict(environ))
+        return 0
+
+    monkeypatch.setattr(sandbox, "prepare_launch_state", lambda *_a, **_k: None)
+    monkeypatch.setattr(server, "_serve_captured", captured)
+    operands = ["_serve", "alice"] if internal else ["alice", "serve"]
+    result = CliRunner().invoke(app, ["--root", str(root), *operands])
+    assert result.exit_code == 0, (result.stderr, result.exception)
+    assert len(observed) == 1
+    assert observed[0].get("PATH") == path

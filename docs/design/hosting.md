@@ -199,19 +199,20 @@ environment_allow_pattern = '^(?:COMPANY_CATALOG_TOKEN|HTTPS?_PROXY)$'
 Docker always writes resolved guest values to mode-`0600` `guest.env`, including
 an empty result. It mounts that file read-only at the ordinary loader's
 highest-priority root policy path: `ROOT/.<name>.env` for residents, or the
-existing source-identity filename for roaming/visiting agents. The guest launch
-uses the same source selector and dotenv parser as the host, before plugin
-construction. File presence naturally disables fallback and `pick`. The complete
-home mount retains any authored `HOME/.env` without masking or modification;
-the loader does not merge it with the selected root file. The controller does
-not separately reload authored dotenv files for staging. Public sandbox requests
-retain the trusted `dotenv_envs` input, whose names bypass the optional pattern;
-resolved process bindings win on duplicate names in the generated file.
+shared [source-identity filename](setup.md#environments) for roaming/visiting
+agents. The guest launch uses the same source selector and dotenv parser as the
+host, before plugin construction. File presence naturally disables fallback and
+`pick`. The complete home mount retains any authored `HOME/.env` without masking
+or modification; the loader does not merge it with the selected root file. The
+controller does not separately reload authored dotenv files for staging. Public
+sandbox requests retain the trusted `dotenv_envs` input, whose names bypass the
+optional pattern; resolved process bindings win on duplicate names in the generated file.
 
 The guest preserves all native image/entrypoint environment variables, overlays
 the loaded bindings, and restores the finite launcher-owned control values.
 Host `keep` never removes image variables or automatically imports host
 `PATH`/`HOME`. Toolang prepends its private bin to the selected guest PATH.
+Host serving preserves the selected PATH, including an absent or empty value.
 Shell tools use `/bin/sh -c`, preserving that environment without login profiles.
 Setup refreshes, model calls, tools, and child processes reuse the startup
 snapshot; file edits take effect after restart.

@@ -18,6 +18,7 @@ this change.
 - For residents, `ROOT/.<name>.env` precedes `HOME/.env`. Preserve existing
   source-based root policy filenames for roaming and visiting agents. Compute
   host/guest paths at orchestration and carry source identity into `_serve`.
+  Encoded filenames over 255 bytes use `.source-<sha256>.env` on both sides.
 - Host processes receive the reduced environment before plugin construction.
   Docker receives only resolved guest grants and mapped workload bindings;
   host-only `keep` values are not staged automatically.
@@ -34,7 +35,8 @@ this change.
   `UV_UNMANAGED_INSTALL` settings never replace workload values. Bootstrap uses
   the image's environment for installation; host grants load with the agent.
 - Resolve internal executables by absolute paths and prepend the private
-  Toolang bin to the selected guest PATH. Shell tools use `/bin/sh -c`.
+  Toolang bin to the selected guest PATH without adding an empty component.
+  Preserve host PATH exactly. Shell tools use `/bin/sh -c`.
 - Model calls, setup refreshes, tools, and children share the captured final
   process environment. Authored file edits take effect after restart.
 

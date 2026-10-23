@@ -4,6 +4,7 @@ from toolang.common.environment import (
     DEFAULT_KEEP,
     DEFAULT_PICK,
     EnvironmentPolicy,
+    agent_environment_paths,
     apply_environment_file,
     current_environment,
     environment_scope,
@@ -553,6 +554,31 @@ def test_long_visiting_url_uses_automatic_policy(tmp_path, root_exists):
         root, AgentLayout.visiting(ref, "alice", root=root_path)
     )
     assert dict(agent.values) == {"OPENAI_API_KEY": "automatic"}
+
+
+@pytest.mark.parametrize("placement", ["roaming", "visiting"])
+@pytest.mark.parametrize("empty", [False, True])
+def test_long_source_root_policy_has_a_mountable_stable_filename(
+    tmp_path, placement, empty
+):
+    if placement == "roaming":
+        source = tmp_path / ("a" * 120) / ("b" * 120) / "alice.too"
+        source.parent.mkdir(parents=True)
+        source.touch()
+        layout = AgentLayout.roaming(source, root=tmp_path)
+    else:
+        ref = "https://example.invalid/alice.too?version=" + "a" * 300
+        layout = AgentLayout.visiting(ref, "alice", root=tmp_path)
+    policy = agent_environment_paths(tmp_path, layout)[0]
+    # The same filename must be creatable on both the host and Linux guest.
+    assert len(policy.name.encode()) <= 255
+    assert agent_environment_paths(tmp_path / "guest", layout)[0].name == policy.name
+    policy.write_text("" if empty else "ADMITTED=root\n")
+    agent = resolve_agent_environment(
+        resolve_root_environment(tmp_path, {"OPENAI_API_KEY": "excluded"}), layout
+    )
+    assert agent.source == policy
+    assert dict(agent.guest_values) == ({} if empty else {"ADMITTED": "root"})
 
 
 def test_source_url_credentials_are_private_in_environment_provenance(tmp_path, caplog):

@@ -196,7 +196,8 @@ def test_nonresident_launch_uses_selected_root_environment_and_cleans_reference(
     source_thread = threading.Thread(target=source_server.serve_forever, daemon=True)
     source_thread.start()
     if placement == "roaming":
-        source = tmp_path / "local.too"
+        source = tmp_path / ("a" * 120) / ("b" * 120) / "local.too"
+        source.parent.mkdir(parents=True)
         source.write_text(program)
         selector = str(source)
         layout = AgentLayout.roaming(
@@ -206,7 +207,10 @@ def test_nonresident_launch_uses_selected_root_environment_and_cleans_reference(
         )
         agent_sources.materialize_roaming_program(source, layout=layout)
     else:
-        selector = f"http://127.0.0.1:{source_server.server_port}/remote.too"
+        selector = (
+            f"http://127.0.0.1:{source_server.server_port}/remote.too?version="
+            + "a" * 300
+        )
         layout = agent_sources.prepare_visiting_layout(
             visiting_layout(selector, toolang_root=root), toolang_root=root
         )
