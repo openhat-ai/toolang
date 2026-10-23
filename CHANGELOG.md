@@ -317,6 +317,18 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   and dotenv edits need a restart.
   ([#940](https://github.com/openhat-ai/toolang/pull/940))
 
+- **Breaking:** Docker guests keep native `PATH`, `HOME`, and locale values and
+  receive only the selected API credential or explicit agent dotenv bindings,
+  so move guest-only dependencies previously admitted through `keep` into an
+  agent dotenv file. Missing runtime defaults must come from images or
+  entrypoints.
+  ([#940](https://github.com/openhat-ai/toolang/pull/940))
+
+- Automatic provider credentials recognize 31 names and choose alphabetically
+  when several exist; set `[env].pick` in `ROOT/config.toml` to keep a
+  preferred order.
+  ([#940](https://github.com/openhat-ai/toolang/pull/940))
+
 ### Fixed
 
 - Failed preparation no longer leaves active registrations; runtime references
