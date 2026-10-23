@@ -298,7 +298,7 @@ class RuntimeProbe:
 
     @classmethod
     def cache_docker_states(cls, owners):
-        from toolang.plugin.sandboxes.docker._cli import docker_container_states
+        from toolang.plugin.sandboxes.docker._cli import docker_reference_states
 
         pending = []
         now = time.monotonic()
@@ -307,14 +307,12 @@ class RuntimeProbe:
             fingerprint = json.dumps(entry, sort_keys=True)
             cached = _LIVENESS_CACHE.get(key)
             if cached is None or cached[0] + 1 <= now or cached[1] != fingerprint:
-                pending.append((key, fingerprint, reference.ref.runtime_id))
-        states = docker_container_states(
-            tuple(dict.fromkeys(identity for _, _, identity in pending))
-        )
+                pending.append((key, fingerprint, reference.ref))
+        states = docker_reference_states(tuple(ref for _, _, ref in pending))
         if len(_LIVENESS_CACHE) > 256:
             _LIVENESS_CACHE.clear()
-        for key, fingerprint, identity in pending:
-            _LIVENESS_CACHE[key] = (now, fingerprint, states.get(identity))
+        for (key, fingerprint, _), alive in zip(pending, states, strict=True):
+            _LIVENESS_CACHE[key] = (now, fingerprint, alive)
 
 
 def _runtime_report(entry) -> dict[str, object] | None:

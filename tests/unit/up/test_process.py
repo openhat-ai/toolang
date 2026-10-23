@@ -12,6 +12,7 @@ import pytest
 
 from toolang.base.types.sandbox import SandboxRef
 from toolang.common.layout import AgentLayout
+from toolang.common.place_codes import root_code
 from toolang.up import process, workload, observation
 from toolang.up.instance import SandboxState
 
@@ -192,22 +193,28 @@ def test_runtime_identity_uses_environment_process_without_sandbox_state() -> No
     assert process.runtime_identity_row({"pid": 1234}) == ("PID", "1234")
 
 
-def test_runtime_identity_formats_named_docker_container(tmp_path: Path) -> None:
+@pytest.mark.parametrize("preparing", [False, True])
+def test_runtime_identity_formats_named_docker_container(
+    tmp_path: Path, preparing
+) -> None:
     layout = AgentLayout.resident(tmp_path, "alice")
+    name = f"toolang-{root_code(str(tmp_path.resolve()))}-alice"
     SandboxState(
         sandbox="docker:python:3.13-slim",
         ref=SandboxRef(
-            runtime_id="176191c1528b8e2861cc16422dee13ade59d4977c2148a9ebf5d36a06f090abb",
+            runtime_id=name
+            if preparing
+            else "176191c1528b8e2861cc16422dee13ade59d4977c2148a9ebf5d36a06f090abb",
             endpoint="http://localhost:7001",
             runtime_kind="container",
-            runtime_name="toolang-alice-launch",
+            runtime_name=name,
         ),
         launch_id="fixture",
     ).save(layout.runtime_status)
 
     assert process.runtime_identity_row({"pid": 1}, layout=layout) == (
         "Container",
-        "toolang-alice-launch (176191c1528b)",
+        name if preparing else f"{name} (176191c1528b)",
     )
 
 

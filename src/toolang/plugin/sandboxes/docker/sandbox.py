@@ -19,6 +19,7 @@ from toolang.base.errors import SandboxLaunchError, ToolangError
 from toolang.base.protocols.sandbox import Sandbox
 from toolang.base.types.progress import ProgressSink, ProgressStage, ProgressStatus
 from toolang.base.types.sandbox import (
+    JsonValue,
     SandboxLocation,
     SandboxMount,
     SandboxPlan,
@@ -27,6 +28,7 @@ from toolang.base.types.sandbox import (
     SandboxRequest,
 )
 from toolang.common.progress import emit_progress
+from toolang.common.place_codes import root_code
 from toolang.plugin.catalogs.models_dev.path import MODEL_CATALOG_ENV
 
 from ._cli import (
@@ -35,6 +37,9 @@ from ._cli import (
     docker_container_running,
     docker_follow_container_logs,
     docker_remove_container,
+    docker_identity_labels,
+    docker_reference_id,
+    docker_reference_running,
     docker_run_detached,
     docker_stop_container,
     docker_wait_container,
@@ -232,28 +237,29 @@ class DockerSandbox:
         return self._runtime_place
 
     def intent_reference(self, request: SandboxRequest) -> SandboxRef:
-        """Persist a unique recovery locator before staging or container creation."""
-        identity = request.envs["TOOLANG_HOST_LAUNCH"]
+        """Persist a generation-bound locator before staging or container creation."""
+        launch_id = request.envs.get("TOOLANG_HOST_LAUNCH", "")
+        name, identity = _request_identity(request, launch_id)
         stage = (
             request.local_place
             / ".sandbox"
             / request.agent_name
             / "launches"
-            / identity
+            / launch_id
         )
-        name = f"toolang-{_container_label(request.agent_name)}-{identity}"
         return SandboxRef(
             name,
             request.endpoint,
             runtime_kind="container",
             runtime_name=name,
             meta={
+                "docker_identity": identity,
                 "stage_dir": str(stage),
                 "diagnostic_path": str(
-                    request.local_home / ".runtime" / f"docker-guest-{identity}.log"
+                    request.local_home / ".runtime" / f"docker-guest-{launch_id}.log"
                 ),
                 "startup_events_path": str(
-                    request.local_home / ".runtime" / f"docker-guest-{identity}.events"
+                    request.local_home / ".runtime" / f"docker-guest-{launch_id}.events"
                 ),
             },
         )
@@ -263,12 +269,14 @@ class DockerSandbox:
         return _docker_ref(plan, runtime_id=name, container_name=name)
 
     def prepare(self, spec: str | None, request: SandboxRequest) -> SandboxPlan:
+        launch_id = request.envs.get("TOOLANG_HOST_LAUNCH", uuid4().hex)
+        container_name, identity = _request_identity(request, launch_id)
         stage_dir = (
             request.local_place
             / ".sandbox"
             / request.agent_name
             / "launches"
-            / request.envs.get("TOOLANG_HOST_LAUNCH", uuid4().hex[:8])
+            / launch_id
         )
         diagnostic_path = (
             request.local_home / ".runtime" / f"docker-guest-{stage_dir.name}.log"
@@ -283,6 +291,8 @@ class DockerSandbox:
                 stage_dir=stage_dir,
                 diagnostic_path=diagnostic_path,
                 startup_events_path=startup_events_path,
+                container_name=container_name,
+                identity=identity,
             )
         except BaseException:
             remove_stage_directory(stage_dir, ignore_errors=True)
@@ -299,6 +309,8 @@ class DockerSandbox:
         stage_dir: Path,
         diagnostic_path: Path,
         startup_events_path: Path,
+        container_name: str,
+        identity: dict[str, JsonValue],
     ) -> SandboxPlan:
         image = _image(spec, self._default_image)
         runtime_dir = request.hosted_home / ".runtime" / "sandbox"
@@ -342,9 +354,6 @@ class DockerSandbox:
             ),
             SandboxMount(stage_dir, runtime_dir, read_only=True),
         ]
-        container_name = (
-            f"toolang-{_container_label(request.agent_name)}-{stage_dir.name}"
-        )
         package_source = (
             str(hosted_dev_artifact) if hosted_dev_artifact is not None else "toolang"
         )
@@ -392,6 +401,7 @@ class DockerSandbox:
             meta={
                 "remove_on_exit": request.remove_on_exit,
                 "container_name": container_name,
+                "docker_identity": identity,
                 "image": image,
                 "stage_dir": str(stage_dir),
                 "diagnostic_path": str(diagnostic_path),
@@ -428,6 +438,7 @@ class DockerSandbox:
         image = _plan_text(plan, "image")
         if len(plan.ports) != 1:
             raise ValueError("docker sandbox requires exactly one published port")
+        labels = docker_identity_labels(plan.meta.get("docker_identity"))
         port = plan.ports[0]
         try:
             runtime_id = await docker_run_detached(
@@ -441,37 +452,38 @@ class DockerSandbox:
                 hosted_port=port.hosted_port,
                 env_values=plan.envs,
                 log_path=None,
+                labels=labels,
                 **({"remove_on_exit": True} if plan.meta.get("remove_on_exit") else {}),
             )
         except BaseException as exc:
             cleanup_error: BaseException | None = None
+            ref = _docker_ref(
+                plan, runtime_id=runtime_id, container_name=container_name
+            )
+
+            async def remove_owned_container() -> None:
+                owned_id = await asyncio.to_thread(docker_reference_id, ref)
+                if owned_id is not None:
+                    await asyncio.to_thread(docker_remove_container, owned_id)
+
             try:
-                await asyncio.shield(
-                    asyncio.to_thread(docker_remove_container, container_name)
-                )
+                await asyncio.shield(remove_owned_container())
             except BaseException as cleanup_exc:
                 cleanup_error = cleanup_exc
-            if cleanup_error is None:
-                await asyncio.to_thread(
-                    remove_stage_directory,
-                    _plan_text(plan, "stage_dir"),
-                    ignore_errors=True,
-                )
-                await asyncio.to_thread(
-                    Path(_plan_text(plan, "startup_events_path")).unlink,
-                    missing_ok=True,
-                )
-            else:
-                ref = _docker_ref(
-                    plan,
-                    runtime_id=runtime_id,
-                    container_name=container_name,
-                )
+            if cleanup_error is not None:
                 raise SandboxLaunchError(
                     "Could not start docker sandbox and could not remove its "
                     f"workload {container_name}: {cleanup_error}",
                     ref=ref,
                 ) from exc
+            await asyncio.to_thread(
+                remove_stage_directory,
+                _plan_text(plan, "stage_dir"),
+                ignore_errors=True,
+            )
+            await asyncio.to_thread(
+                Path(_plan_text(plan, "startup_events_path")).unlink, missing_ok=True
+            )
             if isinstance(exc, (OSError, RuntimeError)):
                 raise ToolangError(f"Could not start docker sandbox: {exc}") from exc
             raise
@@ -494,12 +506,15 @@ class DockerSandbox:
         if plan.output == "inherit":
             self._foreground_runtime_ids.add(ref.runtime_id)
         if progress is not None:
+            runtime_id = await asyncio.to_thread(docker_reference_id, ref)
+            if runtime_id is None:
+                raise RuntimeError("docker container is missing")
             await _observe_startup_events_safely(
                 Path(_plan_text(plan, "startup_events_path")),
                 progress=progress,
                 progress_id=progress_id or f"runtime:{ref.runtime_id}",
                 package_source=_plan_text(plan, "package_source"),
-                runtime_id=ref.runtime_id,
+                runtime_id=runtime_id,
             )
 
     async def detach_output(self, ref: SandboxRef) -> None:
@@ -510,13 +525,16 @@ class DockerSandbox:
             await finish_process(follower)
 
     async def running(self, ref: SandboxRef) -> bool:
-        return await asyncio.to_thread(docker_container_running, ref.runtime_id)
+        return await asyncio.to_thread(docker_reference_running, ref)
 
     async def wait(self, ref: SandboxRef) -> int:
         """Follow foreground logs after startup progress releases the terminal."""
 
+        runtime_id = await asyncio.to_thread(docker_reference_id, ref)
+        if runtime_id is None:
+            raise RuntimeError("docker container is missing")
         if ref.runtime_id in self._foreground_runtime_ids:
-            follower = await docker_follow_container_logs(ref.runtime_id)
+            follower = await docker_follow_container_logs(runtime_id)
             self._log_followers[ref.runtime_id] = follower
             try:
                 returncode = await follower.wait()
@@ -527,27 +545,32 @@ class DockerSandbox:
                 raise
             if returncode != 0:
                 raise RuntimeError("docker logs failed")
-        return await asyncio.to_thread(docker_wait_container, ref.runtime_id)
+        return await asyncio.to_thread(docker_wait_container, runtime_id)
 
     async def stop(self, ref: SandboxRef, *, force: bool = False) -> None:
+        runtime_id = await asyncio.to_thread(docker_reference_id, ref)
+        if runtime_id is None:
+            return
         await asyncio.to_thread(
             docker_stop_container,
-            ref.runtime_id,
+            runtime_id,
             force=force,
         )
 
     async def release(self, ref: SandboxRef) -> None:
+        runtime_id = await asyncio.to_thread(docker_reference_id, ref)
         self._foreground_runtime_ids.discard(ref.runtime_id)
         await self.detach_output(ref)
         log_path = ref.meta.get("log_path")
-        if isinstance(log_path, str) and log_path:
+        if runtime_id is not None and isinstance(log_path, str) and log_path:
             with suppress(OSError):
                 await asyncio.to_thread(
                     docker_append_container_logs,
-                    ref.runtime_id,
+                    runtime_id,
                     Path(log_path),
                 )
-        await asyncio.to_thread(docker_remove_container, ref.runtime_id)
+        if runtime_id is not None:
+            await asyncio.to_thread(docker_remove_container, runtime_id)
         stage_dir = ref.meta.get("stage_dir")
         if isinstance(stage_dir, str) and stage_dir:
             await asyncio.to_thread(remove_stage_directory, stage_dir)
@@ -568,12 +591,14 @@ def _docker_ref(
     runtime_id: str,
     container_name: str,
 ) -> SandboxRef:
+    docker_identity_labels(plan.meta.get("docker_identity"))
     return SandboxRef(
         runtime_id=runtime_id,
         endpoint=plan.endpoint,
         runtime_kind="container",
         runtime_name=container_name,
         meta={
+            "docker_identity": plan.meta["docker_identity"],
             "stage_dir": _plan_text(plan, "stage_dir"),
             "diagnostic_path": _plan_text(plan, "diagnostic_path"),
             "startup_events_path": _plan_text(plan, "startup_events_path"),
@@ -727,11 +752,24 @@ def _image(spec: str | None, configured: str | None) -> str:
     return configured or DEFAULT_IMAGE
 
 
-def _container_label(value: str) -> str:
-    label = "".join(
-        char if char.isalnum() or char in {"-", "_", "."} else "-" for char in value
-    ).strip("-_.")
-    return label or "agent"
+def _request_identity(
+    request: SandboxRequest, launch_id: str
+) -> tuple[str, dict[str, JsonValue]]:
+    """Validate identity and own the single Docker container naming format."""
+    root = request.toolang_root
+    address = request.agent_address
+    if not isinstance(root, Path) or not isinstance(address, str):
+        raise ValueError("docker requires an explicit agent address and Toolang root")
+    identity: dict[str, JsonValue] = {
+        "version": 1,
+        "root": str(root),
+        "address": address,
+        "launch_id": launch_id,
+    }
+    docker_identity_labels(identity)
+    if address.partition("@")[0] != request.agent_name:
+        raise ValueError("docker agent address does not match agent name")
+    return f"toolang-{root_code(str(root))}-{address.replace('@', '-')}", identity
 
 
 def _plan_text(plan: SandboxPlan, key: str) -> str:

@@ -19,6 +19,63 @@ def _roaming(source, *, toolang_root=None):
     return allocate_roaming(source, toolang_root=toolang_root or source.parent)
 
 
+def test_docker_batch_cache_preserves_ownership_for_reused_names(tmp_path, monkeypatch):
+    import subprocess
+    from toolang.base.types.sandbox import SandboxRef
+    from toolang.common.place_codes import root_code
+    from toolang.plugin.sandboxes.docker import _cli
+    from toolang.up import observation
+    from toolang.up.instance import SandboxState
+
+    monkeypatch.setattr(observation, "_LIVENESS_CACHE", {})
+    probe = observation.RuntimeProbe(AgentLayout.resident(tmp_path, "alice"))
+    name = f"toolang-{root_code(str(tmp_path.resolve()))}-alice"
+    labels = {
+        "io.toolang.root": str(tmp_path.resolve()),
+        "io.toolang.address": "alice",
+        "io.toolang.launch-id": "current",
+    }
+    inspected = []
+
+    def inspect(*args, **kwargs):
+        inspected.append(args)
+        return subprocess.CompletedProcess(
+            args, 0, stdout=json.dumps(["a" * 64, "/" + name, True, labels]), stderr=""
+        )
+
+    monkeypatch.setattr(_cli, "_docker", inspect)
+    owners = []
+    for launch_id in ("stale", "current"):
+        ref = SandboxRef(
+            name,
+            "http://localhost:1",
+            meta={
+                "docker_identity": {
+                    "version": 1,
+                    "root": str(tmp_path.resolve()),
+                    "address": "alice",
+                    "launch_id": launch_id,
+                }
+            },
+            runtime_name=name,
+            runtime_kind="container",
+        )
+        state = SandboxState("docker:image", ref, launch_id)
+        entry = {
+            "launch_id": launch_id,
+            "control": {"ref": ref.to_data()},
+            "workload": {"status": "running"},
+        }
+        owners.append((probe, state, entry))
+
+    observation.RuntimeProbe.cache_docker_states(owners)
+    assert [
+        probe._alive(state, entry, cache=True) for probe, state, entry in owners
+    ] == [None, True]
+    assert len(inspected) == 1
+    assert inspected[0][3:] == (name,)
+
+
 @pytest.mark.parametrize("state", ["current", "removed", "replaced"])
 def test_source_registration_checks_its_launch_without_changing_metadata(
     tmp_path, state

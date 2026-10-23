@@ -402,6 +402,14 @@ async def _launch_locked(
             hosted_place=hosted_place,
             hosted_home=hosted_home,
             agent_name=spec.serve.layout.name,
+            agent_address=spec.serve.layout.address,
+            toolang_root=(
+                spec.serve.toolang_root
+                or spec.serve.layout.root
+                or spec.serve.layout.place
+            )
+            .expanduser()
+            .resolve(),
             bind_host=spec.serve.host,
             endpoint_host=spec.serve.endpoint_host,
             port=spec.serve.port,

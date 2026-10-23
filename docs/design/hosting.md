@@ -247,6 +247,24 @@ the final 2000 Docker log lines and streamed without buffering them in memory.
 Diagnostic write failures do not prevent container cleanup. Foreground
 interruption, ready-reporting errors, and wait failures stop and release the
 workload; cleanup failures preserve `SandboxState` for a later forced stop.
+
+New Docker containers use `toolang-<root_code>-<agent_name>[-<place_code>]`.
+Resident names omit the place code; visiting and roaming names include its full
+code. The name is stable across launches of the same home. Docker naming is
+centralized in the adapter using the explicitly bound agent address and canonical
+Toolang root; intent and preparation share that helper, and later references
+carry the name in `runtime_name`.
+
+Labels `io.toolang.root`, `io.toolang.address`, and `io.toolang.launch-id` bind each
+container to its canonical root, original address, and runtime generation.
+Expected values live in `SandboxRef.meta.docker_identity` (version 1). The adapter
+verifies ownership before using new references and resolves names to immutable
+container IDs for subsequent operations. Batched liveness also checks ownership.
+Conflicts, missing labels, malformed metadata, and uncertain inspections never
+authorize cleanup; pending creation keeps its recovery reference. Existing
+references without `docker_identity` retain their original locators and behavior;
+existing containers keep their names until normal stop/release and a new launch.
+
 `SandboxState` reads the `control` section of runtime status format 5 `status.json`; host and
 guest update that shared file with generation checks and owned-field merges.
 Docker mounts the agent home read-write, including status, database sidecars,

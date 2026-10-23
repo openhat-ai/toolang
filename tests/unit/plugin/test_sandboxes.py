@@ -20,8 +20,18 @@ import pytest
 from toolang.base.errors import SandboxLaunchError, ToolangError
 from toolang.base.protocols.sandbox import Sandbox
 from toolang.base.types.progress import ProgressEvent
-from toolang.base.types.sandbox import SandboxMount, SandboxRef, SandboxRequest
+from toolang.base.types.sandbox import (
+    SandboxMount,
+    SandboxPlan,
+    SandboxRef,
+    SandboxRequest,
+)
 from toolang.common.layout import AgentLayout
+from toolang.common.place_codes import (
+    root_code,
+    visiting_place_code,
+    roaming_place_code,
+)
 from toolang.plugin.catalogs.models_dev.path import MODEL_CATALOG_ENV
 from toolang.plugin.sandboxes.docker import _cli as docker_cli
 from toolang.plugin.sandboxes.docker import _guest as docker_guest
@@ -32,6 +42,34 @@ from toolang.up.mounts import prepare_place_mounts
 
 
 _CONTAINER_ID = "176191c1528b8e2861cc16422dee13ade59d4977c2148a9ebf5d36a06f090abb"
+
+
+def _mock_docker_container(
+    monkeypatch: pytest.MonkeyPatch, plan: SandboxPlan, *, labels=None, running=True
+) -> None:
+    identity = plan.meta["docker_identity"]
+    labels = (
+        labels
+        if labels is not None
+        else {
+            "io.toolang.root": identity["root"],
+            "io.toolang.address": identity["address"],
+            "io.toolang.launch-id": identity["launch_id"],
+        }
+    )
+    monkeypatch.setattr(docker_cli, "docker_launch_pending", lambda _: False)
+    monkeypatch.setattr(
+        docker_cli,
+        "_docker",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args,
+            0,
+            stdout=json.dumps(
+                [_CONTAINER_ID, "/" + plan.meta["container_name"], running, labels]
+            ),
+            stderr="",
+        ),
+    )
 
 
 @pytest.mark.parametrize(
@@ -182,6 +220,8 @@ def _request(
         hosted_place=Path("/root/.toolang"),
         hosted_home=Path("/root/.toolang/agents/alice"),
         agent_name="alice",
+        agent_address="alice",
+        toolang_root=root.resolve(),
         bind_host="127.0.0.1",
         endpoint_host="localhost",
         port=8123,
@@ -501,7 +541,7 @@ def test_docker_sandbox_prepares_and_launches(
 
     async def fake_run_detached(**kwargs: object) -> str:
         calls["run"] = kwargs
-        return "container-123"
+        return _CONTAINER_ID
 
     monkeypatch.setattr(
         "toolang.plugin.sandboxes.docker.sandbox.docker_run_detached",
@@ -509,7 +549,7 @@ def test_docker_sandbox_prepares_and_launches(
     )
     monkeypatch.setattr(
         "toolang.plugin.sandboxes.docker.sandbox.docker_container_running",
-        lambda name: name == "container-123",
+        lambda name: name == _CONTAINER_ID,
     )
     dev = tmp_path / "dist" / "toolang-1.2.3-py3-none-any.whl"
     dev.parent.mkdir(parents=True)
@@ -523,11 +563,12 @@ def test_docker_sandbox_prepares_and_launches(
     sandbox = create_sandbox("docker", config={})
 
     plan = sandbox.prepare("python:3.13-slim", _request(tmp_path, dev=dev))
+    _mock_docker_container(monkeypatch, plan)
 
     assert plan.sandbox == "docker:python:3.13-slim"
     assert plan.working_directory == Path("/root/.toolang/agents/alice")
     container_name = cast(str, plan.meta["container_name"])
-    assert container_name.startswith("toolang-alice-")
+    assert container_name == f"toolang-{root_code(str(tmp_path.resolve()))}-alice"
     mounted = {(item.local_path, item.hosted_path) for item in plan.mounts}
     assert (tmp_path / "shared", Path("/root/.toolang/shared")) in mounted
     assert (
@@ -607,7 +648,7 @@ def test_docker_sandbox_prepares_and_launches(
 
     ref = asyncio.run(sandbox.launch(plan))
 
-    assert ref.runtime_id == "container-123"
+    assert ref.runtime_id == _CONTAINER_ID
     assert ref.runtime_kind == "container"
     assert ref.runtime_name == container_name
     assert ref.meta["diagnostic_path"] == str(diagnostic_path)
@@ -616,6 +657,11 @@ def test_docker_sandbox_prepares_and_launches(
     assert asyncio.run(sandbox.running(ref)) is True
     run_call = cast(dict[str, Any], calls["run"])
     assert run_call["image"] == "python:3.13-slim"
+    assert run_call["labels"] == {
+        "io.toolang.root": str(tmp_path.resolve()),
+        "io.toolang.address": "alice",
+        "io.toolang.launch-id": plan.meta["docker_identity"]["launch_id"],
+    }
     assert run_call["published_port"] == 8123
     assert run_call["hosted_port"] == 8123
     assert run_call["env_values"] == {
@@ -771,7 +817,7 @@ def test_docker_sandbox_does_not_reuse_a_released_stage_path(
     monkeypatch.setattr(
         docker_sandbox,
         "docker_run_detached",
-        _async_value("container-123"),
+        _async_value(_CONTAINER_ID),
     )
     monkeypatch.setattr(
         docker_sandbox,
@@ -782,6 +828,7 @@ def test_docker_sandbox_does_not_reuse_a_released_stage_path(
     sandbox = create_sandbox("docker", config={})
 
     first = sandbox.prepare(None, _request(tmp_path))
+    _mock_docker_container(monkeypatch, first)
     ref = asyncio.run(sandbox.launch(first))
     asyncio.run(sandbox.release(ref))
     second = sandbox.prepare(None, _request(tmp_path))
@@ -818,7 +865,7 @@ def test_docker_background_attach_is_quiet_without_progress(
     monkeypatch.setattr(docker_sandbox, "docker_follow_container_logs", follow)
     sandbox = create_sandbox("docker", config={})
     plan = sandbox.prepare(None, _request(tmp_path))
-    ref = SandboxRef("container-123", plan.endpoint)
+    ref = SandboxRef(_CONTAINER_ID, plan.endpoint)
 
     asyncio.run(sandbox.attach(plan, ref, progress=None, progress_id="runtime:test"))
 
@@ -1251,6 +1298,7 @@ def test_docker_launch_failure_removes_the_staged_guest_environment(
     monkeypatch.setattr(docker_sandbox, "docker_remove_container", lambda _name: None)
     sandbox = create_sandbox("docker", config={})
     plan = sandbox.prepare(None, _request(tmp_path))
+    _mock_docker_container(monkeypatch, plan)
     stage_dir = Path(cast(str, plan.meta["stage_dir"]))
     diagnostic_path = Path(cast(str, plan.meta["diagnostic_path"]))
 
@@ -1275,6 +1323,7 @@ def test_docker_launch_cleanup_failure_returns_a_recovery_reference(
     monkeypatch.setattr(docker_sandbox, "docker_remove_container", fail_remove)
     sandbox = create_sandbox("docker", config={})
     plan = sandbox.prepare(None, _request(tmp_path))
+    _mock_docker_container(monkeypatch, plan)
     stage_dir = Path(cast(str, plan.meta["stage_dir"]))
     diagnostic_path = Path(cast(str, plan.meta["diagnostic_path"]))
 
@@ -1334,7 +1383,7 @@ def test_docker_launch_cancellation_terminates_cli_and_removes_container(
     )
     sandbox = create_sandbox("docker", config={})
     plan = sandbox.prepare(None, _request(tmp_path))
-    container_name = cast(str, plan.meta["container_name"])
+    _mock_docker_container(monkeypatch, plan)
     stage_dir = Path(cast(str, plan.meta["stage_dir"]))
     diagnostic_path = Path(cast(str, plan.meta["diagnostic_path"]))
 
@@ -1348,7 +1397,7 @@ def test_docker_launch_cancellation_terminates_cli_and_removes_container(
     asyncio.run(cancel_launch())
 
     assert process.terminated is True
-    assert removed == [container_name]
+    assert removed == [_CONTAINER_ID]
     assert not stage_dir.exists()
     assert diagnostic_path.is_file()
     assert cast(Path, plan.log_path).is_file()
@@ -1361,7 +1410,7 @@ def test_docker_release_preserves_container_diagnostics_before_removal(
     calls: list[tuple[str, str]] = []
 
     async def run(**_kwargs: object) -> str:
-        return "container-123"
+        return _CONTAINER_ID
 
     monkeypatch.setattr(docker_sandbox, "docker_run_detached", run)
     monkeypatch.setattr(
@@ -1376,6 +1425,7 @@ def test_docker_release_preserves_container_diagnostics_before_removal(
     )
     sandbox = create_sandbox("docker", config={})
     plan = sandbox.prepare(None, _request(tmp_path))
+    _mock_docker_container(monkeypatch, plan)
     diagnostic_path = Path(cast(str, plan.meta["diagnostic_path"]))
     ref = asyncio.run(sandbox.launch(plan))
 
@@ -1394,7 +1444,7 @@ def test_docker_release_removes_the_container_when_diagnostics_fail(
     monkeypatch.setattr(
         docker_sandbox,
         "docker_run_detached",
-        _async_value("container-123"),
+        _async_value(_CONTAINER_ID),
     )
 
     def fail_diagnostics(name: str, _path: Path) -> None:
@@ -1413,6 +1463,7 @@ def test_docker_release_removes_the_container_when_diagnostics_fail(
     )
     sandbox = create_sandbox("docker", config={})
     plan = sandbox.prepare(None, _request(tmp_path))
+    _mock_docker_container(monkeypatch, plan)
     stage_dir = Path(cast(str, plan.meta["stage_dir"]))
     ref = asyncio.run(sandbox.launch(plan))
 
@@ -1457,6 +1508,11 @@ def test_docker_run_adds_the_canonical_host_gateway(
             published_port=8123,
             hosted_port=8123,
             env_values={"TOOLANG_ROOT": "/root/.toolang"},
+            labels={
+                "io.toolang.root": "/srv/toolang with spaces",
+                "io.toolang.address": "alice",
+                "io.toolang.launch-id": "a" * 32,
+            },
             log_path=None,
             remove_on_exit=remove_on_exit,
         )
@@ -1468,6 +1524,11 @@ def test_docker_run_adds_the_canonical_host_gateway(
         "host.docker.internal:host-gateway"
     )
     assert "TOOLANG_ROOT=/root/.toolang" in captured
+    assert [captured[i + 1] for i, arg in enumerate(captured) if arg == "--label"] == [
+        "io.toolang.root=/srv/toolang with spaces",
+        "io.toolang.address=alice",
+        "io.toolang.launch-id=" + "a" * 32,
+    ]
 
 
 def test_docker_diagnostics_are_bounded_and_streamed_to_a_private_log(
@@ -1522,7 +1583,7 @@ def test_docker_foreground_sandbox_follows_logs_only_when_waiting(
 
     monkeypatch.setattr(
         "toolang.plugin.sandboxes.docker.sandbox.docker_run_detached",
-        _async_value("container-123"),
+        _async_value(_CONTAINER_ID),
     )
 
     async def follow(name: str) -> Any:
@@ -1539,6 +1600,7 @@ def test_docker_foreground_sandbox_follows_logs_only_when_waiting(
     )
     sandbox = create_sandbox("docker", config={})
     plan = sandbox.prepare(None, _request(tmp_path, foreground=True))
+    _mock_docker_container(monkeypatch, plan)
     stage_dir = Path(cast(str, plan.meta["stage_dir"]))
     assert {path.name for path in stage_dir.iterdir()} == {
         "docker_guest.sh",
@@ -1608,7 +1670,7 @@ def test_docker_foreground_wait_stops_log_follower_before_cancellation(
     monkeypatch.setattr(
         docker_sandbox,
         "docker_run_detached",
-        _async_value("container-123"),
+        _async_value(_CONTAINER_ID),
     )
     monkeypatch.setattr(
         docker_sandbox,
@@ -1617,6 +1679,7 @@ def test_docker_foreground_wait_stops_log_follower_before_cancellation(
     )
     sandbox = create_sandbox("docker", config={})
     plan = sandbox.prepare(None, _request(tmp_path, foreground=True))
+    _mock_docker_container(monkeypatch, plan)
     ref = asyncio.run(sandbox.launch(plan))
     asyncio.run(sandbox.attach(plan, ref))
 
@@ -1630,6 +1693,354 @@ def test_docker_foreground_wait_stops_log_follower_before_cancellation(
     asyncio.run(cancel_wait())
 
     assert follower.terminated is True
+
+
+@pytest.mark.parametrize("placement", ["resident", "visiting", "roaming"])
+@pytest.mark.parametrize("agent", ["alice", "a" + "_" * 63])
+def test_docker_names_follow_bound_addresses_and_preserve_full_codes(
+    tmp_path, placement, agent, monkeypatch
+):
+    code = {
+        "resident": None,
+        "visiting": visiting_place_code("https://example.com/agent.too"),
+        "roaming": roaming_place_code("/work/agent.too", 123),
+    }[placement]
+    address = agent + (f"@{code}" if code else "")
+    request = replace(
+        _request(tmp_path),
+        agent_name=agent,
+        agent_address=address,
+        envs={"TOOLANG_HOST_LAUNCH": "a" * 32},
+    )
+    sandbox = docker_sandbox.DockerSandbox({})
+    intent = sandbox.intent_reference(request)
+    plan = sandbox.prepare(None, request)
+    prepared = sandbox.prepared_reference(plan)
+    monkeypatch.setattr(
+        docker_sandbox, "docker_run_detached", _async_value(_CONTAINER_ID)
+    )
+    ref = asyncio.run(sandbox.launch(plan))
+    expected = f"toolang-{root_code(str(tmp_path.resolve()))}-{agent}" + (
+        f"-{code}" if code else ""
+    )
+    assert intent.runtime_id == prepared.runtime_id == expected
+    assert intent.runtime_name == prepared.runtime_name == ref.runtime_name == expected
+    assert plan.meta["container_name"] == expected
+    assert ref.runtime_id == _CONTAINER_ID
+    assert (
+        ref.meta["docker_identity"]
+        == intent.meta["docker_identity"]
+        == {
+            "version": 1,
+            "root": str(tmp_path.resolve()),
+            "address": address,
+            "launch_id": "a" * 32,
+        }
+    )
+    assert len(expected) <= {"resident": 80, "visiting": 92, "roaming": 99}[placement]
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("toolang_root", None),
+        ("toolang_root", Path("relative")),
+        ("agent_address", None),
+        ("agent_address", ""),
+        ("agent_address", "bob"),
+        ("agent_address", "alice@bad"),
+        ("agent_address", "alice@" + "s" * 18),
+    ],
+)
+@pytest.mark.parametrize("method", ["intent_reference", "prepare"])
+def test_docker_rejects_missing_or_inconsistent_request_identity_before_staging(
+    tmp_path, field, value, method
+):
+    request = replace(_request(tmp_path), **{field: value})
+    sandbox = docker_sandbox.DockerSandbox({})
+    with pytest.raises(ValueError):
+        if method == "prepare":
+            sandbox.prepare(None, request)
+        else:
+            sandbox.intent_reference(request)
+    assert not (tmp_path / ".sandbox").exists()
+    assert not (request.local_home / ".runtime").exists()
+
+
+def test_docker_restart_keeps_name_but_not_generation_or_stage(tmp_path):
+    sandbox = docker_sandbox.DockerSandbox({})
+    request = _request(tmp_path)
+    first = sandbox.prepare(
+        None, replace(request, envs={"TOOLANG_HOST_LAUNCH": "a" * 32})
+    )
+    second = sandbox.prepare(
+        None, replace(request, envs={"TOOLANG_HOST_LAUNCH": "b" * 32})
+    )
+    assert first.meta["container_name"] == second.meta["container_name"]
+    assert first.meta["stage_dir"] != second.meta["stage_dir"]
+    assert first.meta["docker_identity"] != second.meta["docker_identity"]
+    other_root = replace(request, toolang_root=tmp_path / "other")
+    assert (
+        sandbox.intent_reference(
+            replace(other_root, envs={"TOOLANG_HOST_LAUNCH": "c" * 32})
+        ).runtime_name
+        != first.meta["container_name"]
+    )
+
+
+def test_docker_distinct_places_with_same_agent_have_distinct_names(tmp_path):
+    sandbox = docker_sandbox.DockerSandbox({})
+    request = replace(_request(tmp_path), envs={"TOOLANG_HOST_LAUNCH": "a" * 32})
+    codes = [
+        visiting_place_code("https://example.com/one.too"),
+        visiting_place_code("https://example.com/two.too"),
+        roaming_place_code("/work/one.too", 123),
+        roaming_place_code("/work/one.too", 124),
+    ]
+    refs = [
+        sandbox.intent_reference(replace(request, agent_address=f"alice@{code}"))
+        for code in codes
+    ]
+    assert len({ref.runtime_name for ref in refs}) == len(codes)
+
+
+@pytest.mark.parametrize("locator", ["name", "id"])
+@pytest.mark.parametrize(
+    "field",
+    ["io.toolang.root", "io.toolang.address", "io.toolang.launch-id", "missing"],
+)
+@pytest.mark.parametrize("operation", ["running", "stop", "release", "wait", "attach"])
+def test_docker_stale_or_foreign_reference_cannot_use_replacement(
+    tmp_path, monkeypatch, locator, field, operation
+):
+    sandbox = docker_sandbox.DockerSandbox({})
+    plan = sandbox.prepare(None, _request(tmp_path))
+    ref = sandbox.prepared_reference(plan)
+    if locator == "id":
+        ref = replace(ref, runtime_id=_CONTAINER_ID)
+    identity = plan.meta["docker_identity"]
+    labels = {
+        "io.toolang.root": identity["root"],
+        "io.toolang.address": identity["address"],
+        "io.toolang.launch-id": identity["launch_id"],
+    }
+    if field == "missing":
+        labels.clear()
+    else:
+        labels[field] = "another-owner"
+    _mock_docker_container(monkeypatch, plan, labels=labels)
+
+    def reject_access(*args, **kwargs):
+        pytest.fail("a foreign container must not be accessed")
+
+    for name in (
+        "docker_stop_container",
+        "docker_remove_container",
+        "docker_wait_container",
+        "docker_append_container_logs",
+        "docker_follow_container_logs",
+        "_observe_startup_events_safely",
+    ):
+        monkeypatch.setattr(docker_sandbox, name, reject_access)
+    with pytest.raises(RuntimeError, match="ownership"):
+        if operation == "attach":
+            asyncio.run(sandbox.attach(plan, ref, progress=lambda _: None))
+        else:
+            asyncio.run(getattr(sandbox, operation)(ref))
+    assert Path(plan.meta["stage_dir"]).is_dir()
+    assert docker_cli.docker_reference_states((ref,)) == (None,)
+
+
+@pytest.mark.parametrize(
+    "identity",
+    [None, {}, {"version": 2}, {"version": True}, {"version": 1, "root": "/tmp"}],
+)
+def test_docker_malformed_new_metadata_never_falls_back_to_legacy(
+    monkeypatch, identity
+):
+    ref = SandboxRef(
+        _CONTAINER_ID, "http://localhost:1", meta={"docker_identity": identity}
+    )
+
+    def reject_inspection(*args, **kwargs):
+        pytest.fail("invalid identity must be rejected before inspection")
+
+    monkeypatch.setattr(docker_cli, "_docker", reject_inspection)
+    with pytest.raises(ValueError, match="identity"):
+        docker_cli.docker_reference_id(ref)
+
+
+@pytest.mark.parametrize("operation", ["stop", "release", "wait", "attach"])
+def test_docker_name_replacement_after_inspection_uses_original_immutable_id(
+    tmp_path, monkeypatch, operation
+):
+    sandbox = docker_sandbox.DockerSandbox({})
+    plan = sandbox.prepare(None, _request(tmp_path))
+    ref = sandbox.prepared_reference(plan)
+    _mock_docker_container(monkeypatch, plan)
+    targets = []
+    monkeypatch.setattr(
+        docker_sandbox,
+        "docker_stop_container",
+        lambda target, **kwargs: targets.append(target),
+    )
+    monkeypatch.setattr(docker_sandbox, "docker_remove_container", targets.append)
+    monkeypatch.setattr(
+        docker_sandbox,
+        "docker_append_container_logs",
+        lambda target, path: targets.append(target),
+    )
+    monkeypatch.setattr(
+        docker_sandbox,
+        "docker_wait_container",
+        lambda target: targets.append(target) or 0,
+    )
+
+    async def observe(*args, **kwargs):
+        targets.append(kwargs["runtime_id"])
+
+    monkeypatch.setattr(docker_sandbox, "_observe_startup_events_safely", observe)
+    if operation == "attach":
+        asyncio.run(sandbox.attach(plan, ref, progress=lambda _: None))
+    else:
+        asyncio.run(getattr(sandbox, operation)(ref))
+    assert targets and set(targets) == {_CONTAINER_ID}
+
+
+def test_docker_root_code_collision_preserves_foreign_container_and_recovery(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(docker_sandbox, "root_code", lambda _: "0000000")
+    sandbox = docker_sandbox.DockerSandbox({})
+    request = _request(tmp_path)
+    first = sandbox.prepare(None, request)
+    second = sandbox.prepare(None, replace(request, toolang_root=tmp_path / "other"))
+    assert first.meta["container_name"] == second.meta["container_name"]
+    _mock_docker_container(monkeypatch, first)
+
+    async def conflict(**kwargs):
+        assert kwargs["labels"]["io.toolang.root"] == str(tmp_path / "other")
+        raise RuntimeError("container name conflict")
+
+    monkeypatch.setattr(docker_sandbox, "docker_run_detached", conflict)
+    removed = []
+    monkeypatch.setattr(docker_sandbox, "docker_remove_container", removed.append)
+    with pytest.raises(SandboxLaunchError, match="ownership mismatch") as failure:
+        asyncio.run(sandbox.launch(second))
+    assert not removed
+    assert failure.value.ref.meta["docker_identity"] == second.meta["docker_identity"]
+    assert Path(second.meta["stage_dir"]).is_dir()
+    assert asyncio.run(sandbox.running(sandbox.prepared_reference(first)))
+
+
+@pytest.mark.parametrize("pending", [False, True])
+def test_docker_missing_owned_container_releases_only_after_creation_finishes(
+    tmp_path, monkeypatch, pending
+):
+    sandbox = docker_sandbox.DockerSandbox({})
+    plan = sandbox.prepare(None, _request(tmp_path))
+    ref = sandbox.prepared_reference(plan)
+    monkeypatch.setattr(docker_cli, "docker_launch_pending", lambda _: pending)
+    monkeypatch.setattr(
+        docker_cli,
+        "_docker",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args,
+            1,
+            stdout="",
+            stderr=f"Error: No such object: {ref.runtime_id}",
+        ),
+    )
+    removed = []
+    monkeypatch.setattr(docker_sandbox, "docker_remove_container", removed.append)
+    if pending:
+        with pytest.raises(RuntimeError, match="pending"):
+            asyncio.run(sandbox.release(ref))
+        assert Path(plan.meta["stage_dir"]).is_dir()
+        assert docker_cli.docker_reference_states((ref,)) == (None,)
+    else:
+        assert not asyncio.run(sandbox.running(ref))
+        asyncio.run(sandbox.release(ref))
+        assert not Path(plan.meta["stage_dir"]).exists()
+        assert docker_cli.docker_reference_states((ref,)) == (False,)
+    assert not removed
+
+
+def test_docker_batch_keeps_generations_distinct_even_with_same_name(
+    tmp_path, monkeypatch
+):
+    sandbox = docker_sandbox.DockerSandbox({})
+    plan = sandbox.prepare(None, _request(tmp_path))
+    current = sandbox.prepared_reference(plan)
+    stale = replace(
+        current,
+        meta={
+            **current.meta,
+            "docker_identity": {
+                **plan.meta["docker_identity"],
+                "launch_id": "old-generation",
+            },
+        },
+    )
+    _mock_docker_container(monkeypatch, plan)
+    assert docker_cli.docker_reference_states((stale, current, stale)) == (
+        None,
+        True,
+        None,
+    )
+
+
+@pytest.mark.parametrize(
+    "failure", ["timeout", "missing-cli", "invalid-output", "permission"]
+)
+def test_docker_inconclusive_inspection_preserves_owned_resources(
+    tmp_path, monkeypatch, failure
+):
+    sandbox = docker_sandbox.DockerSandbox({})
+    plan = sandbox.prepare(None, _request(tmp_path))
+    ref = sandbox.prepared_reference(plan)
+
+    def inspect(*args, **kwargs):
+        if failure == "timeout":
+            raise subprocess.TimeoutExpired("docker", 2)
+        if failure == "missing-cli":
+            return None
+        return subprocess.CompletedProcess(
+            args, 1, stdout="invalid", stderr="permission denied"
+        )
+
+    monkeypatch.setattr(docker_cli, "_docker", inspect)
+    with pytest.raises(RuntimeError):
+        asyncio.run(sandbox.release(ref))
+    assert Path(plan.meta["stage_dir"]).is_dir()
+    assert docker_cli.docker_reference_states((ref,)) == (None,)
+
+
+def test_docker_legacy_references_keep_original_locators(monkeypatch):
+    ref = SandboxRef("toolang-alice-old-launch", "http://localhost:1")
+    sandbox = docker_sandbox.DockerSandbox({})
+    calls = []
+    monkeypatch.setattr(
+        docker_cli,
+        "docker_container_running",
+        lambda target: calls.append(("running", target)) or True,
+    )
+    monkeypatch.setattr(
+        docker_sandbox,
+        "docker_stop_container",
+        lambda target, **kwargs: calls.append(("stop", target)),
+    )
+    monkeypatch.setattr(
+        docker_sandbox,
+        "docker_remove_container",
+        lambda target: calls.append(("remove", target)),
+    )
+    assert asyncio.run(sandbox.running(ref))
+    asyncio.run(sandbox.stop(ref))
+    asyncio.run(sandbox.release(ref))
+    assert calls == [
+        (operation, ref.runtime_id) for operation in ("running", "stop", "remove")
+    ]
 
 
 def _async_value(value: str) -> Any:
