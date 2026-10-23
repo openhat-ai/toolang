@@ -112,9 +112,12 @@ def test_alternating_formats_converge_and_accept_shared_source_changes(
                         assert (
                             len(list((store / "revs").iterdir())) == source_version + 1
                         )
-                    for foreign, saved in snapshots.items():
-                        if foreign != version:
-                            assert {path: path.read_bytes() for path in saved} == saved
+                    for foreign, foreign_legacy in writers:
+                        if foreign != version and foreign in snapshots:
+                            assert (
+                                _snapshot(_stores(layout, foreign, foreign_legacy))
+                                == snapshots[foreign]
+                            )
                     snapshots[version] = _snapshot(stores)
             previous = expected
 
@@ -166,7 +169,16 @@ def test_adoption_ignores_old_stores_without_reading_or_mutating_them(
         new = prepare.prepare_agent_state(layout)
         assert prepare.prepare_agent_state(layout).revision == new.revision
         assert new.revision != old.revision
-    assert {path: path.read_bytes() for path in saved} == saved
+        for loader, revision in (
+            (cache.load_root_layer, old.root_revision),
+            (cache.load_home_layer, old.home_revision),
+            (prepare.load_agent_state, old.revision),
+            (cache.validate_agent_revision, old.revision),
+        ):
+            with pytest.raises(FileNotFoundError):
+                loader(layout, revision)
+        assert prepare.load_agent_state(layout).revision == new.revision
+    assert _snapshot(foreign_stores) == saved
     for store in stores:
         assert len(list((store / "revs").iterdir())) == 1
 
