@@ -105,26 +105,29 @@ ROOT/.runtime/active/
     <development-wheel>.whl # Only for development launches.
 ```
 
-Create one `<address>.json` at launch. Preserve the existing reference fields
-`version`, `status`, and `launch_id`; add explicit `location` (`host` or `guest`)
-and the concrete `sandbox` selection. Derive address from the filename and
-validate it against the referenced runtime identity. `status` still locates
-authoritative `HOME/.runtime/status.json`; do not duplicate changing status here.
-Keep the generation fence in the content, not in the directory hierarchy.
+Create one `<address>.json` at launch with `version`, `home`, `launch`, explicit
+`location` (`host` or `guest`), and the concrete `sandbox` selection. Derive
+address from the filename and validate it against the referenced runtime
+identity. The authoritative status path is always `HOME/.runtime/status.json`;
+derive it through the existing layout helper instead of storing a filename or
+`status` field. Keep the generation fence in the `launch` field, not in the
+directory hierarchy. This record naming does not rename internal `launch_id`
+bindings or Docker ownership labels.
 
-Store `status` as a normalized POSIX path relative to the selected canonical
+Store `home` as a normalized POSIX path relative to the selected canonical
 host ROOT, not to cwd or the registry file's directory. For resident `hak`, use
-`agents/hak/.runtime/status.json`. Visiting and roaming status files may be
-outside ROOT, so relative paths may contain `..`; resolve them against that same
+`agents/hak`. Visiting and roaming homes may be outside ROOT, so relative paths
+may contain `..`; resolve them against that same
 explicit host ROOT and validate the resulting home/address/launch ownership
 before use. These host-owned locators are not guest paths: use the explicit
 PLACE/HOME mapping when a guest path is needed, rather than substituting guest
 ROOT into a nonresident locator.
 
-Use reference format 6 for this path contract. Read existing format-5 absolute
-locators for normal stop/recovery without rewriting live references. Keep the
-authoritative home status format unchanged; reference decoding belongs to the
-registry, with the selected ROOT supplied explicitly by its caller.
+Use reference format 6 for this record contract. Read existing format-5 absolute
+`status` locators and `launch_id` fields for normal stop/recovery without
+rewriting live references. Keep the authoritative home status format unchanged;
+reference decoding belongs to the registry, with the selected ROOT supplied
+explicitly by its caller.
 
 The host publishes and retires references under a per-address host file guard.
 Guests update only their mounted home runtime status and do not write the root
@@ -200,8 +203,8 @@ provide file secrecy.
 | Root/place identity | Resident and nonresident clients read their selected root Hub, with unchanged canonical host-root identity and correct human defaults. |
 | Mapping table | Every listed source preserves its owning-base suffix and filename; covered catalogs/lab have no duplicate aliases. |
 | Runtime root ownership | Docker inputs belong to the selected root and full address; different places with the same agent name do not collide. Direct host execution creates no Docker input directory. |
-| Current execution record | Each full address has one flat JSON reference with explicit location/sandbox and an in-content launch ID; no registry launch hierarchy. Existing formats remain discoverable and stoppable without duplicate publication. |
-| Relative status locator | All three placements round-trip status paths relative to an explicit host ROOT regardless of cwd; nonresident `..` paths retain ownership validation and use PLACE/HOME mapping for guest access. Format-5 absolute references remain recoverable. |
+| Current execution record | Each full address has one flat JSON reference with `version`, `home`, `launch`, `location`, and `sandbox`; no `status` or `launch_id` field and no registry launch hierarchy. Existing formats remain discoverable and stoppable without duplicate publication. |
+| Home locator | All three placements resolve ROOT-relative homes independently of cwd and derive status through `HOME/.runtime/status.json`; nonresident `..` paths retain ownership validation and PLACE/HOME mapping for guest access. Format-5 absolute status references remain recoverable. |
 | Registry ownership | Guests have no root registry write mount. Host stop removes only the matching reference; guest self-exit is retired on the next verified host refresh and is never reported alive merely because its record exists. |
 | Input lifetime and permissions | Docker inputs are read-only in the guest. Fixed paths are reused only after verified release; failed startup and delayed cleanup preserve replacement inputs and references. |
 | Existing resource recovery | An existing recorded staging path remains stoppable; neither live mounts nor unverified orphan directories are moved or deleted. |
