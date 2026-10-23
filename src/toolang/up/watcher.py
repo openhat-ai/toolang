@@ -95,6 +95,14 @@ class _RuntimeProbe:
                 if snapshot is not None
                 else read_instance(self.layout.runtime_status, self.layout.instance)
             )
+            if observed is not None and "address" in observed["control"]:
+                from .identity import verify_identity
+
+                try:
+                    verify_identity(self.layout, observed["control"])
+                except ValueError:
+                    observed = None
+                    raise
             reference = SandboxState.from_instance(observed)
             report = self._report(observed, reference) or {}
             if reference is not None:

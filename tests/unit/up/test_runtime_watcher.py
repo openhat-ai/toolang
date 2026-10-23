@@ -9,7 +9,12 @@ from toolang.base.types.sandbox import SandboxRef
 from toolang.common.layout import AgentLayout
 from toolang.up import registry, watcher
 from toolang.up.identity import identity_bindings
-from toolang.up.instance import patch_workload, read_instance, SandboxState
+from toolang.up.instance import (
+    patch_workload,
+    read_instance,
+    SandboxState,
+    update_instance,
+)
 from toolang.up.workload import ForegroundWorkload
 from toolang.up.watcher import RuntimeWatcher, runtime_status
 
@@ -259,3 +264,17 @@ def test_membership_failure_recovers_without_freezing_known_departures(
             patch.setattr(discovery, "agent_layouts", denied)
             result = monitor.refresh()
             assert len(result.sources) == 1 and not result.snapshot.membership_complete
+
+
+def test_single_home_status_rejects_foreign_identity_without_repair(tmp_path):
+    home = AgentLayout.resident(tmp_path, "alice")
+    with ForegroundWorkload(home, toolang_root=tmp_path, drivers=frozenset()) as active:
+        update_instance(
+            home.runtime_status, lambda entry: entry["control"].update(name="bob")
+        )
+        before = home.runtime_status.read_bytes()
+        status = runtime_status(home)
+        assert status is not None and status.status == "unknown"
+        assert status.entry is None
+        assert home.runtime_status.read_bytes() == before
+        assert active.path.exists()
