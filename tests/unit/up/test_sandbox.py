@@ -1023,9 +1023,11 @@ def test_foreground_wait_failure_stops_releases_and_clears_state(
     assert SandboxState.load(spec.serve.layout.runtime_status) is None
 
 
+@pytest.mark.parametrize("lifetime", ["persistent", "foreground"])
 def test_foreground_ready_failure_stops_releases_and_clears_state(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    lifetime,
 ) -> None:
     implementation = FakeSandbox()
     monkeypatch.setattr(sandbox, "create_sandbox", lambda _name, config: implementation)
@@ -1035,15 +1037,20 @@ def test_foreground_ready_failure_stops_releases_and_clears_state(
 
     monkeypatch.setattr(sandbox, "_wait_ready", ready)
     spec = _launch_spec(tmp_path)
+    spec = replace(spec, serve=replace(spec.serve, lifetime=lifetime))
 
     def fail_ready(_state: SandboxState) -> None:
         raise RuntimeError("ready output failed")
 
+    from toolang.up.closing import ClosingDeadline
+
+    closing = ClosingDeadline(enabled=False)
     with pytest.raises(RuntimeError, match="ready output failed"):
-        asyncio.run(sandbox.run(spec, on_ready=fail_ready))
+        asyncio.run(sandbox.run(spec, on_ready=fail_ready, closing=closing))
+    assert closing.reason == "server failed"
 
     ref = SandboxRef("workload-1", spec.serve.endpoint)
-    assert ("stop", ref, True) in implementation.calls
+    assert ("stop", ref, lifetime != "foreground") in implementation.calls
     assert ("release", ref) in implementation.calls
     assert SandboxState.load(spec.serve.layout.runtime_status) is None
 

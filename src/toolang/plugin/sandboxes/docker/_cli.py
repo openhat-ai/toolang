@@ -25,6 +25,7 @@ DOCKER_REMOVE_TIMEOUT_SEC = 10.0
 _OWNED_INSPECT_FORMAT = (
     "[{{json .Id}},{{json .Name}},{{json .State.Running}},{{json .Config.Labels}}]"
 )
+_FOREGROUND_CONTROLLERS: dict[str, subprocess.Popen[bytes]] = {}
 
 
 def docker_identity_labels(identity: object) -> dict[str, str]:
@@ -135,7 +136,7 @@ def _owned_container(
     ):
         raise RuntimeError(f"docker container ownership mismatch: {ref.runtime_id}")
     if (container is None or not container.running) and docker_launch_pending(
-        ref.runtime_name or ref.runtime_id
+        ref.runtime_id
     ):
         raise RuntimeError("docker container creation is still pending")
     return container
@@ -147,8 +148,6 @@ def docker_reference_id(ref: SandboxRef) -> str | None:
         return ref.runtime_id  # Existing references keep their original locators.
     docker_identity_labels(ref.meta["docker_identity"])
     container = _owned_container(ref, _inspect_containers((ref.runtime_id,)))
-    if docker_launch_pending(ref.runtime_name or ref.runtime_id):
-        raise RuntimeError("docker container creation is still pending")
     return container.id if container is not None else None
 
 
@@ -237,6 +236,8 @@ def docker_launch_pending(container_name: str) -> bool:
         try:
             if process.info["name"] not in {"docker", "com.docker.cli"}:
                 continue
+            if process.status() in {psutil.STATUS_ZOMBIE, psutil.STATUS_DEAD}:
+                continue
             args = process.info["cmdline"]
             if args is None:
                 uids = process.info["uids"]
@@ -248,7 +249,6 @@ def docker_launch_pending(container_name: str) -> bool:
                 and args[1] == "run"
                 and "--name" in args
                 and args[args.index("--name") + 1] == container_name
-                and process.status() != psutil.STATUS_ZOMBIE
             ):
                 return True
         except (psutil.NoSuchProcess, IndexError):
@@ -365,11 +365,12 @@ async def docker_run_detached(
     log_path: Path | None,
     remove_on_exit: bool = False,
     labels: Mapping[str, str] | None = None,
+    foreground: bool = False,
 ) -> str:
     args = [
         "docker",
         "run",
-        "--detach",
+        "--interactive" if foreground else "--detach",
         "--name",
         container_name,
         "--workdir",
@@ -379,6 +380,17 @@ async def docker_run_detached(
         "--add-host",
         f"{DEFAULT_HOST_GATEWAY}:host-gateway",
     ]
+    if foreground:
+        args.extend(
+            [
+                "--init",
+                "--sig-proxy=false",
+                "--stop-signal",
+                "SIGTERM",
+                "--stop-timeout",
+                "10",
+            ]
+        )
     if remove_on_exit:
         args.append("--rm")
     for name, value in (labels or {}).items():
@@ -390,6 +402,8 @@ async def docker_run_detached(
         args.extend(["--env", f"{name}={value}"])
     args.append(image)
     args.extend(command)
+    if foreground:
+        return await _run_foreground(args, container_name, labels or {}, log_path)
     log_stream = log_path.open("ab") if log_path is not None else None
     try:
         try:
@@ -415,6 +429,81 @@ async def docker_run_detached(
     if not container_id:
         raise RuntimeError("docker did not return a container id")
     return container_id
+
+
+async def _run_foreground(
+    args: list[str], name: str, labels: Mapping[str, str], log_path: Path | None
+) -> str:
+    """Retain a real stdin pipe across the controller's separate event loops."""
+    stream = log_path.open("ab") if log_path is not None else None
+    try:
+        process = subprocess.Popen(
+            args,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=stream or subprocess.DEVNULL,
+            start_new_session=True,
+            close_fds=True,
+        )
+    finally:
+        if stream is not None:
+            stream.close()
+    _FOREGROUND_CONTROLLERS[name] = process
+    try:
+        while True:
+            containers = await asyncio.to_thread(_inspect_containers, (name,))
+            container = containers.get(name)
+            returncode = process.poll()
+            if container is not None:
+                if any(
+                    container.labels.get(key) != value for key, value in labels.items()
+                ):
+                    raise RuntimeError(f"docker container ownership mismatch: {name}")
+                # Docker publishes the ID before starting the workload. Keep
+                # creation owned until it runs or the attached client exits.
+                if container.running or returncode is not None:
+                    _FOREGROUND_CONTROLLERS[container.id] = _FOREGROUND_CONTROLLERS.pop(
+                        name
+                    )
+                    return container.id
+            if returncode is not None:
+                detail = ""
+                if log_path is not None:
+                    with log_path.open("rb") as diagnostic:
+                        diagnostic.seek(0, os.SEEK_END)
+                        diagnostic.seek(max(0, diagnostic.tell() - 16_384))
+                        detail = diagnostic.read().decode(errors="replace").strip()
+                raise RuntimeError(
+                    f"foreground docker run exited before creation: {process.returncode}"
+                    + (f"; {detail}" if detail else "")
+                )
+            await asyncio.sleep(0.05)
+    except BaseException:
+        _FOREGROUND_CONTROLLERS.pop(name, None)
+        if process.stdin is not None:
+            process.stdin.close()
+        if process.poll() is None:
+            process.terminate()
+            await asyncio.to_thread(process.wait, timeout=2)
+        raise
+
+
+def docker_release_controller(container_id: str) -> None:
+    """Close the owned channel only after workload shutdown, and reap its client."""
+    process = _FOREGROUND_CONTROLLERS.pop(container_id, None)
+    if process is None:
+        return
+    if process.stdin is not None:
+        process.stdin.close()
+    try:
+        process.wait(timeout=1)
+    except subprocess.TimeoutExpired:
+        process.terminate()
+        try:
+            process.wait(timeout=1)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
 
 
 async def finish_process(process: asyncio.subprocess.Process) -> None:

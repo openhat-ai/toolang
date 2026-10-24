@@ -15,12 +15,18 @@ from .private_paths import verify_root_namespace, verify_home_paths
 @dataclass(frozen=True, slots=True)
 class AgentAddress:
     name: str
-    place_code: str
+    place_code: str | None
     source: Path | None = None
 
     def __post_init__(self) -> None:
         validate_agent_name(self.name)
-        _, timestamp = decode_place_code(self.place_code)
+        _, timestamp = (
+            decode_place_code(self.place_code)
+            if self.place_code is not None
+            else (0, 0)
+        )
+        if self.place_code is None and self.source is None:
+            raise ValueError("latest HOME selection requires a .too source path")
         if self.source is not None and (
             not self.source.is_absolute()
             or self.source.suffix != ".too"
@@ -33,7 +39,10 @@ class AgentAddress:
     @property
     def placement(self) -> str:
         return (
-            "visiting" if decode_place_code(self.place_code)[1] is None else "roaming"
+            "visiting"
+            if self.place_code is not None
+            and decode_place_code(self.place_code)[1] is None
+            else "roaming"
         )
 
 
@@ -47,7 +56,7 @@ def parse_address(text: str) -> AgentAddress | None:
     if "@" not in text or text.endswith(".too"):
         return None
     label, _, token = text.rpartition("@")
-    _, timestamp = decode_place_code(token)
+    _, timestamp = decode_place_code(token) if token else (0, 0)
     source = None
     if not explicit_name and (label.endswith(".too") or "/" in label):
         source = Path(label).expanduser().resolve()
@@ -58,7 +67,7 @@ def parse_address(text: str) -> AgentAddress | None:
         name = derive_agent_name(source.stem)
     else:
         name = validate_agent_name(label)
-    return AgentAddress(name, token, source)
+    return AgentAddress(name, token or None, source)
 
 
 def resolve_address(root: Path, address: AgentAddress) -> tuple[AgentLayout, str]:
@@ -71,6 +80,7 @@ def resolve_address(root: Path, address: AgentAddress) -> tuple[AgentLayout, str
         layout, launch_id = active_layout(root, f"{address.name}@{address.place_code}")
         return layout, launch_id
     else:
+        assert address.place_code is not None
         namespace = paths.VISITING_BASE / root_code(str(root))
         verify_root_namespace(namespace, root)
         home = namespace / address.place_code / "agents" / address.name

@@ -268,7 +268,8 @@ def _prepare_info_layout(
 ) -> AgentLayout:
     """Prepare one selected home without allocating or registering an execution."""
     from dataclasses import replace
-    from toolang.up.allocation import retained_roaming
+    from toolang.up.allocation import prepare_roaming_home
+    from toolang.up.workload import management_operation
 
     state = cli_context(ctx)
     layout = context_layout(ctx)
@@ -277,15 +278,18 @@ def _prepare_info_layout(
             raise ClickException(f"Agent {layout.name} not found")
     elif state.source is not None:
         if not state.instance_selected and layout.place_code is None:
-            retained = retained_roaming(state.source, toolang_root=state.root)
-            if retained:
-                layout = retained[0]
+            layout = prepare_roaming_home(state.source, toolang_root=state.root)
         state.layout = layout
-        layout = replace(
-            agent_sources.materialize_roaming_program(state.source, layout=layout),
-            root=state.root,
-        )
-    else:
+        if not _owned_info(layout):
+            with management_operation(layout, stage="info"):
+                if not _owned_info(layout):
+                    layout = replace(
+                        agent_sources.materialize_roaming_program(
+                            state.source, layout=layout
+                        ),
+                        root=state.root,
+                    )
+    elif not _owned_info(layout):
         layout = agent_sources.prepare_visiting_layout(
             layout,
             toolang_root=state.root,
@@ -305,6 +309,25 @@ def _local_resources(
 ) -> tuple[list[tuple[str, str]], str | None]:
     from toolang.setup import SetupWatcher
     from toolang.state.watcher import StateWatcher
+
+    if observed := _owned_info(layout):
+        counts = (observed.entry or {}).get("workload", {}).get("resource_counts")
+        if not isinstance(counts, dict):
+            return [("Resources", "unavailable (runtime-owned HOME)")], None
+        try:
+            return [
+                ("Resources", "runtime startup snapshot"),
+                ("Caps", _cap_counts_summary(counts["caps"])),
+                ("Tools", f"{counts['tools']} tools, {counts['toolsets']} toolsets"),
+                (
+                    "Models",
+                    f"{counts['models']} models, {counts['providers']} providers",
+                ),
+                ("Chores", _count(counts["chores"], "chore")),
+                ("Workspaces", ", ".join(counts["workspaces"]) or "-"),
+            ], None
+        except (KeyError, TypeError, ValueError):
+            return [("Resources", "unavailable (invalid runtime summary)")], None
 
     async def inspect():
         setup_watcher = SetupWatcher(
@@ -329,6 +352,26 @@ def _local_resources(
         return rows, error
 
     return asyncio.run(inspect())
+
+
+def _owned_info(layout: AgentLayout):
+    """Observe ownership without refreshing or projecting authored inputs."""
+    from toolang.up.observation import RuntimeProbe
+    from toolang.up.instance import process_alive
+
+    observed = RuntimeProbe(layout).status(ui_base_url="")
+    if observed is None:
+        return None
+    owner = (observed.entry or {}).get("control", {}).get("script_owner")
+    if observed.status not in {"stopped", "failed"} or (
+        owner is not None
+        and (
+            not isinstance(owner, dict)
+            or process_alive(owner.get("pid"), owner.get("created")) is not False
+        )
+    ):
+        return observed
+    return None
 
 
 def _count(value: int, singular: str) -> str:

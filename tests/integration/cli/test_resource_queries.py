@@ -266,7 +266,12 @@ def test_roaming_cap_location_uses_selected_layout_root(tmp_path, monkeypatch, c
     tmp_path = tmp_path.resolve()
     source = tmp_path / "demo.too"
     source.write_text("agic:\n  {{_}}\n")
-    skill = tmp_path / ".toolang" / "skills" / "reviewer" / "SKILL.md"
+    from toolang.up.source import materialize_roaming_program
+
+    layout = materialize_roaming_program(
+        source, toolang_root=tmp_path / "unrelated-root"
+    )
+    skill = layout.place / "skills" / "reviewer" / "SKILL.md"
     skill.parent.mkdir(parents=True)
     skill.write_text("---\nname: reviewer\ndescription: Review changes\n---\nReview.\n")
     monkeypatch.setenv("TOOLANG_ROOT", str(tmp_path / "unrelated-root"))

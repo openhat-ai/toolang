@@ -212,17 +212,30 @@ def run(
                     sandbox="host",
                 )
             else:
-                exit_code = user_call(
-                    asyncio.run,
-                    sandbox_runtime.run(
-                        launch,
-                        on_ready=lambda state: _report_foreground_ready(
+                from ...common.foreground import run_foreground
+                from toolang.up.invocation import ForegroundServerOwner
+
+                with ForegroundServerOwner(launch.serve.layout) as owner:
+
+                    def ready(state: SandboxState) -> None:
+                        owner.bind(state.launch_id)
+                        assert launch is not None
+                        _report_foreground_ready(
                             launch.serve.layout.name, state, progress
+                        )
+
+                    exit_code = user_call(
+                        run_foreground,
+                        sandbox_runtime.run(
+                            launch,
+                            on_ready=ready,
+                            progress=progress.sink,
+                            cleanup_progress=cleanup_progress.sink,
+                            closing=owner.closing,
                         ),
-                        progress=progress.sink,
-                        cleanup_progress=cleanup_progress.sink,
-                    ),
-                )
+                        closing=owner.closing,
+                        interrupt_reason="server interrupted",
+                    )
     except KeyboardInterrupt:
         raise typer.Exit(130) from None
     except (
@@ -592,6 +605,9 @@ def serve(
     workspace_bindings: Annotated[
         str, typer.Option("--workspace-bindings", hidden=True)
     ] = "{}",
+    environment_file: Annotated[
+        Path | None, typer.Option("--environment-file", hidden=True)
+    ] = None,
     initial_workdir: Annotated[
         str | None, typer.Option("--initial-workdir", hidden=True)
     ] = None,
@@ -641,7 +657,21 @@ def serve(
     environ = dict(os.environ)
     environ["TOOLANG_ROOT"] = str(context_root(ctx))
     environ["TOOLANG_SANDBOX"] = sandbox
-    if location == "host" and host_launch:
+    if environment_file is not None:
+        from toolang.common.environment import apply_environment_file
+
+        if location != "guest":
+            raise ClickException("an explicit workload environment requires a guest")
+        grants = user_call(apply_environment_file, environment_file, environ)
+        selected = ResolvedEnvironment(
+            context_root(ctx),
+            EnvironmentPolicy(),
+            environ,
+            identity=environment_identity(layout),
+            source=environment_file,
+            guest_values=grants,
+        )
+    elif location == "host" and host_launch:
         # The controller already resolved and reduced this exec environment.
         selected = ResolvedEnvironment(
             context_root(ctx),

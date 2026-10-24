@@ -73,8 +73,7 @@ def test_read_retries_when_first_writer_creates_guard(tmp_path, failure):
     assert process.exitcode == 0
 
 
-def _mutate(root, family, contended, done):
-    layout = AgentLayout.resident(Path(root), "alice")
+def _mutate(layout, family, contended, done):
     original = files.fcntl.flock
 
     def flock(fd, flags):
@@ -114,8 +113,9 @@ def _mutate(root, family, contended, done):
             context,
         )
     elif family == "projection":
-        source = layout.place.parent / "alice.too"
-        materialize_roaming_program(source)
+        source = layout.source_path
+        assert source is not None
+        materialize_roaming_program(source, layout=layout)
     else:
         other = AgentLayout.resident(layout.place, family)
         with EditLock(other.home_edit_lock).write():
@@ -129,13 +129,17 @@ def _mutate(root, family, contended, done):
 def test_home_writers_share_edit_lock_across_processes(tmp_path, family):
     source = tmp_path / "alice.too"
     source.write_text("agic:\n  Hello.\n")
-    layout = AgentLayout.resident(tmp_path / ".toolang", "alice")
-    layout.home.mkdir(parents=True)
+    layout = (
+        materialize_roaming_program(source, toolang_root=tmp_path)
+        if family == "projection"
+        else AgentLayout.resident(tmp_path / ".toolang", "alice")
+    )
+    layout.home.mkdir(parents=True, exist_ok=True)
+    if family == "projection":
+        (tmp_path / "toolang.toml").write_text('[workspaces]\nrepo = "."\n')
     ctx = multiprocessing.get_context("spawn")
     contended, done = ctx.Event(), ctx.Event()
-    process = ctx.Process(
-        target=_mutate, args=(str(layout.place), family, contended, done)
-    )
+    process = ctx.Process(target=_mutate, args=(layout, family, contended, done))
     try:
         with EditLock(layout.home_edit_lock).write():
             process.start()
@@ -172,8 +176,10 @@ def test_catalog_reads_and_unchanged_projection_do_not_create_guards(tmp_path):
 
     source = tmp_path / "alice.too"
     source.write_text("agic:\n  Hello.\n")
-    layout = AgentLayout.roaming(source)
-    layout.home.mkdir(parents=True)
+    from toolang.up.allocation import prepare_roaming_home
+
+    layout = prepare_roaming_home(source, toolang_root=tmp_path)
+    layout.home.mkdir(parents=True, exist_ok=True)
     layout.config.write_text(
         project_sources(script_sources(source), source=source, catalog=None)
     )
@@ -192,7 +198,7 @@ def test_catalog_reads_and_unchanged_projection_do_not_create_guards(tmp_path):
         ConfiguredWorkspaces(layout.config, lock_path=layout.home_edit_lock).list()
         == {}
     )
-    assert materialize_roaming_program(source) == layout
+    assert materialize_roaming_program(source, toolang_root=tmp_path) == layout
     assert not (layout.home / ".state").exists()
     assert not (layout.place / ".state").exists()
 
@@ -203,7 +209,7 @@ def _add_roaming_workspace(source, name):
         _workspace_edit_lock,
     )
 
-    layout = AgentLayout.roaming(Path(source))
+    layout = materialize_roaming_program(Path(source), toolang_root=Path(source).parent)
     assert _workspace_edit_lock(layout) == layout.place_edit_lock
     ConfiguredWorkspaces(
         _authored_config(layout), lock_path=_workspace_edit_lock(layout)
@@ -215,7 +221,7 @@ def test_shared_roaming_config_updates_preserve_both_scripts_workspaces(tmp_path
     for source in sources:
         source.write_text("agic:\n  Hello.\n")
         (tmp_path / source.stem).mkdir()
-        materialize_roaming_program(source)
+        materialize_roaming_program(source, toolang_root=tmp_path)
     with ProcessPoolExecutor(
         max_workers=2, mp_context=multiprocessing.get_context("spawn")
     ) as pool:
@@ -234,7 +240,7 @@ def test_delayed_roaming_projection_does_not_overwrite_newer_workspace_config(
 ):
     source = tmp_path / "alice.too"
     source.write_text("agic:\n  Hello.\n")
-    layout = materialize_roaming_program(source)
+    layout = materialize_roaming_program(source, toolang_root=tmp_path)
     grants = ConfiguredWorkspaces(
         tmp_path / "toolang.toml", lock_path=layout.place_edit_lock
     )
@@ -258,11 +264,13 @@ def test_delayed_roaming_projection_does_not_overwrite_newer_workspace_config(
 
     monkeypatch.setattr(EditLock, "write", write)
     with ThreadPoolExecutor(thread_name_prefix="old-projection") as pool:
-        pending = pool.submit(materialize_roaming_program, source)
+        pending = pool.submit(
+            materialize_roaming_program, source, toolang_root=tmp_path
+        )
         try:
             assert paused.wait(10)
             grants.add(tmp_path / "second", name="second")
-            materialize_roaming_program(source)
+            materialize_roaming_program(source, toolang_root=tmp_path)
         finally:
             resume.set()
         pending.result(timeout=10)

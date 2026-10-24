@@ -3,17 +3,52 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from contextlib import suppress
+from dataclasses import dataclass
+from hashlib import sha256
 from importlib.resources import files
 from pathlib import Path
 import shutil
 import json
 
-from toolang.base.types.sandbox import SandboxRequest
+from toolang.base.types.sandbox import JsonValue, SandboxRequest
 from toolang.common.files import atomic_write_text
 from toolang.common.environment import is_environment_name
 
 
 _GUEST_FILES = {"guest.sh": 0o755}
+
+
+@dataclass(frozen=True)
+class GuestLaunchFiles:
+    """Host bootstrap and diagnostic paths belonging to one Docker launch."""
+
+    stage: Path
+    diagnostic: Path
+    startup_events: Path
+
+    @classmethod
+    def for_launch(cls, request: SandboxRequest, launch_id: str) -> GuestLaunchFiles:
+        assert request.toolang_root is not None
+        runtime = request.local_runtime or (
+            request.toolang_root / ".runtime" / "active" / str(request.agent_address)
+        )
+        return cls(
+            stage=runtime / "docker" / sha256(launch_id.encode()).hexdigest(),
+            diagnostic=request.local_home
+            / ".runtime"
+            / f"docker-guest-{launch_id}.log",
+            startup_events=request.local_home
+            / ".runtime"
+            / f"docker-guest-{launch_id}.events",
+        )
+
+    def metadata(self) -> dict[str, JsonValue]:
+        return {
+            "stage_dir": str(self.stage),
+            "diagnostic_path": str(self.diagnostic),
+            "startup_events_path": str(self.startup_events),
+        }
 
 
 def stage_guest_files(directory: Path) -> None:
@@ -56,8 +91,19 @@ def validate_guest_environment(environ: Mapping[str, str]) -> None:
 
 
 def prepare_stage_directory(stage_dir: Path) -> None:
-    stage_dir.parent.mkdir(parents=True, exist_ok=True)
-    stage_dir.mkdir()
+    if stage_dir.parent.name == "docker":
+        root = stage_dir.parent
+        root.parent.mkdir(parents=True, exist_ok=True)
+        root.mkdir()
+        try:
+            stage_dir.mkdir()
+        except BaseException:
+            with suppress(OSError):
+                root.rmdir()
+            raise
+    else:
+        stage_dir.parent.mkdir(parents=True, exist_ok=True)
+        stage_dir.mkdir()
 
 
 def prepare_diagnostic(path: Path) -> None:
@@ -73,7 +119,11 @@ def remove_stage_directory(
     launch_id: str | None = None,
 ) -> None:
     path = Path(stage_dir)
-    if launch_id is not None and path.name == "docker":
+    generation_stage = path.parent.name == "docker"
+    if generation_stage and launch_id is not None:
+        if path.name != sha256(launch_id.encode()).hexdigest():
+            return
+    if launch_id is not None and (path.name == "docker" or generation_stage):
         try:
             info_path = path / "active/info.json"
             if not info_path.exists():
@@ -84,7 +134,8 @@ def remove_stage_directory(
             try:
                 path.rmdir()
             except OSError:
-                pass
+                return
+            _remove_empty_stage_root(path)
             return
         if not isinstance(info, dict) or info.get("launch") != launch_id:
             return
@@ -96,6 +147,13 @@ def remove_stage_directory(
         except OSError:
             if not ignore_errors:
                 raise
+    _remove_empty_stage_root(path)
+
+
+def _remove_empty_stage_root(path: Path) -> None:
+    if path.parent.name == "docker":
+        with suppress(OSError):
+            path.parent.rmdir()
 
 
 def prepare_background_log(request: SandboxRequest) -> Path | None:

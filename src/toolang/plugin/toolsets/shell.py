@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Mapping
-from contextlib import suppress
 from dataclasses import dataclass, field
 import locale
 import os
@@ -132,9 +131,16 @@ def _summary(
 
 async def _stop_command(launch: asyncio.Task[asyncio.subprocess.Process]) -> None:
     process = await launch
-    with suppress(ProcessLookupError):
-        os.killpg(process.pid, signal.SIGKILL)
-    await process.communicate()
+    drained = asyncio.create_task(process.communicate())
+    while not drained.done():
+        # A concurrent fork can leave a child holding the group's output pipes
+        # after its leader dies. Keep signaling the owned group until EOF.
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            break
+        await asyncio.wait((drained,), timeout=0.1)
+    await drained
 
 
 def _decode_output(value: bytes) -> str:

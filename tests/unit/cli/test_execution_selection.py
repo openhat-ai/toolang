@@ -7,7 +7,6 @@ from typer.core import TyperCommand
 
 from toolang.cli.common.context import CliContext, context_layout, target_context
 from toolang.cli.common.execution import select_agent_instance
-from toolang.cli.toolang.commands import chat
 from toolang.execution.store import RunStore
 from toolang.up.allocation import allocate_roaming
 
@@ -26,9 +25,9 @@ def test_allocated_home_is_not_replaced_by_a_later_launch(tmp_path):
     assert context_layout(context).place == selected.place
 
 
-def test_chat_uses_its_explicit_thread_instead_of_parser_state(tmp_path, monkeypatch):
-    from toolang.cli.toolang.commands.chat import main as chat_runtime
-
+def test_history_uses_its_explicit_record_instead_of_parser_state(
+    tmp_path, monkeypatch
+):
     source = tmp_path / "aid.too"
     root = tmp_path / "root"
     first = allocate_roaming(source, toolang_root=root)
@@ -38,11 +37,5 @@ def test_chat_uses_its_explicit_thread_instead_of_parser_state(tmp_path, monkeyp
             store.create_thread(thread_id=thread)
     context = Context(TyperCommand("chat"), obj=target_context(root, source))
     context.params["thread"] = "chat_second"
-    selected = []
-    monkeypatch.setattr(
-        chat_runtime,
-        "chat_command",
-        lambda ctx, **_kwargs: selected.append(context_layout(ctx).place),
-    )
-    chat.chat_command(context, agent=str(source), thread="chat_first")
-    assert selected == [first.place]
+    assert select_agent_instance(context, record="chat_first") == first
+    assert context_layout(context) == first

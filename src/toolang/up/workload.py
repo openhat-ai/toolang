@@ -219,7 +219,11 @@ _OPERATIONS: ContextVar[tuple[tuple[Path, str | None], ...]] = ContextVar(
 
 @contextmanager
 def management_operation(
-    layout: AgentLayout, *, stage: str, on_wait: Callable[[], None] | None = None
+    layout: AgentLayout,
+    *,
+    stage: str,
+    on_wait: Callable[[], None] | None = None,
+    wait: bool = True,
 ) -> Iterator[None]:
     key = (layout.runtime_status, layout.instance)
     held = _OPERATIONS.get()
@@ -253,6 +257,8 @@ def management_operation(
             layout.runtime_status, claim, instance=layout.instance, on_wait=on_wait
         )
         if not claimed:
+            if not wait:
+                raise ValueError(f"HOME is busy: {layout.home}")
             if on_wait is not None:
                 on_wait()
             time.sleep(0.05)

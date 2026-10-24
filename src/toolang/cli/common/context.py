@@ -223,7 +223,7 @@ def prepare_agent(ctx: Context, *, progress: ProgressSink | None = None) -> Agen
             message = report.failure_message(exc) if report.failure_stage else str(exc)
             raise ClickException(message) from exc
     state.layout = replace(
-        source.materialize_roaming_program(state.source)
+        source.materialize_roaming_program(state.source, toolang_root=state.root)
         if state.source is not None
         else source.resolve_visiting_layout(
             state.selector or "", toolang_root=state.root, progress=progress

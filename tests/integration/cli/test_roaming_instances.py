@@ -42,7 +42,7 @@ def test_duplicate_chat_workdir_does_not_prepare_a_roaming_instance(
     )
     before = set(tmp_path.rglob("*"))
     assert main([str(source), "chat", "-d", ".", "--workdir", "."]) == 2
-    assert "--workdir may only be specified once" in capsys.readouterr().err
+    assert "paths are not supported" in capsys.readouterr().err
     assert set(tmp_path.rglob("*")) == before
 
 
@@ -126,7 +126,7 @@ def test_resident_stop_selects_and_fences_the_original_owner(tmp_path, monkeypat
     assert captured["expected_launch_id"] == "selected-owner"
 
 
-@pytest.mark.parametrize("command", ["serve", "start", "stop"])
+@pytest.mark.parametrize("command", ["chat", "serve", "start", "stop"])
 @pytest.mark.parametrize("explicit_instance", [False, True])
 def test_roaming_rejects_hosting_commands_without_mutating_instances(
     tmp_path, monkeypatch, command, explicit_instance
@@ -202,62 +202,18 @@ def test_retained_selection_and_rerun_preserve_the_selected_home(
 
 
 @pytest.mark.parametrize("command", ["fork", "rewind"])
-def test_offline_edit_chat_restarts_in_the_same_home(tmp_path, monkeypatch, command):
-    import io
-    import sys
-    from toolang.up.instance import read_instance
-
+def test_roaming_history_chat_rejects_before_edit(tmp_path, monkeypatch, command):
     source = tmp_path / "aid.too"
     source.write_text("flow main(_: Text) -> Text:\n  pass\n")
     root = tmp_path / "global"
     monkeypatch.setenv("TOOLANG_ROOT", str(root))
     assert main([str(source), "main", "--quiet", "hello"]) == 0
-    original = select_roaming(source, toolang_root=root)
-    store = RunStore(original.run_store, read_only=True)
-    try:
+    home = select_roaming(source, toolang_root=root)
+    with closing(RunStore(home.run_store, read_only=True)) as store:
         (run,) = store.list_runs()
-    finally:
-        store.close()
-    monkeypatch.setattr(sys, "stdin", io.StringIO("/exit\n"))
-    assert main([str(source), command, run.id, "--chat"]) == 0
-    continued = select_roaming(source, toolang_root=root)
-    assert continued.place == original.place
-    entry = read_instance(continued.runtime_status)
-    assert entry is not None
-    assert entry["control"]["drivers"] == ["chat"]
-    assert entry["workload"]["status"] == "stopped"
-    assert not list((root / ".runtime" / "active").glob("*/*.json"))
-
-
-@pytest.mark.parametrize("command", ["rerun", "fork", "rewind"])
-def test_roaming_continuation_rejects_a_different_toolang_root(
-    tmp_path, monkeypatch, command
-):
-    source = tmp_path / "aid.too"
-    source.write_text("flow main(_: Text) -> Text:\n  pass\n")
-    root = tmp_path / "environment-root"
-    monkeypatch.setenv("TOOLANG_ROOT", str(root))
-    assert main([str(source), "main", "--quiet", "hello"]) == 0
-    original = select_roaming(source, toolang_root=root)
-    with closing(RunStore(original.run_store, read_only=True)) as store:
-        (run,) = store.list_runs()
-    before = original.runtime_status.read_bytes()
-    selected_root = tmp_path / "invocation-root"
-    assert (
-        main(
-            [
-                "--root",
-                str(selected_root),
-                str(source),
-                command,
-                run.id,
-                *(["--chat"] if command != "rerun" else []),
-            ]
-        )
-        == 1
-    )
-    assert original.runtime_status.read_bytes() == before
-    assert not selected_root.exists()
+    before = home.run_store.read_bytes()
+    assert main([str(source), command, run.id, "--chat"]) == 1
+    assert home.run_store.read_bytes() == before
 
 
 def test_record_selection_binds_an_older_home_without_changing_the_default(
@@ -282,11 +238,9 @@ def test_record_selection_binds_an_older_home_without_changing_the_default(
     assert select_roaming(source, toolang_root=root).place == latest.place
 
 
-def test_chat_thread_selection_requires_one_matching_home(
+def test_history_thread_selection_requires_one_matching_home(
     tmp_path, monkeypatch, capsys
 ):
-    from toolang.cli.common.context import context_layout
-    from toolang.cli.toolang.commands.chat import main as chat
     from toolang.up.allocation import allocate_roaming
 
     root = tmp_path / "root"
@@ -298,19 +252,10 @@ def test_chat_thread_selection_requires_one_matching_home(
         with closing(RunStore(layout.run_store)) as store:
             store.create_thread(thread_id=thread)
             store.create_thread(thread_id="chat_shared")
-    selected = []
-    monkeypatch.setattr(
-        chat,
-        "chat_command",
-        lambda ctx, **_kwargs: selected.append(context_layout(ctx).place),
-    )
-    assert main([str(source), "chat", "-t", "chat_first"]) == 0
-    assert selected == [first.place]
-    assert main([str(source), "chat", "-t", "chat_shared"]) == 1
+    assert main([str(source), "inspect", "chat_first"]) == 0
+    assert main([str(source), "inspect", "chat_shared"]) == 1
     assert "specify name@ID or file.too@ID" in capsys.readouterr().err
-    assert selected == [first.place]
-    assert main([f"{source}@{first.place_code}", "chat", "-t", "chat_shared"]) == 0
-    assert selected == [first.place, first.place]
+    assert main([f"{source}@{first.place_code}", "inspect", "chat_shared"]) == 0
     assert select_roaming(source, toolang_root=root).place == second.place
 
 
@@ -355,7 +300,7 @@ def test_record_home_lookup_reports_incompatible_history_without_changing_it(
     with sqlite3.connect(layout.run_store) as connection:
         connection.execute("PRAGMA user_version = 99999")
     before = layout.run_store.read_bytes()
-    assert main([str(source), "chat", "-t", "chat_saved"]) == 1
+    assert main([str(source), "inspect", "chat_saved"]) == 1
     message = capsys.readouterr().err
     assert "execution history is incompatible" in message
     assert str(layout.run_store) in "".join(message.split())

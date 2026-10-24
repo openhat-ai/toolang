@@ -463,7 +463,9 @@ def test_cd_prepares_nonresident_home_and_reuses_it(
         source = tmp_path / "project" / "alice.too"
         source.parent.mkdir()
         source.write_text(source_text)
-        layout = AgentLayout.roaming(source)
+        layout = agent_sources.roaming_layout(
+            source, toolang_root=tmp_path / "unrelated"
+        )
         selector = str(source)
     else:
         selector = (
@@ -491,7 +493,7 @@ def test_cd_prepares_nonresident_home_and_reuses_it(
     monkeypatch.setenv("SHELL", "/custom/shell")
     monkeypatch.setattr(cd_command.subprocess, "run", run)
 
-    assert not layout.home.exists()
+    assert not layout.program.exists()
     assert cli.main([selector, "cd"]) == 0
     assert cli.main([selector, "cd", "--"]) == 0
 
@@ -509,7 +511,8 @@ def test_cd_prepares_nonresident_home_and_reuses_it(
         }
     assert not (tmp_path / "unrelated").exists()
     if selector_kind == "roaming":
-        assert not layout.runtime.exists()
+        assert layout.runtime_status.exists()
+        assert not layout.run_store.exists()
         assert layout.program.is_symlink()
         assert layout.program.resolve() == source
         assert layout.config.is_file()
@@ -642,5 +645,5 @@ def test_cd_reports_roaming_filesystem_errors_without_launching(
     )
 
     assert cli.main([str(source), "cd"]) == 1
-    assert "Not a directory" in capsys.readouterr().err
+    assert "must be a directory" in capsys.readouterr().err
     assert root.read_text() == "existing file"

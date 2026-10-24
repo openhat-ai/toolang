@@ -37,12 +37,23 @@ then the bundled catalog. Within a layer, `plugin.model_catalog.models_dev.path`
 precedes `toolang.catalog.json`. A project file named `catalog.json` is ignored.
 Resident agents retain their root/home `catalog.json` convention.
 
-Each source-only execution owns `<srcdir>/.toolang/<root_code>/<place_code>/`; agent home is
+Each bare source execution creates `<srcdir>/.toolang/<root_code>/<place_code>/`; agent home is
 `<place>/agents/<agent>`. Status, stores, State, logs, and tool rooms are
 isolated. Published places survive exit/failure; runtime cleanup never deletes them.
 The root-code directory identifies the selected root; its `root.json` retains
-the full root path. Chat and record commands reuse an existing home when selected by
-instance or Thread/Run; see [agent addresses](agent-addresses.md#binding-and-execution).
+the full root path. `file.too@CODE` reuses an exact HOME; `file.too@` requires the
+latest existing HOME. Bare `info` selects the latest or prepares one without a
+Run. See [agent addresses](agent-addresses.md#binding-and-execution) for selection
+and record binding. Legacy unnumbered `.toolang/agents/NAME` directories are
+preserved but never selected or created.
+
+One script, including CLI rerun, may own a HOME at a time. Different HOMEs may run
+on host and Docker concurrently; a verified stopped HOME may switch environments
+on its next invocation. Reuse preserves history/lab and resolves current inputs
+and grants, rather than retaining temporary options from the previous invocation.
+HOMEs share their canonical source; they are not source checkouts. Roaming has
+no Chat or standalone hosting commands.
+
 Roaming scripts use the selected root's [environment policy](setup.md#environments),
 preferring the root file named by the encoded canonical source path over a
 source-local `.toolang.env`. Project `.env`, ancestor dotenv, and same-name

@@ -293,6 +293,47 @@ def test_serve_uses_process_sandbox_instead_of_dotenv(
     assert cast(Mapping[str, str], captured["environ"])["TOOLANG_SANDBOX"] == merged
 
 
+@pytest.mark.parametrize("missing", [False, True])
+def test_guest_requires_the_explicit_launch_environment(tmp_path, monkeypatch, missing):
+    root = tmp_path / "toolang"
+    _create_agent(root)
+    environment = tmp_path / "launch.env"
+    if not missing:
+        environment.write_text(
+            "OLLAMA_HOST=http://fixture.invalid:11434\nTOOLANG_SANDBOX=docker:spoofed\n"
+        )
+    captured = []
+
+    def serve(spec, *, environ, **kwargs):
+        captured.append(dict(environ))
+        return 0
+
+    monkeypatch.setattr(agent_server, "serve", serve)
+    result = runner.invoke(
+        cli.app,
+        [
+            "--root",
+            str(root),
+            "_serve",
+            "alice",
+            "--sandbox",
+            "docker:test",
+            "--location",
+            "guest",
+            "--environment-file",
+            str(environment),
+        ],
+    )
+    if missing:
+        assert result.exit_code == 1
+        assert "could not read environment file" in result.stderr
+        assert not captured
+    else:
+        assert result.exit_code == 0, result.stderr
+        assert captured[0]["OLLAMA_HOST"] == "http://fixture.invalid:11434"
+        assert captured[0]["TOOLANG_SANDBOX"] == "docker:test"
+
+
 @pytest.mark.parametrize("agent_first", [False, True])
 def test_run_resolves_sandbox_inputs_and_runs_in_foreground(
     tmp_path: Path,
@@ -323,6 +364,7 @@ def test_run_resolves_sandbox_inputs_and_runs_in_foreground(
         on_ready: Any,
         progress: Any,
         cleanup_progress: Any,
+        closing: Any,
     ) -> int:
         captured["run"] = spec
         captured["progress"] = progress

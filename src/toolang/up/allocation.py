@@ -1,11 +1,12 @@
 """Allocate and select source-local roaming identities."""
 
 from pathlib import Path
+from contextlib import nullcontext
 import time
 from uuid import uuid4
 
 from toolang.common.files import EditLock
-from toolang.common.layout import AgentLayout, derive_agent_name
+from toolang.common.layout import AgentLayout, derive_agent_name, validate_agent_name
 from toolang.common.place_codes import (
     decode_place_code,
     place_source_id,
@@ -14,7 +15,8 @@ from toolang.common.place_codes import (
     roaming_timestamp_ms,
 )
 from .identity import layout_from_control
-from .instance import control_owner, read_instance
+from .instance import control_owner, initialize_instance, read_instance
+from .identity import identity_bindings
 from .private_paths import verify_home_paths, verify_root_namespace
 from .registry import RuntimeRegistration, registration_lock, verify_registration
 from .workload import fail_preparation, prepare_workload
@@ -96,49 +98,84 @@ def _select_retained_roaming(
     raise FileNotFoundError(f"no retained instance for {source}")
 
 
-def allocate_roaming(source: Path, *, toolang_root: Path) -> AgentLayout:
+def allocate_roaming(
+    source: Path, *, toolang_root: Path, register: bool = True
+) -> AgentLayout:
     """Allocate once under source/registry guards; collisions fail without retry."""
     source = source.expanduser().resolve()
     toolang_root = toolang_root.expanduser().resolve()
+    validate_agent_name(derive_agent_name(source.stem))
     if source.suffix != ".too":
         raise ValueError(f"agent program must be a .too file: {source}")
-    cache = source.parent / ".toolang" / root_code(str(toolang_root))
     with EditLock(source.parent / ".toolang" / ".state" / "launch.lock").write():
-        verify_root_namespace(cache, toolang_root, create=True)
-        highest = -1
-        for previous in retained_roaming(source, toolang_root=toolang_root):
-            assert previous.place_code is not None
-            highest = max(highest, roaming_timestamp_ms(previous.place_code))
-        timestamp_ms = max(time.time_ns() // 1_000_000, highest + 1)
+        return _allocate_roaming_locked(source, toolang_root, register=register)
+
+
+def prepare_roaming_home(source: Path, *, toolang_root: Path) -> AgentLayout:
+    """Select the latest HOME, allocating identity without a runtime when absent."""
+    source, toolang_root = (
+        source.expanduser().resolve(),
+        toolang_root.expanduser().resolve(),
+    )
+    validate_agent_name(derive_agent_name(source.stem))
+    if source.suffix != ".too":
+        raise ValueError(f"agent program must be a .too file: {source}")
+    with EditLock(source.parent / ".toolang" / ".state" / "launch.lock").write():
+        retained = retained_roaming(source, toolang_root=toolang_root)
+        return (
+            retained[0]
+            if retained
+            else _allocate_roaming_locked(source, toolang_root, register=False)
+        )
+
+
+def _allocate_roaming_locked(
+    source: Path, toolang_root: Path, *, register: bool
+) -> AgentLayout:
+    cache = source.parent / ".toolang" / root_code(str(toolang_root))
+    verify_root_namespace(cache, toolang_root, create=True)
+    highest = -1
+    for previous in retained_roaming(source, toolang_root=toolang_root):
+        assert previous.place_code is not None
+        highest = max(highest, roaming_timestamp_ms(previous.place_code))
+    timestamp_ms = max(time.time_ns() // 1_000_000, highest + 1)
+    token = roaming_place_code(str(source), timestamp_ms)
+    while (
+        (cache / token).is_dir()
+        and not (cache / token).is_symlink()
+        and not any((cache / token).iterdir())
+    ):
+        timestamp_ms += 1
         token = roaming_place_code(str(source), timestamp_ms)
-        while (
-            (cache / token).is_dir()
-            and not (cache / token).is_symlink()
-            and not any((cache / token).iterdir())
-        ):
-            timestamp_ms += 1
-            token = roaming_place_code(str(source), timestamp_ms)
-        layout = AgentLayout.roaming(source, place_code=token, root=toolang_root)
-        with registration_lock(toolang_root, layout):
-            if layout.place.exists() or layout.place.is_symlink():
-                raise FileExistsError(f"roaming place code collision: {layout.address}")
-            verify_registration(layout, toolang_root=toolang_root, require_absent=True)
-            # Exclusive creation cannot replace even an empty preexisting place.
-            layout.place.mkdir(mode=0o700)
-            launch_id = uuid4().hex
-            prepare_workload(
-                layout,
+    layout = AgentLayout.roaming(source, place_code=token, root=toolang_root)
+    with registration_lock(toolang_root, layout) if register else nullcontext():
+        if layout.place.exists() or layout.place.is_symlink():
+            raise FileExistsError(f"roaming place code collision: {layout.address}")
+        verify_registration(layout, toolang_root=toolang_root, require_absent=True)
+        # Exclusive creation cannot replace even an empty preexisting place.
+        layout.place.mkdir(mode=0o700)
+        launch_id = uuid4().hex
+        if not register:
+            initialize_instance(
+                layout.runtime_status,
                 launch_id=launch_id,
-                requested_at=time.time(),
-                owner=control_owner(),
+                control=identity_bindings(layout),
+                workload={"status": "stopped", "pid": None},
             )
-            try:
-                RuntimeRegistration(
-                    layout,
-                    toolang_root=toolang_root,
-                    launch_id=launch_id,
-                ).publish()
-            except BaseException as exc:
-                fail_preparation(layout, exc, expected_launch_id=launch_id)
-                raise
-        return layout
+            return layout
+        prepare_workload(
+            layout,
+            launch_id=launch_id,
+            requested_at=time.time(),
+            owner=control_owner(),
+        )
+        try:
+            RuntimeRegistration(
+                layout,
+                toolang_root=toolang_root,
+                launch_id=launch_id,
+            ).publish()
+        except BaseException as exc:
+            fail_preparation(layout, exc, expected_launch_id=launch_id)
+            raise
+    return layout

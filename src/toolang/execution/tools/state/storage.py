@@ -77,7 +77,10 @@ class HomeFiles:
                 # Reconstructing a filename loses whitespace normalized by it.
                 if (
                     source.suffix == ".too"
-                    and AgentLayout.roaming(source).home == self.layout.home
+                    and AgentLayout.roaming(
+                        source, place_code=self.layout.place_code, root=self.layout.root
+                    ).home
+                    == self.layout.home
                 ):
                     target = source
             except RuntimeError as exc:

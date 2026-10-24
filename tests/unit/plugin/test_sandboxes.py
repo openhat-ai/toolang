@@ -2,7 +2,10 @@ from __future__ import annotations
 
 
 import asyncio
+from contextlib import suppress
 from dataclasses import replace
+from hashlib import sha256
+from io import BytesIO
 import json
 import os
 from pathlib import Path
@@ -12,10 +15,12 @@ import stat
 import subprocess
 import sys
 import threading
+import time
 from types import SimpleNamespace
 from typing import Any, cast
 
 from dotenv import dotenv_values
+import psutil
 import pytest
 
 from toolang.base.errors import SandboxLaunchError, ToolangError
@@ -44,6 +49,38 @@ from toolang.up.mounts import prepare_place_mounts
 
 
 _CONTAINER_ID = "176191c1528b8e2861cc16422dee13ade59d4977c2148a9ebf5d36a06f090abb"
+
+
+@pytest.mark.parametrize("terminal_phase", ["running", "exited"])
+def test_foreground_launch_waits_until_creation_has_finished(
+    monkeypatch, terminal_phase
+):
+    process = SimpleNamespace(stdin=BytesIO(), returncode=None)
+    process.poll = lambda: process.returncode
+    observations = []
+
+    def inspect(identities):
+        phase = "created" if not observations else terminal_phase
+        observations.append(phase)
+        if phase == "exited":
+            process.returncode = 0
+        return {
+            identities[0]: docker_cli._Container(_CONTAINER_ID, phase == "running", {})
+        }
+
+    controllers = {}
+    monkeypatch.setattr(docker_cli, "_FOREGROUND_CONTROLLERS", controllers)
+    monkeypatch.setattr(docker_cli.subprocess, "Popen", lambda *args, **kwargs: process)
+    monkeypatch.setattr(docker_cli, "_inspect_containers", inspect)
+    try:
+        runtime_id = asyncio.run(
+            docker_cli._run_foreground(["docker"], "toolang-alice", {}, None)
+        )
+        assert runtime_id == _CONTAINER_ID
+        assert observations[-1] == terminal_phase
+        assert controllers == {_CONTAINER_ID: process}
+    finally:
+        process.stdin.close()
 
 
 def _mock_docker_container(
@@ -206,6 +243,53 @@ def test_pending_creation_matches_the_exact_unique_container_name(monkeypatch, m
     monkeypatch.setattr(docker_cli.psutil, "process_iter", lambda *args: [helper])
     name = "toolang-alice-launch" if match else "toolang-alice-other"
     assert docker_cli.docker_launch_pending(name) == match
+
+
+@pytest.mark.parametrize("status", ["zombie", "dead", "running"])
+def test_pending_creation_does_not_treat_exited_helpers_as_unknown(monkeypatch, status):
+    helper = SimpleNamespace(
+        info={
+            "name": "docker",
+            "cmdline": None,
+            "uids": SimpleNamespace(real=os.getuid()),
+        },
+        status=lambda: status,
+    )
+    monkeypatch.setattr(docker_cli.psutil, "process_iter", lambda *args: [helper])
+    if status == "running":
+        with pytest.raises(RuntimeError, match="cannot verify pending"):
+            docker_cli.docker_launch_pending("toolang-alice-launch")
+    else:
+        assert not docker_cli.docker_launch_pending("toolang-alice-launch")
+
+
+@pytest.mark.parametrize("missing", [False, True])
+def test_immutable_container_death_does_not_probe_unrelated_creation_helpers(
+    tmp_path, monkeypatch, missing
+):
+    sandbox = docker_sandbox.DockerSandbox({})
+    plan = sandbox.prepare(None, _request(tmp_path))
+    ref = replace(sandbox.prepared_reference(plan), runtime_id=_CONTAINER_ID)
+    monkeypatch.setattr(
+        docker_cli,
+        "_inspect_containers",
+        lambda _: {
+            _CONTAINER_ID: None
+            if missing
+            else docker_cli._Container(
+                _CONTAINER_ID,
+                False,
+                docker_cli.docker_identity_labels(ref.meta["docker_identity"]),
+            )
+        },
+    )
+
+    def unrelated_helpers(*args):
+        pytest.fail("immutable container death must not scan creation helpers")
+
+    monkeypatch.setattr(docker_cli.psutil, "process_iter", unrelated_helpers)
+    assert not docker_cli.docker_reference_running(ref)
+    assert docker_cli.docker_reference_states((ref,)) == (False,)
 
 
 def _request(
@@ -613,7 +697,11 @@ def test_docker_sandbox_prepares_and_launches(
         for mount in plan.mounts
     )
     assert control_lock.read_text(encoding="utf-8") == "host control\n"
-    assert stage_dir == tmp_path / ".runtime" / "active" / "alice" / "docker"
+    assert stage_dir.parent == tmp_path / ".runtime" / "active" / "alice" / "docker"
+    assert (
+        stage_dir.name
+        == sha256(plan.meta["docker_identity"]["launch_id"].encode()).hexdigest()
+    )
     assert diagnostic_path.is_file()
     assert stat.S_IMODE(diagnostic_path.stat().st_mode) == 0o600
     assert startup_events_path.is_file()
@@ -643,6 +731,8 @@ def test_docker_sandbox_prepares_and_launches(
         "alice",
         "--port",
         "8123",
+        "--environment-file",
+        "/root/.toolang/.runtime/active/alice/guest.env",
     )
 
     ref = asyncio.run(sandbox.launch(plan))
@@ -829,7 +919,7 @@ def test_docker_sandbox_reuses_stage_only_after_release(
 
     first_stage = Path(cast(str, first.meta["stage_dir"]))
     second_stage = Path(cast(str, second.meta["stage_dir"]))
-    assert first_stage == second_stage
+    assert first_stage != second_stage
     assert second_stage.is_dir()
 
 
@@ -1900,11 +1990,13 @@ def test_docker_release_removes_the_container_when_diagnostics_fail(
     assert not stage_dir.exists()
 
 
+@pytest.mark.parametrize("foreground", [False, True])
 @pytest.mark.parametrize("remove_on_exit", [False, True])
 def test_docker_run_adds_the_canonical_host_gateway(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     remove_on_exit: bool,
+    foreground: bool,
 ) -> None:
     captured: list[str] = []
 
@@ -1924,6 +2016,12 @@ def test_docker_run_adds_the_canonical_host_gateway(
         create_subprocess_exec,
     )
 
+    async def run_foreground(args, *_args):
+        captured.extend(args)
+        return "container-id"
+
+    monkeypatch.setattr(docker_cli, "_run_foreground", run_foreground)
+
     container_id = asyncio.run(
         docker_cli.docker_run_detached(
             image="python:3.13-slim",
@@ -1942,10 +2040,14 @@ def test_docker_run_adds_the_canonical_host_gateway(
             },
             log_path=None,
             remove_on_exit=remove_on_exit,
+            foreground=foreground,
         )
     )
 
     assert ("--rm" in captured) == remove_on_exit
+    assert ("--stop-signal" in captured) == foreground
+    if foreground:
+        assert captured[captured.index("--stop-signal") + 1] == "SIGTERM"
     assert container_id == "container-id"
     assert captured[captured.index("--add-host") + 1] == (
         "host.docker.internal:host-gateway"
@@ -1956,6 +2058,55 @@ def test_docker_run_adds_the_canonical_host_gateway(
         "io.toolang.address=alice",
         "io.toolang.launch-id=" + "a" * 32,
     ]
+
+
+@pytest.mark.parametrize("fault", ["closed-stderr", "unwritable-marker"])
+def test_guest_owner_monitor_enforces_shutdown_despite_output_failure(tmp_path, fault):
+    source = (Path(docker_guest.__file__).parent / "guest.sh").read_text()
+    monitor = source[
+        source.index(
+            'if [ -n "${TOOLANG_FOREGROUND_OWNER_FILE:-}" ]; then'
+        ) : source.index('\nbootstrap "$@" </dev/null')
+    ]
+    marker = tmp_path / "owner"
+    ready = tmp_path / "ready"
+    Path(f"{marker}.closing").write_text(
+        "0\n" if fault == "closed-stderr" else f"{int(time.time()) + 60}\n"
+    )
+    if fault == "unwritable-marker":
+        marker.mkdir()
+    script = "set -eu\n"
+    if fault == "closed-stderr":
+        script += "exec 2>&-\n"
+    script += monitor + f'\nprintf ready >"{ready}"\n'
+    script += (
+        "kill -STOP $$\n" if fault == "closed-stderr" else "while :; do sleep 1; done\n"
+    )
+    worker = subprocess.Popen(
+        ["/bin/sh", "-c", script],
+        env={**os.environ, "TOOLANG_FOREGROUND_OWNER_FILE": str(marker)},
+        stdin=subprocess.PIPE,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    try:
+        end = time.monotonic() + 3
+        while not ready.exists() or (
+            fault == "closed-stderr"
+            and psutil.Process(worker.pid).status() != psutil.STATUS_STOPPED
+        ):
+            assert worker.poll() is None
+            assert time.monotonic() < end, "monitor fixture did not stop its owner"
+            time.sleep(0.01)
+        assert worker.stdin is not None
+        worker.stdin.close()
+        expected = -signal.SIGKILL if fault == "closed-stderr" else 143
+        assert worker.wait(timeout=3) == expected
+    finally:
+        with suppress(ProcessLookupError):
+            os.killpg(worker.pid, signal.SIGKILL)
+        worker.wait(timeout=3)
 
 
 def test_docker_diagnostics_are_bounded_and_streamed_to_a_private_log(
@@ -2195,7 +2346,7 @@ def test_docker_rejects_missing_or_inconsistent_request_identity_before_staging(
     assert not (request.local_home / ".runtime").exists()
 
 
-def test_docker_restart_reuses_name_and_stage_after_release(tmp_path):
+def test_docker_restart_reuses_name_with_a_fresh_stage_after_release(tmp_path):
     sandbox = docker_sandbox.DockerSandbox({})
     request = _request(tmp_path)
     first = sandbox.prepare(
@@ -2216,7 +2367,7 @@ def test_docker_restart_reuses_name_and_stage_after_release(tmp_path):
         None, replace(request, envs={"TOOLANG_HOST_LAUNCH": "b" * 32})
     )
     assert first.meta["container_name"] == second.meta["container_name"]
-    assert first.meta["stage_dir"] == second.meta["stage_dir"]
+    assert first.meta["stage_dir"] != second.meta["stage_dir"]
     assert first.meta["docker_identity"] != second.meta["docker_identity"]
     other_root = replace(request, toolang_root=tmp_path / "other")
     assert (
@@ -2269,7 +2420,7 @@ def test_docker_bootstrap_has_a_guest_info_view_under_the_selected_root(
         envs={"TOOLANG_HOST_LAUNCH": "a" * 32},
     )
     plan = docker_sandbox.DockerSandbox({}).prepare(None, request)
-    stage = runtime / "docker"
+    stage = runtime / "docker" / sha256(("a" * 32).encode()).hexdigest()
     assert Path(plan.meta["stage_dir"]) == stage
     assert request.hosted_runtime is not None
     assert (
@@ -2301,12 +2452,27 @@ def test_delayed_docker_release_preserves_replacement_bootstrap(tmp_path, monkey
     old_ref = sandbox.prepared_reference(old)
     stage = Path(old.meta["stage_dir"])
     docker_guest.remove_stage_directory(stage, launch_id="a" * 32)
-    sandbox.prepare(None, replace(request, envs={"TOOLANG_HOST_LAUNCH": "b" * 32}))
-    before = (stage / "active/info.json").read_bytes()
+    new = sandbox.prepare(
+        None, replace(request, envs={"TOOLANG_HOST_LAUNCH": "b" * 32})
+    )
+    replacement_stage = Path(new.meta["stage_dir"])
+    before = (replacement_stage / "active/info.json").read_bytes()
     monkeypatch.setattr(docker_sandbox, "docker_reference_id", lambda _ref: None)
     asyncio.run(sandbox.release(old_ref))
-    assert (stage / "active/info.json").read_bytes() == before
-    assert (stage / "active/guest.sh").is_file()
+    assert (replacement_stage / "active/info.json").read_bytes() == before
+    assert (replacement_stage / "active/guest.sh").is_file()
+
+
+def test_missing_old_stage_cannot_remove_a_replacement_preparation_slot(tmp_path):
+    sandbox = docker_sandbox.DockerSandbox({})
+    plan = sandbox.prepare(
+        None, replace(_request(tmp_path), envs={"TOOLANG_HOST_LAUNCH": "a" * 32})
+    )
+    stage = Path(plan.meta["stage_dir"])
+    docker_guest.remove_stage_directory(stage, launch_id="a" * 32)
+    stage.parent.mkdir()
+    docker_guest.remove_stage_directory(stage, launch_id="a" * 32)
+    assert stage.parent.is_dir()
 
 
 def test_guest_config_and_active_mounts_have_disjoint_sources(tmp_path):

@@ -129,16 +129,18 @@ requests a file or `-` for stdout. Quiet mode suppresses preparation/execution
 progress. Non-TTY progress is plain append-only text. [Execution presentation](execution-presentation.md)
 owns rendering and [Scripts](scripts.md) owns temporary grants and path origins.
 
-Each source-only roaming script or Chat launch creates a fresh agent root and executor.
-Instance and Thread/Run continuation reuse the selected home. Roaming does
-not support `serve`, `start`, or `stop`. Host scripts expose the shared Agent API
+Each bare roaming script launch creates a fresh HOME; `file.too@CODE` and
+`file.too@` require an existing exact or latest HOME. One script owns that HOME
+through cleanup; a busy or unverifiable owner fails immediately. Roaming does
+not support `chat`, `serve`, `start`, or `stop`. Host scripts expose the shared Agent API
 on the workload's event loop; guest workloads
 use existing sandbox serving. Resources close when the owning foreground caller
 exits. [Hosting](hosting.md) owns startup compatibility and recovery.
 
 ### Instance selection
 
-Use `name@CODE` or `file.too@CODE` as `AGENT`; require complete codes. Visiting
+Use `name@CODE` or `file.too@CODE` as `AGENT`; require complete codes. A trailing
+`file.too@` selects the latest retained HOME under the current ROOT. Visiting
 codes have 10 chars and type `11`; roaming codes have 19 chars and type `00`.
 [Agent addresses](agent-addresses.md#short-codes) defines their bit layout.
 Remote schemes retain their own revisions and URL `@` characters. Source-only
@@ -151,14 +153,16 @@ resource commands reject instance operands. There is no `--instance`/`-i` option
   Completion time, restart time, and mtime never reorder it. Each Toolang root has
   its own root-code directory.
 - `inspect` reads retained history without preparing sources. `info` prepares the
-  selected home and reads current Setup/State through their watchers, then adds
-  runtime status. A fresh URL/ref or source path needs no retained execution;
-  an existing source path selects its newest retained home when available.
+  selected stopped home and reads current Setup/State, then adds runtime status.
+  A bare source path selects the latest HOME or prepares one if none exists;
+  explicit selectors fail when missing. During owned execution, `info` observes
+  status and saved startup resource counts without reprojecting inputs or changing
+  invocation grants. Unavailable guest resources are labeled explicitly.
 - A command pins its root/identity/generation once; controls attach only to that
   live owner. Offline fork/rewind edit history under verified stopped ownership.
-- Instance and Thread/Run selection bind the home for Chat, rerun, fork, rewind,
-  and `--chat`. Multiple matching homes require an explicit instance. Live owners
-  attach under compatibility checks; stopped owners restart in the same home.
+- Instance and Thread/Run selection bind the home for rerun, fork and rewind.
+  Multiple matching homes require an explicit instance. Resident/visiting Chat
+  attaches under compatibility checks; roaming rerun requires exclusive ownership.
 
 [agent addresses](agent-addresses.md) defines identity, layout, and ownership.
 
@@ -173,8 +177,8 @@ and effective Talk selection. Both use the shared `RuntimeWatcher` inventory.
 shows the uppercase agent name, preserving any place code; `Home` gives its
 location, followed by Caps, Tools, Models, Chores, Workspaces, and runtime status.
 Setup/State preparation creates no executor or Run store. `--catalog` selects
-the local catalog for either running or stopped
-agents. Preparation failures preserve runtime ownership, show diagnostics, and
+the local catalog for stopped agents; owned agents report their runtime snapshot.
+Preparation failures preserve runtime ownership, show diagnostics, and
 return a nonzero exit; a watcher's last valid State is explicitly labeled.
 
 `too AGENT info` shows enabled `Drivers` immediately
@@ -290,7 +294,8 @@ inspects the stored edge.
 
 Chat and rerun acquire a compatible server in the bound home and use its API.
 Fork/rewind use guarded offline transactions when stopped, or the live owner's
-API; `--chat` continues in the edited home. Historical inspection stays offline.
+API; `--chat` continues in resident/visiting homes and is rejected for roaming
+before editing history. Historical inspection stays offline.
 Steer and cancel support all placements and attach to a healthy live owner without
 starting a replacement; invocation guards prevent delayed requests from reaching
 a different Run incarnation.

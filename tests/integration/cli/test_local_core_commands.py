@@ -4436,7 +4436,7 @@ def test_non_execution_commands_reject_workspace_options(
     assert f"No such option: {option}" in strip_ansi(result.stderr)
 
 
-def test_running_roaming_info_reads_current_workspace_configuration(
+def test_running_roaming_info_uses_runtime_resource_summary(
     tmp_path, monkeypatch, capsys
 ):
     from toolang.cli.common.client import RuntimeClient
@@ -4456,11 +4456,33 @@ def test_running_roaming_info_reads_current_workspace_configuration(
         lambda *args, **kwargs: pytest.fail("info fetched executor resources"),
     )
     layout = allocate_roaming(source, toolang_root=tmp_path)
-    with ForegroundWorkload(layout, toolang_root=tmp_path, drivers=frozenset()):
+    with ForegroundWorkload(
+        layout, toolang_root=tmp_path, drivers=frozenset()
+    ) as active:
+        from toolang.up.instance import patch_workload
+
+        patch_workload(
+            layout.runtime_status,
+            active.token,
+            {
+                "resource_counts": {
+                    "caps": {
+                        kind: 0 for kind in ("psyches", "skills", "services", "prompts")
+                    },
+                    "models": 0,
+                    "providers": 0,
+                    "tools": 0,
+                    "toolsets": 0,
+                    "chores": 0,
+                    "workspaces": ["lab", "bound"],
+                }
+            },
+        )
         result = cli.main([str(source), "info"])
         output = capsys.readouterr()
     assert result == 0, output.err
-    assert "Workspaces: lab, repo" in output.out
+    assert "Workspaces: lab, bound" in output.out
+    assert "runtime startup snapshot" in output.out
 
 
 @pytest.mark.parametrize("command", ["models", "providers", "tools"])

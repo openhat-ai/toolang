@@ -231,11 +231,38 @@ exec_workload() {
     exec "$@" || exit "$?"
 }
 
-bootstrap "$@"
+if [ -n "${TOOLANG_FOREGROUND_OWNER_FILE:-}" ]; then
+    # The only reader of the dedicated owner channel survives bootstrap exec.
+    # Its watchdog is outside the Python/model/tool event loop.
+    OWNER_PID=$$
+    exec 4<&0
+    (
+        while IFS= read -r OWNER_INPUT <&4; do :; done
+        (
+            OWNER_GRACE=10
+            if [ -r "$TOOLANG_FOREGROUND_OWNER_FILE.closing" ]; then
+                OWNER_DEADLINE=$(cat "$TOOLANG_FOREGROUND_OWNER_FILE.closing" 2>/dev/null || :)
+                case "$OWNER_DEADLINE" in
+                    ''|*[!0-9]*) ;;
+                    *) OWNER_GRACE=$((OWNER_DEADLINE - $(date +%s))) ;;
+                esac
+            fi
+            if [ "$OWNER_GRACE" -gt 0 ]; then sleep "$OWNER_GRACE"; fi
+            printf '%s\n' 'Foreground finalization deadline exceeded; records may be incomplete.' >&2 || :
+            kill -KILL "$OWNER_PID" 2>/dev/null || :
+        ) </dev/null &
+        printf '%s\n' 'foreground owner channel closed' >"$TOOLANG_FOREGROUND_OWNER_FILE" || :
+        kill -TERM "$OWNER_PID" 2>/dev/null || :
+    ) 4<&4 </dev/null &
+    exec 4<&-
+    trap 'exit 143' TERM INT HUP
+fi
+
+bootstrap "$@" </dev/null
 # Function redirections can report open failures without a POSIX shell exiting.
 if [ "$5" = "-" ]; then
-    exec_workload "$@" 3>&2
-elif ! exec_workload "$@" 3>&2 2>>"$1" >>"$5" 2>&1; then
+    exec_workload "$@" 3>&2 </dev/null
+elif ! exec_workload "$@" 3>&2 2>>"$1" >>"$5" 2>&1 </dev/null; then
     printf '%s\nSee %s\n' "Could not open workload log" "$2" >&2
     exit 73
 fi

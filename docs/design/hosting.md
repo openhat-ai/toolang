@@ -60,6 +60,11 @@ modes, not additional placement implementations.
   own preparation/finalization. Source-only roaming execution begins with a newly
   allocated identity; bound continuation validates the retained home instead.
   Discovery publication does not own execution state.
+- [Foreground invocations](../../src/toolang/up/invocation.py) claim script HOMEs
+  and bind controller shutdown to the owned launch. The CLI supplies readiness
+  and interruption events; invocation code publishes the fenced closing state.
+- [Closing deadlines](../../src/toolang/up/closing.py) bound process finalization
+  independently of the event loop, without interpreting HOME or launch records.
 - [Application assembly](../../src/toolang/up/application.py) supplies the complete
   Agent API and Stats to both embedded and hosted `AgentCore` instances. Each
   execution host starts/closes those services within its existing resource scope.
@@ -200,9 +205,11 @@ Docker always writes resolved guest values to mode-`0600` `guest.env`, including
 an empty result. It mounts that file read-only at the ordinary loader's
 highest-priority root policy path: `ROOT/.<name>.env` for residents, or the
 shared [source-identity filename](setup.md#environments) for roaming/visiting
-agents. The guest launch uses the same source selector and dotenv parser as the
-host, before plugin construction. File presence naturally disables fallback and
-`pick`. The complete home mount retains any authored `HOME/.env` without masking
+agents. Managed Docker startup also receives the bootstrap copy's explicit path
+through hidden `--environment-file` and requires that launch snapshot before
+plugin construction; missing or invalid inputs fail. Both paths use the common
+dotenv parser. File presence disables fallback and `pick` for ordinary guest
+commands. The complete home mount retains any authored `HOME/.env` without masking
 or modification; the loader does not merge it with the selected root file. The
 controller does not separately reload authored dotenv files for staging. Public
 sandbox requests retain the trusted `dotenv_envs` input, whose names bypass the
@@ -258,8 +265,8 @@ Agent entrypoints also share one logging policy resolver:
 
 The lifecycle saves intent before creation and binds recoverable references as
 soon as they are available, then attaches output observers and performs
-the readiness check. The Docker sandbox follows container output locally from
-container creation for foreground `serve`. Background `start` instead creates the
+the readiness check. Foreground Docker uses attached stdin without a TTY as
+its owner channel, retaining separate output/diagnostics. Background `start` creates the
 host `agent_log` with mode `0600` and writes Docker launch diagnostics,
 bootstrap errors, and AgentServer output there. Early container diagnostics are
 copied to that log before a failed or stopped workload is released, bounded to
@@ -317,8 +324,8 @@ Let `R` be host ROOT, `P` host PLACE, `H` host HOME, `G` guest ROOT = PLACE, and
 | `P/.state/` and cap directories | Same relative paths below `G/` | Read-write |
 | Each granted workspace directory | `G/workspaces/NAME/WORKSPACE/` | Read-write |
 | `R/hub/` | `G/hub/` | Read-only |
-| `R/.runtime/active/A/docker/active/` | `G/.runtime/active/NAME/` | Read-only |
-| `R/.runtime/active/A/docker/config.toml` | `G/config.toml` | Read-only |
+| `R/.runtime/active/A/docker/L/active/` | `G/.runtime/active/NAME/` | Read-only |
+| `R/.runtime/active/A/docker/L/config.toml` | `G/config.toml` | Read-only |
 
 Lab is an ordinary separate mount from `P/workspaces/NAME/lab`. All workspace
 names are unique before mounting; nested and alias sources retain distinct named
@@ -338,6 +345,10 @@ read-only mount at `G/.inputs/models/<path-hash>/<filename>`.
 Assembly is split between [mount preparation](../../src/toolang/up/mounts.py),
 the [launch boundary](../../src/toolang/up/sandbox.py), and the
 [Docker adapter](../../src/toolang/plugin/sandboxes/docker/sandbox.py).
+
+`L` is the launch ID's SHA-256 digest. Each launch gets fresh immutable host
+staging paths while the address keeps one exclusive preparation slot. Delayed
+release cannot remove a replacement launch's inputs.
 
 ## Guest bootstrap
 
@@ -394,6 +405,13 @@ collection filters nonresident references before reading or probing their status
 [Layout](layout.md#runtime-state-and-discovery) defines format-6 info records and
 their host/guest path views. Canonical identity and Docker ownership labels retain
 host bindings. HOME status remains authoritative.
+
+Root guests create RunStore databases with the mounted runtime directory's owner;
+SQLite's WAL/SHM files inherit that owner. Host inspection and subsequent HOME
+reuse retain access to the private execution records.
+New State cache directories, locks, revision trees and current pointers likewise
+retain their mounted parent's owner. Ownership is set on newly staged revisions
+before publication; existing source/workspace trees are not recursively changed.
 
 The registry guard serializes one address; the status guard serializes one home.
 After resource release and generation checks, bootstrap inputs and the empty
@@ -460,6 +478,33 @@ An agent recorded on `7001` receives a new port on its next default start.
 Explicit CLI, environment, or home configuration port overrides still take
 precedence, including `7001`. Running processes are not relocated.
 
+## Foreground ownership and finalization
+
+Scripts and foreground `serve --sandbox docker` use an attached `docker run -i --init`
+with no TTY. Docker's init owns PID 1 and reaps children, leaving the workload
+terminable by its independent guest watchdog when it cannot handle signals.
+Only the host frontend holds the dedicated stdin writer; terminal
+input and tool subprocesses use separate descriptors. The guest watches EOF from
+bootstrap through shutdown, independently of model/tool execution. HTTP/SSE loss
+alone does not end ownership; EOF does. Background lifetimes are unchanged. This
+channel covers local Docker Engine/Desktop; remote-daemon blackhole detection is
+not provided.
+
+Closing stops admission, records the first shutdown reason, cancels and drains
+unfinished roots/descendants/spawns/tools, then closes writers and storage.
+Completed results remain intact. Normal order is persisted result, guest cleanup,
+container exit, host registration/staging release, then CLI return. Ctrl-C returns
+130 after cleanup; owner loss records `foreground owner channel closed` in the
+guest. The host owns global active/staging records; the guest writes only workload
+status and execution data.
+
+One ten-second closing budget covers cancellation and cleanup; repeated signals
+do not reset it. The guest enforces the deadline even if the frontend/Docker client
+is gone. Forced exit or storage failure may leave incomplete records and is not
+reported as successful finalization. Recovery verifies process creation time and
+container identity/labels before releasing resources; unknown ownership blocks
+HOME reuse. Cleanup preserves HOME/history/lab and cannot release a newer launch.
+
 ## Server lifetime and client leases
 
 Terminal Chat shares a compatible AgentServer for the same agent, Toolang root,
@@ -467,11 +512,10 @@ and source identity, retaining its startup settings. Resident implicit servers
 remain running; visiting implicit servers exit once no client leases or accepted
 work remain.
 Fresh implicit servers enable chat only. Fresh start/serve keep placement
-defaults: resident chat,chore,talk; visiting chat,talk. Source-only roaming Chat
-allocates a fresh home; instance/Thread continuation reuses its bound home.
-A roaming client stops the server it created on exit; attachment retains the
-existing lifetime owner. Standalone scripts use embedded host execution or stop
-the guest server they created when the command exits.
+defaults: resident chat,chore,talk; visiting chat,talk. Roaming has no Chat.
+Standalone scripts exclusively own embedded host execution or a foreground guest
+server until final cleanup. Reusing a HOME starts a new launch with current inputs;
+it does not attach to an existing script owner.
 
 Use `too AGENT start` for unattended availability. It promotes an
 automatic visiting server in place or reuses a persistent server, reports actual

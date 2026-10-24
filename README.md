@@ -89,6 +89,11 @@ Save it as `translate.too` and run it with some text:
 too translate.too -- Toolang, a language and runtime for agents and humans
 ```
 
+A bare script path creates a new HOME for its history and lab. Use `translate.too@` to
+run in its latest HOME, or `translate.too@CODE` for a specific one; both require
+an existing HOME. `too translate.too info` inspects the latest HOME or prepares
+one without running the script. See [Scripts](docs/design/scripts.md).
+
 Use `too init` to create a starter script that you can rename and customize:
 
 ```bash

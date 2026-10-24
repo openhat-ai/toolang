@@ -12,7 +12,12 @@ from ..common.lazy import LazyCommand
 
 def local_script_candidate(token: str) -> bool:
     """Recognize syntax, independently of existence and source validity."""
-    return token.endswith(".too") and ":" not in token.split("/", 1)[0]
+    label = (
+        token.rpartition("@")[0]
+        if "@" in token and not token.endswith(".too")
+        else token
+    )
+    return label.endswith(".too") and ":" not in label.split("/", 1)[0]
 
 
 def _agent_candidate(token: str) -> bool:

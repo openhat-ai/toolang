@@ -33,7 +33,7 @@ def test_shared_workspaces_are_ignored_before_path_resolution(tmp_path, placemen
         source.write_text("flow run():\n  pass\n")
         (tmp_path / "toolang.toml").write_text(shared)
         (source.parent / "toolang.toml").write_text('[workspaces]\nrepo = "."\n')
-        layout = materialize_roaming_program(source)
+        layout = materialize_roaming_program(source, toolang_root=tmp_path)
         expected = str(source.parent)
     else:
         layout = AgentLayout(tmp_path, "helper", placement)
@@ -74,7 +74,7 @@ def test_bounded_layers_keep_path_origins_and_local_permissions(tmp_path, monkey
     (project / "toolang.toml").write_text('[model]\neffort = "high"\n')
     (source_dir / "toolang.toml").write_text('[workspaces]\nrepo = ".."\n')
     monkeypatch.setenv("GIT_WORK_TREE", "/wrong")
-    layout = materialize_roaming_program(source)
+    layout = materialize_roaming_program(source, toolang_root=tmp_path)
     sources = config_sources(layout)
     assert [item.path.parent for item in sources] == [tmp_path, project, source_dir]
     assert sources[-1].config["workspaces"] == {"repo": str(project)}
@@ -83,7 +83,9 @@ def test_bounded_layers_keep_path_origins_and_local_permissions(tmp_path, monkey
     defaults = resolve_run_defaults([item.config for item in sources])
     assert defaults.model is not None and defaults.model.ref == "openai/gpt-4o"
     assert prepare_agent_state(layout).workspaces == {"repo": str(project)}
-    assert layout.place == source_dir / ".toolang"
+    assert layout == AgentLayout.roaming(
+        source, place_code=layout.place_code, root=tmp_path
+    )
 
 
 def test_nearest_companion_beats_outer_catalog_path(tmp_path):
@@ -99,12 +101,12 @@ def test_nearest_companion_beats_outer_catalog_path(tmp_path):
     (tmp_path / "toolang.toml").write_text(
         '[plugin.model_catalog.models_dev]\npath = "outer.json"\n'
     )
-    layout = materialize_roaming_program(source)
+    layout = materialize_roaming_program(source, toolang_root=tmp_path)
     assert resolve_model_catalog_path(layout) == nearest
     assert source_catalog(config_sources(layout), roaming=True) == nearest
     assert (layout.home / "catalog.json").resolve() == nearest
     nearest.unlink()
-    materialize_roaming_program(source)
+    materialize_roaming_program(source, toolang_root=tmp_path)
     assert resolve_model_catalog_path(layout) == outer
 
 
@@ -132,14 +134,14 @@ def test_removed_source_config_clears_derived_settings(tmp_path):
     source.write_text("flow run():\n  pass\n")
     config = tmp_path / "toolang.toml"
     config.write_text('[workspaces]\nrepo = "."\n')
-    layout = materialize_roaming_program(source)
+    layout = materialize_roaming_program(source, toolang_root=tmp_path)
     assert prepare_agent_state(layout).workspaces == {"repo": str(tmp_path)}
     config.unlink()
-    materialize_roaming_program(source)
+    materialize_roaming_program(source, toolang_root=tmp_path)
     assert prepare_agent_state(layout).workspaces == {}
     layout.config.write_text("# authored conflict\n")
     with pytest.raises(ValueError, match="conflicts"):
-        materialize_roaming_program(source)
+        materialize_roaming_program(source, toolang_root=tmp_path)
     assert layout.config.read_text() == "# authored conflict\n"
 
 
@@ -155,7 +157,7 @@ def test_bad_config_candidates_fail(tmp_path, kind):
     else:
         config.write_text("[broken")
     with pytest.raises(ValueError, match="toolang.toml"):
-        materialize_roaming_program(source)
+        materialize_roaming_program(source, toolang_root=tmp_path)
 
 
 def test_real_script_and_discovered_config_symlinks_keep_distinct_origins(tmp_path):
@@ -170,8 +172,10 @@ def test_real_script_and_discovered_config_symlinks_keep_distinct_origins(tmp_pa
     (source_dir / "toolang.toml").symlink_to(shared / "settings.toml")
     alias = tmp_path / "alias.too"
     alias.symlink_to(source)
-    layout = materialize_roaming_program(alias)
-    assert layout.place == source_dir / ".toolang"
+    layout = materialize_roaming_program(alias, toolang_root=tmp_path)
+    assert layout == AgentLayout.roaming(
+        source, place_code=layout.place_code, root=tmp_path
+    )
     assert prepare_agent_state(layout).workspaces == {"repo": str(tmp_path)}
 
 
@@ -229,7 +233,9 @@ def test_git_boundary_does_not_inherit_parent(tmp_path, kind):
     source = inner / "aid.too"
     source.touch()
     assert script_directories(source) == (inner, worktree)
-    assert config_sources(materialize_roaming_program(source)) == ()
+    assert (
+        config_sources(materialize_roaming_program(source, toolang_root=tmp_path)) == ()
+    )
 
 
 def test_three_project_layers_preserve_field_specific_merges(tmp_path):
@@ -257,7 +263,7 @@ def test_three_project_layers_preserve_field_specific_merges(tmp_path):
         '[allow]\ntools = ["shell/*"]\n'
         "[plugin.toolset.fs]\nvalues = [3]\n"
     )
-    layout = materialize_roaming_program(source)
+    layout = materialize_roaming_program(source, toolang_root=tmp_path)
     configs = [item.config for item in config_sources(layout)]
     defaults = resolve_run_defaults(configs)
     assert defaults.model is not None
@@ -277,13 +283,13 @@ def test_three_project_layers_preserve_field_specific_merges(tmp_path):
 def test_unowned_symlink_is_not_replaced(tmp_path):
     source = tmp_path / "aid.too"
     source.write_text("flow run():\n  pass\n")
-    layout = materialize_roaming_program(source)
+    layout = materialize_roaming_program(source, toolang_root=tmp_path)
     unrelated = tmp_path / "unrelated.toml"
     unrelated.write_text("# keep me\n")
     layout.config.unlink()
     layout.config.symlink_to(unrelated)
     with pytest.raises(ValueError, match="symlink conflicts"):
-        materialize_roaming_program(source)
+        materialize_roaming_program(source, toolang_root=tmp_path)
     assert layout.config.is_symlink()
     assert unrelated.read_text() == "# keep me\n"
 
@@ -294,7 +300,7 @@ def test_explicit_catalog_can_override_a_missing_authored_catalog(tmp_path):
     (tmp_path / "toolang.toml").write_text(
         '[plugin.model_catalog.models_dev]\npath = "missing.json"\n'
     )
-    layout = materialize_roaming_program(source)
+    layout = materialize_roaming_program(source, toolang_root=tmp_path)
     explicit = tmp_path / "explicit.json"
     explicit.write_text("{}")
     assert resolve_model_catalog_path(layout, explicit=explicit) == explicit
@@ -309,7 +315,7 @@ def test_empty_catalog_path_does_not_become_the_config_directory(tmp_path):
         '[plugin.model_catalog.models_dev]\npath = ""\n'
     )
     with pytest.raises(ValueError, match="model catalog path must be nonempty"):
-        materialize_roaming_program(source)
+        materialize_roaming_program(source, toolang_root=tmp_path)
 
 
 def test_relocated_project_can_clear_its_owned_catalog_link(tmp_path):
@@ -320,11 +326,11 @@ def test_relocated_project_can_clear_its_owned_catalog_link(tmp_path):
     source = original / "aid.too"
     source.write_text("flow run():\n  pass\n")
     (original / "toolang.catalog.json").write_text("{}")
-    materialize_roaming_program(source)
+    materialize_roaming_program(source, toolang_root=tmp_path)
     copied = tmp_path / "copied"
     shutil.copytree(original, copied, symlinks=True)
     (copied / "toolang.catalog.json").unlink()
-    layout = materialize_roaming_program(copied / "aid.too")
+    layout = materialize_roaming_program(copied / "aid.too", toolang_root=tmp_path)
     assert not (layout.home / "catalog.json").is_symlink()
     assert (original / "toolang.catalog.json").is_file()
 
@@ -340,7 +346,7 @@ def test_only_companion_directories_contribute_layers(tmp_path):
     catalog = middle / "toolang.catalog.json"
     catalog.write_text("{}")
 
-    layout = materialize_roaming_program(source)
+    layout = materialize_roaming_program(source, toolang_root=tmp_path)
 
     assert [item.path.parent for item in config_sources(layout)] == [tmp_path, middle]
     assert resolve_model_catalog_path(layout) == catalog

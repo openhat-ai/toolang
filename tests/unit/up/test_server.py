@@ -641,6 +641,77 @@ def test_server_owns_statistics_and_joins_worker_before_closing_source(
     core.close.assert_awaited_once()
 
 
+@pytest.mark.parametrize("fault", ["read", "write"])
+@pytest.mark.parametrize("startup_failure", [False, True])
+def test_foreground_status_failure_cannot_skip_deadline_or_core_cleanup(
+    tmp_path, monkeypatch, fault, startup_failure
+):
+    from unittest.mock import AsyncMock, MagicMock
+    from toolang.up.closing import ClosingDeadline
+
+    layout = AgentLayout.resident(tmp_path, "alice")
+    core = MagicMock()
+    core.close = AsyncMock()
+    core.lifecycle = None
+    deadline = ClosingDeadline(enabled=False)
+    closing_observations = []
+    refreshed = False
+
+    async def refresh(_core):
+        nonlocal refreshed
+        refreshed = True
+        if startup_failure:
+            raise RuntimeError("startup interrupted")
+
+    def read(*args, **kwargs):
+        if fault == "read":
+            closing_observations.append(deadline.started)
+            raise OSError("status storage unavailable")
+        return {"workload": {}}
+
+    def write(*args, **kwargs):
+        if refreshed and fault == "write":
+            closing_observations.append(deadline.started)
+            raise OSError("status storage unavailable")
+        return True
+
+    finalized = MagicMock()
+    monkeypatch.setattr(server, "AgentCore", lambda *args, **kwargs: core)
+    monkeypatch.setattr(server, "_refresh_core", refresh)
+    monkeypatch.setattr(server, "validate_agent_ceiling", lambda *args: None)
+    monkeypatch.setattr(server, "_log_state_loaded", lambda *args, **kwargs: None)
+    monkeypatch.setattr(server, "configure_logging", lambda **kwargs: None)
+    monkeypatch.setattr(server, "_restore_termination_signal_defaults", lambda: None)
+    monkeypatch.setattr(server, "create_agent_application", MagicMock())
+    monkeypatch.setattr(server, "_run_uvicorn_app", lambda *args, **kwargs: None)
+    monkeypatch.setattr("toolang.up.instance.read_instance", read)
+    monkeypatch.setattr("toolang.up.instance.patch_workload", write)
+    monkeypatch.setattr("toolang.up.registry.finalize_runtime", finalized)
+    spec = resolve_serve(
+        layout=layout,
+        port=8123,
+        drivers=frozenset(),
+        launch_id="launch",
+        lifetime="foreground",
+    )
+    error = RuntimeError if startup_failure else OSError
+    message = "startup interrupted" if startup_failure else "status storage unavailable"
+    with pytest.raises(error, match=message):
+        server._serve_workload(
+            spec,
+            environ={},
+            sandbox="docker:image",
+            launch_id="launch",
+            location="guest",
+            deadline=deadline,
+        )
+    core.close.assert_awaited_once_with(reason="server interrupted")
+    assert closing_observations and all(
+        started is not None for started in closing_observations
+    )
+    assert "status storage unavailable" in finalized.call_args.kwargs["failure"]
+
+
 def test_server_installs_supplied_environment_before_core_loading(
     tmp_path, monkeypatch
 ):

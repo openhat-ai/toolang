@@ -27,7 +27,7 @@ _PLACEMENT_POLICIES: dict[AgentPlacement, PlacementPolicy] = {
     "roaming": PlacementPolicy(
         reuse_executor=False,
         hosted_drivers=frozenset(),
-        client_drivers=frozenset({"chat"}),
+        client_drivers=frozenset(),
         client_lifetime="foreground",
     ),
 }

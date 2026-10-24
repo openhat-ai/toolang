@@ -565,7 +565,7 @@ def test_public_dual_orders_bind_the_same_selector(
     error = None
     if kind.endswith("instance") and name == "cd":
         error = "instances are not supported"
-    elif name in {"start", "stop", "serve"}:
+    elif name in {"start", "stop", "serve", "chat"}:
         if kind == "path":
             error = "paths are not supported"
         elif kind == "roaming_instance":

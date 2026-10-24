@@ -76,7 +76,7 @@ def test_local_script_saves_only_to_an_explicit_destination(
     source_text = _SOURCE if entry == "echo" else "agic():\n  Say hello.\n"
     source = tmp_path / "echo.too"
     source.write_text(source_text, encoding="utf-8")
-    layout = agent_sources.materialize_roaming_program(source)
+    layout = agent_sources.materialize_roaming_program(source, toolang_root=tmp_path)
     harness = ExecutionHarness.create(
         tmp_path / "harness",
         source=source_text,
@@ -246,7 +246,7 @@ def test_template_helpers_bind_arguments(
     source_text = load_template("script").raw_text
     source = tmp_path / "work.too"
     source.write_text(source_text, encoding="utf-8")
-    layout = agent_sources.materialize_roaming_program(source)
+    layout = agent_sources.materialize_roaming_program(source, toolang_root=tmp_path)
     harness = ExecutionHarness.create(
         tmp_path / "harness",
         source=source_text,
@@ -314,7 +314,7 @@ def test_local_script_renders_composite_flow_progress(
     source_text = _FLOW_SOURCE.replace("flow research", f"flow {entry}")
     source = tmp_path / "research.too"
     source.write_text(source_text, encoding="utf-8")
-    layout = agent_sources.materialize_roaming_program(source)
+    layout = agent_sources.materialize_roaming_program(source, toolang_root=tmp_path)
     harness = ExecutionHarness.create(
         tmp_path / "harness",
         source=source_text,

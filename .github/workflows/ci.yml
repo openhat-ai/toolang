@@ -176,6 +176,44 @@ jobs:
           path: ${{ runner.temp }}/test-results
           retention-days: 7
 
+  docker:
+    name: Docker foreground lifecycle (Linux)
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up uv and Python
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          python-version: "3.13"
+
+      - name: Sync locked environment
+        run: uv sync --frozen
+
+      - name: Exercise Docker with deterministic providers
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/docker-results"
+          docker version
+          uv run --frozen pytest --live-docker -q \
+            tests/integration/up/test_docker_sandbox_lifecycle.py \
+            -k 'home_reuse_resolves or owner_loss_finalizes or script_runs_with_a_temporary or run_interrupt_stops or killed_temporary_controller or host_script_ctrl_c or distinct_homes_run or foreground_launch_preserves or owner_eof_stops or root_guest_runtime_data' \
+            --junitxml="$RUNNER_TEMP/docker-results/junit.xml" \
+            --durations=20 2>&1 | tee "$RUNNER_TEMP/docker-results/pytest.log"
+
+      - name: Upload Docker diagnostics
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: docker-results-linux
+          path: ${{ runner.temp }}/docker-results
+          retention-days: 7
+
   package:
     name: Package
     needs: changes
@@ -204,6 +242,7 @@ jobs:
       - changes
       - quality
       - tests
+      - docker
       - package
     runs-on: ubuntu-latest
 
@@ -214,6 +253,7 @@ jobs:
           DOCS_ONLY: ${{ needs.changes.outputs.docs_only }}
           QUALITY_RESULT: ${{ needs.quality.result }}
           TESTS_RESULT: ${{ needs.tests.result }}
+          DOCKER_RESULT: ${{ needs.docker.result }}
           PACKAGE_RESULT: ${{ needs.package.result }}
         run: |
           test "$CHANGES_RESULT" = "success"
@@ -227,4 +267,5 @@ jobs:
           esac
           test "$QUALITY_RESULT" = "$expected"
           test "$TESTS_RESULT" = "$expected"
+          test "$DOCKER_RESULT" = "$expected"
           test "$PACKAGE_RESULT" = "$expected"

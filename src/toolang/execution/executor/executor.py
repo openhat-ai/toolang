@@ -1054,7 +1054,7 @@ class RunExecutor:
         self._observe_control(control)
         return control
 
-    async def stop(self) -> None:
+    async def stop(self, *, reason: str | None = None) -> None:
         """Cancel and await all runs owned by this executor."""
 
         if self._stopped:
@@ -1062,10 +1062,32 @@ class RunExecutor:
         self._stopped = True
         with self._runs_lock:
             owned = tuple(self._root_runs.values())
+        shutdown_error: Exception | None = None
         for root in owned:
             task = root.task
             if not task.done():
-                task.cancel()
+                try:
+                    if reason is not None and not self.store.pending_run_controls(
+                        run_id=root.run_id, kind="cancel"
+                    ):
+                        record = self.store.get_run(run_id=root.run_id)
+                        if record is not None and record.status in {
+                            "pending",
+                            "running",
+                        }:
+                            control = self.store.accept_run_control(
+                                run_id=root.run_id,
+                                kind="cancel",
+                                timing="immediate",
+                                input=CallInput({"_": reason}),
+                                request_id=None,
+                                created_at=utc_now(),
+                            )
+                            self._observe_control(control)
+                except Exception as exc:
+                    shutdown_error = shutdown_error or exc
+                finally:
+                    task.cancel()
         try:
             if owned:
                 draining = asyncio.gather(
@@ -1083,10 +1105,10 @@ class RunExecutor:
                     raise
         finally:
             for root in owned:
-                await self._ensure_terminal(
-                    root.run_id,
-                    status="canceled",
-                )
+                try:
+                    await self._ensure_terminal(root.run_id, status="canceled")
+                except Exception as exc:
+                    shutdown_error = shutdown_error or exc
             with self._runs_lock:
                 owned_tasks = {root.task for root in owned}
                 for run_id, active in tuple(self._active_runs.items()):
@@ -1110,6 +1132,8 @@ class RunExecutor:
                     observer.reader.close()
                     if not observer.task.done():
                         observer.task.cancel()
+        if shutdown_error is not None:
+            raise shutdown_error
 
     def _require_available(self) -> None:
         if self._stopped:
