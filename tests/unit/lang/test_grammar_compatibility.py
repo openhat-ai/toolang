@@ -165,7 +165,7 @@ def test_inactive_words_remain_prose_and_contextual_names(word, position):
 def test_program_documentation_and_first_member_ownership():
     source = "#@ Program.\n## Work.\n## @param sort Input.\nflow work(sort: Text):\n  ## First.\n  run: {{sort}}\n  ## Second.\n  run: Done.\n"
     tree = cst.parse(source.encode())
-    assert version("tree-sitter-toolang") == "0.4.0a6"
+    assert version("tree-sitter-toolang") == "0.4.0"
     assert tree.root_node.type == "program"
     assert [child.type for child in tree.root_node.named_children[:3]] == [
         "program_doc",
