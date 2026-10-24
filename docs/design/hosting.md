@@ -343,6 +343,13 @@ the [launch boundary](../../src/toolang/up/sandbox.py), and the
 
 Docker uses the engine's default missing-image pull behavior. Its guest script
 quietly bootstraps uv and installs the selected package with `uv tool install`.
+The self-contained `guest.sh` reuses a capable image uv, installs pinned uv
+through Python 3.8+ with pip into a private directory, or downloads the pinned
+installer through curl/wget. uv reuses Python 3.11+ or installs managed Python
+3.13, then installs Toolang in a private tool environment without replacing
+image packages. Bootstrap variables and uv directory overrides stay in a
+subshell; the parent retains the image environment and directly `exec`s the
+workload with its original arguments, container identity, and private bin path.
 For a source-local roaming agent, Docker overlays linked `agent.too` and
 `config.toml` targets as explicit read-only guest files so host symlinks do not
 become broken paths in the container.

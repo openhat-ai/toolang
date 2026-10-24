@@ -1405,7 +1405,7 @@ from pathlib import Path
 runtime = Path('/root/.toolang/.runtime/active/alice')
 info = runtime / 'info.json'
 assert json.loads(info.read_text())['home'] == '/root/.toolang/agents/alice'
-assert (runtime / 'guest.sh').is_file() and (runtime / 'guest.py').is_file()
+assert (runtime / 'guest.sh').is_file() and not (runtime / 'guest.py').exists()
 assert not (runtime / 'docker').exists()
 assert not (runtime / 'config.toml').exists()
 assert Path('/root/.toolang/config.toml').is_file()

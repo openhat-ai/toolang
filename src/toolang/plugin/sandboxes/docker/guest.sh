@@ -3,123 +3,55 @@
 set -eu
 umask 077
 
-# Image ENV names may collide with any shell variable used during installation.
-bootstrap() (
-UV_VERSION="0.12.6"
-PYTHON_VERSION="3.13"
-
 fail() {
-    printf '%s\n' "$1" >&2
-    printf 'See %s\n' "$DIAGNOSTIC_DISPLAY" >&2
+    printf '%s\nSee %s\n' "$1" "$DIAGNOSTIC_DISPLAY" >&3
     exit "${2:-1}"
 }
 
-if [ "$#" -lt 8 ]; then
-    printf '%s\n' \
-        "usage: guest.sh HELPER DIAGNOSTIC DISPLAY EVENTS PACKAGE LOG -- COMMAND..." \
-        >&2
-    exit 64
-fi
-
-HELPER=$1
-DIAGNOSTIC=$2
-DIAGNOSTIC_DISPLAY=$3
-PROGRESS_EVENTS=$4
-PACKAGE_SOURCE=$5
-WORKLOAD_LOG=$6
-shift 6
-if [ "$1" != "--" ]; then
-    printf '%s\n' "docker guest command separator is missing" >&2
-    exit 64
-fi
-shift
-if [ "$#" -eq 0 ]; then
-    printf '%s\n' "docker guest command is missing" >&2
-    exit 64
-fi
-
-if [ "$(uname -s 2>/dev/null || :)" != "Linux" ]; then
-    printf '%s\n' "docker guest requires a Linux image" >&2
-    exit 64
-fi
-
-RUNTIME_ROOT=${TOOLANG_GUEST_RUNTIME:-${TMPDIR:-/tmp}/toolang-runtime}
-UV_BIN_DIR=$RUNTIME_ROOT/uv-bin
-UV_MODULE_DIR=$RUNTIME_ROOT/uv-module
-PYTHON_DIR=$RUNTIME_ROOT/python
-PYTHON_BIN_DIR=$RUNTIME_ROOT/python-bin
-TOOL_DIR=$RUNTIME_ROOT/tools
-TOOL_BIN_DIR=$RUNTIME_ROOT/bin
-CACHE_DIR=$RUNTIME_ROOT/cache
-INSTALLER=$RUNTIME_ROOT/install-uv.sh
-
-umask 077
-mkdir -p \
-    "$RUNTIME_ROOT" \
-    "$UV_BIN_DIR" \
-    "$UV_MODULE_DIR" \
-    "$PYTHON_DIR" \
-    "$PYTHON_BIN_DIR" \
-    "$TOOL_DIR" \
-    "$TOOL_BIN_DIR" \
-    "$CACHE_DIR" || {
-    printf '%s\n' "docker guest runtime is not writable: $RUNTIME_ROOT" >&2
-    exit 73
-}
-: >"$DIAGNOSTIC" || {
-    printf '%s\n' "docker guest diagnostic is not writable: $DIAGNOSTIC_DISPLAY" >&2
-    exit 73
-}
-chmod 600 "$DIAGNOSTIC" 2>/dev/null || :
-
-case "${HOSTNAME:-}" in
-    ????????????) ;;
-    *) fail "docker guest hostname is not a short container ID" 64 ;;
-esac
-case "$HOSTNAME" in
-    *[!0-9a-f]*) fail "docker guest hostname is not a short container ID" 64 ;;
-esac
-
-export UV_CACHE_DIR=$CACHE_DIR
-export UV_PYTHON_INSTALL_DIR=$PYTHON_DIR
-export UV_PYTHON_BIN_DIR=$PYTHON_BIN_DIR
-export UV_TOOL_DIR=$TOOL_DIR
-export UV_TOOL_BIN_DIR=$TOOL_BIN_DIR
-export UV_NO_PROGRESS=1
-
-UV_MODE=
-UV_BIN=
-UV_PYTHON=
-
 progress() {
-    TOKEN=$1
-    shift
-    if [ "$PROGRESS_EVENTS" = "-" ]; then
-        printf '%s\n' "$*" >&2
-    else
-        { printf '%s\n' "$TOKEN" >>"$PROGRESS_EVENTS"; } 2>/dev/null || :
+    if [ "$PROGRESS_EVENTS" != "-" ]; then
+        { printf '%s\n' "$1" >>"$PROGRESS_EVENTS"; } 2>/dev/null || :
+    elif [ "$#" -ge 2 ]; then
+        printf '%s\n' "$2" >&3
     fi
 }
 
-uv_run() {
-    if [ "$UV_MODE" = "module" ]; then
-        PYTHONPATH=$UV_MODULE_DIR "$UV_PYTHON" -m uv "$@"
-    else
-        "$UV_BIN" "$@"
-    fi
+tool_bin_dir() {
+    printf '%s/bin' "${TOOLANG_GUEST_RUNTIME:-${TMPDIR:-/tmp}/toolang-runtime}"
 }
 
-uv_capable() {
-    uv_run --version >/dev/null 2>>"$DIAGNOSTIC" &&
-        uv_run python find --help >/dev/null 2>>"$DIAGNOSTIC" &&
-        uv_run python install --help >/dev/null 2>>"$DIAGNOSTIC" &&
-        uv_run tool install --help >/dev/null 2>>"$DIAGNOSTIC"
-}
+prepare_runtime() {
+    TOOL_BIN_DIR=$(tool_bin_dir)
+    RUNTIME_ROOT=${TOOL_BIN_DIR%/bin}
+    mkdir -p "$TOOL_BIN_DIR" || {
+        printf '%s\n' "docker guest runtime is not writable: $RUNTIME_ROOT" >&2
+        exit 73
+    }
+    : >"$DIAGNOSTIC" || {
+        printf '%s\n' "docker guest diagnostic is not writable: $DIAGNOSTIC_DISPLAY" >&2
+        exit 73
+    }
+    chmod 600 "$DIAGNOSTIC" 2>/dev/null || :
+    RUNTIME_ROOT=$(CDPATH= cd -- "$RUNTIME_ROOT" && pwd -P)
+    TOOL_BIN_DIR=$RUNTIME_ROOT/bin
+    TOO_BIN=$TOOL_BIN_DIR/too
 
-uv_fact() {
-    UV_FACT=$(uv_run --version 2>>"$DIAGNOSTIC") || return 1
-    UV_FACT=${UV_FACT#uv }
-    printf '%s' "$UV_FACT"
+    # Docker's default hostname is a twelve-character hexadecimal container ID.
+    case "${HOSTNAME:-}" in
+        ????????????) ;;
+        *) fail "docker guest hostname is not a short container ID" 64 ;;
+    esac
+    case "$HOSTNAME" in
+        *[!0-9a-f]*) fail "docker guest hostname is not a short container ID" 64 ;;
+    esac
+    export TOOLANG_SANDBOX_INSTANCE=$HOSTNAME
+    export UV_CACHE_DIR=$RUNTIME_ROOT/cache
+    export UV_PYTHON_INSTALL_DIR=$RUNTIME_ROOT/python
+    export UV_PYTHON_BIN_DIR=$RUNTIME_ROOT/python-bin
+    export UV_TOOL_DIR=$RUNTIME_ROOT/tools
+    export UV_TOOL_BIN_DIR=$TOOL_BIN_DIR
+    export UV_NO_PROGRESS=1
+    UV_MODULE_DIR=$RUNTIME_ROOT/uv-module
 }
 
 find_pip_python() {
@@ -127,8 +59,8 @@ find_pip_python() {
         if command -v "$CANDIDATE" >/dev/null 2>&1 &&
             "$CANDIDATE" -c \
                 'import sys; raise SystemExit(0 if sys.version_info >= (3, 8) else 1)' \
-                >>"$DIAGNOSTIC" 2>&1 &&
-            "$CANDIDATE" -m pip --version >>"$DIAGNOSTIC" 2>&1; then
+                >>"$DIAGNOSTIC" &&
+            "$CANDIDATE" -m pip --version >>"$DIAGNOSTIC"; then
             command -v "$CANDIDATE"
             return 0
         fi
@@ -136,105 +68,169 @@ find_pip_python() {
     return 1
 }
 
-if command -v uv >/dev/null 2>&1; then
+uv_run() {
+    if [ "$UV_MODE" = "module" ]; then
+        PYTHONPATH=$UV_MODULE_DIR${PYTHONPATH:+:$PYTHONPATH} "$UV_PYTHON" -m uv "$@"
+    else
+        "$UV_BIN" "$@"
+    fi
+}
+
+probe_uv() {
+    uv_run python find --help >/dev/null &&
+        uv_run python install --help >/dev/null &&
+        uv_run tool install --help >/dev/null &&
+        uv_run --version
+}
+
+ensure_uv() {
     UV_MODE=bin
-    UV_BIN=$(command -v uv)
-    if ! uv_capable; then
-        UV_MODE=
-        UV_BIN=
+    if UV_BIN=$(command -v uv) && UV_FACT=$(probe_uv); then
+        progress uv.use "Using uv · ${UV_FACT#uv }"
+        return
     fi
-fi
 
-if [ -n "$UV_MODE" ]; then
-    UV_FACT=$(uv_fact) || fail "Existing uv is unusable" 69
-    progress uv.use "Using uv · $UV_FACT"
-else
     progress uv.install.running "Installing uv..."
-    BOOTSTRAP_PYTHON=$(find_pip_python || :)
-    if [ -n "$BOOTSTRAP_PYTHON" ]; then
-        if "$BOOTSTRAP_PYTHON" -m pip install \
-            --disable-pip-version-check \
-            --no-input \
-            --quiet \
-            --target "$UV_MODULE_DIR" \
-            "uv==$UV_VERSION" >>"$DIAGNOSTIC" 2>&1; then
-            UV_MODE=module
-            UV_PYTHON=$BOOTSTRAP_PYTHON
-            if ! uv_capable; then
-                UV_MODE=
-                UV_PYTHON=
-            fi
+    if UV_PYTHON=$(find_pip_python) &&
+        "$UV_PYTHON" -m pip install --disable-pip-version-check --no-input \
+            --quiet --target "$UV_MODULE_DIR" "uv==$UV_VERSION"; then
+        UV_MODE=module
+        if UV_FACT=$(probe_uv); then
+            progress uv.install.ok "Installed uv · ${UV_FACT#uv }"
+            return
         fi
     fi
 
-    if [ -z "$UV_MODE" ]; then
-        INSTALLER_URL="https://astral.sh/uv/$UV_VERSION/install.sh"
-        if command -v curl >/dev/null 2>&1; then
-            curl -LsSf "$INSTALLER_URL" -o "$INSTALLER" \
-                >>"$DIAGNOSTIC" 2>&1 || fail "Could not download uv" 69
-        elif command -v wget >/dev/null 2>&1; then
-            wget -qO "$INSTALLER" "$INSTALLER_URL" \
-                >>"$DIAGNOSTIC" 2>&1 || fail "Could not download uv" 69
-        else
-            fail \
-                "Unsupported image: provide uv, Python 3.8+ with pip, curl, or wget" \
-                69
+    INSTALLER=$RUNTIME_ROOT/install-uv.sh
+    INSTALLER_URL="https://astral.sh/uv/$UV_VERSION/install.sh"
+    if command -v curl >/dev/null 2>&1; then
+        set -- curl -LsSf "$INSTALLER_URL" -o "$INSTALLER"
+    elif command -v wget >/dev/null 2>&1; then
+        set -- wget -qO "$INSTALLER" "$INSTALLER_URL"
+    else
+        fail "Unsupported image: provide uv, Python 3.8+ with pip, curl, or wget" 69
+    fi
+    "$@" || fail "Could not download uv" 69
+    UV_MODE=bin
+    UV_BIN=$RUNTIME_ROOT/uv-bin/uv
+    UV_UNMANAGED_INSTALL=$RUNTIME_ROOT/uv-bin sh "$INSTALLER" ||
+        fail "Could not install uv" 69
+    UV_FACT=$(probe_uv) || fail "Installed uv is unusable" 69
+    progress uv.install.ok "Installed uv · ${UV_FACT#uv }"
+}
+
+prepare_python() {
+    PYTHON_BIN=$(uv_run python find '>=3.11,<4' || :)
+    if [ -n "$PYTHON_BIN" ] && [ -x "$PYTHON_BIN" ]; then
+        PYTHON_EVENT=python.use
+        PYTHON_LABEL="Using Python"
+    else
+        progress python.install.running "Installing Python · $PYTHON_VERSION..."
+        uv_run python install "$PYTHON_VERSION" --no-progress ||
+            fail "Could not install Python $PYTHON_VERSION" 69
+        PYTHON_BIN=$(uv_run python find "$PYTHON_VERSION" || :)
+        if [ -z "$PYTHON_BIN" ] || [ ! -x "$PYTHON_BIN" ]; then
+            fail "Installed Python $PYTHON_VERSION is unavailable" 69
         fi
-        UV_UNMANAGED_INSTALL=$UV_BIN_DIR sh "$INSTALLER" \
-            >>"$DIAGNOSTIC" 2>&1 || fail "Could not install uv" 69
-        UV_MODE=bin
-        UV_BIN=$UV_BIN_DIR/uv
-        uv_capable || fail "Installed uv is unusable" 69
+        PYTHON_EVENT=python.install.ok
+        PYTHON_LABEL="Installed Python"
     fi
-    UV_FACT=$(uv_fact) || fail "Installed uv is unusable" 69
-    progress uv.install.ok "Installed uv · $UV_FACT"
-fi
+    PYTHON_FACT=$("$PYTHON_BIN" -c 'import platform; print(platform.python_version())') ||
+        fail "Python is unusable" 69
+    progress "$PYTHON_EVENT" "$PYTHON_LABEL · $PYTHON_FACT"
+}
 
-PYTHON_BIN=$(uv_run python find '>=3.11,<4' 2>>"$DIAGNOSTIC" || :)
-if [ -n "$PYTHON_BIN" ] && [ -x "$PYTHON_BIN" ]; then
-    PYTHON_FACT=$(
-        "$PYTHON_BIN" -c 'import platform; print(platform.python_version())' \
-            2>>"$DIAGNOSTIC"
-    ) || fail "Existing Python is unusable" 69
-    progress python.use "Using Python · $PYTHON_FACT"
-else
-    progress python.install.running "Installing Python · $PYTHON_VERSION..."
-    uv_run python install "$PYTHON_VERSION" --no-progress \
-        >>"$DIAGNOSTIC" 2>&1 || fail "Could not install Python $PYTHON_VERSION" 69
-    PYTHON_BIN=$(uv_run python find "$PYTHON_VERSION" 2>>"$DIAGNOSTIC" || :)
-    if [ -z "$PYTHON_BIN" ] || [ ! -x "$PYTHON_BIN" ]; then
-        fail "Installed Python $PYTHON_VERSION is unavailable" 69
+install_toolang() {
+    progress toolang.install.running "Installing Toolang · ${PACKAGE_SOURCE##*/}..."
+    if ! uv_run tool install --quiet --no-progress --force \
+        --python "$PYTHON_BIN" "$PACKAGE_SOURCE"; then
+        progress toolang.install.failed
+        fail "Could not install Toolang"
     fi
-    PYTHON_FACT=$(
-        "$PYTHON_BIN" -c 'import platform; print(platform.python_version())' \
-            2>>"$DIAGNOSTIC"
-    ) || fail "Installed Python is unusable" 69
-    progress python.install.ok "Installed Python · $PYTHON_FACT"
-fi
+    progress toolang.install.ok
+}
 
-if [ "$UV_MODE" = "module" ]; then
-    UV_EXECUTABLE=$UV_PYTHON
-else
-    UV_EXECUTABLE=$UV_BIN
-fi
-exec "$PYTHON_BIN" "$HELPER" --install \
-    "$DIAGNOSTIC" \
-    "$DIAGNOSTIC_DISPLAY" \
-    "$PROGRESS_EVENTS" \
-    "$PACKAGE_SOURCE" \
-    "$WORKLOAD_LOG" \
-    "$PYTHON_BIN" \
-    "$TOOL_BIN_DIR" \
-    "$UV_MODE" \
-    "$UV_EXECUTABLE" \
-    "$UV_MODULE_DIR" \
-    -- \
-    "$@"
+validate_toolang() {
+    export PATH="$TOOL_BIN_DIR${PATH:+:$PATH}"
+    progress toolang.check.running
+    if [ ! -f "$TOO_BIN" ] || [ ! -x "$TOO_BIN" ]; then
+        progress toolang.check.failed
+        fail "Installed Toolang executable is unavailable" 69
+    fi
+    if ! "$TOO_BIN" _serve --help; then
+        progress toolang.check.failed
+        fail "The installed Toolang package cannot start the required AgentServer" 69
+    fi
+    progress toolang.check.ok
+    if [ "$PROGRESS_EVENTS" = "-" ]; then
+        TOOLANG_VERSION=$("$TOO_BIN" --version || :)
+        progress toolang.version "Installed Toolang${TOOLANG_VERSION:+ · $TOOLANG_VERSION}"
+    fi
+}
+
+prepare_workload() {
+    if [ "$WORKLOAD_LOG" != "-" ]; then
+        { : >>"$WORKLOAD_LOG" && chmod 600 "$WORKLOAD_LOG"; } ||
+            fail "Could not open workload log" 73
+    fi
+    rm -f "$DIAGNOSTIC"
+    case "$1:${2:-}" in
+        too:_serve|toolang:_serve) progress server.running "Starting agent..." ;;
+        *) progress server.running "Starting command..." ;;
+    esac
+}
+
+# Bootstrap state and installer overrides stay out of the workload environment.
+bootstrap() (
+    exec 3>&2
+    UV_VERSION="0.12.6"
+    PYTHON_VERSION="3.13"
+    if [ "$#" -lt 7 ]; then
+        printf '%s\n' "usage: guest.sh DIAGNOSTIC DISPLAY EVENTS PACKAGE LOG -- COMMAND..." >&2
+        exit 64
+    fi
+    DIAGNOSTIC=$1
+    DIAGNOSTIC_DISPLAY=$2
+    PROGRESS_EVENTS=$3
+    PACKAGE_SOURCE=$4
+    WORKLOAD_LOG=$5
+    if [ "$6" != "--" ]; then
+        printf '%s\n' "docker guest command separator is missing" >&2
+        exit 64
+    fi
+    shift 6
+    if [ "$(uname -s 2>/dev/null || :)" != "Linux" ]; then
+        printf '%s\n' "docker guest requires a Linux image" >&2
+        exit 64
+    fi
+    prepare_runtime
+    # Keep messages on fd 3; installer output stays in the private diagnostic.
+    exec >>"$DIAGNOSTIC" 2>&1
+    ensure_uv
+    prepare_python
+    install_toolang
+    validate_toolang
+    prepare_workload "$@"
 )
 
-# Bootstrap reports its Python on stdout; exec retains the original environment.
-set -- "$(bootstrap "$@" || printf 'toolang-bootstrap-failed:%s' "$?")" "$@"
-case "$1" in
-    toolang-bootstrap-failed:*) exit "${1#*:}" ;;
-esac
-exec "$@"
+# Arguments: LOG -- COMMAND...
+exec_workload() {
+    if [ "$1" != "-" ]; then
+        exec >>"$1" 2>&1
+    fi
+    shift 2
+    case "$1" in
+        too|toolang)
+            shift
+            set -- "$(tool_bin_dir)/too" "$@"
+            ;;
+    esac
+    export TOOLANG_SANDBOX_INSTANCE=$HOSTNAME
+    export PATH="$(tool_bin_dir)${PATH:+:$PATH}"
+    exec "$@"
+}
+
+bootstrap "$@"
+# Pass only LOG -- COMMAND... to the parent-shell launcher.
+shift 4
+exec_workload "$@"
