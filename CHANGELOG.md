@@ -43,6 +43,20 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   or URL, while residents keep `ROOT/.<agent>.env`.
   ([#940](https://github.com/openhat-ai/toolang/pull/940))
 
+- Roaming script operands accept `file.too` for a fresh home, `file.too@` for
+  the latest existing home, and `file.too@P19` for an exact home, while
+  explicit selectors fail instead of allocating.
+
+- Bare script `info` selects the latest home or prepares once without creating
+  a Run or active registration.
+
+- Each roaming script home allows one owner from preparation through cleanup,
+  so a busy home is rejected while different homes run concurrently on host and
+  Docker.
+
+- Active script `info` observes saved runtime metadata without reprojecting
+  inputs or changing grants.
+
 ### Changed
 
 - `too AGENT chore list` shows complete `chore_<ID>` thread identities in its
@@ -84,8 +98,8 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   existing root; align those options or run `too AGENT stop` first.
   ([#884](https://github.com/openhat-ai/toolang/pull/884))
 
-- **Breaking:** Roaming `serve` is removed; run `too FILE.too` instead, or
-  `too FILE.too chat --enable chat` for Chat.
+- **Breaking:** Roaming `serve` is removed; run `too FILE.too` instead, and
+  use resident names or visiting sources for Chat.
   ([#884](https://github.com/openhat-ai/toolang/pull/884))
 
 - Resident ports reuse their previous value only when available, otherwise
@@ -380,6 +394,21 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   bits and name nonresident placement directories, Docker containers, and Hub
   namespaces.
   ([#950](https://github.com/openhat-ai/toolang/pull/950))
+
+- **Breaking:** Roaming Chat is removed; run standalone `file.too` commands with
+  explicit home selectors, or use resident names and visiting sources for Chat.
+
+- **Breaking:** Roaming `fork`, `rewind`, and history requests reject `--chat`
+  before mutation; omit the flag and continue in a standalone `file.too` run.
+
+- Legacy unnumbered `<source_dir>/.toolang/agents/<name>` roaming data stays
+  untouched and is unused by home-selected launches.
+
+- Docker foreground scripts treat attached stdin as an exclusive owner channel,
+  so EOF ends bootstrap or execution regardless of other activity.
+
+- Scripts and foreground serve share a ten-second closing deadline, drain
+  execution writers, and exit the container before releasing host registration.
 
 ### Fixed
 
@@ -678,6 +707,15 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 - **Breaking:** Direct Docker sandbox callers supply `agent_address` and the
   canonical `toolang_root` on `SandboxRequest`.
   ([#945](https://github.com/openhat-ai/toolang/pull/945))
+
+- Failed roaming script creation reclaims its owned intent and preserves Docker
+  diagnostics, so a retry can reuse the same home.
+
+- Storage failures and forced exits report incomplete finalization while
+  readable records and completed results remain available.
+
+- Foreground Docker containers stop within the ten-second deadline even when a
+  guest blocks signals, instead of surviving it.
 
 ### Security
 
