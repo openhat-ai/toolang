@@ -984,6 +984,9 @@ def test_docker_guest_executes_the_real_command_with_original_pid_and_arguments(
     probe = (
         "import json, os, sys\n"
         "if sys.argv[1:] == ['_serve', '--help']: sys.exit(0)\n"
+        "try: os.fstat(3)\n"
+        "except OSError: pass\n"
+        "else: raise AssertionError('bootstrap console leaked into the workload')\n"
         "print(json.dumps({'pid': os.getpid(), 'args': sys.argv[1:]}))\n"
         "sys.exit(37)\n"
     )
@@ -2595,6 +2598,7 @@ def _write_fake_pip_python(
         "        sys.exit(0)\n"
         "if args[:2] == ['-m', 'pip']:\n"
         "    if args[2:] == ['--version']:\n"
+        f"        if {pip_available!r}: print('pip test')\n"
         f"        sys.exit({0 if pip_available else 1})\n"
         "    Path(os.environ['TOOLANG_TEST_PIP_LOG']).write_text(json.dumps({\n"
         "        'args': args, 'proxy': os.environ.get('HTTPS_PROXY'),\n"
