@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from contextlib import suppress
+from hashlib import sha256
 from importlib.resources import files
 from pathlib import Path
 import shutil
@@ -56,8 +58,19 @@ def validate_guest_environment(environ: Mapping[str, str]) -> None:
 
 
 def prepare_stage_directory(stage_dir: Path) -> None:
-    stage_dir.parent.mkdir(parents=True, exist_ok=True)
-    stage_dir.mkdir()
+    if stage_dir.parent.name == "docker":
+        root = stage_dir.parent
+        root.parent.mkdir(parents=True, exist_ok=True)
+        root.mkdir()
+        try:
+            stage_dir.mkdir()
+        except BaseException:
+            with suppress(OSError):
+                root.rmdir()
+            raise
+    else:
+        stage_dir.parent.mkdir(parents=True, exist_ok=True)
+        stage_dir.mkdir()
 
 
 def prepare_diagnostic(path: Path) -> None:
@@ -73,7 +86,11 @@ def remove_stage_directory(
     launch_id: str | None = None,
 ) -> None:
     path = Path(stage_dir)
-    if launch_id is not None and path.name == "docker":
+    generation_stage = path.parent.name == "docker"
+    if generation_stage and launch_id is not None:
+        if path.name != sha256(launch_id.encode()).hexdigest():
+            return
+    if launch_id is not None and (path.name == "docker" or generation_stage):
         try:
             info_path = path / "active/info.json"
             if not info_path.exists():
@@ -84,7 +101,8 @@ def remove_stage_directory(
             try:
                 path.rmdir()
             except OSError:
-                pass
+                return
+            _remove_empty_stage_root(path)
             return
         if not isinstance(info, dict) or info.get("launch") != launch_id:
             return
@@ -96,6 +114,13 @@ def remove_stage_directory(
         except OSError:
             if not ignore_errors:
                 raise
+    _remove_empty_stage_root(path)
+
+
+def _remove_empty_stage_root(path: Path) -> None:
+    if path.parent.name == "docker":
+        with suppress(OSError):
+            path.parent.rmdir()
 
 
 def prepare_background_log(request: SandboxRequest) -> Path | None:

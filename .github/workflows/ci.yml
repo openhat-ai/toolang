@@ -202,7 +202,7 @@ jobs:
           docker version
           uv run --frozen pytest --live-docker -q \
             tests/integration/up/test_docker_sandbox_lifecycle.py \
-            -k 'home_reuse_resolves or owner_loss_finalizes or script_runs_with_a_temporary or run_interrupt_stops or killed_temporary_controller or host_script_ctrl_c or distinct_homes_run or foreground_launch_preserves or owner_eof_stops or root_guest_run_store' \
+            -k 'home_reuse_resolves or owner_loss_finalizes or script_runs_with_a_temporary or run_interrupt_stops or killed_temporary_controller or host_script_ctrl_c or distinct_homes_run or foreground_launch_preserves or owner_eof_stops or root_guest_runtime_data' \
             --junitxml="$RUNNER_TEMP/docker-results/junit.xml" \
             --durations=20 2>&1 | tee "$RUNNER_TEMP/docker-results/pytest.log"
 

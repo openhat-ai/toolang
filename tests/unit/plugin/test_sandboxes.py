@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import replace
+from hashlib import sha256
 import json
 import os
 from pathlib import Path
@@ -660,7 +661,11 @@ def test_docker_sandbox_prepares_and_launches(
         for mount in plan.mounts
     )
     assert control_lock.read_text(encoding="utf-8") == "host control\n"
-    assert stage_dir == tmp_path / ".runtime" / "active" / "alice" / "docker"
+    assert stage_dir.parent == tmp_path / ".runtime" / "active" / "alice" / "docker"
+    assert (
+        stage_dir.name
+        == sha256(plan.meta["docker_identity"]["launch_id"].encode()).hexdigest()
+    )
     assert diagnostic_path.is_file()
     assert stat.S_IMODE(diagnostic_path.stat().st_mode) == 0o600
     assert startup_events_path.is_file()
@@ -878,7 +883,7 @@ def test_docker_sandbox_reuses_stage_only_after_release(
 
     first_stage = Path(cast(str, first.meta["stage_dir"]))
     second_stage = Path(cast(str, second.meta["stage_dir"]))
-    assert first_stage == second_stage
+    assert first_stage != second_stage
     assert second_stage.is_dir()
 
 
@@ -2244,7 +2249,7 @@ def test_docker_rejects_missing_or_inconsistent_request_identity_before_staging(
     assert not (request.local_home / ".runtime").exists()
 
 
-def test_docker_restart_reuses_name_and_stage_after_release(tmp_path):
+def test_docker_restart_reuses_name_with_a_fresh_stage_after_release(tmp_path):
     sandbox = docker_sandbox.DockerSandbox({})
     request = _request(tmp_path)
     first = sandbox.prepare(
@@ -2265,7 +2270,7 @@ def test_docker_restart_reuses_name_and_stage_after_release(tmp_path):
         None, replace(request, envs={"TOOLANG_HOST_LAUNCH": "b" * 32})
     )
     assert first.meta["container_name"] == second.meta["container_name"]
-    assert first.meta["stage_dir"] == second.meta["stage_dir"]
+    assert first.meta["stage_dir"] != second.meta["stage_dir"]
     assert first.meta["docker_identity"] != second.meta["docker_identity"]
     other_root = replace(request, toolang_root=tmp_path / "other")
     assert (
@@ -2318,7 +2323,7 @@ def test_docker_bootstrap_has_a_guest_info_view_under_the_selected_root(
         envs={"TOOLANG_HOST_LAUNCH": "a" * 32},
     )
     plan = docker_sandbox.DockerSandbox({}).prepare(None, request)
-    stage = runtime / "docker"
+    stage = runtime / "docker" / sha256(("a" * 32).encode()).hexdigest()
     assert Path(plan.meta["stage_dir"]) == stage
     assert request.hosted_runtime is not None
     assert (
@@ -2350,12 +2355,27 @@ def test_delayed_docker_release_preserves_replacement_bootstrap(tmp_path, monkey
     old_ref = sandbox.prepared_reference(old)
     stage = Path(old.meta["stage_dir"])
     docker_guest.remove_stage_directory(stage, launch_id="a" * 32)
-    sandbox.prepare(None, replace(request, envs={"TOOLANG_HOST_LAUNCH": "b" * 32}))
-    before = (stage / "active/info.json").read_bytes()
+    new = sandbox.prepare(
+        None, replace(request, envs={"TOOLANG_HOST_LAUNCH": "b" * 32})
+    )
+    replacement_stage = Path(new.meta["stage_dir"])
+    before = (replacement_stage / "active/info.json").read_bytes()
     monkeypatch.setattr(docker_sandbox, "docker_reference_id", lambda _ref: None)
     asyncio.run(sandbox.release(old_ref))
-    assert (stage / "active/info.json").read_bytes() == before
-    assert (stage / "active/guest.sh").is_file()
+    assert (replacement_stage / "active/info.json").read_bytes() == before
+    assert (replacement_stage / "active/guest.sh").is_file()
+
+
+def test_missing_old_stage_cannot_remove_a_replacement_preparation_slot(tmp_path):
+    sandbox = docker_sandbox.DockerSandbox({})
+    plan = sandbox.prepare(
+        None, replace(_request(tmp_path), envs={"TOOLANG_HOST_LAUNCH": "a" * 32})
+    )
+    stage = Path(plan.meta["stage_dir"])
+    docker_guest.remove_stage_directory(stage, launch_id="a" * 32)
+    stage.parent.mkdir()
+    docker_guest.remove_stage_directory(stage, launch_id="a" * 32)
+    assert stage.parent.is_dir()
 
 
 def test_guest_config_and_active_mounts_have_disjoint_sources(tmp_path):

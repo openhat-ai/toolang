@@ -319,8 +319,8 @@ Let `R` be host ROOT, `P` host PLACE, `H` host HOME, `G` guest ROOT = PLACE, and
 | `P/.state/` and cap directories | Same relative paths below `G/` | Read-write |
 | Each granted workspace directory | `G/workspaces/NAME/WORKSPACE/` | Read-write |
 | `R/hub/` | `G/hub/` | Read-only |
-| `R/.runtime/active/A/docker/active/` | `G/.runtime/active/NAME/` | Read-only |
-| `R/.runtime/active/A/docker/config.toml` | `G/config.toml` | Read-only |
+| `R/.runtime/active/A/docker/L/active/` | `G/.runtime/active/NAME/` | Read-only |
+| `R/.runtime/active/A/docker/L/config.toml` | `G/config.toml` | Read-only |
 
 Lab is an ordinary separate mount from `P/workspaces/NAME/lab`. All workspace
 names are unique before mounting; nested and alias sources retain distinct named
@@ -340,6 +340,10 @@ read-only mount at `G/.inputs/models/<path-hash>/<filename>`.
 Assembly is split between [mount preparation](../../src/toolang/up/mounts.py),
 the [launch boundary](../../src/toolang/up/sandbox.py), and the
 [Docker adapter](../../src/toolang/plugin/sandboxes/docker/sandbox.py).
+
+`L` is the launch ID's SHA-256 digest. Each launch gets fresh immutable host
+staging paths while the address keeps one exclusive preparation slot. Delayed
+release cannot remove a replacement launch's inputs.
 
 ## Guest bootstrap
 
@@ -400,6 +404,9 @@ host bindings. HOME status remains authoritative.
 Root guests create RunStore databases with the mounted runtime directory's owner;
 SQLite's WAL/SHM files inherit that owner. Host inspection and subsequent HOME
 reuse retain access to the private execution records.
+New State cache directories, locks, revision trees and current pointers likewise
+retain their mounted parent's owner. Ownership is set on newly staged revisions
+before publication; existing source/workspace trees are not recursively changed.
 
 The registry guard serializes one address; the status guard serializes one home.
 After resource release and generation checks, bootstrap inputs and the empty

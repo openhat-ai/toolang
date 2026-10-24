@@ -275,6 +275,53 @@ def test_shell_interruption_stops_the_command(
     asyncio.run(scenario())
 
 
+def test_shell_cleanup_retries_when_the_first_group_signal_misses_a_child(
+    tmp_path, monkeypatch
+):
+    from contextlib import suppress
+    from toolang.plugin.toolsets.shell import _stop_command
+
+    async def scenario():
+        marker = tmp_path / "ready"
+        launch = asyncio.create_task(
+            asyncio.create_subprocess_exec(
+                "/bin/sh",
+                "-c",
+                "sleep 30 & printf ready > ready; wait",
+                cwd=tmp_path,
+                start_new_session=True,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+        )
+        process = await launch
+        kill_group = os.killpg
+        signals = []
+
+        def miss_child_once(group, signum):
+            assert group == process.pid
+            signals.append(signum)
+            if len(signals) == 1:
+                os.kill(process.pid, signum)
+            else:
+                kill_group(group, signum)
+
+        try:
+            async with asyncio.timeout(5):
+                while not marker.exists():
+                    await asyncio.sleep(0.01)
+            monkeypatch.setattr(os, "killpg", miss_child_once)
+            await asyncio.wait_for(_stop_command(launch), timeout=2)
+            assert process.returncode is not None
+            assert len(signals) >= 2
+        finally:
+            with suppress(ProcessLookupError):
+                kill_group(process.pid, signal.SIGKILL)
+            await asyncio.wait_for(process.communicate(), timeout=2)
+
+    asyncio.run(scenario())
+
+
 def test_web_search_tool_filters_domains(monkeypatch, tmp_path: Path) -> None:
     tool = create_web_tool({}).tools()["search"]
 

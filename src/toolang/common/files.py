@@ -67,7 +67,7 @@ def file_write_lock(
     try:
         if state.depth == 0:
             if create:
-                _prepare_directory(path.parent, inherit_owner=inherit_owner)
+                ensure_directory(path.parent, inherit_owner=inherit_owner)
             state.shared = shared_owner is not None
             state.handle = (
                 _claim_file(
@@ -260,7 +260,7 @@ class EditLock:
 
 def ensure_file(path: Path, *, inherit_owner: bool = False) -> None:
     """Create a private file without replacing existing data or its inode."""
-    _prepare_directory(path.parent, inherit_owner=inherit_owner)
+    ensure_directory(path.parent, inherit_owner=inherit_owner)
     try:
         descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     except FileExistsError:
@@ -282,7 +282,7 @@ def atomic_write_bytes(
     path: Path, content: bytes, *, inherit_owner: bool = False
 ) -> None:
     """Replace exact bytes atomically, preserving the existing file mode."""
-    _prepare_directory(path.parent, inherit_owner=inherit_owner)
+    ensure_directory(path.parent, inherit_owner=inherit_owner)
     # A valid target name may already occupy the filesystem's full name limit.
     descriptor, temporary = tempfile.mkstemp(dir=path.parent, prefix=".toolang-")
     try:
@@ -300,13 +300,13 @@ def atomic_write_bytes(
         raise
 
 
-def _prepare_directory(path: Path, *, inherit_owner: bool) -> None:
+def ensure_directory(path: Path, *, inherit_owner: bool = False) -> None:
     """Let privileged writers retain the mounted parent's owner for new paths."""
 
     if not inherit_owner or os.geteuid() != 0:
         path.mkdir(parents=True, exist_ok=True)
     elif not path.is_dir():
-        _prepare_directory(path.parent, inherit_owner=True)
+        ensure_directory(path.parent, inherit_owner=True)
         try:
             path.mkdir()
         except FileExistsError:

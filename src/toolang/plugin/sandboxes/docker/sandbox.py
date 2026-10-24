@@ -251,14 +251,18 @@ class DockerSandbox:
         name, identity = _request_identity(request, launch_id)
         assert request.toolang_root is not None
         stage = (
-            request.local_runtime
-            or (
-                request.toolang_root
-                / ".runtime"
-                / "active"
-                / str(request.agent_address)
+            (
+                request.local_runtime
+                or (
+                    request.toolang_root
+                    / ".runtime"
+                    / "active"
+                    / str(request.agent_address)
+                )
             )
-        ) / "docker"
+            / "docker"
+            / sha256(launch_id.encode()).hexdigest()
+        )
         return SandboxRef(
             name,
             request.endpoint,
@@ -285,14 +289,18 @@ class DockerSandbox:
         container_name, identity = _request_identity(request, launch_id)
         assert request.toolang_root is not None
         stage_dir = (
-            request.local_runtime
-            or (
-                request.toolang_root
-                / ".runtime"
-                / "active"
-                / str(request.agent_address)
+            (
+                request.local_runtime
+                or (
+                    request.toolang_root
+                    / ".runtime"
+                    / "active"
+                    / str(request.agent_address)
+                )
             )
-        ) / "docker"
+            / "docker"
+            / sha256(launch_id.encode()).hexdigest()
+        )
         diagnostic_path = (
             request.local_home / ".runtime" / f"docker-guest-{launch_id}.log"
         )

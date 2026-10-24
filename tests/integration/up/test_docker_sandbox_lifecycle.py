@@ -444,13 +444,18 @@ def test_killed_temporary_controller_is_recovered_by_next_control_operation(
             assert SandboxState.load(home.runtime_status) is None
             assert home.run_store.exists()
             scenario.resume.set()
-            worker = _script_process(
-                source, root, docker_wheel_dir, operand=f"{source}@{home.place_code}"
-            )
-            stdout, stderr = worker.communicate(timeout=180)
-            assert worker.returncode == 0, (stdout, stderr)
-            assert stdout == "done"
+            for _ in range(2):
+                worker = _script_process(
+                    source,
+                    root,
+                    docker_wheel_dir,
+                    operand=f"{source}@{home.place_code}",
+                )
+                stdout, stderr = worker.communicate(timeout=180)
+                assert worker.returncode == 0, (stdout, stderr)
+                assert stdout == "done"
             with closing(RunStore(home.run_store, read_only=True)) as store:
+                assert len(store.list_runs()) == 3
                 assert {run.status for run in store.list_runs()} == {
                     "canceled",
                     "succeeded",
@@ -486,7 +491,10 @@ def docker_wheel_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
     return wheel_dir
 
 
-def test_root_guest_run_store_retains_mounted_parent_ownership(docker_wheel_dir):
+@pytest.mark.parametrize("kind", ["store", "state"])
+def test_root_guest_runtime_data_retains_mounted_parent_ownership(
+    docker_wheel_dir, kind
+):
     """Exercise Linux ownership even on Docker Desktop's translated mounts."""
     from uuid import uuid4
 
@@ -515,6 +523,35 @@ try:
     assert checked.returncode == 0, checked.stdout + checked.stderr
 finally:
     store.close()
+"""
+    if kind == "state":
+        code = """
+import os, subprocess, sys, tempfile
+from pathlib import Path
+from toolang.common.layout import AgentLayout, ensure_scratch_workspace
+from toolang.state.prepare import prepare_agent_state
+home = Path(tempfile.mkdtemp())
+layout = AgentLayout.resident(home, 'alice')
+layout.home.mkdir(parents=True)
+layout.program.write_text('flow main():\\n  pass\\n')
+ensure_scratch_workspace(layout.home)
+for path in [home, *home.rglob('*')]:
+    os.chown(path, 65534, 65534)
+state = prepare_agent_state(layout)
+for anchor in (layout.place_state, layout.home_state, layout.agent_state):
+    for path in [anchor, *anchor.rglob('*')]:
+        assert path.stat().st_uid == 65534, (path, path.stat())
+checked = subprocess.run(
+    [sys.executable, '-c',
+     'import os, sys; from pathlib import Path; '
+     'from toolang.common.layout import AgentLayout; '
+     'from toolang.state.prepare import prepare_agent_state; '
+     'layout=AgentLayout.resident(Path(sys.argv[1]), "alice"); '
+     'prepare_agent_state(layout); os.setgid(65534); os.setuid(65534); '
+     'prepare_agent_state(layout)', str(home)],
+    capture_output=True, text=True, timeout=15,
+)
+assert checked.returncode == 0, checked.stdout + checked.stderr
 """
     try:
         result = subprocess.run(
@@ -1481,7 +1518,11 @@ else:
         assert result.returncode == 0, result.stderr
         assert (agent.layout.lab / "mount-probe.txt").read_text() == "shared lab"
         host = json.loads((directory / "info.json").read_text())
-        guest = json.loads((directory / "docker/active/info.json").read_text())
+        state = SandboxState.load(agent.layout.runtime_status)
+        assert state is not None
+        stage_dir = state.ref.meta["stage_dir"]
+        assert isinstance(stage_dir, str)
+        guest = json.loads((Path(stage_dir) / "active/info.json").read_text())
         assert host["home"] == str(agent.layout.home)
         assert host["launch"] == guest["launch"]
         assert host["location"] == guest["location"] == "guest"
@@ -1561,7 +1602,9 @@ def _script_handler(scenario: _ScriptScenario):
                 scenario.phase += 1
                 if scenario.phase == 1:
                     tool_name = "shell__execute"
-                    arguments = {"command": "printf owned > owner-ready; cat input.txt"}
+                    arguments = {
+                        "command": "printf owned > owner-ready; chmod 644 owner-ready; cat input.txt"
+                    }
             else:
                 raise AssertionError(f"unknown fixture mode: {scenario.mode}")
             message: dict[str, Any] = {

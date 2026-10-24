@@ -16,6 +16,7 @@ from typing import Literal, cast
 from uuid import uuid4
 
 from toolang.common.layout import AgentLayout, validate_agent_name
+from toolang.common.files import atomic_write_text, ensure_directory, ensure_file
 from toolang.common.progress import ProgressSink, emit_progress
 
 from ..common.immutable import freeze_mapping, mutable_data
@@ -281,7 +282,7 @@ def write_layer(
     encoded = canonical_json(document)
     revision = sha256(encoded).hexdigest()
     target = layer_revision_dir(layout, scope, revision)
-    target.parent.mkdir(parents=True, exist_ok=True)
+    ensure_directory(target.parent, inherit_owner=True)
     staging = target.with_name(f".{revision}.tmp-{uuid4().hex}")
     try:
         staging.mkdir()
@@ -344,7 +345,7 @@ def _persist_agent_revision(
     encoded = canonical_json(document)
     revision = sha256(encoded).hexdigest()
     target = agent_revision_dir(layout, revision)
-    target.parent.mkdir(parents=True, exist_ok=True)
+    ensure_directory(target.parent, inherit_owner=True)
     staging = target.with_name(f".{revision}.tmp-{uuid4().hex}")
     try:
         staging.mkdir()
@@ -435,7 +436,7 @@ def _agent_publish_lock(
 def _file_lock(
     path: Path, *, label: str, progress: ProgressSink | None
 ) -> Iterator[None]:
-    path.parent.mkdir(parents=True, exist_ok=True)
+    ensure_file(path, inherit_owner=True)
     with path.open("a+b") as lock_file:
         try:
             fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -1276,6 +1277,7 @@ def _install_revision(
 ) -> None:
     """Install staging, replacing an invalid same-revision entry if necessary."""
 
+    _inherit_revision_owner(staging)
     while True:
         if not _path_exists(target):
             try:
@@ -1305,6 +1307,22 @@ def _install_revision(
             return
         finally:
             _remove_path(displaced)
+
+
+def _inherit_revision_owner(staging: Path) -> None:
+    """Keep only this newly built cache tree accessible to its mounted owner."""
+    if os.geteuid() != 0:
+        return
+    owner = staging.parent.stat()
+    for directory, _children, files in os.walk(staging):
+        os.chown(directory, owner.st_uid, owner.st_gid, follow_symlinks=False)
+        for name in files:
+            os.chown(
+                Path(directory) / name,
+                owner.st_uid,
+                owner.st_gid,
+                follow_symlinks=False,
+            )
 
 
 def _path_exists(path: Path) -> bool:
@@ -1400,10 +1418,7 @@ def _write_revision(path: Path, revision: str) -> None:
             return
     except (FileNotFoundError, TypeError, ValueError):
         pass
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(f".{path.name}.tmp-{uuid4().hex}")
-    temporary.write_text(f"{revision}\n", encoding="utf-8")
-    os.replace(temporary, path)
+    atomic_write_text(path, f"{revision}\n", inherit_owner=True)
 
 
 def _revision_field(document: Mapping[str, object], key: str) -> str:
