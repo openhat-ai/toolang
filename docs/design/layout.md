@@ -177,17 +177,19 @@ Discovery references live under `${TOOLANG_ROOT}/.runtime/active/`:
 - Registrations provide active discovery only. Removing one neither removes
   history nor proves process death. Known-path lookup works without registration.
 
-Each format-6 reference records its absolute home, launch, execution location,
-and sandbox; source paths/refs are optional. Status is derived as
+Each format-6 reference records its full address, absolute home, launch,
+execution location, and sandbox; source paths/refs are optional. Status is derived as
 `HOME/.runtime/status.json`. Legacy format-5 status/launch references remain
 readable. `RuntimeRegistration` publishes into one Toolang root under the private
 `active/<address>/register.lock`, with home and launch ownership checks. Pure
 reads create no guards. Publication does not initialize or stop workloads.
-Docker's read-only guest view comes from `<address>/docker/`; host control
-retires the address after resource release. For example:
+Docker's read-only guest active view comes from `<address>/docker/active/`;
+generated `<address>/docker/config.toml` is mounted separately at guest ROOT.
+Host control retires the address after resource release. For example, with the
+default Docker root:
 
 ```json
-{"version": 6, "home": "/project/.toolang/<root_code>/<place_code>/agents/aid", "launch": "<fresh-launch-id>", "location": "guest", "sandbox": "docker:python:3.13-slim"}
+{"version": 6, "address": "aid@<place_code>", "home": "/root/.toolang/agents/aid", "launch": "<fresh-launch-id>", "location": "guest", "sandbox": "docker:python:3.13-slim"}
 ```
 
 `up.identity` owns immutable `InstanceIdentity` bindings and strict parsing,
