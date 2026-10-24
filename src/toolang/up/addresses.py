@@ -20,19 +20,21 @@ class AgentAddress:
 
     def __post_init__(self) -> None:
         validate_agent_name(self.name)
-        decode_place_code(self.place_code)
+        _, timestamp = decode_place_code(self.place_code)
         if self.source is not None and (
             not self.source.is_absolute()
             or self.source.suffix != ".too"
-            or not self.place_code.startswith("s")
+            or timestamp is None
         ):
             raise ValueError(
-                "a source-path instance requires an absolute .too path and an s ID"
+                "a source-path instance requires an absolute .too path and a roaming code"
             )
 
     @property
     def placement(self) -> str:
-        return "visiting" if self.place_code.startswith("t") else "roaming"
+        return (
+            "visiting" if decode_place_code(self.place_code)[1] is None else "roaming"
+        )
 
 
 def parse_address(text: str) -> AgentAddress | None:
@@ -45,12 +47,14 @@ def parse_address(text: str) -> AgentAddress | None:
     if "@" not in text or text.endswith(".too"):
         return None
     label, _, token = text.rpartition("@")
-    decode_place_code(token)
+    _, timestamp = decode_place_code(token)
     source = None
     if not explicit_name and (label.endswith(".too") or "/" in label):
         source = Path(label).expanduser().resolve()
-        if source.suffix != ".too" or not token.startswith("s"):
-            raise ValueError("a source-path instance requires a .too path and an s ID")
+        if source.suffix != ".too" or timestamp is None:
+            raise ValueError(
+                "a source-path instance requires a .too path and a roaming code"
+            )
         name = derive_agent_name(source.stem)
     else:
         name = validate_agent_name(label)
@@ -61,7 +65,7 @@ def resolve_address(root: Path, address: AgentAddress) -> tuple[AgentLayout, str
     root = root.expanduser().resolve()
     if address.source is not None:
         layout = select_roaming(address.source, address.place_code, toolang_root=root)
-    elif address.place_code.startswith("s"):
+    elif address.placement == "roaming":
         from .discovery import active_layout
 
         layout, launch_id = active_layout(root, f"{address.name}@{address.place_code}")

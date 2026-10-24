@@ -5,7 +5,7 @@ from copy import deepcopy
 import pytest
 
 from toolang.common.layout import AgentLayout
-from toolang.common.place_codes import roaming_place_code
+from toolang.common.place_codes import PLACE_CODE_EPOCH_MS, roaming_place_code
 from toolang.up.identity import InstanceIdentity, identity_bindings, layout_from_control
 
 
@@ -20,7 +20,7 @@ def layout(tmp_path, request):
         if request.param == "visiting"
         else AgentLayout.roaming(
             source,
-            place_code=roaming_place_code(str(source), 100),
+            place_code=roaming_place_code(str(source), PLACE_CODE_EPOCH_MS + 100),
             root=root,
         )
     )

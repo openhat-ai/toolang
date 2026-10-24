@@ -1,3 +1,4 @@
+from toolang.common.place_codes import PLACE_CODE_EPOCH_MS
 from toolang.up.registry import instance_filename
 from toolang.up.workload import ForegroundWorkload
 from concurrent.futures import ThreadPoolExecutor
@@ -14,14 +15,17 @@ def test_parallel_allocations_are_isolated_and_keep_history(tmp_path, monkeypatc
     source = tmp_path / "aid.too"
     source.write_text("flow main():\n  pass\n")
     root = tmp_path / "global"
-    monkeypatch.setattr("toolang.up.allocation.time.time_ns", lambda: 100_000_000)
+    monkeypatch.setattr(
+        "toolang.up.allocation.time.time_ns",
+        lambda: (PLACE_CODE_EPOCH_MS + 100) * 1_000_000,
+    )
     with ThreadPoolExecutor(max_workers=4) as pool:
         layouts = list(
             pool.map(lambda _: allocate_roaming(source, toolang_root=root), range(12))
         )
     assert len({layout.place for layout in layouts}) == 12
     assert sorted(layout.request_order_ns for layout in layouts) == list(
-        (value * 1_000_000 for value in range(100, 112))
+        ((PLACE_CODE_EPOCH_MS + value) * 1_000_000 for value in range(100, 112))
     )
     latest = max(layouts, key=lambda layout: layout.place_code)
     assert select_roaming(source, toolang_root=root).place == latest.place
@@ -71,7 +75,7 @@ def test_select_rejects_unknown_or_corrupt_identity(tmp_path):
     with pytest.raises(ValueError, match="place code requires"):
         select_roaming(source, "abc", toolang_root=tmp_path / "global")
     with pytest.raises(ValueError, match="invalid retained"):
-        select_roaming(source, "s" + "0" * 17, toolang_root=tmp_path / "global")
+        select_roaming(source, "0" * 19, toolang_root=tmp_path / "global")
     layout.runtime_status.write_text("broken")
     with pytest.raises(ValueError):
         select_roaming(source, toolang_root=tmp_path / "global")
@@ -80,7 +84,10 @@ def test_select_rejects_unknown_or_corrupt_identity(tmp_path):
 def test_instance_identity_uses_canonical_path_even_with_the_same_clock_and_nonce(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setattr("toolang.up.allocation.time.time_ns", lambda: 100_000_000)
+    monkeypatch.setattr(
+        "toolang.up.allocation.time.time_ns",
+        lambda: (PLACE_CODE_EPOCH_MS + 100) * 1_000_000,
+    )
     monkeypatch.setattr("toolang.up.allocation.uuid4", lambda: UUID(int=1))
     first = allocate_roaming(
         tmp_path / "one" / "aid.too", toolang_root=tmp_path / "global"
@@ -144,21 +151,21 @@ def test_clock_rollback_and_other_sources_do_not_reorder_one_source(
 ):
     from toolang.common.place_codes import roaming_timestamp_ms
 
-    now = [500_000_000]
+    now = [(PLACE_CODE_EPOCH_MS + 500) * 1_000_000]
     monkeypatch.setattr("toolang.up.allocation.time.time_ns", lambda: now[0])
     source = tmp_path / "aid.too"
     root = tmp_path / "global"
     first = allocate_roaming(source, toolang_root=root)
-    now[0] = 900_000_000
+    now[0] = (PLACE_CODE_EPOCH_MS + 900) * 1_000_000
     other = allocate_roaming(tmp_path / "other.too", toolang_root=root)
-    now[0] = 100_000_000
+    now[0] = (PLACE_CODE_EPOCH_MS + 100) * 1_000_000
     second = allocate_roaming(source, toolang_root=root)
     assert first.place_code is not None and second.place_code is not None
     assert other.place_code is not None
-    assert roaming_timestamp_ms(first.place_code) == 500
-    assert roaming_timestamp_ms(second.place_code) == 501
-    assert roaming_timestamp_ms(other.place_code) == 900
-    assert second.request_order_ns == 501_000_000
+    assert roaming_timestamp_ms(first.place_code) == PLACE_CODE_EPOCH_MS + 500
+    assert roaming_timestamp_ms(second.place_code) == PLACE_CODE_EPOCH_MS + 501
+    assert roaming_timestamp_ms(other.place_code) == PLACE_CODE_EPOCH_MS + 900
+    assert second.request_order_ns == (PLACE_CODE_EPOCH_MS + 501) * 1_000_000
     first.runtime_status.touch()
     assert select_roaming(source, toolang_root=root).place == second.place
 
@@ -170,7 +177,10 @@ def test_roaming_full_id_collision_fails_once_and_preserves_owner(
     from toolang.common import place_codes
 
     monkeypatch.setattr(place_codes, "_tag", lambda *_: 123)
-    monkeypatch.setattr("toolang.up.allocation.time.time_ns", lambda: 100_000_000)
+    monkeypatch.setattr(
+        "toolang.up.allocation.time.time_ns",
+        lambda: (PLACE_CODE_EPOCH_MS + 100) * 1_000_000,
+    )
     root = tmp_path / "global"
     first_source = tmp_path / "one" / "a-id.too"
     second_source = (
@@ -182,7 +192,7 @@ def test_roaming_full_id_collision_fails_once_and_preserves_owner(
     with pytest.raises((ValueError, FileExistsError), match="collision"):
         allocate_roaming(second_source, toolang_root=root)
     assert (first.runtime_status.read_bytes(), reference.read_bytes()) == before
-    candidates = list((second_source.parent / ".toolang").glob("*/s*"))
+    candidates = list((second_source.parent / ".toolang").glob("*/[0-7]*"))
     assert candidates == ([first.place] if scope == "local" else [])
     assert list(reference.parent.glob("*.json")) == [reference]
 
@@ -221,21 +231,22 @@ def test_allocation_rejects_untrusted_retained_ownership_without_rewriting_it(
         if retained.runtime_status.exists()
         else None
     ) == before
-    assert list((source.parent / ".toolang").glob("*/s*")) == [retained.place]
+    assert list((source.parent / ".toolang").glob("*/[0-7]*")) == [retained.place]
 
 
 def test_timestamp_overflow_does_not_wrap_or_publish(tmp_path, monkeypatch):
     monkeypatch.setattr(
-        "toolang.up.allocation.time.time_ns", lambda: (2**48 - 1) * 1_000_000
+        "toolang.up.allocation.time.time_ns",
+        lambda: (PLACE_CODE_EPOCH_MS + 2**45 - 1) * 1_000_000,
     )
     source = tmp_path / "aid.too"
     root = tmp_path / "global"
     retained = allocate_roaming(source, toolang_root=root)
     before = retained.runtime_status.read_bytes()
-    with pytest.raises(ValueError, match="48-bit"):
+    with pytest.raises(ValueError, match="45-bit"):
         allocate_roaming(source, toolang_root=root)
     assert retained.runtime_status.read_bytes() == before
-    assert list((source.parent / ".toolang").glob("*/s*")) == [retained.place]
+    assert list((source.parent / ".toolang").glob("*/[0-7]*")) == [retained.place]
 
 
 def test_parallel_source_allocators_fence_a_global_full_id_collision(
@@ -244,7 +255,10 @@ def test_parallel_source_allocators_fence_a_global_full_id_collision(
     from toolang.common import place_codes
 
     monkeypatch.setattr(place_codes, "_tag", lambda *_: 123)
-    monkeypatch.setattr("toolang.up.allocation.time.time_ns", lambda: 100_000_000)
+    monkeypatch.setattr(
+        "toolang.up.allocation.time.time_ns",
+        lambda: (PLACE_CODE_EPOCH_MS + 100) * 1_000_000,
+    )
     root = tmp_path / "global"
 
     def launch(source):
@@ -262,7 +276,7 @@ def test_parallel_source_allocators_fence_a_global_full_id_collision(
     failures = [item for item in outcomes if isinstance(item, ValueError)]
     assert len(failures) == 1 and "collision" in str(failures[0])
     assert len(list((root / ".runtime" / "active").glob("*/*.json"))) == 1
-    assert len(list(tmp_path.glob("*/.toolang/*/s*"))) == 1
+    assert len(list(tmp_path.glob("*/.toolang/*/[0-7]*"))) == 1
 
 
 def test_previous_layout_is_ignored_without_reading_or_modifying_it(tmp_path):
@@ -287,18 +301,18 @@ def test_a_shared_path_tag_does_not_mix_retained_source_order_or_selection(
     from toolang.common import place_codes
 
     monkeypatch.setattr(place_codes, "_tag", lambda *_: 123)
-    now = [500_000_000]
+    now = [(PLACE_CODE_EPOCH_MS + 500) * 1_000_000]
     monkeypatch.setattr("toolang.up.allocation.time.time_ns", lambda: now[0])
     root = tmp_path / "global"
     source = tmp_path / "a-id.too"
     first = allocate_roaming(source, toolang_root=root)
-    now[0] = 900_000_000
+    now[0] = (PLACE_CODE_EPOCH_MS + 900) * 1_000_000
     other = allocate_roaming(tmp_path / "a id.too", toolang_root=root)
-    now[0] = 100_000_000
+    now[0] = (PLACE_CODE_EPOCH_MS + 100) * 1_000_000
     second = allocate_roaming(source, toolang_root=root)
-    assert first.request_order_ns == 500_000_000
-    assert second.request_order_ns == 501_000_000
-    assert other.request_order_ns == 900_000_000
+    assert first.request_order_ns == (PLACE_CODE_EPOCH_MS + 500) * 1_000_000
+    assert second.request_order_ns == (PLACE_CODE_EPOCH_MS + 501) * 1_000_000
+    assert other.request_order_ns == (PLACE_CODE_EPOCH_MS + 900) * 1_000_000
     assert select_roaming(source, toolang_root=root).place == second.place
     assert other.source_path is not None
     assert select_roaming(other.source_path, toolang_root=root).place == other.place
@@ -314,10 +328,15 @@ def test_new_roaming_allocation_rejects_a_dangling_reference_to_its_candidate(
 
     source = tmp_path / "aid.too"
     root = tmp_path / "global"
-    monkeypatch.setattr("toolang.up.allocation.time.time_ns", lambda: 100_000_000)
+    monkeypatch.setattr(
+        "toolang.up.allocation.time.time_ns",
+        lambda: (PLACE_CODE_EPOCH_MS + 100) * 1_000_000,
+    )
     candidate = replace(
         AgentLayout.roaming(
-            source, place_code=roaming_place_code(str(source), 100), root=root
+            source,
+            place_code=roaming_place_code(str(source), PLACE_CODE_EPOCH_MS + 100),
+            root=root,
         ),
         root=root,
     )

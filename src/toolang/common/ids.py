@@ -16,7 +16,7 @@ import sqlite3
 
 from .id_codec import decode_short_id, derive_id_key, encode_short_id, scramble_id
 
-_ID_EPOCH = datetime(2026, 1, 1, tzinfo=UTC)
+ID_EPOCH = datetime(2026, 1, 1, tzinfo=UTC)
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,7 +32,7 @@ class IdFamily:
     seq_multiplier: int
     seq_offset: int
     mask_seed: int = 0x15A5
-    epoch: datetime = _ID_EPOCH
+    epoch: datetime = ID_EPOCH
 
     def __post_init__(self) -> None:
         if not self.name.strip():

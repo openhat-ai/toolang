@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+
 import asyncio
 import json
 import os
@@ -9,6 +10,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from toolang.common.place_codes import PLACE_CODE_EPOCH_MS
 from toolang.base.types.model import ModelOverride
 from toolang.cli.common.policy import (
     resolve_default_overrides,
@@ -421,7 +423,7 @@ def test_serve_argv_keeps_the_selected_root_separate_from_guest_place(
         else AgentLayout.roaming(
             source,
             root=root,
-            place_code=roaming_place_code(str(source), 100),
+            place_code=roaming_place_code(str(source), PLACE_CODE_EPOCH_MS + 100),
         )
     )
     spec = server.ServeSpec(

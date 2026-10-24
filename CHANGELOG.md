@@ -365,6 +365,22 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   agent is removed, and ignores old data there.
   ([#948](https://github.com/openhat-ai/toolang/pull/948))
 
+- **Breaking:** Nonresident addresses now pack the type inside one lowercase
+  Base32 value: visiting (`11`, 48-bit requested-ref hash) uses 10 characters,
+  while roaming (`00`, 48-bit source hash, 45-bit milliseconds) uses 19. Prior
+  literal `s`/`t`-prefixed codes no longer parse, and retained data is untouched.
+  ([#950](https://github.com/openhat-ai/toolang/pull/950))
+
+- Roaming and visiting addresses retain all 48 hash bits of the source, and
+  retained roots stay ordered by creation time from the shared 2026-01-01 UTC
+  epoch.
+  ([#950](https://github.com/openhat-ai/toolang/pull/950))
+
+- Root codes grow to eight Base32 characters from the first 40 root-path hash
+  bits and name nonresident placement directories, Docker containers, and Hub
+  namespaces.
+  ([#950](https://github.com/openhat-ai/toolang/pull/950))
+
 ### Fixed
 
 - Failed preparation no longer leaves active registrations; runtime references

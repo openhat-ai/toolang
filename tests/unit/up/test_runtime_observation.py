@@ -133,7 +133,9 @@ def test_reference_names_use_stable_host_source_identity(tmp_path):
     assert instance_filename(visiting) == f"lex@{visiting.place_code}.json"
     assert visiting.place.name == visiting.place_code
     assert visiting.place_code is not None
-    assert visiting.source_id == visiting.place_code[1:]
+    from toolang.common.place_codes import place_source_id
+
+    assert visiting.source_id == place_source_id("visiting", source)
     assert instance_filename(roaming) == f"aid@{roaming.place_code}.json"
     assert instance_filename(replace(roaming)) == instance_filename(roaming)
     assert instance_filename(
@@ -561,6 +563,30 @@ def test_agent_removal_retains_home_used_by_an_independent_script(tmp_path):
         with pytest.raises(ValueError, match="execution instance"):
             asyncio.run(remove_agent(layout))
         assert layout.home.exists()
+
+
+@pytest.mark.parametrize("placement", ["visiting", "roaming"])
+def test_damaged_nonresident_status_keeps_its_packed_address(tmp_path, placement):
+    root = tmp_path / "toolang"
+    layout = (
+        AgentLayout.visiting("https://example.com/alice.too", "alice", root=root)
+        if placement == "visiting"
+        else _roaming(tmp_path / "alice.too", toolang_root=root)
+    )
+    with ForegroundWorkload(layout, toolang_root=root, drivers=frozenset()):
+        before = layout.runtime_status.read_bytes()
+        layout.runtime_status.write_text("broken")
+        try:
+            snapshot = runtime_snapshot(root)
+            assert snapshot.partial
+            assert len(snapshot.instances) == 1
+            row = snapshot.instances[0]
+            assert row.placement == placement
+            assert row.label == layout.address
+            assert row.state == "unknown"
+            assert layout.runtime_status.read_text() == "broken"
+        finally:
+            layout.runtime_status.write_bytes(before)
 
 
 def test_runtime_snapshot_lists_residents_and_registered_placements_once(tmp_path):

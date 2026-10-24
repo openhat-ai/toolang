@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+
 import asyncio
 from dataclasses import replace
 import json
@@ -28,6 +29,7 @@ from toolang.base.types.sandbox import (
 )
 from toolang.common.layout import AgentLayout
 from toolang.common.place_codes import (
+    PLACE_CODE_EPOCH_MS,
     root_code,
     visiting_place_code,
     roaming_place_code,
@@ -1695,7 +1697,7 @@ def test_docker_names_follow_bound_addresses_and_preserve_full_codes(
     code = {
         "resident": None,
         "visiting": visiting_place_code("https://example.com/agent.too"),
-        "roaming": roaming_place_code("/work/agent.too", 123),
+        "roaming": roaming_place_code("/work/agent.too", PLACE_CODE_EPOCH_MS + 123),
     }[placement]
     address = agent + (f"@{code}" if code else "")
     request = replace(
@@ -1729,7 +1731,7 @@ def test_docker_names_follow_bound_addresses_and_preserve_full_codes(
             "launch_id": "a" * 32,
         }
     )
-    assert len(expected) <= {"resident": 80, "visiting": 92, "roaming": 99}[placement]
+    assert len(expected) <= {"resident": 81, "visiting": 92, "roaming": 101}[placement]
 
 
 @pytest.mark.parametrize(
@@ -1806,7 +1808,9 @@ def test_docker_bootstrap_has_a_guest_info_view_under_the_selected_root(
         )
     else:
         layout = AgentLayout.roaming(
-            source, root=root, place_code=roaming_place_code(str(source), 1)
+            source,
+            root=root,
+            place_code=roaming_place_code(str(source), PLACE_CODE_EPOCH_MS + 1),
         )
     guest_root = Path("/guest/toolang")
     guest_place = guest_root
@@ -1908,8 +1912,8 @@ def test_docker_distinct_places_with_same_agent_have_distinct_names(tmp_path):
     codes = [
         visiting_place_code("https://example.com/one.too"),
         visiting_place_code("https://example.com/two.too"),
-        roaming_place_code("/work/one.too", 123),
-        roaming_place_code("/work/one.too", 124),
+        roaming_place_code("/work/one.too", PLACE_CODE_EPOCH_MS + 123),
+        roaming_place_code("/work/one.too", PLACE_CODE_EPOCH_MS + 124),
     ]
     refs = [
         sandbox.intent_reference(replace(request, agent_address=f"alice@{code}"))
@@ -2024,7 +2028,7 @@ def test_docker_name_replacement_after_inspection_uses_original_immutable_id(
 def test_docker_root_code_collision_preserves_foreign_container_and_recovery(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setattr(docker_sandbox, "root_code", lambda _: "0000000")
+    monkeypatch.setattr(docker_sandbox, "root_code", lambda _: "00000000")
     sandbox = docker_sandbox.DockerSandbox({})
     request = _request(tmp_path)
     first = sandbox.prepare(None, request)

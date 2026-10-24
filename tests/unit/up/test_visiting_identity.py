@@ -89,7 +89,7 @@ def test_full_visiting_id_collision_fails_before_cached_program_or_history_chang
     tmp_path, monkeypatch
 ):
     monkeypatch.setattr(
-        "toolang.common.layout.visiting_place_code", lambda *_: "t" + "0" * 10
+        "toolang.common.layout.visiting_place_code", lambda *_: "r" + "0" * 9
     )
     first = materialize_visiting_program(
         HttpRef("https://one.example/alice.too"), "original", toolang_root=tmp_path

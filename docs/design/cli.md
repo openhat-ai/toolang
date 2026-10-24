@@ -138,7 +138,9 @@ exits. [Hosting](hosting.md) owns startup compatibility and recovery.
 
 ### Instance selection
 
-Use `name@t...`, `name@s...`, or `file.too@s...` as `AGENT`; require complete IDs.
+Use `name@CODE` or `file.too@CODE` as `AGENT`; require complete codes. Visiting
+codes have 10 chars and type `11`; roaming codes have 19 chars and type `00`.
+[Agent addresses](agent-addresses.md#short-codes) defines their bit layout.
 Remote schemes retain their own revisions and URL `@` characters. Source-only
 resource commands reject instance operands. There is no `--instance`/`-i` option.
 

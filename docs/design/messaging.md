@@ -40,10 +40,11 @@ Hub listener must be reachable through the gateway.
 hub store schema `5` owns messaging and execution-event data. Incompatible or
 corrupt initialized stores fail closed without resets, mutation, or import.
 All Hub keys use `toolang:<root_code>:v0:`, including execution events and Talk
-cursors. `root_code` reuses the seven-character Crockford Base32 root code derived
-from the host-canonical Toolang root. Separate roots can share one backend URL
-without sharing data. Each namespace records its full root identity; collisions
-and missing/corrupt ownership fail without adopting or modifying another dataset.
+cursors. `root_code` reuses `R8` from
+[agent addresses](agent-addresses.md#short-codes), derived from the host-canonical
+Toolang root. Separate roots can share one backend URL without sharing data.
+Each namespace records its full root identity; collisions and missing/corrupt
+ownership fail without adopting or modifying another dataset.
 Backend connection identity includes both the configured URL and canonical root,
 so Hub API and Talk identity checks distinguish roots on the same backend.
 

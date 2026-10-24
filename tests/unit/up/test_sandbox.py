@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+
 import asyncio
 from dataclasses import replace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -11,6 +12,7 @@ from typing import Any, cast
 
 import pytest
 
+from toolang.common.place_codes import PLACE_CODE_EPOCH_MS
 from toolang.base.errors import SandboxLaunchError
 from toolang.base.types.progress import ProgressEvent, ProgressSink
 from toolang.base.types.sandbox import (
@@ -612,7 +614,7 @@ def test_guest_roaming_mounts_the_shared_project_edit_guard(monkeypatch, tmp_pat
 
     layout = AgentLayout.roaming(
         source,
-        place_code=roaming_place_code(str(source), 1),
+        place_code=roaming_place_code(str(source), PLACE_CODE_EPOCH_MS + 1),
         root=tmp_path / "global",
     )
     layout.home.mkdir(parents=True)
@@ -673,7 +675,9 @@ def test_mount_layout_preserves_root_place_and_home_scopes(
         source.parent.mkdir()
         source.write_text("hello() {}")
         layout = AgentLayout.roaming(
-            source, root=root, place_code=roaming_place_code(str(source), 1)
+            source,
+            root=root,
+            place_code=roaming_place_code(str(source), PLACE_CODE_EPOCH_MS + 1),
         )
     if placement == "visiting":
         from toolang.up.identity import visiting_home_guard

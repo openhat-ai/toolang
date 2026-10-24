@@ -3,13 +3,22 @@
 from typing import Literal
 
 from .id_codec import decode_short_id, derive_id_key, encode_short_id
+from .ids import ID_EPOCH
 
-PlaceMarker = Literal["t", "s"]
+NonresidentPlacement = Literal["visiting", "roaming"]
+PLACE_CODE_EPOCH_MS = int(ID_EPOCH.timestamp()) * 1_000
+_HASH_BITS = 48
+_TIME_BITS = 45
+_VISITING_TAG = 0b11
+
+
+def _check_component(value: int, bits: int) -> None:
+    if type(value) is not int or not 0 <= value < 1 << bits:
+        raise ValueError(f"place code component must be an unsigned {bits}-bit integer")
 
 
 def _field(value: int, bits: int, width: int) -> str:
-    if type(value) is not int or not 0 <= value < 1 << bits:
-        raise ValueError(f"place code component must be an unsigned {bits}-bit integer")
+    _check_component(value, bits)
     return encode_short_id(value, width=width)
 
 
@@ -21,28 +30,42 @@ def _decode(value: str, bits: int, width: int) -> int:
 
 
 def encode_place_code(
-    marker: PlaceMarker, source: int, timestamp_ms: int | None = None
+    placement: NonresidentPlacement, source: int, timestamp_ms: int | None = None
 ) -> str:
-    """Encode each bounded field independently, preserving creation order."""
-    if marker == "t" and timestamp_ms is None:
-        return "t" + _field(source, 48, 10)
-    if marker == "s" and timestamp_ms is not None:
-        return "s" + _field(source, 32, 7) + _field(timestamp_ms, 48, 10)
-    raise ValueError("place code requires t with a source hash or s with a timestamp")
+    """Pack the type, source hash, and optional epoch-relative milliseconds."""
+    _check_component(source, _HASH_BITS)
+    if placement == "visiting" and timestamp_ms is None:
+        return encode_short_id((_VISITING_TAG << _HASH_BITS) | source, width=10)
+    if placement == "roaming" and timestamp_ms is not None:
+        if type(timestamp_ms) is not int:
+            raise ValueError("place code timestamp component must be an integer")
+        elapsed_ms = timestamp_ms - PLACE_CODE_EPOCH_MS
+        _check_component(elapsed_ms, _TIME_BITS)
+        return encode_short_id((source << _TIME_BITS) | elapsed_ms, width=19)
+    raise ValueError(
+        "place code requires visiting with a source hash or roaming with a timestamp"
+    )
 
 
 def decode_place_code(
-    value: str, *, marker: PlaceMarker | None = None
+    value: str, *, placement: NonresidentPlacement | None = None
 ) -> tuple[int, int | None]:
-    """Require a complete canonical t/s place code; old spellings are unsupported."""
-    if not isinstance(value, str) or not value or (marker and value[0] != marker):
-        raise ValueError("place code requires a complete t/s place code")
-    if value[0] == "t" and len(value) == 11:
-        return _decode(value[1:], 48, 10), None
-    if value[0] == "s" and len(value) == 18:
-        return _decode(value[1:8], 32, 7), _decode(value[8:], 48, 10)
+    """Require the complete fixed width, canonical spelling, and two-bit type."""
+    if not isinstance(value, str):
+        raise ValueError("place code must be a string")
+    if len(value) == 10 and placement in {None, "visiting"}:
+        packed = _decode(value, 50, 10)
+        if packed >> _HASH_BITS == _VISITING_TAG:
+            return packed & ((1 << _HASH_BITS) - 1), None
+    if len(value) == 19 and placement in {None, "roaming"}:
+        packed = _decode(value, 95, 19)
+        if packed >> (_HASH_BITS + _TIME_BITS) == 0b00:
+            return packed >> _TIME_BITS, (
+                packed & ((1 << _TIME_BITS) - 1)
+            ) + PLACE_CODE_EPOCH_MS
     raise ValueError(
-        "place code requires t plus 10 or s plus 17 lowercase base32 characters"
+        "place code requires 10 lowercase base32 characters with type 11 "
+        "or 19 with type 00"
     )
 
 
@@ -51,18 +74,29 @@ def _tag(namespace: str, source: str, bits: int) -> int:
 
 
 def root_code(root: str) -> str:
-    return _field(_tag("place:v1", root, 32), 32, 7)
+    """Encode the leading 40 root-hash bits in eight lowercase Base32 characters."""
+    return _field(_tag("place:v1", root, 40), 40, 8)
 
 
 def visiting_place_code(source_ref: str) -> str:
-    return encode_place_code("t", _tag("visiting:v1", source_ref, 48))
+    return encode_place_code("visiting", _tag("visiting:v1", source_ref, 48))
 
 
 def roaming_place_code(source_path: str, timestamp_ms: int) -> str:
-    return encode_place_code("s", _tag("roaming:v1", source_path, 32), timestamp_ms)
+    return encode_place_code(
+        "roaming", _tag("roaming:v1", source_path, 48), timestamp_ms
+    )
+
+
+def place_source_id(placement: NonresidentPlacement, source: str) -> str:
+    """Return the raw source hash; roaming codes start with this stable prefix."""
+    if placement not in {"visiting", "roaming"}:
+        raise ValueError("invalid nonresident placement")
+    namespace = f"{placement}:v1"
+    return _field(_tag(namespace, source, _HASH_BITS), _HASH_BITS, 10)
 
 
 def roaming_timestamp_ms(place_code: str) -> int:
-    timestamp = decode_place_code(place_code, marker="s")[1]
+    timestamp = decode_place_code(place_code, placement="roaming")[1]
     assert timestamp is not None
     return timestamp

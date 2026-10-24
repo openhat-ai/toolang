@@ -14,7 +14,7 @@ def test_roaming_chat_help_does_not_allocate_an_instance(tmp_path, monkeypatch):
     source.write_text("flow main():\n  pass\n")
     monkeypatch.setenv("TOOLANG_ROOT", str(tmp_path / "global"))
     assert main([str(source), "chat", "--help"]) == 0
-    assert not list((tmp_path / ".toolang").glob("*/s*"))
+    assert not list((tmp_path / ".toolang").glob("*/[0-7]*"))
 
 
 def test_roaming_argument_failure_does_not_publish_an_identity(tmp_path, monkeypatch):
@@ -150,7 +150,7 @@ def test_roaming_rejects_hosting_commands_without_mutating_instances(
     ]
     assert main(args) == 2
     assert layout.runtime_status.read_bytes() == before
-    assert list((source.parent / ".toolang").glob("*/s*")) == [layout.place]
+    assert list((source.parent / ".toolang").glob("*/[0-7]*")) == [layout.place]
     assert {
         path.name: path.read_bytes()
         for path in (root / ".runtime" / "active").glob("*/*.json")

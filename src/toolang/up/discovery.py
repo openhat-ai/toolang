@@ -9,7 +9,7 @@ from typing import Any, TypeGuard, cast
 
 from toolang.common import layout as paths
 from toolang.common.layout import AgentLayout, is_agent_name
-from toolang.common.place_codes import root_code
+from toolang.common.place_codes import root_code, decode_place_code
 from .identity import layout_from_control
 from .instance import SandboxState, read_document, read_instance
 from .observation import RuntimeInventory, RuntimeProbe, RuntimeSource, runtime_source
@@ -108,7 +108,7 @@ class _SnapshotCandidate:
 
 
 _REFERENCE_NAME = re.compile(
-    r"(?P<name>[a-z][a-z0-9_]{0,63})(?:@(?P<instance>t[0-9abcdefghjkmnpqrstvwxyz]{10}|s[0-9abcdefghjkmnpqrstvwxyz]{17}))?\.json\Z"
+    r"(?P<name>[a-z][a-z0-9_]{0,63})(?:@(?P<instance>[0-9abcdefghjkmnpqrstvwxyz]+))?\.json\Z"
 )
 
 
@@ -129,11 +129,15 @@ def _fallback_layout(
         return None
     name = match.group("name")
     place_code = match.group("instance")
+    try:
+        timestamp = decode_place_code(place_code)[1] if place_code is not None else None
+    except ValueError:
+        return None
     placement = (
         "resident"
         if place_code is None
         else "visiting"
-        if place_code.startswith("t")
+        if timestamp is None
         else "roaming"
     )
     layout = AgentLayout(

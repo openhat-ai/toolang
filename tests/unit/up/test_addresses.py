@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from toolang.common.place_codes import root_code
+from toolang.common.place_codes import PLACE_CODE_EPOCH_MS, root_code
 from toolang.common.layout import AgentLayout
 from toolang.up.addresses import parse_address, resolve_address
 from toolang.up.allocation import allocate_roaming, select_roaming
@@ -38,7 +38,10 @@ def test_roaming_path_survives_exit_and_source_removal_but_short_name_does_not(
 
 
 def test_one_source_has_separate_root_namespaces_and_defaults(tmp_path, monkeypatch):
-    monkeypatch.setattr("toolang.up.allocation.time.time_ns", lambda: 100_000_000)
+    monkeypatch.setattr(
+        "toolang.up.allocation.time.time_ns",
+        lambda: (PLACE_CODE_EPOCH_MS + 100) * 1_000_000,
+    )
     source = tmp_path / "aid.too"
     first_root, second_root = tmp_path / "first", tmp_path / "second"
     first = allocate_roaming(source, toolang_root=first_root)
@@ -101,7 +104,17 @@ def test_source_at_characters_are_not_instance_suffixes(text):
 
 
 @pytest.mark.parametrize(
-    "text", ["aid@r0000000000000000", "aid@s000", "aid@h000", "aid@S00000000000000000"]
+    "text",
+    [
+        "aid@r0000000000000000",
+        "aid@s000",
+        "aid@h000",
+        "aid@S00000000000000000",
+        "aid@s" + "0" * 17,
+        "lex@t" + "0" * 10,
+        "aid@8" + "0" * 18,
+        "lex@q" + "0" * 9,
+    ],
 )
 def test_partial_and_previous_ids_are_rejected(text):
     with pytest.raises(ValueError):
@@ -111,6 +124,14 @@ def test_partial_and_previous_ids_are_rejected(text):
 def test_previous_complete_visiting_marker_is_rejected():
     with pytest.raises(ValueError, match="place code"):
         parse_address("lex@h0000000000")
+
+
+def test_source_path_cannot_select_a_visiting_code(tmp_path):
+    from toolang.common.place_codes import visiting_place_code
+
+    code = visiting_place_code("https://example.com/lex.too")
+    with pytest.raises(ValueError, match="roaming code"):
+        parse_address(f"{tmp_path / 'lex.too'}@{code}")
 
 
 def test_previous_binding_fields_are_not_accepted(tmp_path):
@@ -129,14 +150,19 @@ def test_empty_unpublished_candidate_is_skipped_without_overwriting_it(
 ):
     from toolang.common.place_codes import roaming_place_code
 
-    monkeypatch.setattr("toolang.up.allocation.time.time_ns", lambda: 100_000_000)
+    monkeypatch.setattr(
+        "toolang.up.allocation.time.time_ns",
+        lambda: (PLACE_CODE_EPOCH_MS + 100) * 1_000_000,
+    )
     source = tmp_path / "aid.too"
     root = tmp_path / "root"
     first = allocate_roaming(source, toolang_root=root)
-    occupied = first.place.parent / roaming_place_code(str(source), 101)
+    occupied = first.place.parent / roaming_place_code(
+        str(source), PLACE_CODE_EPOCH_MS + 101
+    )
     occupied.mkdir(mode=0o700)
     second = allocate_roaming(source, toolang_root=root)
-    assert second.request_order_ns == 102_000_000
+    assert second.request_order_ns == (PLACE_CODE_EPOCH_MS + 102) * 1_000_000
     assert occupied.is_dir() and not tuple(occupied.iterdir())
     assert select_roaming(source, toolang_root=root).place == second.place
 

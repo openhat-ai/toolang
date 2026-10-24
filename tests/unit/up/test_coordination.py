@@ -235,7 +235,8 @@ def test_process_allocations_with_the_same_clock_have_distinct_retained_homes(tm
 import sys
 from pathlib import Path
 from toolang.up import allocation
-allocation.time.time_ns = lambda: 100_000_000
+from toolang.common.place_codes import PLACE_CODE_EPOCH_MS
+allocation.time.time_ns = lambda: (PLACE_CODE_EPOCH_MS + 100) * 1_000_000
 print('ready', flush=True)
 sys.stdin.readline()
 layout = allocation.allocate_roaming(Path(sys.argv[1]), toolang_root=Path(sys.argv[2]))

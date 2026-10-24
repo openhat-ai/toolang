@@ -232,8 +232,8 @@ absolute. Bootstrap does not parse authored or generated dotenv files.
 Toolang passes gateway, mapped Toolang-root, sandbox, and workspace control
 values through Docker's environment arguments; `_serve` receives the mapped
 root/place paths and original source identity explicitly. Docker maps
-`host.docker.internal` through the engine's `host-gateway`. The complete staging
-mount is read-only in the guest. Staged files are removed on release and after a
+`host.docker.internal` through the engine's `host-gateway`. Bootstrap inputs
+are read-only in the guest. Staged files are removed on release and after a
 failed Docker launch whose workload was removed successfully. If Docker cleanup
 fails, the staged files remain with the persisted recovery reference.
 
@@ -269,6 +269,14 @@ interruption, ready-reporting errors, and wait failures stop and release the
 workload; cleanup failures preserve `SandboxState` for a later forced stop.
 
 New Docker containers use `toolang-<root_code>-<agent_name>[-<place_code>]`.
+Using the notation from [agent addresses](agent-addresses.md):
+
+| Placement | Container name |
+| --- | --- |
+| Resident | `toolang-<R8>-<name>` |
+| Visiting | `toolang-<R8>-<name>-<P10>` |
+| Roaming | `toolang-<R8>-<name>-<P19>` |
+
 Resident names omit the place code; visiting and roaming names include its full
 code. The name is stable across launches of the same home. Docker naming is
 centralized in the adapter using the explicitly bound agent address and canonical
@@ -285,32 +293,51 @@ authorize cleanup; pending creation keeps its recovery reference. Existing
 references without `docker_identity` retain their original locators and behavior;
 existing containers keep their names until normal stop/release and a new launch.
 
-`SandboxState` reads the `control` section of runtime status format 5 `status.json`; host and
-guest update that shared file with generation checks and owned-field merges.
-Docker mounts the agent home read-write, including status, database sidecars,
-and logs; required inputs/workspaces and read-only bootstrap materials are added
-separately. Host records live at `ROOT/.runtime/active/<address>/info.json`.
-Every guest has ROOT = PLACE at the configured Docker root; host placement and
-canonical address remain unchanged. State and authored inputs come from the
-current host PLACE, while Hub discovery comes from the selected host ROOT.
-Docker stages generated guest `config.toml` directly under `docker/`, separately
-from `docker/active/`, which contains guest-path `info.json`, `guest.sh`, `guest.py`,
-generated environment input, and an optional wheel. The active directory is mounted
-read-only at guest `ROOT/.runtime/active/<name>/`; config is mounted read-only at
-guest `ROOT/config.toml`. These mount sources do not contain each other.
-Both info views record the full address. The guest updates home status and never
-needs a writable root registry mount. Workspace mounts use the distinct namespace
-`PLACE/workspaces/<agent>/<workspace>` independently of HOME, including lab at the
-same place-relative host and guest path. Source grants are optional; input overlays
-cannot make a grant read-only.
-Guest field ownership is cooperative, not filesystem isolation. Independent sandbox state
-is removed. Legacy `.sandbox/<agent>/state.json` and `.runtime/sandbox.json`
+`SandboxState` reads the `control` section of authoritative HOME runtime status.
+Host and guest merge owned fields with generation checks; that cooperative
+contract does not isolate control fields from arbitrary guest writes.
+Legacy `.sandbox/<agent>/state.json` and `.runtime/sandbox.json`
 block launch, stop, and removal: stop old workloads with the previous version
 before upgrading. Older status formats are rejected without migration; preserve
 required history separately before removing obsolete runtime metadata.
 Likewise, bootstrap inputs without a matching control reference are preserved
 and block relaunch or removal until any associated workload is removed and the
 staging directory is cleaned manually.
+
+## Docker filesystem
+
+[Layout](layout.md#agent-placement) defines host and guest ROOT, PLACE, and HOME.
+Let `R` be host ROOT, `P` host PLACE, `H` host HOME, `G` guest ROOT = PLACE, and
+`A` the complete address. `G` defaults to `/root/.toolang`; guest HOME is always
+`G/agents/NAME`, including roaming without a source-directory grant.
+
+| Host source | Guest target | Access |
+| --- | --- | --- |
+| `H/` | `G/agents/NAME/` | Read-write; linked authored inputs receive read-only overlays |
+| `P/.state/` and cap directories | Same relative paths below `G/` | Read-write |
+| Each granted workspace directory | `G/workspaces/NAME/WORKSPACE/` | Read-write |
+| `R/hub/` | `G/hub/` | Read-only |
+| `R/.runtime/active/A/docker/active/` | `G/.runtime/active/NAME/` | Read-only |
+| `R/.runtime/active/A/docker/config.toml` | `G/config.toml` | Read-only |
+
+Lab is an ordinary separate mount from `P/workspaces/NAME/lab`. All workspace
+names are unique before mounting; nested and alias sources retain distinct named
+targets. Authored-input overlays cannot make a workspace grant read-only.
+
+The generated configuration projects effective workspace paths into the guest
+ROOT table, overriding paths in the whole-mounted HOME configuration. Host files
+remain unchanged. [Workspaces](workspaces.md) owns selection and precedence.
+Config and active inputs have disjoint mount sources; mounting one cannot expose
+the other. The guest reads its own info view and writes HOME status.
+
+A selected catalog keeps its existing mapped scope and filename. Root/place
+`catalog.json` maps to `G/catalog.json`; a HOME catalog remains below guest HOME.
+Reuse a covering mount when available. An uncovered external catalog receives a
+read-only mount at `G/.inputs/models/<path-hash>/<filename>`.
+
+Assembly is split between [mount preparation](../../src/toolang/up/mounts.py),
+the [launch boundary](../../src/toolang/up/sandbox.py), and the
+[Docker adapter](../../src/toolang/plugin/sandboxes/docker/sandbox.py).
 
 ## Guest bootstrap
 
@@ -355,28 +382,9 @@ Port allocation reads registered endpoints only, reserving declared endpoints
 during preparation and startup before an API becomes available. Resident-only
 collection filters nonresident references before reading or probing their status.
 
-New publications use format 6 in a per-address directory:
-
-```text
-TOOLANG_ROOT/.runtime/active/<address>/
-    register.lock
-    info.json             # address, absolute home, launch, location, sandbox
-    docker/
-        config.toml       # generated guest ROOT config; read-only mount
-        active/           # read-only as guest ROOT/.runtime/active/<name>/
-            info.json     # full address and mapped guest home/source paths
-            guest.env
-            guest.sh
-            guest.py
-AGENT_HOME/.runtime/
-    status.json           # authoritative runtime status, still format 5
-    status.json.lock
-```
-
-The record derives `.runtime/status.json` from `home`; it stores no status
-filename. Optional `source` and `source_ref` describe the source in the reader's
-path view. Canonical identity and Docker ownership labels retain their original
-host bindings. A source directory is exposed only through existing grants.
+[Layout](layout.md#runtime-state-and-discovery) defines format-6 info records and
+their host/guest path views. Canonical identity and Docker ownership labels retain
+host bindings. HOME status remains authoritative.
 
 The registry guard serializes one address; the status guard serializes one home.
 After resource release and generation checks, bootstrap inputs and the empty

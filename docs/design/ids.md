@@ -2,8 +2,8 @@
 
 Run, Thread, Chore, and conversation suffixes use eight lowercase Base32 characters:
 `0123456789abcdefghjkmnpqrstvwxyz`. External/provider IDs remain opaque.
-[agent addresses](agent-addresses.md#short-codes) defines the separate
-root-code and place-code widths and composition.
+[Agent addresses](agent-addresses.md#short-codes) defines root/place-code
+formats and their use of the shared ID epoch.
 
 Thread IDs require one of `chat_`, `chore_`, `talk_`, `work_`, or `exec_` and a
 nonempty suffix. `ThreadKind` is derived from this prefix on references, records,
@@ -45,7 +45,7 @@ and read schemas; classification is not stored separately. Creation selects
 - Talk uses `talk_thread_id` and persists one binding per backend/conversation
   in the agent's `runs.db`. Reuse it across batches/restarts; reject an occupied
   ID with another or no binding. The codec itself creates no thread.
-  hub/clients use hub store schema 4. Add no compatibility codec or migration.
+  Hub storage compatibility follows [Messaging](messaging.md).
 
 Shared primitives live in `common/id_codec.py`; allocation in `common/ids.py`;
 chore rules in `catalog/chore_ids.py`; conversation rules in `teaming/ids.py`.
