@@ -640,7 +640,7 @@ _registered_command(
 _registered_command(
     "init",
     "toolang.cli.toolang.commands.init:init_script",
-    help="Create a starter script and project configuration",
+    help="Initialize Toolang in a directory",
     no_args_is_help=True,
     rich_help_panel=SCRIPT_COMMAND_PANEL,
 )
