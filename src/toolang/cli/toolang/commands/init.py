@@ -13,7 +13,7 @@ from toolang.catalog.templates import load_template
 def init_script(
     directory: Annotated[
         Path,
-        typer.Argument(metavar="DIR", help="Directory to set up for Toolang"),
+        typer.Argument(metavar="DIR", help="Directory for aid.too and toolang.toml"),
     ],
 ) -> None:
     """Create the bundled script and its portable project configuration."""

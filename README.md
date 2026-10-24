@@ -86,10 +86,18 @@ agic:
 Save it as `translate.too` and run it with some text:
 
 ```bash
-too translate.too -- Toolang, a language and runtime for agents and humans
+too translate.too -o - -- Toolang, a language and runtime for agents and humans
 ```
 
-Use `too init` to create a starter script that you can rename and customize:
+`-o -` prints the result to stdout; without `-o`, the result stays in run history.
+Put options and `name=value` arguments before input text. Use `--` to start text
+that begins with an option or assignment. To read input from stdin, use `-`:
+
+```bash
+printf '%s\n' 'Hello, Toolang' | too translate.too -o - -
+```
+
+Use `too init` to create a starter script and project configuration:
 
 ```bash
 too init PROJECT_DIR
@@ -134,7 +142,7 @@ too AGENT start              # Start an agent in the background
 too AGENT stop               # Stop an agent
 too AGENT chat               # Chat directly with an agent
 
-too init DIR                 # Initialize Toolang in a directory
+too init DIR                 # Create aid.too and toolang.toml
 too run FILE.too [RUNNABLE]  # Execute a .too file
 
 too hub start                # Start the hub in the background

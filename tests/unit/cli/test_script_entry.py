@@ -113,7 +113,7 @@ def test_init_without_directory_only_shows_help(
     assert f"Usage: {executable} init [OPTIONS] <DIR>" in output
     assert "* DIR" in output
     assert "[default: .]" not in output
-    assert "Directory to set up for Toolang" in output
+    assert "Directory for aid.too and toolang.toml" in output
     assert output.endswith("Show this message and exit")
 
 
@@ -548,6 +548,29 @@ def test_static_run_help(executable, arguments, monkeypatch, capsys):
         f"{executable} aid.too whats_for." in output
     )
     assert "Add --help after FILE or RUNNABLE for details." in output
+
+
+@pytest.mark.parametrize("explicit", [False, True])
+@pytest.mark.parametrize("suffix", [[], ["--", "text"], ["count=2"], ["--help"]])
+def test_unnamed_entry_rejects_fenced_marker_before_reading_or_running(
+    explicit, suffix, monkeypatch, capsys
+):
+    path = _source("agic:\n  {{_}}\n")
+    monkeypatch.setattr(
+        "sys.stdin.read", lambda *_args: pytest.fail("invalid input read stdin")
+    )
+    monkeypatch.setattr(
+        script, "_run", lambda *_args, **_kwargs: pytest.fail("invalid input ran")
+    )
+
+    assert cli.main([*(["run"] if explicit else []), path, "---", *suffix]) == 2
+
+    error = " ".join(strip_ansi(capsys.readouterr().err).split())
+    assert (
+        "fenced input marker '---' is not supported in script mode; "
+        "use '-' to read stream input from stdin"
+    ) in error
+    assert "No such option" not in error
 
 
 @pytest.mark.parametrize("explicit", [False, True])
