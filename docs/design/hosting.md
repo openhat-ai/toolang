@@ -200,9 +200,11 @@ Docker always writes resolved guest values to mode-`0600` `guest.env`, including
 an empty result. It mounts that file read-only at the ordinary loader's
 highest-priority root policy path: `ROOT/.<name>.env` for residents, or the
 shared [source-identity filename](setup.md#environments) for roaming/visiting
-agents. The guest launch uses the same source selector and dotenv parser as the
-host, before plugin construction. File presence naturally disables fallback and
-`pick`. The complete home mount retains any authored `HOME/.env` without masking
+agents. Managed Docker startup also receives the bootstrap copy's explicit path
+through hidden `--environment-file` and requires that launch snapshot before
+plugin construction; missing or invalid inputs fail. Both paths use the common
+dotenv parser. File presence disables fallback and `pick` for ordinary guest
+commands. The complete home mount retains any authored `HOME/.env` without masking
 or modification; the loader does not merge it with the selected root file. The
 controller does not separately reload authored dotenv files for staging. Public
 sandbox requests retain the trusted `dotenv_envs` input, whose names bypass the
@@ -394,6 +396,10 @@ collection filters nonresident references before reading or probing their status
 [Layout](layout.md#runtime-state-and-discovery) defines format-6 info records and
 their host/guest path views. Canonical identity and Docker ownership labels retain
 host bindings. HOME status remains authoritative.
+
+Root guests create RunStore databases with the mounted runtime directory's owner;
+SQLite's WAL/SHM files inherit that owner. Host inspection and subsequent HOME
+reuse retain access to the private execution records.
 
 The registry guard serializes one address; the status guard serializes one home.
 After resource release and generation checks, bootstrap inputs and the empty

@@ -486,6 +486,74 @@ def docker_wheel_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
     return wheel_dir
 
 
+def test_root_guest_run_store_retains_mounted_parent_ownership(docker_wheel_dir):
+    """Exercise Linux ownership even on Docker Desktop's translated mounts."""
+    from uuid import uuid4
+
+    resource = f"toolang-test-store-owner-{uuid4().hex}"
+    package = next(docker_wheel_dir.glob("*.whl"))
+    bootstrap = _repository() / "src/toolang/plugin/sandboxes/docker"
+    code = """
+import os, subprocess, sys, tempfile
+from pathlib import Path
+from toolang.execution.store import RunStore
+home = Path(tempfile.mkdtemp())
+os.chown(home, 65534, 65534)
+path = home / '.runtime' / 'runs.db'
+store = RunStore(path)
+try:
+    for item in (path.parent, path, path.with_name('runs.db-wal'), path.with_name('runs.db-shm')):
+        assert item.stat().st_uid == 65534, (item, item.stat())
+    checked = subprocess.run(
+        [sys.executable, '-c',
+         'from pathlib import Path; import os, sys; from toolang.execution.store import RunStore; '
+         'os.setgid(65534); os.setuid(65534); '
+         'p=Path(sys.argv[1]); r=RunStore(p, read_only=True); r.list_runs(); r.close(); '
+         'w=RunStore(p); w.list_runs(); w.close()', str(path)],
+        capture_output=True, text=True, timeout=15,
+    )
+    assert checked.returncode == 0, checked.stdout + checked.stderr
+finally:
+    store.close()
+"""
+    try:
+        result = subprocess.run(
+            [
+                "docker",
+                "run",
+                "--rm",
+                "--name",
+                resource,
+                "--volume",
+                f"{bootstrap}:/bootstrap:ro",
+                "--volume",
+                f"{docker_wheel_dir}:/packages:ro",
+                "python:3.13-slim",
+                "/bin/sh",
+                "/bootstrap/guest.sh",
+                "/tmp/diagnostic.log",
+                "/tmp/diagnostic.log",
+                "-",
+                f"/packages/{package.name}",
+                "-",
+                "--",
+                "/tmp/toolang-runtime/tools/toolang/bin/python",
+                "-c",
+                code,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=180,
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+    finally:
+        subprocess.run(
+            ["docker", "rm", "--force", resource],
+            capture_output=True,
+            timeout=15,
+        )
+
+
 @pytest.fixture(scope="module")
 def local_model_port() -> Iterator[int]:
     provider = ThreadingHTTPServer(("0.0.0.0", 0), _LocalModelHandler)

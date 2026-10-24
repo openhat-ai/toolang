@@ -258,6 +258,20 @@ class EditLock:
             return read()
 
 
+def ensure_file(path: Path, *, inherit_owner: bool = False) -> None:
+    """Create a private file without replacing existing data or its inode."""
+    _prepare_directory(path.parent, inherit_owner=inherit_owner)
+    try:
+        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        return
+    try:
+        if inherit_owner:
+            _inherit_owner(descriptor, path.parent)
+    finally:
+        os.close(descriptor)
+
+
 def atomic_write_text(path: Path, content: str, *, inherit_owner: bool = False) -> None:
     """Replace UTF-8 text, preserving mode and optionally the parent owner."""
 

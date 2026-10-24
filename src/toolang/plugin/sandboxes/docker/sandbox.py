@@ -411,6 +411,8 @@ class DockerSandbox:
         command = list(request.command)
         if "--sandbox" in command:
             command[command.index("--sandbox") + 1] = f"{self.name}:{image}"
+        if "_serve" in command:
+            command.extend(["--environment-file", str(runtime_dir / "guest.env")])
         return SandboxPlan(
             sandbox=f"{self.name}:{image}",
             command=(

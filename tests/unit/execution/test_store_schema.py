@@ -310,21 +310,14 @@ def test_content_store_rejects_corrupted_bytes(tmp_path: Path) -> None:
         reopened.close()
 
 
-def test_run_store_concurrent_first_open(tmp_path, monkeypatch):
+def test_run_store_concurrent_first_open(tmp_path):
     from concurrent.futures import ThreadPoolExecutor
     import threading
 
-    connect = sqlite3.connect
     barrier = threading.Barrier(8)
 
-    def simultaneous_connect(*args, **kwargs):
-        connection = connect(*args, **kwargs)
-        barrier.wait(timeout=10)
-        return connection
-
-    monkeypatch.setattr(sqlite3, "connect", simultaneous_connect)
-
     def open_store(path):
+        barrier.wait(timeout=10)
         store = RunStore(path)
         try:
             assert store.list_threads() == []

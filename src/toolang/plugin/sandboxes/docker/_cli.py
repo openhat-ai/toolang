@@ -136,7 +136,7 @@ def _owned_container(
     ):
         raise RuntimeError(f"docker container ownership mismatch: {ref.runtime_id}")
     if (container is None or not container.running) and docker_launch_pending(
-        ref.runtime_name or ref.runtime_id
+        ref.runtime_id
     ):
         raise RuntimeError("docker container creation is still pending")
     return container
@@ -236,6 +236,8 @@ def docker_launch_pending(container_name: str) -> bool:
         try:
             if process.info["name"] not in {"docker", "com.docker.cli"}:
                 continue
+            if process.status() in {psutil.STATUS_ZOMBIE, psutil.STATUS_DEAD}:
+                continue
             args = process.info["cmdline"]
             if args is None:
                 uids = process.info["uids"]
@@ -247,7 +249,6 @@ def docker_launch_pending(container_name: str) -> bool:
                 and args[1] == "run"
                 and "--name" in args
                 and args[args.index("--name") + 1] == container_name
-                and process.status() != psutil.STATUS_ZOMBIE
             ):
                 return True
         except (psutil.NoSuchProcess, IndexError):

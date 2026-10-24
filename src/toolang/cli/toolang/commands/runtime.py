@@ -627,6 +627,9 @@ def serve(
     workspace_bindings: Annotated[
         str, typer.Option("--workspace-bindings", hidden=True)
     ] = "{}",
+    environment_file: Annotated[
+        Path | None, typer.Option("--environment-file", hidden=True)
+    ] = None,
     initial_workdir: Annotated[
         str | None, typer.Option("--initial-workdir", hidden=True)
     ] = None,
@@ -676,7 +679,21 @@ def serve(
     environ = dict(os.environ)
     environ["TOOLANG_ROOT"] = str(context_root(ctx))
     environ["TOOLANG_SANDBOX"] = sandbox
-    if location == "host" and host_launch:
+    if environment_file is not None:
+        from toolang.common.environment import apply_environment_file
+
+        if location != "guest":
+            raise ClickException("an explicit workload environment requires a guest")
+        grants = user_call(apply_environment_file, environment_file, environ)
+        selected = ResolvedEnvironment(
+            context_root(ctx),
+            EnvironmentPolicy(),
+            environ,
+            identity=environment_identity(layout),
+            source=environment_file,
+            guest_values=grants,
+        )
+    elif location == "host" and host_launch:
         # The controller already resolved and reduced this exec environment.
         selected = ResolvedEnvironment(
             context_root(ctx),

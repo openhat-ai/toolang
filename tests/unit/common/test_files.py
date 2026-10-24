@@ -10,10 +10,25 @@ import toolang.common.files as files
 from toolang.common.files import (
     EditLock,
     atomic_write_text,
+    ensure_file,
     file_lock_path,
     file_write_lock,
 )
 from toolang.common.layout import home_edit_lock_path
+
+
+def test_ensure_file_creates_private_file_and_preserves_existing_data(tmp_path):
+    path = tmp_path / "nested" / "runs.db"
+    ensure_file(path)
+    assert path.read_bytes() == b""
+    assert path.stat().st_mode & 0o777 == 0o600
+    path.write_bytes(b"retained database")
+    path.chmod(0o640)
+    inode = path.stat().st_ino
+    ensure_file(path)
+    assert path.read_bytes() == b"retained database"
+    assert path.stat().st_ino == inode
+    assert path.stat().st_mode & 0o777 == 0o640
 
 
 def test_atomic_write_text_replaces_content_and_preserves_mode(tmp_path: Path) -> None:

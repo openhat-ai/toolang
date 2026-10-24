@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Iterator, Mapping, Sequence
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from dataclasses import replace
 import hashlib
 import json
@@ -24,7 +24,7 @@ from toolang.base.types.message import (
 )
 from toolang.base.types.model import ModelRequest
 from toolang.base.types.run import ModelCall
-from toolang.common.files import file_write_lock
+from toolang.common.files import ensure_file, file_write_lock
 from toolang.lang.input import PromptInvocation, CallInput
 from toolang.lang.types import Array, Struct, Value
 from toolang.base.types.tool import ToolDefinition
@@ -147,36 +147,37 @@ class RunStore:
         self.read_only = read_only
         self.talk = talk.TalkStore(self)
         self._stream_deadline: float | None = None
-        if read_only:
-            target = f"{db_path.expanduser().resolve().as_uri()}?mode=ro"
-            self._conn = sqlite3.connect(
-                target,
-                uri=True,
-                check_same_thread=False,
-                timeout=30,
-            )
-        else:
-            self.db_path.parent.mkdir(parents=True, exist_ok=True)
-            self._conn = sqlite3.connect(
-                db_path.as_posix(),
-                check_same_thread=False,
-                timeout=30,
-            )
-        self._conn.row_factory = sqlite3.Row
         self._lock = threading.RLock()
-        try:
+        # Serialize ownership publication, WAL activation and schema checks.
+        with (
+            nullcontext()
+            if read_only
+            else file_write_lock(
+                db_path.with_name(db_path.name + ".init.lock"), inherit_owner=True
+            )
+        ):
             if read_only:
-                self._init_schema()
+                target = f"{db_path.expanduser().resolve().as_uri()}?mode=ro"
+                self._conn = sqlite3.connect(
+                    target,
+                    uri=True,
+                    check_same_thread=False,
+                    timeout=30,
+                )
             else:
-                # WAL activation and the initial schema check must not race
-                # another opener before SQLite's write transaction begins.
-                with file_write_lock(
-                    db_path.with_name(db_path.name + ".init.lock"), inherit_owner=True
-                ):
-                    self._init_schema()
-        except BaseException:
-            self._conn.close()
-            raise
+                # SQLite's WAL/SHM files inherit the main database's owner.
+                ensure_file(self.db_path, inherit_owner=True)
+                self._conn = sqlite3.connect(
+                    db_path.as_posix(),
+                    check_same_thread=False,
+                    timeout=30,
+                )
+            self._conn.row_factory = sqlite3.Row
+            try:
+                self._init_schema()
+            except BaseException:
+                self._conn.close()
+                raise
 
     def close(self) -> None:
         with self._lock:

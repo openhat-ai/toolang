@@ -208,6 +208,53 @@ def test_pending_creation_matches_the_exact_unique_container_name(monkeypatch, m
     assert docker_cli.docker_launch_pending(name) == match
 
 
+@pytest.mark.parametrize("status", ["zombie", "dead", "running"])
+def test_pending_creation_does_not_treat_exited_helpers_as_unknown(monkeypatch, status):
+    helper = SimpleNamespace(
+        info={
+            "name": "docker",
+            "cmdline": None,
+            "uids": SimpleNamespace(real=os.getuid()),
+        },
+        status=lambda: status,
+    )
+    monkeypatch.setattr(docker_cli.psutil, "process_iter", lambda *args: [helper])
+    if status == "running":
+        with pytest.raises(RuntimeError, match="cannot verify pending"):
+            docker_cli.docker_launch_pending("toolang-alice-launch")
+    else:
+        assert not docker_cli.docker_launch_pending("toolang-alice-launch")
+
+
+@pytest.mark.parametrize("missing", [False, True])
+def test_immutable_container_death_does_not_probe_unrelated_creation_helpers(
+    tmp_path, monkeypatch, missing
+):
+    sandbox = docker_sandbox.DockerSandbox({})
+    plan = sandbox.prepare(None, _request(tmp_path))
+    ref = replace(sandbox.prepared_reference(plan), runtime_id=_CONTAINER_ID)
+    monkeypatch.setattr(
+        docker_cli,
+        "_inspect_containers",
+        lambda _: {
+            _CONTAINER_ID: None
+            if missing
+            else docker_cli._Container(
+                _CONTAINER_ID,
+                False,
+                docker_cli.docker_identity_labels(ref.meta["docker_identity"]),
+            )
+        },
+    )
+
+    def unrelated_helpers(*args):
+        pytest.fail("immutable container death must not scan creation helpers")
+
+    monkeypatch.setattr(docker_cli.psutil, "process_iter", unrelated_helpers)
+    assert not docker_cli.docker_reference_running(ref)
+    assert docker_cli.docker_reference_states((ref,)) == (False,)
+
+
 def _request(
     root: Path,
     *,
@@ -643,6 +690,8 @@ def test_docker_sandbox_prepares_and_launches(
         "alice",
         "--port",
         "8123",
+        "--environment-file",
+        "/root/.toolang/.runtime/active/alice/guest.env",
     )
 
     ref = asyncio.run(sandbox.launch(plan))
