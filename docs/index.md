@@ -46,8 +46,8 @@ organized by responsibility. Read the system overview before the relevant chapte
 
 ## Hosting and storage
 
-- [Hosting](design/hosting.md): sandbox processes, lifecycle/leases, installation, environment transport, and recovery.
-- [Layout](design/layout.md): physical paths, discovery, locks, and storage locations.
+- [Hosting](design/hosting.md): sandbox processes, Docker names/mounts, lifecycle, installation, environment transport, and recovery.
+- [Layout](design/layout.md): host/guest placement, runtime records, locks, and storage locations.
 
 ## Clients and interaction
 

@@ -28,6 +28,7 @@ Current root layout:
 ```text
 ${TOOLANG_ROOT}/
   config.toml
+  catalog.json                      # Optional root catalog
   psyches/
   skills/
   services/
@@ -36,9 +37,9 @@ ${TOOLANG_ROOT}/
   .runtime/
     active/
       gus/info.json                 # Resident, host path view
-      lex@<place_code>/info.json     # Visiting
-      aid@<place_code>/info.json     # Roaming
-      <address>/docker/             # Docker inputs and guest info.json
+      lex@<P10>/info.json            # Visiting
+      aid@<P19>/info.json            # Roaming
+      <address>/docker/             # Guest inputs; see runtime layout below
       <address>/register.lock       # Present while owned
   hub/
   human/
@@ -84,12 +85,8 @@ derived from the selected root and Source Ref:
 
 - `/tmp/toolang/<root_code>/<place_code>/`
 
-Agent names are bounded to 64 ASCII characters. Visiting place codes use `t` plus a
-10-character source hash; roaming place codes use `s` plus a 7-character path hash and
-10-character timestamp. Each field uses canonical ordered Base32. The
-7-character root code identifies the selected root, whose full path is retained
-in `root.json`; it is excluded from place codes. See [agent addresses](agent-addresses.md)
-for encoding and canonicalization.
+Agent names are bounded to 64 ASCII characters. Code notation, encoding, and
+canonicalization follow [agent addresses](agent-addresses.md#short-codes).
 
 Repeated visiting launches reuse their place. Each new source-only roaming launch
 allocates a place; explicit instance and Thread/Run continuation reuse the selected
@@ -130,21 +127,22 @@ Key paths:
 
 ## Agent Placement
 
-`AgentLayout` is the immutable process-owned description of one materialized
-agent. It records the current placement and derives every place, home, setup,
-state, and runtime path from that identity.
+`AgentLayout` derives placement paths. In the table, `R` is the selected host ROOT,
+`G` is the configured Docker root (default `/root/.toolang`), and `DIR` is the
+canonical roaming source directory. `R8`, `P10`, and `P19` denote complete codes.
 
-| Placement | Place calculation |
-| --- | --- |
-| `resident` | The explicit Toolang root |
-| `visiting` | `/tmp/toolang/<root_code>/<place_code>/` |
-| `roaming` | `<source-directory>/.toolang/<root_code>/<place_code>/` |
+| Placement | Host ROOT | Host PLACE | Guest ROOT = PLACE |
+| --- | --- | --- | --- |
+| Resident | `R` | `R` | `G` |
+| Visiting | `R` | `/tmp/toolang/<R8>/<P10>` | `G` |
+| Roaming | `R` | `DIR/.toolang/<R8>/<P19>` | `G` |
 
-All three placements use the same layout below their calculated place:
-`agents/<agent>/` is the agent home, Agent State uses `.state/`, and durable
-operational data uses `.runtime/`. Runtime setup revisions and derived model
-views stay in memory; Toolang does not create or mount a model-cache `.setup/`
-directory. Existing legacy `.setup/models` data is ignored.
+Each Docker guest hosts one agent. In both environments, HOME is
+`PLACE/agents/NAME` and lab is `PLACE/workspaces/NAME/lab`. Other host workspaces
+may live anywhere; their guest targets are `G/workspaces/NAME/WORKSPACE`.
+Roaming HOME does not depend on exposing its source directory. The guest retains
+the original placement and full address even though its physical ROOT and PLACE
+coincide. [Hosting](hosting.md#docker-filesystem) defines the mounts.
 
 
 ## Setup Data
@@ -157,48 +155,50 @@ mounted; existing legacy `.setup/models` is ignored.
 
 ## Runtime state and discovery
 
-Discovery references live under `${TOOLANG_ROOT}/.runtime/active/`:
+The host owns one directory per complete address under ROOT, regardless of PLACE:
 
-| Placement | Reference name |
-| --- | --- |
-| Resident | `gus/info.json` |
-| Visiting | `lex@<place_code>/info.json` |
-| Roaming | `aid@<place_code>/info.json` |
-
-- Short codes and root isolation follow [agent addresses](agent-addresses.md).
-  Nonresident place basenames contain only the place code; registry directory names
-  add the agent name.
-- Under the source cache's `.state/launch.lock`, allocate a timestamp after every
-  retained launch of the same source within that Toolang root. Completion and
-  restart times do not change creation order.
-- Verify full ownership on retained reads and before registry publication. Hash
-  collisions, corrupt ownership, and timestamp overflow cannot overwrite data.
-- `launch_id` is a private startup-generation fence, independent of the place code.
-- Registrations provide active discovery only. Removing one neither removes
-  history nor proves process death. Known-path lookup works without registration.
-
-Each format-6 reference records its full address, absolute home, launch,
-execution location, and sandbox; source paths/refs are optional. Status is derived as
-`HOME/.runtime/status.json`. Legacy format-5 status/launch references remain
-readable. `RuntimeRegistration` publishes into one Toolang root under the private
-`active/<address>/register.lock`, with home and launch ownership checks. Pure
-reads create no guards. Publication does not initialize or stop workloads.
-Docker's read-only guest active view comes from `<address>/docker/active/`;
-generated `<address>/docker/config.toml` is mounted separately at guest ROOT.
-Host control retires the address after resource release. For example, with the
-default Docker root:
-
-```json
-{"version": 6, "address": "aid@<place_code>", "home": "/root/.toolang/agents/aid", "launch": "<fresh-launch-id>", "location": "guest", "sandbox": "docker:python:3.13-slim"}
+```text
+ROOT/.runtime/active/<address>/
+  info.json                         # Host path view
+  register.lock                     # Present while owned
+  docker/                           # Docker launches only
+    config.toml                     # Generated guest ROOT configuration
+    active/
+      info.json                     # Guest path view
+      guest.env
+      guest.sh
+      guest.py
+      <development-wheel>.whl        # Optional
 ```
 
-`up.identity` owns immutable `InstanceIdentity` bindings and strict parsing,
-validation, and serialization. Mutable control/workload fields remain outside
-that value. `up.allocation` owns roaming allocation and retained selection;
-`up.registry` owns `RuntimeReference`, publication, and conditional removal.
-Allocation and observation consume those boundaries without depending on each
-other. `RuntimeRegistration.publish()` supports explicit publication, while its
-context manager removes the matching reference on exit.
+Both format-6 info files contain the full address, absolute `home`, `launch`,
+execution `location`, and `sandbox`. Optional `source` and `source_ref` describe
+the source available in that reader's filesystem. The copies describe the same
+launch and location; a Docker launch has `location = "guest"` in both. They store
+no status filename: status is always `HOME/.runtime/status.json`.
+
+For example, the guest view for a roaming Docker launch is:
+
+```json
+{
+  "version": 6,
+  "address": "aid@<P19>",
+  "home": "/root/.toolang/agents/aid",
+  "launch": "<launch-id>",
+  "location": "guest",
+  "sandbox": "docker:python:3.13-slim"
+}
+```
+
+The guest receives its read-only view at `ROOT/.runtime/active/NAME/`; it writes
+status through the separately mounted HOME. The host removes the address directory
+only after resource release and generation checks. Registration enables active
+discovery; removing it does not delete history or prove process death.
+
+`up.records` owns reference parsing; `up.registry` owns guarded publication and
+conditional removal; `up.identity` validates full source/root/home ownership.
+[Hosting](hosting.md#runtime-observation-and-retirement) owns recovery and
+retirement. Legacy format-5 references remain readable for resource recovery.
 
 Each agent runtime stores operational state under:
 
@@ -232,13 +232,6 @@ history. Only process/container/bootstrap resources and matching global referenc
 are released. Runtime paths never add an execution-instance subdirectory. Earlier
 places and histories remain untouched and outside the new runtime scope.
 [Hosting](hosting.md#runtime-recovery-and-logs) owns resource recovery.
-
-Each Docker guest has ROOT = PLACE at the configured root, defaulting to
-`/root/.toolang`, with HOME at `ROOT/agents/NAME` for every placement. Source
-directory grants are optional. Docker mounts the target agent home read-write,
-necessary inputs/workspaces, and bootstrap materials read-only. Discovery references and entire roots are
-not mounted. Shared control/workload field ownership is a cooperative contract;
-it does not isolate control fields from arbitrary guest file writes.
 
 Human Talk stores accepted input history at
 `<root>/human/talk-input/<conversation-id>.jsonl`, shared by human viewers of the

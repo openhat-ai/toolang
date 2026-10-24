@@ -7,9 +7,18 @@ owns invocation syntax and [Hosting](hosting.md) owns sandbox mounts.
 
 ## Grant construction
 
-State reads HOME `[workspaces]` and matching ROOT `[workspaces.KEY]` declarations.
-KEY is the resident agent name, canonical visiting ref/URL, or canonical roaming
-source path. ROOT wins for a shared workspace name; HOME supplies the other names.
+State merges HOME `config.toml` `[workspaces]` with the matching ROOT
+`config.toml` table. ROOT wins for a shared name; HOME supplies other names.
+
+| Placement | Matching ROOT table |
+| --- | --- |
+| Resident | `[workspaces.hak]` |
+| Visiting | `[workspaces."https://toolang.ai/lex.too"]` |
+| Roaming | `[workspaces."/Users/bryan/project/check.too"]` |
+
+Keys are the resident name, canonical requested ref/URL, or canonical source-file
+path. ROOT configuration can define grants for every agent, selecting only its
+matching table. Paths may be anywhere on the host.
 Absolute host paths are recommended in both HOME and ROOT configuration.
 `workspace add` resolves paths at the client's procdir and writes canonical
 absolute paths. Authored relative paths resolve at their declaring file.
@@ -26,7 +35,7 @@ Inferred names normalize directory basenames to kebab case. Explicit names use
 the validated workspace-name grammar.
 
 Host and guest use the same place-relative lab path. Removing an agent preserves
-its lab and contents. The old `HOME/.lab` path is ignored without migration.
+its lab and contents.
 
 The caller may select workdir without adding access. Without an invocation
 selection, the runtime uses the last usable workspace, with implicit `lab`
@@ -59,23 +68,28 @@ State publication cannot grant new paths to an accepted Run. Changing workdir
 selects among those grants. Per-tool-call contexts capture that authority and
 must not be retained on shared plugin objects.
 
-Guest startup captures host paths and mounts workspaces under
-`PLACE/workspaces/<agent>/`, separately from HOME and its read-only input
-overlays. Every grant uses its unique name, including `lab` and optional source
-directory grants; nested and alias sources keep their separate named guest paths.
-Each guest has ROOT = PLACE, defaulting to `/root/.toolang`, and HOME at
-`ROOT/agents/NAME`. Source-directory access is optional and does not determine HOME.
-Hosting generates `config.toml` under the address's `docker/` stage and binds it
-read-only at guest ROOT. Its matching `[workspaces.KEY]` contains effective guest
-paths, overriding the whole-mounted HOME configuration. Authored host files remain
-unchanged. Runtime grant identity normalizes captured guest paths back to host
-sources for frozen Run authority and client compatibility. Logical `name://` paths
-work in both environments.
-Runtime resolution uses that mapping rather than probing client directories
-again. A new or remapped workspace needs a compatible mount; restart a guest or
-server to change its captured grants. Attaching clients must request compatible
-bindings. Temporary grants last for the server generation and are not written
-to configuration.
+Guest startup captures host grants and projects their paths into generated ROOT
+configuration. For example:
+
+```toml
+# Host ROOT/config.toml
+[workspaces.hak]
+repo = "/Volumes/projects/demo"
+```
+
+```toml
+# Generated guest ROOT/config.toml, with the default Docker root
+[workspaces.hak]
+repo = "/root/.toolang/workspaces/hak/repo"
+```
+
+Host configuration remains unchanged. Captured mappings normalize guest paths
+back to host sources for Run authority and attaching-client compatibility;
+logical `name://` paths work in either environment. Runtime resolution uses that
+mapping without probing client directories again. A new or remapped grant needs
+a compatible mount, so restart the server to change its captured grants.
+Temporary grants last for the server generation and are not written to authored
+configuration. [Hosting](hosting.md#docker-filesystem) owns mount paths and access.
 
 File inputs have another origin: Chat/script attachments use client procdir;
 file chores use the Markdown directory and inline chores use agent home.

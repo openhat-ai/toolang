@@ -66,6 +66,7 @@ def test_backend_namespace_matches_the_root_code_in_nonresident_paths(tmp_path):
         place_code=roaming_place_code(str(source.resolve()), PLACE_CODE_EPOCH_MS + 1),
     )
     assert config.root_code == root_code(str(tmp_path.resolve()))
+    assert len(config.root_code) == 8
     assert config.root_code == visiting.place.parent.name == roaming.place.parent.name
     backend = ValkeyBackend(config)
     assert backend.keys.prefix == f"toolang:{config.root_code}:v0"
@@ -148,7 +149,7 @@ def test_shared_database_isolates_names_messages_leases_cursors_and_events():
 
 
 def test_colliding_root_codes_fail_without_adopting_or_mutating(monkeypatch):
-    monkeypatch.setattr("toolang.teaming.config.root_code", lambda root: "0000000")
+    monkeypatch.setattr("toolang.teaming.config.root_code", lambda root: "00000000")
 
     async def scenario():
         server = FakeServer(server_type="valkey")

@@ -1,4 +1,4 @@
-# agent addresses
+# Agent addresses
 
 [Layout](layout.md) and [Hosting](hosting.md) describe storage and execution;
 [CLI command recognition](cli-command-recognition.md) defines command parameters.
@@ -11,7 +11,7 @@
 | place | Internal name for the agent root path; contains configuration, prepared data, and agent homes. |
 | home | `PLACE/agents/NAME`; owns one agent's Threads, Runs, and history. |
 | placement | How an agent is placed: resident, visiting, or roaming. |
-| `root_code` | Short code derived from the canonical root path; groups its nonresident places. |
+| `root_code` | Code identifying the selected canonical ROOT. |
 | `place_code` | Short code selecting a visiting or roaming place; resident places need none. |
 | agent address | Selects a place/home pair within the selected root. |
 | location | Where a runtime executes: host or guest; independent of placement. |
@@ -28,17 +28,18 @@ For every placement, `HOME = PLACE/agents/NAME`:
 | Placement | PLACE | Named address |
 | --- | --- | --- |
 | Resident | `ROOT` | `NAME` |
-| Visiting | `/tmp/toolang/ROOT_CODE/PLACE_CODE` | `NAME@<10-char code>` |
-| Roaming | `DIR/.toolang/ROOT_CODE/PLACE_CODE` | `NAME@<19-char code>` |
+| Visiting | `/tmp/toolang/ROOT_CODE/PLACE_CODE` | `NAME@<P10>` |
+| Roaming | `DIR/.toolang/ROOT_CODE/PLACE_CODE` | `NAME@<P19>` |
 
-The table describes host storage; sandboxes map place/home paths into the guest.
+The table describes host storage; [guest placement](layout.md#agent-placement)
+maps place/home paths into the container.
 `DIR` is the canonical source file's parent. Resident lookup uses its fixed path
 without allocating a place code.
 
 ## Short codes
 
 ```text
-root_code           = E(H32("place:v1", canonical_root), 7)
+root_code           = E(H40("place:v1", canonical_root), 8)
 visiting place_code = E((0b11 << 48) | H48("visiting:v1", canonical_url_or_ref), 10)
 roaming place_code  = E((H48("roaming:v1", canonical_source_path) << 45) | elapsed_ms, 19)
 ```
@@ -50,9 +51,13 @@ Keep leading zeroes and use raw digest bits, without hex shortening.
 
 | Code | High-to-low bit layout | Raw width | Encoded width |
 | --- | --- | --- | --- |
-| Root | 32-bit root hash | 32 bits | 7 chars |
-| Visiting | `11`, 48-bit requested URL/ref hash | 50 bits | 10 chars |
-| Roaming | `00`, 48-bit source-path hash, 45-bit elapsed milliseconds | 95 bits | 19 chars |
+| Root (`R8`) | 40-bit root hash | 40 bits | 8 chars |
+| Visiting (`P10`) | `11`, 48-bit requested URL/ref hash | 50 bits | 10 chars |
+| Roaming (`P19`) | `00`, 48-bit source-path hash, 45-bit elapsed milliseconds | 95 bits | 19 chars |
+
+`R8`, `P10`, and `P19` denote complete codes in examples; their letters and widths
+are notation, never literal prefixes. The same `R8` identifies nonresident
+directories, Docker names, and Hub namespaces.
 
 The two high bits identify placement; `01` and `10` are reserved. Roaming starts
 with `0–7`, visiting with `rstvwxyz`. No literal `s`/`t` marker is prepended.
@@ -63,8 +68,8 @@ Both source IDs are raw 48-bit hashes encoded in 10 chars; roaming's first
 `elapsed_ms` is measured from the shared ID epoch, `2026-01-01T00:00:00Z`.
 Its 45 bits cover about 1,115 years, through December 3140. Decode back to
 absolute Unix milliseconds for allocation and request ordering. Reject
-pre-epoch times and overflow rather than wrapping. Prior complete literal-prefix
-codes are unsupported; retained data is left untouched.
+pre-epoch times and overflow rather than wrapping. Previous code formats have no
+compatibility lookup or migration; retained data is left untouched.
 
 The ordered alphabet, high digits first, and zero padding preserve numeric
 order. Within one source, lexical roaming-code order is creation order.
@@ -90,18 +95,18 @@ ROOT/                                     # Resident place
   agents/alice/                           # Resident home
   .runtime/active/
     alice/info.json
-    lex@<place_code>/info.json  # 10-char visiting code
-    aid@<place_code>/info.json  # 19-char roaming code
+    lex@<P10>/info.json                     # Visiting address
+    aid@<P19>/info.json                     # Roaming address
     <address>/register.lock                # Exists only while owned
 
-/tmp/toolang/<root_code>/
+/tmp/toolang/<R8>/
   root.json                               # Canonical ROOT
-  <place_code>/                           # Visiting place: 10-char code
+  <P10>/                                  # Visiting place
     agents/lex/                           # Visiting home
 
-DIR/.toolang/<root_code>/
+DIR/.toolang/<R8>/
   root.json                               # Canonical ROOT
-  <place_code>/                           # Roaming place: 19-char code
+  <P19>/                                  # Roaming place
     agents/aid/                           # Roaming home
 ```
 
@@ -112,9 +117,9 @@ files. Preserve ownership/link validation.
 | Address | Lookup |
 | --- | --- |
 | `name` | Resident home directly under ROOT. |
-| `name@<10-char code>` | Visiting home derived directly from ROOT and the place code. |
-| `name@<19-char code>` | ROOT's active registry supplies the source path; then validate the home. |
-| `path/to/file.too@<19-char code>` | Derive the roaming place from the canonical source path; works offline. |
+| `name@<P10>` | Visiting home derived directly from ROOT and the place code. |
+| `name@<P19>` | ROOT's active registry supplies the source path; then validate the home. |
+| `path/to/file.too@<P19>` | Derive the roaming place from the canonical source path; works offline. |
 
 Require complete place codes; angle-bracketed values above are placeholders.
 A code alone is not an address. Nonresident place directory names contain only codes; addresses add a
@@ -188,7 +193,6 @@ active directory name; a nonresident place basename supplies only the place code
 when available. The output ends with the table.
 Addresses copied from `top` require the same Toolang root in another command.
 
-Expanded `top`/`chore` scope, home-based `cd`, JSON binding metadata, and Toolang-root
-scoping of hub backend namespaces remain follow-ups; namespace formats are not
-defined here. Old instance flags, IDs, and placement paths remain unsupported.
-Format-5 registry references remain readable for normal resource recovery.
+Hub namespace behavior belongs to [Messaging](messaging.md). Runtime record
+formats and recovery belong to [Layout](layout.md#runtime-state-and-discovery)
+and [Hosting](hosting.md#runtime-observation-and-retirement).

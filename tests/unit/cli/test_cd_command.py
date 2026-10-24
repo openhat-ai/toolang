@@ -64,15 +64,15 @@ def _context(root: Path, agent: str | None = "alice") -> Any:
         ),
         (
             "visiting",
-            "/tmp/toolang/0000000/r012345678",
+            "/tmp/toolang/00000000/r012345678",
             "r012345678",
-            "/tmp/toolang/0000000/r012345678/agents/gus",
+            "/tmp/toolang/00000000/r012345678/agents/gus",
         ),
         (
             "roaming",
-            "/toolang-project/.toolang/0000000/0012345600000000001",
+            "/toolang-project/.toolang/00000000/0012345600000000001",
             "0012345600000000001",
-            "/toolang-project/.toolang/0000000/0012345600000000001/agents/gus",
+            "/toolang-project/.toolang/00000000/0012345600000000001/agents/gus",
         ),
     ],
 )

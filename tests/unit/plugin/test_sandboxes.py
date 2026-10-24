@@ -1731,7 +1731,7 @@ def test_docker_names_follow_bound_addresses_and_preserve_full_codes(
             "launch_id": "a" * 32,
         }
     )
-    assert len(expected) <= {"resident": 80, "visiting": 91, "roaming": 100}[placement]
+    assert len(expected) <= {"resident": 81, "visiting": 92, "roaming": 101}[placement]
 
 
 @pytest.mark.parametrize(
@@ -2028,7 +2028,7 @@ def test_docker_name_replacement_after_inspection_uses_original_immutable_id(
 def test_docker_root_code_collision_preserves_foreign_container_and_recovery(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setattr(docker_sandbox, "root_code", lambda _: "0000000")
+    monkeypatch.setattr(docker_sandbox, "root_code", lambda _: "00000000")
     sandbox = docker_sandbox.DockerSandbox({})
     request = _request(tmp_path)
     first = sandbox.prepare(None, request)

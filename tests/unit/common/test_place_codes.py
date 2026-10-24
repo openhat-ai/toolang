@@ -110,13 +110,31 @@ def test_place_epoch_matches_existing_id_families():
     assert PLACE_CODE_EPOCH_MS == int(ID_EPOCH.timestamp()) * 1_000
 
 
+@pytest.mark.parametrize(
+    "key,expected",
+    [
+        (bytes(32), "00000000"),
+        (b"\xff" * 32, "zzzzzzzz"),
+        (b"\x80" + bytes(31), "g0000000"),
+        (bytes(4) + b"\x01" + bytes(27), "00000001"),
+        (bytes(5) + b"\xff" * 27, "00000000"),
+    ],
+    ids=["zero", "maximum", "high-bit", "low-bit", "truncated-tail"],
+)
+def test_root_code_uses_all_40_hash_bits_in_eight_characters(
+    monkeypatch, key, expected
+):
+    monkeypatch.setattr("toolang.common.place_codes.derive_id_key", lambda *_: key)
+    assert root_code("/root") == expected
+
+
 def test_hash_fields_use_distinct_framed_domains_and_raw_base32():
     root = "/root"
     ref = "gh:owner/agent"
     path = "/a.too"
-    assert len(root_code(root)) == 7
-    assert decode_short_id(root_code(root), width=7) == int.from_bytes(
-        derive_id_key("place:v1", root)[:4], "big"
+    assert len(root_code(root)) == 8
+    assert decode_short_id(root_code(root), width=8) == int.from_bytes(
+        derive_id_key("place:v1", root)[:5], "big"
     )
     for placement, source, domain, token in (
         ("visiting", ref, "visiting:v1", visiting_place_code(ref)),
@@ -129,7 +147,7 @@ def test_hash_fields_use_distinct_framed_domains_and_raw_base32():
 
 
 def test_short_code_vectors_pin_the_domains_and_packed_layout():
-    assert root_code("/root") == "0knzkk6"
+    assert root_code("/root") == "4xfwwsny"
     assert visiting_place_code("gh:owner/agent") == "zskgcwa0vh"
     assert (
         roaming_place_code("/a.too", PLACE_CODE_EPOCH_MS + 32) == "2xwt5t3mm0000000010"

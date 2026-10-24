@@ -74,7 +74,8 @@ def _tag(namespace: str, source: str, bits: int) -> int:
 
 
 def root_code(root: str) -> str:
-    return _field(_tag("place:v1", root, 32), 32, 7)
+    """Encode the leading 40 root-hash bits in eight lowercase Base32 characters."""
+    return _field(_tag("place:v1", root, 40), 40, 8)
 
 
 def visiting_place_code(source_ref: str) -> str:

@@ -1,50 +1,39 @@
 # Hub storage namespaces
 
-Scope approved for namespace-only implementation. Guest transport and the
-root/place/home vocabulary and address-prefix changes belong to separate work.
+Status: implemented; namespace-only scope approved in conversation.
 
-## Goal
+## Goal and contract
 
-Isolate Hub datasets by the host-selected canonical Toolang root, including when
-two roots share one backend URL and use identical participant/conversation IDs.
-Reuse the root hash from [agent addresses](../design/agent-addresses.md).
+Isolate Hub datasets by the host-selected canonical Toolang ROOT, even when
+roots share a backend URL and participant/conversation IDs. Reuse R8 from
+[Agent addresses](../design/agent-addresses.md#short-codes); guest transport and
+placement terminology are separate concerns.
 
-## Namespace and identity
+Setup canonicalizes ROOT before passing concrete backend configuration. Every
+key uses `toolang:<root_code>:v0:<suffix>`, including Lua keys, scans, cursors,
+staging, events, and cleanup. Each backend owns its key builder.
 
-Host setup resolves `T = str(root.expanduser().resolve(strict=False))`.
-Resolved backend configuration requires T; core modules never resolve paths or
-read environment defaults. Reuse `common.place_codes.root_code(T)`: 32 hash bits
-encoded as seven lowercase Crockford Base32 characters under the `place:v1` domain.
-
-Every key uses `toolang:<root_code>:v0:<suffix>`, preserving existing suffixes.
-Each backend owns its key builder, shared by messaging and execution events.
-Lua-generated keys, scans, cursors, staging, and cleanup use the same namespace.
-
-`toolang:<root_code>:v0:root` stores T without expiry. Initialize ownership and
-schema atomically; conflicting ownership, partial stores, and corrupt records
-fail without writes. Operations validate root ownership before data access.
+The namespace records full ROOT ownership without expiry. Schema and ownership
+initialize atomically; conflicting ownership, partial stores, and corrupt records
+fail without writes. Operations validate ownership before data access.
 
 Backend identity is the first 20 hex characters of SHA-256 over compact UTF-8
-JSON `["hub-backend:v1", url, T]`, with `ensure_ascii=False`. Existing discovery,
-Hub API headers, and Talk connections use that identity without wire changes.
+JSON `["hub-backend:v1", url, canonical_root]`, with `ensure_ascii=False`.
+Discovery, Hub API headers, and Talk use that identity. Namespace version remains
+`v0`, HTTP API remains `0`, and Hub store schema is `5`. Previous datasets remain
+untouched without import or fallback. Identical canonical paths share identity.
 
-## Compatibility
-
-Keep namespace version `v0` and HTTP API `0`; use Hub store schema `5`.
-Legacy unscoped data is left untouched, without import or fallback. Restart Hub
-and reopen Talk after upgrading; old Hub conversation history is not migrated.
-Moving the canonical host root selects a new dataset. Equal root hashes cannot
-adopt another owner; identical canonical paths on different hosts share identity.
-
-## Acceptance and delivery
-
-- Canonical host path aliases agree; two roots on one backend remain isolated.
-- Identical names/DM IDs have independent messages, leases, cursors, and events.
-- Collisions, partial data, ownership loss, and bad schemas fail without mutation.
-- Hub API rejects other-root identities; Talk uses the selected root's dataset.
-- Legacy and other-root data do not block initialization or change during operations.
+## Implementation and acceptance
 
 Touchpoints: `setup/teaming.py`, `teaming/config.py`, backend keys/Lua/events,
-Hub/Talk/API tests, and [messaging documentation](../design/messaging.md).
-Run repository checks and isolated wire tests; generate the changelog through
-`too aid.too update_changelog`. No guest routing or place/address changes ship here.
+Hub/Talk/API tests, and [Messaging](../design/messaging.md).
+
+- Canonical aliases agree; different roots sharing one backend remain isolated.
+- Identical participant/conversation IDs retain independent messages, leases,
+  cursors, and execution events.
+- Collisions, partial data, lost ownership, and bad schemas fail without mutation.
+- Hub API rejects mismatched roots; Talk uses the selected dataset.
+- Legacy and other-root data remain unchanged during operations.
+
+Run default checks and isolated wire tests. Namespace changes do not alter local
+execution history or guest networking.
