@@ -11,9 +11,10 @@ selected canonical ROOT. Runtime resources follow their foreground owner.
 
 Success requires consistent HOME selection, one script owner per HOME, and the
 same execution cancellation/persistence contract for host Ctrl-C, Docker Ctrl-C
-and Docker owner loss. Each script uses fixed startup program/configuration
-snapshots while ordinary workspace I/O remains live. A container disappearing
-alone is insufficient evidence of correct cleanup.
+and Docker owner loss. Preserve source watching and in-process evolution for
+scripts and hosted agents, with existing publication/capture boundaries and live
+workspace I/O. A container disappearing alone is insufficient evidence of correct
+cleanup.
 
 Include shared foreground Docker ownership for scripts and existing resident/
 visiting `serve --sandbox docker`. Roaming exposes no Chat, start, stop or serve.
@@ -99,38 +100,32 @@ shared lock semantics and [host/guest status ownership](../design/hosting.md#run
 host owns global active registration and staged inputs; guest owns its workload
 status and execution writes. No writable global registry mount is added.
 
-## Script startup snapshots
+## Source watching and evolution
 
-Use the existing `SetupWatcher.refresh()` and `StateWatcher.refresh()` during
-startup preparation, after HOME and invocation options are resolved. Freeze the
-resulting Setup/State before admitting the first Run. Do not start their `run()`
-monitoring loops for host scripts or script-created Docker guest servers; no new
-parallel loader abstraction is needed. Watcher objects may remain as one-shot
-loaders, but execution getters must return the captured publications.
+Preserve existing source monitoring and explicit State sync for scripts, resident
+and visiting agents on host and Docker. Startup still refreshes prepared inputs;
+do not replace monitoring with refresh-only loading or freeze executor State
+getters for the whole script. A script such as `too grow.too` can edit its source
+and use a valid new publication in subsequent calls during the same invocation.
+Keep watcher lifetime bounded by its runtime owner and include it in shutdown.
 
-The snapshot covers parsed `.too` programs and imports, authored capability
-sources, effective configuration, environment/grant bindings and Toolang-managed
-plugin/tool configuration and loaded implementations. Materialize required
-runtime resources from those captured inputs before execution. Root, child and
-spawned Runs, runnable discovery and same-Run handoffs use that invocation's
-publications. Disable live source-sync callbacks in script mode so an on-demand
-refresh cannot bypass the snapshot boundary. An external `info` may update
-prepared metadata without changing the active script's in-memory publications.
+Retain the existing [State capture contract](../design/execution.md#state-capture)
+and [Setup publication contract](../design/setup.md#publication-and-lifetime).
+Accepted Runs and inline plans keep their captured code; newly accepted named
+children and exec operations can bind the latest valid State. Model-call resource
+resolution may adopt newer publications at its existing capture boundary, without
+rewriting prepared frames or widening captured authority. Preserve validation,
+signature checks and recorded revision provenance. Watching does not mean
+replacing every input immediately: environment, installed implementations,
+accepted Setup and startup mount/driver/port choices retain their current limits.
 
-Reusing a HOME starts a new invocation and refreshes current authored inputs and
-configuration again. Preserve old history/lab, not its previous runtime snapshot.
-Invalid new inputs must fail preparation with diagnostics rather than silently
-execute a last-valid cached revision. Source edits during a running script may
-become effective only in the next invocation.
-
-Ordinary workspace reads/writes remain live, including shell commands or Python
-programs reading/executing files there. This does not copy or freeze the workspace,
-container image filesystem or arbitrary files loaded by external programs. Those
-live I/O results are expected. Owner EOF detection, cancellation controls,
-execution event streams and persistence continue running; they are not source
-watchers. Select the startup-snapshot policy explicitly at script call sites and
-carry it through host/guest startup, independently of driver count or foreground
-lifetime. This source-loading change applies only to script execution.
+This definition adds no new watcher policy for scripts or serve. Host scripts
+currently monitor State; hosted servers monitor State and Setup. Keep these
+existing loops and sync paths, including current invalid-publication handling
+and visiting-source acquisition rules. Ordinary workspace I/O remains live.
+Reusing a HOME refreshes current inputs for a new invocation while retaining old
+history/lab. Existing host/guest configuration-projection differences require
+separate diagnosis; preserving watching does not establish full hot-reload parity.
 
 ## Common foreground Docker ownership
 
@@ -224,9 +219,9 @@ cleanup cannot release a later invocation in the same HOME.
   and history `--chat` paths early.
 - `up/{lifecycle,server,sandbox,core}.py`, Docker sandbox/CLI/bootstrap and script/
   foreground serve call sites: common owner channel, signal ordering and deadlines.
-- Script/guest startup, `setup/watcher.py`, `state/watcher.py` and executor snapshot/
-  sync bindings: reuse one-shot refresh, omit source-monitor tasks, freeze getters
-  and preserve runtime control loops.
+- Script/guest startup and watcher/executor integration: preserve monitoring,
+  explicit State sync and per-call capture while coordinating watcher shutdown
+  with the owner lifecycle.
 - Execution cancellation, tool runtime, owned-run bookkeeping and store/events:
   reasoned cancellation, durable ordering and generation-proven recovery. Keep
   parsing, orchestration, execution and persistence with their owning concepts.
@@ -243,10 +238,11 @@ cleanup cannot release a later invocation in the same HOME.
 | Bare script after info; explicit reuse and concurrent claim | Bare gets a new HOME; reuse keeps P19/history/lab with new launch/Run; one owner wins and the other reports busy. |
 | Latest ordering, same-name sources, symlinks and multiple ROOTs | Select by canonical source/ROOT and creation order; never skip newer stopped/prepared targets or cross identities. |
 | Host/guest simultaneous HOMEs and sequential reuse | Correct per-invocation workspace/workdir/env/sandbox/dev bindings; grants and source-sharing behavior remain explicit. |
-| Edit source/config/imported code during a gated host or guest script | Existing and later child/spawn/exec operations use the original program/configuration; no source-watcher loop or post-admission source refresh starts. |
-| Info/source-sync requests during script execution | Prepared cache changes cannot replace active snapshots; live source sync is unavailable; cancellation and result streams still work. |
-| Reuse the same HOME after source/config edits | A new invocation adopts valid changes and preserves old history/lab; invalid changes fail without running a stale cached revision. |
-| Modify an ordinary workspace file during execution | Later filesystem/tool reads observe current content; script source/configuration stays fixed. |
+| Self-editing script on host and Docker, using normal file/shell tools | A valid edit becomes available through watching and explicit State sync; a later named child/exec uses the new revision while accepted code/inline plans stay bound; record each revision. |
+| New publication between Model Calls and invalid source edits | Existing capture, validation and last-valid/error behavior remain intact; prepared frames and captured authority are preserved. |
+| Reuse the same HOME after source/config edits | A new invocation prepares current inputs under normal validation rules and preserves old history/lab. |
+| Modify an ordinary workspace file during execution | Later filesystem/tool reads observe current content. |
+| Resident/visiting watch regression and shutdown during refresh | Supported source/config changes still publish under existing capture boundaries; startup-bound inputs remain bound; no watcher keeps a closing runtime alive. |
 | Info during execution and unsupported commands | Observation cannot change/prolong ownership; Chat/hosting/continuations reject before writes; existing background/automatic policies remain valid. |
 | Real CLI host Ctrl-C, Docker Ctrl-C and Docker owner EOF | Equivalent cancellation, persisted records and cleanup invariants across model wait, shell/file tools, nested/spawned work, pending work and terminal races. |
 | RunStore reopened after process/container exit | Valid Run/Step/control terminals and reasons, committed output/usage/errors retained, no unfinished owned execution after graceful close, inspect/stats usable. |
@@ -268,9 +264,9 @@ required. Run the default verification for implementation changes.
 Roaming Chat removal and info-created HOMEs are user-visible compatibility
 changes. Explicit reuse makes launch/resource fences essential. EOF ownership
 requires changing the current detached foreground adapter and careful descriptor/
-signal isolation. Disabling monitoring alone is insufficient if lazy source-sync
-or getter paths still adopt newer publications. Force deadlines trade complete
-records for bounded exit under faults; expose that limit instead of claiming
-guaranteed persistence. Legacy
-unnumbered HOME migration, roaming Chat and remote-daemon lease fallback are
-explicitly deferred; there are no remaining decisions inside this scope.
+signal isolation. Watch/sync tasks must terminate without losing execution
+records or changing publication/authority boundaries. Force deadlines trade
+complete records for bounded exit under faults; expose that limit instead of
+claiming guaranteed persistence. Legacy unnumbered HOME migration, roaming Chat,
+configuration-projection parity and remote-daemon lease fallback are outside this
+scope; there are no remaining decisions inside this scope.
