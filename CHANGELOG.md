@@ -679,6 +679,11 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   canonical `toolang_root` on `SandboxRequest`.
   ([#945](https://github.com/openhat-ai/toolang/pull/945))
 
+- Docker guests install Toolang with the image's Python 3.11+ and pip, which
+  may replace image packages, otherwise with standalone uv and managed
+  Python 3.13.
+  ([#951](https://github.com/openhat-ai/toolang/pull/951))
+
 ### Security
 
 - The locked certifi trust store advances to 2026.10.19, resolving trust-store
