@@ -529,8 +529,8 @@ def test_dual_order_completion_consumes_the_agent_once(
         ("https://example.test/alice.too", "remote"),
         ("./alice.too", "path"),
         ("{root}/source with spaces/alice.too", "path"),
-        ("alice@t0000000001", "visiting_instance"),
-        ("alice@s00000010000000001", "roaming_instance"),
+        ("alice@r000000001", "visiting_instance"),
+        ("alice@0000000001000000001", "roaming_instance"),
     ],
 )
 def test_public_dual_orders_bind_the_same_selector(

@@ -1021,7 +1021,7 @@ def test_instance_selector_and_top_use_the_same_complete_name(tmp_path, placemen
         else allocate_roaming(tmp_path / "alice.too", toolang_root=tmp_path)
     )
     assert layout.place_code is not None
-    assert len(layout.place_code) == (11 if placement == "visiting" else 18)
+    assert len(layout.place_code) == (10 if placement == "visiting" else 19)
     address = parse_address(layout.address)
     assert address is not None and address.place_code == layout.place_code
     assert (
@@ -1034,6 +1034,8 @@ def test_instance_selector_and_top_use_the_same_complete_name(tmp_path, placemen
         )
         == layout.address
     )
-    for invalid in (layout.place_code[1:], layout.place_code.upper()):
+    for invalid in {layout.place_code[1:], layout.place_code.upper()} - {
+        layout.place_code
+    }:
         with pytest.raises(ValueError):
             parse_address(f"{layout.name}@{invalid}")

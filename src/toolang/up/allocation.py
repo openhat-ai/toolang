@@ -8,6 +8,7 @@ from toolang.common.files import EditLock
 from toolang.common.layout import AgentLayout, derive_agent_name
 from toolang.common.place_codes import (
     decode_place_code,
+    place_source_id,
     root_code,
     roaming_place_code,
     roaming_timestamp_ms,
@@ -22,7 +23,7 @@ from .workload import fail_preparation, prepare_workload
 def _retained_layout(place: Path, name: str) -> AgentLayout:
     if place.is_symlink():
         raise ValueError(f"invalid retained agent root: {place}")
-    decode_place_code(place.name, marker="s")
+    decode_place_code(place.name, placement="roaming")
     statuses = list((place / "agents").glob("*/.runtime/status.json"))
     if len(statuses) > 1:
         raise ValueError(f"invalid retained instance identity: {place}")
@@ -49,7 +50,7 @@ def select_roaming(
     """Resolve retained identity without materialization or global discovery."""
     source = source.expanduser().resolve()
     if place_code is not None:
-        decode_place_code(place_code, marker="s")
+        decode_place_code(place_code, placement="roaming")
     guard = EditLock(source.parent / ".toolang" / ".state" / "launch.lock")
     return guard.read(
         lambda: _select_retained_roaming(source, place_code, toolang_root)
@@ -64,7 +65,7 @@ def retained_roaming(source: Path, *, toolang_root: Path) -> tuple[AgentLayout, 
     if not cache.exists():
         return ()
     verify_root_namespace(cache, toolang_root)
-    prefix = roaming_place_code(str(source), 0)[:8]
+    prefix = place_source_id("roaming", str(source))
     layouts = tuple(
         _retained_layout(place, derive_agent_name(source.stem))
         for place in sorted(cache.glob(prefix + "*"), reverse=True)

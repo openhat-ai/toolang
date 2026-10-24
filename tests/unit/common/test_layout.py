@@ -110,7 +110,8 @@ def test_visiting_layout_is_stable_and_root_and_source_specific(
     assert first.home == first.place / "agents" / first.name
     assert first.place.parent.parent == isolated_visiting_base
     assert first.source_id is not None and len(first.source_id) == 10
-    assert first.place.name == f"t{first.source_id}"
+    assert first.place.name == first.place_code
+    assert len(first.place.name) == 10 and first.place.name[0] in "rstvwxyz"
     assert first.place != other.place
     assert first.place != other_root.place
     assert first.root != other_root.root
@@ -129,7 +130,8 @@ def test_visiting_place_preserves_bounded_agent_names(
     (tmp_path / layout.place.name).mkdir()
 
     assert layout.name == name
-    assert layout.place.name == f"t{layout.source_id}"
+    assert layout.place.name == layout.place_code
+    assert len(layout.place.name) == 10 and layout.place.name[0] in "rstvwxyz"
     assert layout.home.name == name
     assert layout.source_id is not None and len(layout.source_id) == 10
 

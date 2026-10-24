@@ -11,7 +11,7 @@ from .source import AcquiredSource
 from .place_codes import (
     root_code,
     decode_place_code,
-    roaming_place_code,
+    place_source_id,
     roaming_timestamp_ms,
     visiting_place_code,
 )
@@ -82,7 +82,8 @@ class AgentLayout:
             if self.placement == "resident":
                 raise ValueError("place code does not match its placement")
             decode_place_code(
-                self.place_code, marker="t" if self.placement == "visiting" else "s"
+                self.place_code,
+                placement="visiting" if self.placement == "visiting" else "roaming",
             )
         if self.instance is not None and (
             not self.instance or not self.instance.isalnum()
@@ -90,15 +91,13 @@ class AgentLayout:
             raise ValueError("instance identity must be alphanumeric")
         if self.source_id is not None and (
             not isinstance(self.source_id, str)
-            or len(self.source_id) not in {7, 10}
+            or len(self.source_id) != 10
             or any(
                 char not in "0123456789abcdefghjkmnpqrstvwxyz"
                 for char in self.source_id
             )
         ):
-            raise ValueError(
-                "source identity must be 7 or 10 lowercase base32 characters"
-            )
+            raise ValueError("source identity must be 10 lowercase base32 characters")
         object.__setattr__(self, "place", place)
         object.__setattr__(self, "name", name)
         if self.root is not None:
@@ -126,7 +125,7 @@ class AgentLayout:
             name=name,
             placement="visiting",
             root=root,
-            source_id=token[1:],
+            source_id=place_source_id("visiting", source),
             place_code=token,
             source_ref=source,
         )
@@ -153,7 +152,7 @@ class AgentLayout:
             place=place,
             name=derive_agent_name(source.stem),
             placement="roaming",
-            source_id=roaming_place_code(str(source), 0)[1:8],
+            source_id=place_source_id("roaming", str(source)),
             place_code=place_code,
             source_path=source,
             root=root,

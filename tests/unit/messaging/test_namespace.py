@@ -11,7 +11,11 @@ import pytest
 
 from toolang.setup.teaming import load_teaming_root
 from toolang.common.layout import AgentLayout
-from toolang.common.place_codes import root_code, roaming_place_code
+from toolang.common.place_codes import (
+    PLACE_CODE_EPOCH_MS,
+    root_code,
+    roaming_place_code,
+)
 from toolang.teaming.api import create_app
 from toolang.teaming.backend.valkey import ValkeyBackend
 from toolang.teaming.client import HubClient
@@ -59,7 +63,7 @@ def test_backend_namespace_matches_the_root_code_in_nonresident_paths(tmp_path):
     roaming = AgentLayout.roaming(
         source,
         root=tmp_path,
-        place_code=roaming_place_code(str(source.resolve()), 1),
+        place_code=roaming_place_code(str(source.resolve()), PLACE_CODE_EPOCH_MS + 1),
     )
     assert config.root_code == root_code(str(tmp_path.resolve()))
     assert config.root_code == visiting.place.parent.name == roaming.place.parent.name
