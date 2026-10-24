@@ -461,7 +461,7 @@ agic chat(_: Part[]) -> Part[]:
         lambda: "macOS 27.0 arm64",
     )
 
-    assert not (harness.setup.layout.home / ".lab").exists()
+    assert not (harness.setup.layout.lab).exists()
     session = local.LocalChatSession(
         harness.setup.layout,
     )
@@ -482,7 +482,7 @@ agic chat(_: Part[]) -> Part[]:
             sandbox_detail="macOS 27.0 arm64",
             workspaces=("lab",),
         )
-        absolute_workspace = harness.setup.layout.home / ".lab" / "absolute"
+        absolute_workspace = harness.setup.layout.lab / "absolute"
         absolute_workspace.mkdir(parents=True)
         assert session.resolve_workdir(None, None, None) == "lab://"
         assert session.resolve_workdir(str(absolute_workspace), None, None) == (

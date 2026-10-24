@@ -332,6 +332,8 @@ def test_agent_removal_releases_control_state_through_the_sandbox(
     )
     layout = AgentLayout.resident(tmp_path, "alice")
     layout.home.mkdir(parents=True)
+    layout.lab.mkdir(parents=True)
+    (layout.lab / "keep.txt").write_text("workspace content")
     SandboxState(
         sandbox="docker:python:3.13-slim",
         ref=SandboxRef("toolang-alice-test", "http://localhost:8123"),
@@ -345,6 +347,7 @@ def test_agent_removal_releases_control_state_through_the_sandbox(
     )
     assert SandboxState.load(layout.runtime_status) is None
     assert not layout.home.exists()
+    assert (layout.lab / "keep.txt").read_text() == "workspace content"
 
 
 def test_release_stopped_rejects_a_workload_that_became_active(
@@ -615,7 +618,7 @@ def test_guest_roaming_mounts_the_shared_project_edit_guard(monkeypatch, tmp_pat
     layout.home.mkdir(parents=True)
     spec = _launch_spec(tmp_path / "global")
     spec = replace(spec, serve=replace(spec.serve, layout=layout))
-    handle = asyncio.run(sandbox.launch(spec))
+    asyncio.run(sandbox.launch(spec))
     prepared = next(
         call
         for call in implementation.calls
@@ -624,20 +627,118 @@ def test_guest_roaming_mounts_the_shared_project_edit_guard(monkeypatch, tmp_pat
     request = cast(SandboxRequest, prepared[2])
     guard = tmp_path / ".toolang" / ".state" / "root" / "edit.lock"
     assert guard.is_file()
-    assert SandboxMount(guard, Path("/runtime/.state/root/edit.lock")) in request.mounts
+    guest_place = Path("/runtime")
+    assert SandboxMount(guard, guest_place / ".state/root/edit.lock") in request.mounts
     position = request.command.index("--source-edit-lock")
-    assert request.command[position + 1] == "/runtime/.state/root/edit.lock"
+    assert request.command[position + 1] == str(guest_place / ".state/root/edit.lock")
     registry = tmp_path / "global" / ".runtime" / "active" / layout.address
-    guest_registry = Path("/runtime/agents/aid/.runtime/registration")
-    assert SandboxMount(registry, guest_registry) in request.mounts
-    assert not any(mount.local_path == registry.parent for mount in request.mounts)
-    assert request.command[request.command.index("--registry-directory") + 1] == str(
-        guest_registry
+    assert not any(
+        mount.local_path == registry or mount.local_path == registry.parent
+        for mount in request.mounts
     )
-    assert request.command[request.command.index("--registry-status") + 1] == str(
-        layout.runtime_status
-    )
+    assert "--registry-directory" not in request.command
+    assert "--registry-status" not in request.command
+    assert request.local_runtime == registry
+    assert request.hosted_place == request.hosted_root
     assert asyncio.run(sandbox.stop(layout, force=True))
+
+
+@pytest.mark.parametrize("placement", ["resident", "visiting", "roaming"])
+@pytest.mark.parametrize("source_workspace", [False, True])
+def test_mount_layout_preserves_root_place_and_home_scopes(
+    monkeypatch, tmp_path, placement, source_workspace
+):
+    from toolang.common.place_codes import roaming_place_code
+    from toolang.plugin.catalogs.models_dev.path import MODEL_CATALOG_ENV
+
+    implementation = FakeSandbox()
+    monkeypatch.setattr(
+        sandbox, "create_sandbox", lambda *_args, **_kwargs: implementation
+    )
+
+    async def ready(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(sandbox, "_wait_ready", ready)
+    root = tmp_path / "global"
+    spec = _launch_spec(root)
+    source = tmp_path / "project/alice.too"
+    if placement == "resident":
+        layout = spec.serve.layout
+    elif placement == "visiting":
+        layout = AgentLayout.visiting(
+            "https://example.com/alice.too", "alice", root=root
+        )
+    else:
+        source.parent.mkdir()
+        source.write_text("hello() {}")
+        layout = AgentLayout.roaming(
+            source, root=root, place_code=roaming_place_code(str(source), 1)
+        )
+    if placement == "visiting":
+        from toolang.up.identity import visiting_home_guard
+
+        with visiting_home_guard(layout):
+            layout.program.write_text("flow:\n  pass\n")
+            layout.program.chmod(0o600)
+    else:
+        layout.home.mkdir(parents=True, exist_ok=True)
+    if placement == "roaming":
+        if source_workspace:
+            layout.config.write_text(f'[workspaces]\nproject = "{source.parent}"\n')
+        layout.program.symlink_to(source)
+    catalog = root / "catalog.json"
+    catalog.write_text("{}")
+    spec = replace(
+        spec,
+        serve=replace(spec.serve, layout=layout),
+        environ={**spec.environ, MODEL_CATALOG_ENV: str(catalog)},
+    )
+    handle = asyncio.run(sandbox.launch(spec))
+    try:
+        prepared = implementation.calls[0]
+        assert isinstance(prepared, tuple)
+        request = cast(SandboxRequest, prepared[2])
+        guest_root = Path("/runtime")
+        guest_place = guest_root
+        assert request.hosted_runtime == guest_root / ".runtime/active/alice"
+        assert request.guest_config is not None
+        assert len({mount.hosted_path for mount in request.mounts}) == len(
+            request.mounts
+        )
+        assert request.hosted_root == guest_root
+        assert request.hosted_place == guest_place
+        assert request.hosted_home == guest_place / "agents/alice"
+        if placement == "roaming" and source_workspace:
+            assert (
+                request.hosted_source
+                == request.hosted_place / "workspaces/alice/project/alice.too"
+            )
+        elif placement == "roaming":
+            assert request.hosted_source is None
+            assert not any(
+                mount.local_path == source.parent for mount in request.mounts
+            )
+        assert request.envs[MODEL_CATALOG_ENV] == "/runtime/catalog.json"
+        assert (
+            SandboxMount(root / "hub", guest_root / "hub", read_only=True)
+            in request.mounts
+        )
+        assert not any(
+            "model-catalog.json" in str(m.hosted_path)
+            or "/.runtime/registration" in str(m.hosted_path)
+            for m in request.mounts
+        )
+        info = json.loads(
+            (root / ".runtime/active" / layout.address / "info.json").read_text()
+        )
+        assert info["home"] == str(layout.home)
+        assert info["launch"] == handle.state.launch_id
+        assert info["location"] == "guest"
+        assert "--registry-directory" not in request.command
+    finally:
+        asyncio.run(sandbox.stop(layout, force=True))
+    assert not (root / ".runtime/active" / layout.address).exists()
     assert ("release", handle.state.ref) in implementation.calls
 
 
@@ -1263,9 +1364,9 @@ def test_guest_launch_snapshots_workspace_mounts_and_unavailable_roots(
         prepare = implementation.calls[0]
         assert isinstance(prepare, tuple)
         request = cast(SandboxRequest, prepare[2])
-        hosted = Path("/runtime/agents/alice/.workspaces/repo")
-        lab_root = spec.serve.layout.home / ".lab"
-        hosted_lab = Path("/runtime/agents/alice/.workspaces/lab")
+        hosted = Path("/runtime/workspaces/alice/repo")
+        lab_root = spec.serve.layout.lab
+        hosted_lab = Path("/runtime/workspaces/alice/lab")
         assert SandboxMount(repo, hosted) in request.mounts
         assert SandboxMount(lab_root.resolve(), hosted_lab) in request.mounts
         assert not any(mount.local_path == missing for mount in request.mounts)

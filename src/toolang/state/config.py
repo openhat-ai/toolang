@@ -15,7 +15,7 @@ import tomlkit
 
 from toolang.catalog.types import CAP_DIR_BY_KIND, CAP_KINDS
 from toolang.common.errors import ToolangError
-from toolang.common.config_sources import read_config
+from toolang.common.config_sources import read_config, rebase_config
 from toolang.common.files import EditLock, atomic_write_text
 from toolang.common.policy import resolve_query_sentinels
 
@@ -31,8 +31,17 @@ _ACRONYM_TO_WORD_RE = re.compile(r"([A-Z]+)([A-Z][a-z])")
 class ConfiguredWorkspaces:
     """Manage agent-home workspace grants in one explicit config file."""
 
-    def __init__(self, config_path: Path, *, lock_path: Path) -> None:
+    def __init__(
+        self,
+        config_path: Path,
+        *,
+        lock_path: Path,
+        root_config: Path | None = None,
+        key: str | None = None,
+    ) -> None:
         self.config_path = config_path
+        self.root_config = root_config
+        self.key = key
         self._lock = EditLock(lock_path)
 
     @property
@@ -52,7 +61,19 @@ class ConfiguredWorkspaces:
     def _list(self) -> dict[str, str]:
         if self.config_path.exists() and not self.config_path.is_file():
             raise ValueError(f"agent config must be a file: {self.config_path}")
-        return configured_workspaces(read_config(self.config_path))
+        grants = configured_workspaces(read_config(self.config_path))
+        grants.update(self._overrides())
+        _validate_workspace_roots(grants)
+        return grants
+
+    def _overrides(self) -> dict[str, str]:
+        if self.root_config is None:
+            return {}
+        return root_workspace_overrides(
+            read_config(self.root_config, include_workspaces=True),
+            self.key,
+            self.root_config.parent,
+        )
 
     @staticmethod
     def parse(content: str) -> dict[str, str]:
@@ -95,6 +116,10 @@ class ConfiguredWorkspaces:
         """Remove one workspace grant without changing the workspace itself."""
 
         with self.write_lock():
+            if name in self._overrides():
+                raise ValueError(
+                    f"workspace {name} is configured in {self.root_config}; edit that file"
+                )
             workspaces = self.list()
             try:
                 path = workspaces[name]
@@ -133,6 +158,25 @@ def configured_workspaces(config: Mapping[str, object]) -> dict[str, str]:
         workspaces[name] = str(Path(path))
     _validate_workspace_roots(workspaces)
     return workspaces
+
+
+def root_workspace_overrides(
+    config: Mapping[str, object], key: str | None, directory: Path
+) -> dict[str, str]:
+    """Select one stable identity without inheriting same-name foreign sources."""
+    raw = config.get("workspaces", {})
+    if not isinstance(raw, Mapping):
+        raise ValueError("root workspaces config must be a table")
+    selected = cast(Mapping[str, object], raw).get(key, {}) if key is not None else {}
+    if not isinstance(selected, Mapping):
+        raise ValueError(f"root workspace config must be a table: {key}")
+    return configured_workspaces(rebase_config({"workspaces": selected}, directory))
+
+
+def root_workspace_content(content: bytes, key: str | None, directory: Path) -> bytes:
+    """Capture only this agent's resolved workspace policy, excluding Setup fields."""
+    grants = root_workspace_overrides(parse_config(content), key, directory)
+    return tomlkit.dumps({"workspaces": grants}).encode() if grants else b""
 
 
 def project_state_config(config: Mapping[str, object]) -> dict[str, object]:

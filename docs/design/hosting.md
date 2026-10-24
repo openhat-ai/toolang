@@ -289,18 +289,27 @@ existing containers keep their names until normal stop/release and a new launch.
 guest update that shared file with generation checks and owned-field merges.
 Docker mounts the agent home read-write, including status, database sidecars,
 and logs; required inputs/workspaces and read-only bootstrap materials are added
-separately. Only the instance's `.runtime/active/<address>` directory is mounted read-write at
-an explicit guest path, so the guest can atomically unlink its own reference.
-Other instances' registrations and guards are outside that mount. Startup
-passes the reference name (the complete agent address), canonical host status
-path, and launch ID; guests never derive host paths from their mounted layout.
+separately. Host records live at `ROOT/.runtime/active/<address>/info.json`.
+Every guest has ROOT = PLACE at the configured Docker root; host placement and
+canonical address remain unchanged. State and authored inputs come from the
+current host PLACE, while Hub discovery comes from the selected host ROOT.
+Docker stages generated guest `config.toml` directly under `docker/`, separately
+from `docker/active/`, which contains guest-path `info.json`, `guest.sh`, `guest.py`,
+generated environment input, and an optional wheel. The active directory is mounted
+read-only at guest `ROOT/.runtime/active/<name>/`; config is mounted read-only at
+guest `ROOT/config.toml`. These mount sources do not contain each other.
+Both info views record the full address. The guest updates home status and never
+needs a writable root registry mount. Workspace mounts use the distinct namespace
+`PLACE/workspaces/<agent>/<workspace>` independently of HOME, including lab at the
+same place-relative host and guest path. Source grants are optional; input overlays
+cannot make a grant read-only.
 Guest field ownership is cooperative, not filesystem isolation. Independent sandbox state
 is removed. Legacy `.sandbox/<agent>/state.json` and `.runtime/sandbox.json`
 block launch, stop, and removal: stop old workloads with the previous version
 before upgrading. Older status formats are rejected without migration; preserve
 required history separately before removing obsolete runtime metadata.
-Likewise, per-launch staging without a matching control reference is preserved
-and blocks relaunch or removal until any associated workload is removed and the
+Likewise, bootstrap inputs without a matching control reference are preserved
+and block relaunch or removal until any associated workload is removed and the
 staging directory is cleaned manually.
 
 ## Guest bootstrap
@@ -346,21 +355,33 @@ Port allocation reads registered endpoints only, reserving declared endpoints
 during preparation and startup before an API becomes available. Resident-only
 collection filters nonresident references before reading or probing their status.
 
-New publications retain the format-5 payload in a per-address directory:
+New publications use format 6 in a per-address directory:
 
 ```text
 TOOLANG_ROOT/.runtime/active/<address>/
     register.lock
-    <address>.json         # canonical host status path and launch_id
+    info.json             # address, absolute home, launch, location, sandbox
+    docker/
+        config.toml       # generated guest ROOT config; read-only mount
+        active/           # read-only as guest ROOT/.runtime/active/<name>/
+            info.json     # full address and mapped guest home/source paths
+            guest.env
+            guest.sh
+            guest.py
 AGENT_HOME/.runtime/
-    status.json
+    status.json           # authoritative runtime status, still format 5
     status.json.lock
 ```
 
-The registry guard serializes only one address; the status guard serializes one
-home. Empty per-address directories are removed after host guard release when
-possible. Existing flat format-5 references remain readable and repairable by
-hosts during an upgrade; new guests receive only their private directory.
+The record derives `.runtime/status.json` from `home`; it stores no status
+filename. Optional `source` and `source_ref` describe the source in the reader's
+path view. Canonical identity and Docker ownership labels retain their original
+host bindings. A source directory is exposed only through existing grants.
+
+The registry guard serializes one address; the status guard serializes one home.
+After resource release and generation checks, bootstrap inputs and the empty
+address directory are removed. Legacy nested and flat format-5 references remain
+readable during upgrade without moving their resources.
 
 Both guards use shared-file claims carrying owner location, PID, process creation
 time, and acquisition time. Guest claims additionally retain their exact launch,
@@ -387,9 +408,10 @@ more; missing status or further instability stays unknown. A terminal launch
 cannot bind a resource or return to an active phase; a new execution requires a
 new launch ID.
 
-The owning workload performs the same ordered terminal update and withdrawal on
-exit, including from a sandbox guest. These operations never release sandbox
-resources; host lifecycle management owns release. Other host CLI processes
+Host workloads perform the ordered terminal update and withdrawal on exit.
+New guests update only home status; the next verified host observation retires
+their registration. Bootstrap ownership metadata stays until resource release.
+Host lifecycle management owns release. Other host CLI processes
 repair records left by interrupted owners. Run history is never rewritten by
 runtime observation or retirement.
 

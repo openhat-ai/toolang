@@ -2,19 +2,18 @@
 
 from __future__ import annotations
 
-from contextlib import contextmanager, ExitStack
-from dataclasses import dataclass, replace
+from contextlib import contextmanager, ExitStack, nullcontext
+from dataclasses import replace
 import json
 import time
 import psutil
 from pathlib import Path
-from typing import cast
 
 from toolang.common.files import atomic_write_text, file_write_lock, file_read_snapshot
 from toolang.common.layout import AgentLayout
 from .identity import layout_from_control, verify_identity
+from .records import RuntimeReference
 from .instance import (
-    RUNTIME_STATUS_FORMAT,
     LockRecovery,
     runtime_lock_owner,
     read_instance,
@@ -34,9 +33,16 @@ def registration_directory(layout: AgentLayout, *, toolang_root: Path) -> Path:
 
 
 def registration_path(layout: AgentLayout, *, toolang_root: Path) -> Path:
-    return registration_directory(
-        layout, toolang_root=toolang_root
-    ) / instance_filename(layout)
+    return registration_directory(layout, toolang_root=toolang_root) / "info.json"
+
+
+def reference_address(path: Path) -> str:
+    """Read the address from a current directory or a legacy filename."""
+    return (
+        path.parent.name
+        if path.name == "info.json" and path.parent.parent.name == "active"
+        else path.stem
+    )
 
 
 def _reference_paths(layout: AgentLayout, root: Path) -> tuple[Path, ...]:
@@ -44,48 +50,9 @@ def _reference_paths(layout: AgentLayout, root: Path) -> tuple[Path, ...]:
     # publish only in their private directory; legacy guards are never mounted.
     return (
         registration_path(layout, toolang_root=root),
+        registration_directory(layout, toolang_root=root) / instance_filename(layout),
         root / ".runtime" / "active" / instance_filename(layout),
     )
-
-
-@dataclass(frozen=True, slots=True)
-class RuntimeReference:
-    """A discovery locator fenced by its authoritative status path and launch."""
-
-    status: Path
-    launch_id: str
-
-    @classmethod
-    def from_data(cls, value: object) -> RuntimeReference:
-        if not isinstance(value, dict):
-            raise ValueError("invalid runtime reference")
-        payload = cast(dict[str, object], value)
-        if (
-            type(payload.get("version")) is not int
-            or payload["version"] != RUNTIME_STATUS_FORMAT
-        ):
-            raise ValueError("unsupported runtime reference version")
-        status_path = payload.get("status")
-        launch_id = payload.get("launch_id")
-        if not isinstance(status_path, str) or not isinstance(launch_id, str):
-            raise ValueError("incomplete runtime reference")
-        status = Path(status_path)
-        if (
-            not status.is_absolute()
-            or str(status) != status_path
-            or ".." in status.parts
-        ):
-            raise ValueError(
-                "runtime reference requires a normalized absolute status path"
-            )
-        return cls(status, launch_id)
-
-    def to_data(self) -> dict[str, object]:
-        return {
-            "version": RUNTIME_STATUS_FORMAT,
-            "status": str(self.status),
-            "launch_id": self.launch_id,
-        }
 
 
 def read_reference(path: Path) -> RuntimeReference | None:
@@ -194,7 +161,9 @@ class RuntimeRegistration:
         self.toolang_root = toolang_root.expanduser().resolve()
         self.layout = replace(layout, root=self.toolang_root)
         self.path = registration_path(layout, toolang_root=self.toolang_root)
-        self.payload = RuntimeReference(layout.runtime_status, self.token).to_data()
+        self.payload = RuntimeReference(
+            layout.runtime_status, self.token, address=layout.address
+        ).to_data()
 
     def publish(self) -> RuntimeRegistration:
         """Publish after checking identity and collisions under the registry guard."""
@@ -236,13 +205,31 @@ class RuntimeRegistration:
                     )
                 verify_identity(self.layout, entry["control"])
                 try:
+                    control = entry["control"]
+                    sandbox = control.get("sandbox", "host")
+                    self.payload = RuntimeReference(
+                        self.layout.runtime_status,
+                        self.token,
+                        location=entry["workload"].get(
+                            "location", "host" if sandbox == "host" else "guest"
+                        ),
+                        sandbox=sandbox,
+                        source=Path(control["source_path"])
+                        if control.get("source_path")
+                        else None,
+                        source_ref=control.get("source_ref"),
+                        address=self.layout.address,
+                    ).to_data()
                     atomic_write_text(self.path, json.dumps(self.payload))
-                    previous = read_reference(legacy)
-                    if (
-                        previous is not None
-                        and previous.status == self.layout.runtime_status
-                    ):
-                        legacy.unlink(missing_ok=True)
+                    for previous_path in _reference_paths(
+                        self.layout, self.toolang_root
+                    )[1:]:
+                        previous = read_reference(previous_path)
+                        if (
+                            previous is not None
+                            and previous.status == self.layout.runtime_status
+                        ):
+                            previous_path.unlink(missing_ok=True)
                 except BaseException:
                     self.close()
                     raise
@@ -281,7 +268,8 @@ def _remove_reference(
                 and reference.launch_id == launch_id
                 and reference.status == status_path
             ):
-                path.unlink(missing_ok=True)
+                if path.name != "info.json" or not (path.parent / "docker").exists():
+                    path.unlink(missing_ok=True)
     except (OSError, ValueError):
         pass
 
@@ -369,7 +357,9 @@ def repair_registration(
                         instance=layout.instance,
                         launch_id=observed["launch_id"],
                     )
-                if expected is not None:
+                if expected is not None and (
+                    path.name != "info.json" or not (path.parent / "docker").exists()
+                ):
                     path.unlink(missing_ok=True)
                 return "retired"
     except (OSError, ValueError):
@@ -393,27 +383,30 @@ def finalize_runtime(
         return False
     if entry is None or entry["launch_id"] != launch_id:
         return False
-    if location == "guest":
-        if directory is None or status_path is None:
-            raise ValueError(
-                "guest finalization requires its explicit registry binding"
-            )
-    else:
+    guest_report_only = location == "guest" and directory is None
+    if location == "host":
         root = entry["control"].get("root")
         if not isinstance(root, str):
             return False
         directory = registration_directory(layout, toolang_root=Path(root))
         status_path = layout.runtime_status
-    assert directory is not None and status_path is not None
-    path = directory / instance_filename(layout)
+    path = (
+        directory / ("info.json" if location == "host" else instance_filename(layout))
+        if directory is not None
+        else None
+    )
     try:
         created = psutil.Process(expected_pid).create_time()
         recovery = LockRecovery()
-        guard = _registration_guard(
-            directory,
-            owner=runtime_lock_owner(location=location, entry=entry),
-            recovery=recovery,
-            blocking=True,
+        guard = (
+            _registration_guard(
+                directory,
+                owner=runtime_lock_owner(location=location, entry=entry),
+                recovery=recovery,
+                blocking=True,
+            )
+            if directory is not None
+            else nullcontext()
         )
         status_guard = runtime_lock(
             layout.runtime_status,
@@ -455,9 +448,15 @@ def finalize_runtime(
                     location=location,
                     blocking=False,
                 )
-                reference = read_reference(path)
-                if reference == RuntimeReference(status_path, launch_id):
-                    path.unlink(missing_ok=True)
+                if not guest_report_only and path is not None:
+                    reference = read_reference(path)
+                    if (
+                        reference is not None
+                        and reference.status == status_path
+                        and reference.launch_id == launch_id
+                        and not (path.parent / "docker").exists()
+                    ):
+                        path.unlink(missing_ok=True)
                 return True
     except (OSError, ValueError, psutil.Error):
         return False  # Queries can later repair a dead owner's unwithdrawn record.

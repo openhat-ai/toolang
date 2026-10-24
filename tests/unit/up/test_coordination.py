@@ -152,7 +152,7 @@ registration.close()
                     layout, toolang_root=tmp_path, launch_id="replacement"
                 ).publish()
             finish(cleanup)
-        assert json.loads(old.path.read_text())["launch_id"] == "replacement"
+        assert json.loads(old.path.read_text())["launch"] == "replacement"
     assert replacement.path.exists()
     replacement.close()
 
@@ -180,7 +180,5 @@ print(layout.place_code, flush=True)
     for code in codes:
         layout = select_roaming(source, code, toolang_root=root)
         assert layout.runtime_status.is_file()
-        assert (
-            root / ".runtime" / "active" / layout.address / f"{layout.address}.json"
-        ).is_file()
+        assert (root / ".runtime" / "active" / layout.address / "info.json").is_file()
     assert select_roaming(source, toolang_root=root).place_code == max(codes)

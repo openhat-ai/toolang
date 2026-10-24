@@ -276,7 +276,7 @@ def test_workspace_list_excludes_implicit_lab_and_does_not_prepare_state(
     assert "Workdir:" not in result.stdout
     layout = AgentLayout.resident(root, "alice")
     assert not layout.agent_state.exists()
-    assert not (layout.home / ".lab").exists()
+    assert not (layout.lab).exists()
 
 
 def test_workspace_commands_preserve_config_and_never_delete_data(

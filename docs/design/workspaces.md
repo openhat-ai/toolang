@@ -7,17 +7,24 @@ owns invocation syntax and [Hosting](hosting.md) owns sandbox mounts.
 
 ## Grant construction
 
-State reads workspace declarations from home/source-local configuration.
-Root/ancestor configuration does not grant workspace access. Relative paths
-resolve at the declaring file; CLI additions resolve at the client's procdir.
+State reads HOME `[workspaces]` and matching ROOT `[workspaces.KEY]` declarations.
+KEY is the resident agent name, canonical visiting ref/URL, or canonical roaming
+source path. ROOT wins for a shared workspace name; HOME supplies the other names.
+Roaming source-local declarations are captured in HOME; ancestor project
+configuration grants no access. Relative paths resolve at their declaring file;
+CLI additions resolve at the client's procdir. Home State captures only the selected
+ROOT workspace policy, so unrelated ROOT Setup edits do not change its revision.
 Source discovery and process directories are distinct from execution workdir.
 
-Setup adds the implicit `lab` workspace, rooted at the agent home's `.lab`,
+Setup adds the implicit `lab` workspace at `PLACE/workspaces/<agent>/lab`,
 before configured grants. It is runtime-owned and cannot be replaced by a
 configured or temporary grant. Configured and invocation grants retain stable
 names and order; conflicting bindings reject instead of silently rebinding a name.
 Inferred names normalize directory basenames to kebab case. Explicit names use
 the validated workspace-name grammar.
+
+Host and guest use the same place-relative lab path. Removing an agent preserves
+its lab and contents. The old `HOME/.lab` path is ignored without migration.
 
 The caller may select workdir without adding access. Without an invocation
 selection, the runtime uses the last usable workspace, with implicit `lab`
@@ -50,7 +57,18 @@ State publication cannot grant new paths to an accepted Run. Changing workdir
 selects among those grants. Per-tool-call contexts capture that authority and
 must not be retained on shared plugin objects.
 
-Guest startup captures host paths and maps each workspace to its guest root.
+Guest startup captures host paths and mounts workspaces under
+`PLACE/workspaces/<agent>/`, separately from HOME and its read-only input
+overlays. Every grant uses its unique name, including `lab` and optional source
+directory grants; nested and alias sources keep their separate named guest paths.
+Each guest has ROOT = PLACE, defaulting to `/root/.toolang`, and HOME at
+`ROOT/agents/NAME`. Source-directory access is optional and does not determine HOME.
+Hosting generates `config.toml` under the address's `docker/` stage and binds it
+read-only at guest ROOT. Its matching `[workspaces.KEY]` contains effective guest
+paths, overriding the whole-mounted HOME configuration. Authored host files remain
+unchanged. Runtime grant identity normalizes captured guest paths back to host
+sources for frozen Run authority and client compatibility. Logical `name://` paths
+work in both environments.
 Runtime resolution uses that mapping rather than probing client directories
 again. A new or remapped workspace needs a compatible mount; restart a guest or
 server to change its captured grants. Attaching clients must request compatible
@@ -67,7 +85,9 @@ and [client HTTP capture](api.md#client-file-inputs).
 Configured inspection reads authored grants without preparing execution or
 starting a server. It excludes implicit `lab`, temporary grants, and workdir.
 `workspace list/add/remove` accept an agent name or source path and manage resident
-home or project configuration. Visiting agents use invocation grants and reject
-these commands before source acquisition.
+home or project configuration. Listing includes matching ROOT overrides; adding
+a duplicate name fails. ROOT bindings must be edited in ROOT configuration.
+Visiting agents may use ROOT declarations and invocation grants, but reject these
+editing commands before source acquisition.
 Runtime inspection reports usable captured grants in that environment.
 The two views answer different questions; neither changes authority.

@@ -74,6 +74,8 @@ def add_workspace(
     configured = ConfiguredWorkspaces(
         _authored_config(layout),
         lock_path=_workspace_edit_lock(layout),
+        root_config=layout.root_config,
+        key=layout.config_key,
     )
     selected_name, selected_path = user_call(configured.add, path, name=name)
     _refresh_project(layout)
@@ -98,7 +100,12 @@ def list_workspaces(
     else:
         config_path = layout.config
     workspaces = user_call(
-        ConfiguredWorkspaces(config_path, lock_path=_workspace_edit_lock(layout)).list
+        ConfiguredWorkspaces(
+            config_path,
+            lock_path=_workspace_edit_lock(layout),
+            root_config=layout.root_config,
+            key=layout.config_key,
+        ).list
     )
     if workspaces:
         echo_table(
@@ -146,6 +153,8 @@ def remove_workspace(
     configured = ConfiguredWorkspaces(
         _authored_config(layout),
         lock_path=_workspace_edit_lock(layout),
+        root_config=layout.root_config,
+        key=layout.config_key,
     )
     path = user_call(configured.remove, name)
     _refresh_project(layout)

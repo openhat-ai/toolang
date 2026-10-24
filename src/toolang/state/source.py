@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Collection, Mapping, Sequence
 from collections import OrderedDict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from hashlib import sha256
 import os
 from pathlib import Path
@@ -20,6 +20,7 @@ from ..common.progress import ProgressSink, emit_progress
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _AGENT_PROGRAMS: OrderedDict[tuple[Path, str], Program] = OrderedDict()
 _AGENT_PROGRAMS_LOCK = RLock()
+ROOT_WORKSPACE_SOURCE = "root/config.toml"
 
 
 def cached_agent_program(path: Path, digest: str) -> Program | None:
@@ -124,6 +125,7 @@ class SourceObservationEntry:
     link_mtime_ns: int | None = None
     link_size: int | None = None
     link_target: str | None = None
+    workspace_key: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -196,10 +198,20 @@ def scan_root_source(place: Path) -> SourceManifest:
     return root_source_manifest(observe_root_source(place))
 
 
-def scan_home_source(place: Path, agent_name: str) -> SourceManifest:
+def scan_home_source(
+    place: Path,
+    agent_name: str,
+    *,
+    root_config: Path | None = None,
+    workspace_key: str | None = None,
+) -> SourceManifest:
     """Capture one agent program, config, and authored cap paths."""
 
-    return home_source_manifest(observe_home_source(place, agent_name))
+    return home_source_manifest(
+        observe_home_source(
+            place, agent_name, root_config=root_config, workspace_key=workspace_key
+        )
+    )
 
 
 def observe_source(
@@ -295,9 +307,23 @@ def build_source_manifest(
                 raise
             issues.append(source_issue(item.path, exc))
             continue
-        raw_digest = sha256(content).hexdigest()
-        if _observe_file(item.source, relative_path=item.path) != item:
+        if (
+            replace(
+                _observe_file(item.source, relative_path=item.path),
+                workspace_key=item.workspace_key,
+            )
+            != item
+        ):
             raise SourceChangedError(f"source changed while reading: {item.source}")
+        if item.path == ROOT_WORKSPACE_SOURCE:
+            from .config import root_workspace_content
+
+            content = root_workspace_content(
+                content, item.workspace_key, item.source.parent
+            )
+            if not content:
+                continue
+        raw_digest = sha256(content).hexdigest()
         entries.append(
             SourceManifestEntry(
                 path=item.path,
@@ -317,11 +343,30 @@ def observe_root_source(place: Path) -> SourceObservation:
     return observe_source(place, ("config.toml", *CAP_DIRECTORY_NAMES), isolate=True)
 
 
-def observe_home_source(place: Path, agent_name: str) -> SourceObservation:
+def observe_home_source(
+    place: Path,
+    agent_name: str,
+    *,
+    root_config: Path | None = None,
+    workspace_key: str | None = None,
+) -> SourceObservation:
     """Observe home sources without creating optional resource directories."""
     home = place / "agents" / agent_name
     _require_source_shape(home / "config.toml", shape="file")
-    return observe_source(home, _home_source_paths(home), isolate=True)
+    observation = observe_source(home, _home_source_paths(home), isolate=True)
+    if root_config is None:
+        return observation
+    _require_source_shape(root_config, shape="file")
+    if not root_config.exists():
+        return observation
+    entry = replace(
+        _observe_file(root_config, relative_path=ROOT_WORKSPACE_SOURCE),
+        workspace_key=workspace_key,
+    )
+    return SourceObservation(
+        tuple(sorted((*observation.files, entry), key=lambda item: item.path)),
+        observation.issues,
+    )
 
 
 def root_source_manifest(
@@ -581,7 +626,12 @@ def source_manifest_from_snapshot(
 
 
 def _read_scope_sources(
-    place: Path, agent_name: str, *, include_home: bool
+    place: Path,
+    agent_name: str,
+    *,
+    include_home: bool,
+    root_config: Path | None = None,
+    workspace_key: str | None = None,
 ) -> SourceSnapshot:
     files: list[SourceFile] = []
     issues: list[SourceIssue] = []
@@ -591,7 +641,12 @@ def _read_scope_sources(
             (
                 place / "agents" / agent_name,
                 "agent",
-                observe_home_source(place, agent_name),
+                observe_home_source(
+                    place,
+                    agent_name,
+                    root_config=root_config,
+                    workspace_key=workspace_key,
+                ),
             )
         )
     for base, layer, observation in observations:
@@ -604,6 +659,34 @@ def _read_scope_sources(
                 )
             )
         for entry in observation.files:
+            if layer == "agent" and entry.path == ROOT_WORKSPACE_SOURCE:
+                from .config import root_workspace_content
+
+                item = _collect_file(
+                    place,
+                    entry.source,
+                    category="workspace-policy",
+                    layer=layer,
+                    relative_path=(
+                        Path("agents") / agent_name / ROOT_WORKSPACE_SOURCE
+                    ).as_posix(),
+                )[0]
+                content = root_workspace_content(
+                    item.content, workspace_key, entry.source.parent
+                )
+                if not content:
+                    continue
+                files.append(
+                    replace(
+                        item,
+                        content=content,
+                        digest=sha256(content).hexdigest(),
+                        size=len(content),
+                        raw_content=content,
+                        raw_digest=sha256(content).hexdigest(),
+                    )
+                )
+                continue
             head = Path(entry.path).parts[0]
             category = (
                 "config"
@@ -634,9 +717,21 @@ def _read_scope_sources(
     )
 
 
-def read_authored_source(place: Path, agent_name: str) -> SourceSnapshot:
+def read_authored_source(
+    place: Path,
+    agent_name: str,
+    *,
+    root_config: Path | None = None,
+    workspace_key: str | None = None,
+) -> SourceSnapshot:
     """Capture current files, isolating resource-local read failures."""
-    return _read_scope_sources(place, agent_name, include_home=True)
+    return _read_scope_sources(
+        place,
+        agent_name,
+        include_home=True,
+        root_config=root_config,
+        workspace_key=workspace_key,
+    )
 
 
 def read_root_source(place: Path) -> SourceSnapshot:
@@ -694,13 +789,14 @@ def _collect_file(
     *,
     category: str,
     layer: str,
+    relative_path: str | None = None,
 ) -> list[SourceFile]:
     if not path.exists() and not path.is_symlink():
         return []
     _require_source_shape(path, shape="file")
     before = _observe_file(
         path,
-        relative_path=path.relative_to(place).as_posix(),
+        relative_path=relative_path or path.relative_to(place).as_posix(),
     )
     content = path.read_bytes()
     raw_content = content
@@ -717,7 +813,7 @@ def _collect_file(
     return [
         SourceFile(
             path=path,
-            relative_path=path.relative_to(place).as_posix(),
+            relative_path=before.path,
             category=category,
             layer=layer,
             content=content,

@@ -50,6 +50,9 @@ from toolang.plugin.config import (
 from toolang.plugin.loading import create_sandbox
 from toolang.state.config import CAP_ALLOW_FIELDS
 from toolang.up.mounts import (
+    mapped_path,
+    prepare_catalog_mount,
+    prepare_guest_config,
     prepare_source_mounts,
     prepare_workspace_mounts,
 )
@@ -339,43 +342,72 @@ async def _launch_locked(
         await _release_stopped_locked(spec.serve.layout)
         launch_id = uuid4().hex
         spec = replace(spec, serve=replace(spec.serve, launch_id=launch_id))
-        owns_launch = True
-        _begin_launch(spec)
         if not spec.serve.layout.home.is_dir():
             raise FileNotFoundError(f"agent not found: {spec.serve.layout.name}")
 
         name, raw_spec = _split_sandbox(spec.sandbox)
         implementation = create_sandbox(name, config=spec.config)
-        hosted_place = implementation.runtime_place(spec.serve.layout.place)
-        local_root = (
-            spec.serve.toolang_root or spec.serve.layout.root or spec.serve.layout.place
-        )
-        hosted_root = implementation.runtime_place(local_root)
         if implementation.location not in {"host", "guest"}:
             raise ValueError(
                 f"sandbox {name} returned invalid location: {implementation.location}"
             )
         on_host = implementation.location == "host"
-        hosted_home = hosted_place / "agents" / spec.serve.layout.name
+        layout = spec.serve.layout
+        local_root = (spec.serve.toolang_root or layout.root or layout.place).resolve()
+        hosted_root = implementation.runtime_place(local_root)
+        hosted_place = layout.place if on_host else hosted_root
+        hosted_home = hosted_place / "agents" / layout.name
+        owns_launch = True
+        _begin_launch(spec, location=implementation.location)
+        source_mounts: tuple[SandboxMount, ...] = ()
         workspace_mounts: tuple[SandboxMount, ...] = ()
         workspace_mapping: dict[str, tuple[str, str]] = {}
         state = await asyncio.to_thread(prepare_launch_state, spec, progress=progress)
         if not on_host:
+            source_mounts = prepare_source_mounts(
+                layout.place, layout.name, hosted_place
+            )
+            source_mounts = tuple(
+                mount
+                for mount in source_mounts
+                if mount.hosted_path != hosted_root / "config.toml"
+            )
+            hub = local_root / "hub"
+            hub.mkdir(parents=True, exist_ok=True)
+            source_mounts = (
+                *source_mounts,
+                SandboxMount(hub, hosted_root / "hub", read_only=True),
+            )
             workspace_mounts, workspace_mapping = prepare_workspace_mounts(
-                spec.serve.layout.home, hosted_home, workspaces=state.workspaces
+                layout.home,
+                hosted_place / "workspaces" / layout.name,
+                workspaces=state.workspaces,
             )
         catalog_mounts: tuple[SandboxMount, ...] = ()
         catalog_env: dict[str, str] = {}
+        covered_mounts = (
+            *source_mounts,
+            SandboxMount(layout.home, hosted_home),
+            *workspace_mounts,
+        )
         if not on_host:
-            catalog_path = resolve_model_catalog_path(
-                spec.serve.layout, environ=spec.environ
-            )
-            guest_catalog = hosted_home / ".runtime" / "model-catalog.json"
-            catalog_mounts = (
-                SandboxMount(
-                    local_path=catalog_path, hosted_path=guest_catalog, read_only=True
-                ),
-            )
+            catalog_path = resolve_model_catalog_path(layout, environ=spec.environ)
+            if catalog_path.resolve() == (local_root / "catalog.json").resolve():
+                guest_catalog = hosted_root / "catalog.json"
+                source_mounts = tuple(
+                    mount
+                    for mount in source_mounts
+                    if mount.hosted_path != guest_catalog
+                )
+                catalog_mounts = (
+                    SandboxMount(catalog_path, guest_catalog, read_only=True),
+                )
+            else:
+                catalog_mounts, guest_catalog = prepare_catalog_mount(
+                    catalog_path,
+                    hosted_place,
+                    mounts=covered_mounts,
+                )
             catalog_env[MODEL_CATALOG_ENV] = str(guest_catalog)
         edit_lock_mounts: tuple[SandboxMount, ...] = ()
         guest_edit_lock = None
@@ -385,23 +417,7 @@ async def _launch_locked(
             local_guard.touch(exist_ok=True)
             guest_edit_lock = hosted_place / ".state" / "root" / "edit.lock"
             edit_lock_mounts = (SandboxMount(local_guard, guest_edit_lock),)
-        registry_mounts: tuple[SandboxMount, ...] = ()
         environment_paths = agent_environment_paths(hosted_root, spec.serve.layout)
-        guest_registry = None
-        if not on_host:
-            from .registry import registration_directory
-
-            registry = registration_directory(
-                spec.serve.layout,
-                toolang_root=(
-                    spec.serve.toolang_root
-                    or spec.serve.layout.root
-                    or spec.serve.layout.place
-                ),
-            )
-            registry.mkdir(parents=True, exist_ok=True)
-            guest_registry = hosted_home / ".runtime" / "registration"
-            registry_mounts = (SandboxMount(registry, guest_registry),)
         request = SandboxRequest(
             local_place=spec.serve.layout.place,
             local_home=spec.serve.layout.home,
@@ -416,6 +432,26 @@ async def _launch_locked(
             )
             .expanduser()
             .resolve(),
+            hosted_root=hosted_root,
+            local_runtime=local_root / ".runtime" / "active" / layout.address,
+            hosted_runtime=hosted_root / ".runtime" / "active" / layout.name,
+            guest_config=prepare_guest_config(
+                layout.place,
+                local_root / "config.toml",
+                layout.config_key,
+                workspaces=state.workspaces,
+                mapping=workspace_mapping,
+                temporary_names=tuple(spec.serve.workspace_additions),
+            )
+            if not on_host
+            else None,
+            hosted_source=mapped_path(
+                layout.source_path,
+                tuple(mount for mount in covered_mounts if mount.local_path.is_dir()),
+            )
+            if layout.source_path is not None and not on_host
+            else layout.source_path,
+            source_ref=layout.source_ref,
             bind_host=spec.serve.host,
             endpoint_host=spec.serve.endpoint_host,
             port=spec.serve.port,
@@ -430,7 +466,6 @@ async def _launch_locked(
                     location=implementation.location,
                     host=spec.serve.host if on_host else "0.0.0.0",
                     source_edit_lock=guest_edit_lock,
-                    registry_directory=guest_registry,
                 ),
             ),
             working_directory=spec.serve.layout.home if on_host else hosted_home,
@@ -461,14 +496,9 @@ async def _launch_locked(
                 ()
                 if on_host
                 else (
-                    *registry_mounts,
                     *workspace_mounts,
                     *catalog_mounts,
-                    *prepare_source_mounts(
-                        spec.serve.layout.place,
-                        spec.serve.layout.name,
-                        hosted_place,
-                    ),
+                    *source_mounts,
                     *edit_lock_mounts,
                 )
             ),
@@ -486,6 +516,10 @@ async def _launch_locked(
             SandboxState(plan.sandbox, prepared_reference(plan), launch_id).save(
                 spec.serve.layout.runtime_status, instance=spec.serve.layout.instance
             )
+        if not on_host:
+            RuntimeRegistration(
+                layout, toolang_root=local_root, launch_id=launch_id
+            ).publish()
     except BaseException as exc:
         if owns_launch and spec.serve.launch_id is not None:
             fail_workload(
@@ -1284,7 +1318,8 @@ async def _recover_unreferenced(layout: AgentLayout) -> SandboxState | None:
         dead = (
             str(control.get("sandbox", "")).partition(":")[0] == "docker"
             and report.get("pid") is None
-            and not (layout.sandbox_stage / entry["launch_id"]).exists()
+            and not layout.sandbox_stage.exists()
+            and not (layout.sandbox_home / "launches" / entry["launch_id"]).exists()
         )
     if not dead:
         raise ValueError("active runtime report has no verifiable sandbox reference")
@@ -1308,9 +1343,6 @@ def _reject_legacy_state(layout: AgentLayout) -> None:
 
 
 def _reject_unreferenced_staging(layout: AgentLayout) -> None:
-    path = layout.sandbox_stage
-    if not path.is_dir() or not any(path.iterdir()):
-        return
     document = read_document(layout.runtime_status) or {}
     owned = {
         Path(stage).resolve()
@@ -1322,12 +1354,15 @@ def _reject_unreferenced_staging(layout: AgentLayout) -> None:
             str,
         )
     }
-    if all(item.resolve() in owned for item in path.iterdir()):
-        return
-    raise ValueError(
-        "unreferenced sandbox staging requires manual cleanup before continuing: "
-        f"{path}; remove any associated workload before deleting these files"
-    )
+    old = layout.sandbox_home / "launches"
+    candidates = (layout.sandbox_stage, *(old.iterdir() if old.is_dir() else ()))
+    for path in candidates:
+        if not path.exists() or path.resolve() in owned:
+            continue
+        raise ValueError(
+            "unreferenced sandbox staging requires manual cleanup before continuing: "
+            f"{path}; remove any associated workload before deleting these files"
+        )
 
 
 def _task_lock(path: Path, *, instance: str | None = None) -> asyncio.Lock:
@@ -1348,7 +1383,7 @@ def _remembered_sandbox(layout: AgentLayout) -> str | None:
     return value if isinstance(value, str) and value else None
 
 
-def _begin_launch(spec: LaunchSpec) -> None:
+def _begin_launch(spec: LaunchSpec, *, location: str = "host") -> None:
     layout = spec.serve.layout
     assert spec.serve.launch_id is not None
 
@@ -1361,7 +1396,12 @@ def _begin_launch(spec: LaunchSpec) -> None:
         sandbox=spec.sandbox,
         endpoint=spec.serve.endpoint,
         drivers=spec.serve.drivers,
-        workload={"status": "preparing", "pid": None, "updated_at": _now()},
+        workload={
+            "status": "preparing",
+            "pid": None,
+            "updated_at": _now(),
+            "location": location,
+        },
         startup_contract=startup_contract(spec),
     )
     RuntimeRegistration(

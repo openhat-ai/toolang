@@ -580,7 +580,7 @@ def test_next_control_operation_recovers_only_abandoned_temporary_runtimes(
     assert (read_instance(base.runtime_status, old.instance) is not None) is live_owner
 
 
-def test_owned_bootstrap_is_not_mistaken_for_unreferenced_staging(tmp_path):
+def test_owned_legacy_bootstrap_is_not_mistaken_for_unreferenced_staging(tmp_path):
     import asyncio
     from toolang.up import sandbox
 
@@ -588,7 +588,7 @@ def test_owned_bootstrap_is_not_mistaken_for_unreferenced_staging(tmp_path):
     old = replace(base, instance="running")
     registration = ForegroundWorkload(old, toolang_root=tmp_path, drivers=frozenset())
     registration.__enter__()
-    stage = base.sandbox_stage / "owned"
+    stage = base.sandbox_home / "launches" / "owned"
     stage.mkdir(parents=True)
     state = SandboxState(
         "docker:image",

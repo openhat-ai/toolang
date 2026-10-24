@@ -416,7 +416,8 @@ def test_short_lived_scripts_keep_local_status_and_share_registry_lock(tmp_path)
         with ForegroundWorkload(
             layout, toolang_root=scope, drivers=frozenset()
         ) as registration:
-            assert registration.path.name == f"{layout.address}.json"
+            assert registration.path.name == "info.json"
+            assert registration.path.parent.name == layout.address
         entry = read_instance(layout.runtime_status)
         assert entry is not None and entry["workload"]["status"] == "stopped"
     assert tuple(directory.iterdir()) == ()
@@ -961,7 +962,7 @@ def test_rejected_publication_preserves_an_existing_reference_even_with_equal_uu
     )
     reference = json.loads(registration.path.read_text())
     if fault == "foreign_status":
-        reference["status"] = str(tmp_path / "peer" / "status.json")
+        reference["home"] = str(tmp_path / "peer")
     else:
         reference["version"] = 3
     registration.path.write_text(json.dumps(reference))
@@ -984,7 +985,7 @@ def test_failed_publication_cleanup_checks_status_and_uuid_after_attempting_a_wr
     registration = RuntimeRegistration(
         layout, toolang_root=tmp_path, launch_id=entry["launch_id"]
     )
-    peer = dict(registration.payload, status=str(tmp_path / "peer" / "status.json"))
+    peer = dict(registration.payload, home=str(tmp_path / "peer"))
 
     def replaced_then_failed(path, _content):
         path.write_text(json.dumps(peer))

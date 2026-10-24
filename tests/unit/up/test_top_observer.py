@@ -1126,7 +1126,7 @@ def test_agent_scope_isolates_discovery_but_preserves_its_own_failures(
             (tmp_path / ".runtime" / "active" / "broken.json").write_text("invalid")
         elif fault == "own_reference":
             reference = json.loads(own_registration.path.read_text())
-            reference["status"] = str(bob.runtime_status)
+            reference["home"] = str(bob.home)
             own_registration.path.write_text(json.dumps(reference))
         elif fault == "same_name_roaming":
             roaming = allocate_roaming(tmp_path / "alice.too", toolang_root=tmp_path)

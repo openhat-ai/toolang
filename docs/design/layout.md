@@ -35,15 +35,17 @@ ${TOOLANG_ROOT}/
   .state/
   .runtime/
     active/
-      gus.json                      # Resident
-      lex@<place_code>.json         # Visiting
-      aid@<place_code>.json         # Roaming
-      register.lock
+      gus/info.json                 # Resident, host path view
+      lex@<place_code>/info.json     # Visiting
+      aid@<place_code>/info.json     # Roaming
+      <address>/docker/             # Docker inputs and guest info.json
+      <address>/register.lock       # Present while owned
   hub/
   human/
     talk-input/<conversation-id>.jsonl
-  .sandbox/
-    <agent>/launches/<launch-id>/  # Docker bootstrap materials only
+  workspaces/
+    <agent>/
+      lab/                           # Retained independently of agent home
   agents/
     <agent>/
       agent.too
@@ -159,12 +161,12 @@ Discovery references live under `${TOOLANG_ROOT}/.runtime/active/`:
 
 | Placement | Reference name |
 | --- | --- |
-| Resident | `gus.json` |
-| Visiting | `lex@<place_code>.json` |
-| Roaming | `aid@<place_code>.json` |
+| Resident | `gus/info.json` |
+| Visiting | `lex@<place_code>/info.json` |
+| Roaming | `aid@<place_code>/info.json` |
 
 - Short codes and root isolation follow [agent addresses](agent-addresses.md).
-  Nonresident place basenames contain only the place code; registry filename stems
+  Nonresident place basenames contain only the place code; registry directory names
   add the agent name.
 - Under the source cache's `.state/launch.lock`, allocate a timestamp after every
   retained launch of the same source within that Toolang root. Completion and
@@ -175,20 +177,17 @@ Discovery references live under `${TOOLANG_ROOT}/.runtime/active/`:
 - Registrations provide active discovery only. Removing one neither removes
   history nor proves process death. Known-path lookup works without registration.
 
-Each reference contains only its version, absolute authoritative status path,
-and launch ID. Read and write only format 5; rejected or unsupported documents
-remain untouched. `RuntimeRegistration` publishes into one Toolang root and uses
-one shared `active/register.lock` for publication and conditional removal.
-It does not initialize or stop workloads; removing a reference changes no
-authoritative lifecycle state. Removal is fenced by both status path and UUID;
-failed publication cleans up only after attempting its own write.
-The guard is released before starting or waiting for a workload. Pure reads
-neither acquire nor create it. Cleanup of an existing reference creates a missing
-guard, including when only an old guard remains after an upgrade; cleanup of an
-absent reference creates no files. Old guards are retained. For example:
+Each format-6 reference records its absolute home, launch, execution location,
+and sandbox; source paths/refs are optional. Status is derived as
+`HOME/.runtime/status.json`. Legacy format-5 status/launch references remain
+readable. `RuntimeRegistration` publishes into one Toolang root under the private
+`active/<address>/register.lock`, with home and launch ownership checks. Pure
+reads create no guards. Publication does not initialize or stop workloads.
+Docker's read-only guest view comes from `<address>/docker/`; host control
+retires the address after resource release. For example:
 
 ```json
-{"version": 5, "status": "/project/.toolang/<root_code>/<place_code>/agents/aid/.runtime/status.json", "launch_id": "<fresh-launch-id>"}
+{"version": 6, "home": "/project/.toolang/<root_code>/<place_code>/agents/aid", "launch": "<fresh-launch-id>", "location": "guest", "sandbox": "docker:python:3.13-slim"}
 ```
 
 `up.identity` owns immutable `InstanceIdentity` bindings and strict parsing,
@@ -232,8 +231,10 @@ are released. Runtime paths never add an execution-instance subdirectory. Earlie
 places and histories remain untouched and outside the new runtime scope.
 [Hosting](hosting.md#runtime-recovery-and-logs) owns resource recovery.
 
-Docker mounts the target agent home read-write, necessary inputs/workspaces,
-and bootstrap materials read-only. Discovery references and entire roots are
+Each Docker guest has ROOT = PLACE at the configured root, defaulting to
+`/root/.toolang`, with HOME at `ROOT/agents/NAME` for every placement. Source
+directory grants are optional. Docker mounts the target agent home read-write,
+necessary inputs/workspaces, and bootstrap materials read-only. Discovery references and entire roots are
 not mounted. Shared control/workload field ownership is a cooperative contract;
 it does not isolate control fields from arbitrary guest file writes.
 
@@ -288,7 +289,7 @@ Other locks remain beside their protected objects:
 | `<database-name>.init.lock` | SQLite initialization |
 | `<thread-id>.compact.lock` | Thread compaction across model calls |
 | `status.json.lock` | Transient shared host/guest writer claim for the authoritative status file |
-| `.runtime/active/register.lock` | Discovery publication/removal within one Toolang root |
+| `.runtime/active/<address>/register.lock` | Discovery publication/removal for one address |
 | `hub/hub.lock` | One hub process per root for its lifetime |
 
 Visiting preparation briefly holds `/tmp/toolang/.<root_code>.lock` to publish

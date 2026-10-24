@@ -228,7 +228,7 @@ def test_guest_workspace_roots_require_matching_captured_mounts(
     layout = AgentLayout.resident(tmp_path / "host", "alice")
     guest = Path("/srv/toolang/agents/alice/.workspaces/repo")
     repo = tmp_path / "repo"
-    lab_source = layout.home / ".lab"
+    lab_source = layout.lab
     guest_lab = Path("/srv/toolang/agents/alice/.workspaces/lab")
     monkeypatch.setenv(
         "TOOLANG_WORKSPACE_MOUNTS",
@@ -279,7 +279,7 @@ def test_guest_workspace_roots_include_configured_tmp_mount(
         "TOOLANG_WORKSPACE_MOUNTS",
         json.dumps(
             {
-                "lab": [str(layout.home / ".lab"), str(lab_guest)],
+                "lab": [str(layout.lab), str(lab_guest)],
                 "tmp": [str(configured), str(tmp_guest)],
             }
         ),
@@ -293,6 +293,40 @@ def test_guest_workspace_roots_include_configured_tmp_mount(
     assert setup.workspace_roots({"tmp": str(configured)}) == {
         "lab": lab_guest,
         "tmp": tmp_guest,
+    }
+
+
+@pytest.mark.parametrize("placement", ["resident", "visiting", "roaming"])
+def test_guest_layout_keeps_host_source_identifiers_for_workspace_config(
+    tmp_path, placement
+):
+    from dataclasses import replace
+
+    host = AgentLayout(tmp_path / "host/place", "alice", placement)
+    guest = replace(host, place=tmp_path / "guest/place")
+    repo = tmp_path / "host/repo"
+    guest_repo = guest.workspaces / "repo"
+    environment = replace(
+        AgentEnvironment.capture(guest, sandbox="host"),
+        sandbox="docker",
+        workspace_location="guest",
+        workspace_mounts={
+            "lab": (host.lab, guest.lab),
+            "repo": (repo, guest_repo),
+        },
+    )
+    setup = AgentSetup(layout=guest, envs={}, environment=environment)
+    authored = {"repo": str(repo)}
+    assert setup.workspace_grants(authored) == {
+        "lab": str(host.lab),
+        "repo": str(repo),
+    }
+    assert setup.workspace_roots(authored) == {
+        "lab": guest.lab,
+        "repo": guest_repo,
+    }
+    assert setup.workspace_roots({"repo": str(tmp_path / "replacement")}) == {
+        "lab": guest.lab,
     }
 
 

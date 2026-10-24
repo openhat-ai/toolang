@@ -14,7 +14,7 @@ from toolang.setup.types import AgentEnvironment
 from toolang.up import AgentCore
 
 
-@pytest.mark.parametrize("guest", [False, True])
+@pytest.mark.parametrize("guest", [False, True, "mapped-config"])
 def test_workspace_inspection_uses_published_state_and_runtime_paths(
     tmp_path, monkeypatch, guest
 ):
@@ -24,6 +24,8 @@ def test_workspace_inspection_uses_published_state_and_runtime_paths(
     (runtime_repo / "src").mkdir(parents=True)
     source = "/host-only/repo" if guest else str(runtime_repo)
     layout.config.write_text(f'[workspaces]\nrepo = "{source}"\n')
+    if guest == "mapped-config":
+        layout.place_config.write_text(f'[workspaces.alice]\nrepo = "{runtime_repo}"\n')
     core = AgentCore(layout)
     state = asyncio.run(core.state.refresh())
     environment = AgentEnvironment.capture(layout, sandbox="host")
@@ -35,7 +37,7 @@ def test_workspace_inspection_uses_published_state_and_runtime_paths(
             sandbox="docker",
             workspace_location="guest",
             workspace_mounts={
-                "lab": (layout.home / ".lab", guest_lab),
+                "lab": (layout.lab, guest_lab),
                 "repo": (type(runtime_repo)(source), runtime_repo),
             },
         )
@@ -90,7 +92,7 @@ def test_guest_workspace_added_after_launch_is_not_reported_available(
         AgentEnvironment.capture(layout, sandbox="host"),
         sandbox="docker",
         workspace_location="guest",
-        workspace_mounts={"lab": (layout.home / ".lab", layout.home / ".lab")},
+        workspace_mounts={"lab": (layout.lab, layout.lab)},
     )
     monkeypatch.setattr(
         core.setup,
@@ -136,7 +138,7 @@ def test_workspace_inspection_accepts_symlinked_runtime_root(
             sandbox="docker",
             workspace_location="guest",
             workspace_mounts={
-                "lab": (layout.home / ".lab", layout.home / ".lab"),
+                "lab": (layout.lab, layout.lab),
                 "repo": (link, link),
             },
         )
@@ -205,7 +207,7 @@ def test_listing_reports_unavailable_lab_without_requiring_execution(
             workspace_mounts={},
         )
     else:
-        (layout.home / ".lab").rmdir()
+        (layout.lab).rmdir()
     monkeypatch.setattr(
         core.setup,
         "current",
@@ -219,7 +221,7 @@ def test_listing_reports_unavailable_lab_without_requiring_execution(
             assert response.status_code == 200, response.text
             assert response.json()["workdir"] is None
             assert response.json()["items"] == [
-                {"name": "lab", "path": str(layout.home / ".lab"), "available": False}
+                {"name": "lab", "path": str(layout.lab), "available": False}
             ]
     finally:
         asyncio.run(core.close())

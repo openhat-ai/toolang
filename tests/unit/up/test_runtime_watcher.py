@@ -691,6 +691,13 @@ def test_guest_owner_finalizes_through_an_explicit_mounted_registry(tmp_path):
         host_status = home.runtime_status
         # A directory mount preserves host unlink semantics even though the guest
         # sees a different path. The reference itself keeps the canonical host path.
+        legacy = active.path.with_name(f"{home.address}.json")
+        legacy.write_text(
+            json.dumps(
+                {"version": 5, "status": str(host_status), "launch_id": active.token}
+            )
+        )
+        active.path.unlink()
         mounted = tmp_path / "mounted-active"
         mounted.symlink_to(active.path.parent, target_is_directory=True)
         assert registry.finalize_runtime(
@@ -701,8 +708,22 @@ def test_guest_owner_finalizes_through_an_explicit_mounted_registry(tmp_path):
             directory=mounted,
             status_path=host_status,
         )
-        assert not active.path.exists()
+        assert not legacy.exists()
         assert required_entry(home)["workload"]["status"] == "stopped"
+
+
+def test_guest_owner_reports_exit_without_writing_host_info(tmp_path):
+    home = AgentLayout.resident(tmp_path, "alice")
+    with ForegroundWorkload(home, toolang_root=tmp_path, drivers=frozenset()) as active:
+        before = active.path.read_bytes()
+        assert registry.finalize_runtime(
+            home, active.token, expected_pid=os.getpid(), location="guest"
+        )
+        assert active.path.read_bytes() == before
+        report = read_instance(home.runtime_status)
+        assert report is not None and report["workload"]["status"] == "stopped"
+        registry.remove_registration(home, active.token)
+        assert not active.path.parent.exists()
 
 
 def test_guest_lock_recovery_does_not_need_a_registration_or_status(
