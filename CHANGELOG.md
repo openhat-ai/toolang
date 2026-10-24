@@ -618,6 +618,16 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   dotenv edits cannot change credentials or block the launch.
   ([#946](https://github.com/openhat-ai/toolang/pull/946))
 
+- Docker containers take stable
+  `toolang-<root_code>-<agent>[-<place_code>]` names, so `docker ps` entries
+  match agent commands and Top; existing containers keep their names until
+  stop and restart.
+  ([#945](https://github.com/openhat-ai/toolang/pull/945))
+
+- **Breaking:** Direct Docker sandbox callers supply `agent_address` and the
+  canonical `toolang_root` on `SandboxRequest`.
+  ([#945](https://github.com/openhat-ai/toolang/pull/945))
+
 ### Security
 
 - The locked certifi trust store advances to 2026.10.19, resolving trust-store
@@ -633,6 +643,11 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   selection logs, reprs, and low-level exception context, while exact matching
   and on-disk encoded filenames stay unchanged.
   ([#940](https://github.com/openhat-ai/toolang/pull/940))
+
+- The locked FastMCP dependency advances to 3.4.10, resolving
+  GHSA-7xgj-8392-5q4r, where direct calls could skip post-transform component
+  authorization.
+  ([#949](https://github.com/openhat-ai/toolang/pull/949))
 
 ## [0.4.0a11] - 2026-10-20
 
