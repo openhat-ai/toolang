@@ -32,6 +32,7 @@ from .prepare import load_agent_state, prepare_agent_state
 from .source import (
     SourceManifest,
     SourceObservation,
+    ROOT_WORKSPACE_SOURCE,
     home_source_manifest,
     observe_home_source,
     observe_root_source,
@@ -279,6 +280,8 @@ class StateWatcher:
             home_observation = observe_home_source(
                 self.layout.place,
                 self.layout.name,
+                root_config=self.layout.root_config,
+                workspace_key=self.layout.config_key,
             )
         except Exception as exc:
             return self._reject_check(exc)
@@ -407,6 +410,12 @@ class StateWatcher:
             timeout_ms = max(int(interval_ms), 50)
             async for changes in awatch(
                 self.layout.place,
+                *(
+                    ()
+                    if self.layout.root_config.is_relative_to(self.layout.place)
+                    or not self.layout.root_config.parent.is_dir()
+                    else (self.layout.root_config.parent,)
+                ),
                 debounce=max(int(debounce_ms), 50),
                 step=timeout_ms,
                 rust_timeout=timeout_ms,
@@ -424,6 +433,7 @@ class StateWatcher:
                             Path(path),
                         )
                         is not None
+                        or Path(path) == self.layout.root_config
                         or _is_state_current_path(self.layout, Path(path))
                     )
                 }
@@ -432,6 +442,8 @@ class StateWatcher:
                 invalidated_root: set[str] = set()
                 invalidated_home: set[str] = set()
                 for path in paths:
+                    if path == self.layout.root_config:
+                        invalidated_home.add(ROOT_WORKSPACE_SOURCE)
                     source = source_path_scope(
                         self.layout.place,
                         self.layout.name,

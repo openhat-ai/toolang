@@ -136,14 +136,15 @@ def test_temporary_bindings_survive_independent_runs_and_reload(layout, tmp_path
     assert not layout.config.exists()
 
 
-def test_alias_mounts_share_one_mount(layout, tmp_path):
+def test_alias_mounts_keep_their_workspace_names(layout, tmp_path):
     root = tmp_path / "repo"
     root.mkdir()
     mounts, mapping = prepare_workspace_mounts(
         layout.home, Path("/guest"), workspaces={"one": str(root), "two": str(root)}
     )
-    assert len([mount for mount in mounts if mount.local_path == root]) == 1
-    assert mapping["one"] == mapping["two"]
+    assert len([mount for mount in mounts if mount.local_path == root]) == 2
+    assert mapping["one"] == (str(root), "/guest/one")
+    assert mapping["two"] == (str(root), "/guest/two")
 
 
 def test_existing_server_grant_can_be_selected_without_adding(layout, tmp_path):
@@ -246,7 +247,7 @@ def test_explicit_grants_can_repeat_running_bindings_when_selecting_uri(
 
 def test_configured_lab_does_not_replace_the_implicit_workspace(layout, tmp_path):
     layout.config.write_text('[workspaces]\nlab = "/unavailable-authored-lab"\n')
-    (layout.home / ".lab" / "src").mkdir(parents=True)
+    (layout.lab / "src").mkdir(parents=True)
     selected = resolve_workspaces(layout, procdir=tmp_path, workdir="lab://src")
     assert selected.workdir == "lab://src"
 

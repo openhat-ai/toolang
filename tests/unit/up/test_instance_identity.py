@@ -177,7 +177,7 @@ def test_roaming_full_id_collision_fails_once_and_preserves_owner(
         first_source.parent if scope == "local" else tmp_path / "two"
     ) / "a id.too"
     first = allocate_roaming(first_source, toolang_root=root)
-    reference = root / ".runtime" / "active" / first.address / instance_filename(first)
+    reference = root / ".runtime" / "active" / first.address / "info.json"
     before = (first.runtime_status.read_bytes(), reference.read_bytes())
     with pytest.raises((ValueError, FileExistsError), match="collision"):
         allocate_roaming(second_source, toolang_root=root)

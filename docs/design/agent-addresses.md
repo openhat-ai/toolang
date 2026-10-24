@@ -79,9 +79,9 @@ on every access; hash collisions cannot overwrite or select another owner.
 ROOT/                                     # Resident place
   agents/alice/                           # Resident home
   .runtime/active/
-    alice/alice.json
-    lex@<place_code>/lex@<place_code>.json  # t...
-    aid@<place_code>/aid@<place_code>.json  # s...
+    alice/info.json
+    lex@<place_code>/info.json  # t...
+    aid@<place_code>/info.json  # s...
     <address>/register.lock                # Exists only while owned
 
 /tmp/toolang/<root_code>/
@@ -167,18 +167,18 @@ follows the committed edit; Chat failure reports and preserves that edit.
 
 ## Discovery and copyable output
 
-Active records live at `ROOT/.runtime/active/<address>/<address>.json`, fenced
-by `launch_id`. They may describe startup/shutdown and do not prove liveness.
+Active records live at `ROOT/.runtime/active/<address>/info.json`, fenced
+by the `launch` field. They may describe startup/shutdown and do not prove liveness.
 Remove them on exit; preserve places/history. Known-path lookup is independent of
 registration. A later runtime at that home reuses the address with a new generation.
 
 `top` shows full resident names or `name@CODE` addresses. The address equals the
-active filename stem; a nonresident place basename supplies only the place code.
+active directory name; a nonresident place basename supplies only the place code.
 `info` shows `Root` (the agent root), `Home`, and `Agent`, plus runtime details
 when available. The output ends with the table.
 Addresses copied from `top` require the same Toolang root in another command.
 
 Expanded `top`/`chore` scope, home-based `cd`, JSON binding metadata, and Toolang-root
 scoping of hub backend namespaces remain follow-ups; namespace formats are not
-defined here. Old instance flags, IDs, paths, and registry formats have no
-compatibility readers or migration behavior.
+defined here. Old instance flags, IDs, and placement paths remain unsupported.
+Format-5 registry references remain readable for normal resource recovery.

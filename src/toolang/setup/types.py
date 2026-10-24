@@ -19,7 +19,6 @@ from toolang.base.types.model import Model, ModelOverride, Provider
 from toolang.base.types.policy import RunDefaults, RunLimits
 from toolang.common.layout import (
     AgentLayout,
-    IMPLICIT_WORKSPACE_DIRECTORY,
     IMPLICIT_WORKSPACE_NAME,
 )
 from toolang.common.progress import ProgressSink
@@ -278,7 +277,7 @@ class AgentSetup:
 
     def workspace_grants(self, grants: Mapping[str, str]) -> dict[str, str]:
         """Add the implicit lab grant before configured workspaces; first name wins."""
-        scratch_source = str(self.layout.home / IMPLICIT_WORKSPACE_DIRECTORY)
+        scratch_source = str(self.layout.lab)
         if (
             self.environment is not None
             and self.environment.workspace_location == "guest"
@@ -287,11 +286,17 @@ class AgentSetup:
             if captured is not None:
                 scratch_source = str(captured[0])
         result = {IMPLICIT_WORKSPACE_NAME: scratch_source}
-        result.update(
-            (name, source)
-            for name, source in grants.items()
-            if name != IMPLICIT_WORKSPACE_NAME
-        )
+        for name, source in grants.items():
+            if name == IMPLICIT_WORKSPACE_NAME:
+                continue
+            if (
+                self.environment is not None
+                and self.environment.workspace_location == "guest"
+            ):
+                mounted = self.environment.workspace_mounts.get(name)
+                if mounted is not None and Path(source) == mounted[1]:
+                    source = str(mounted[0])
+            result[name] = source
         return result
 
     def workspace_roots(self, grants: Mapping[str, str]) -> dict[str, Path]:

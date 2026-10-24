@@ -262,10 +262,9 @@ except KeyboardInterrupt:
             assert entry["control"]["source_id"] == layout.source_id
             references = tuple((root / ".runtime" / "active").glob("*/*.json"))
             assert len(references) == 1
-            assert references[0].name == f"{layout.address}.json"
-            assert json.loads(references[0].read_text())["status"] == str(
-                layout.runtime_status
-            )
+            assert references[0].name == "info.json"
+            assert references[0].parent.name == layout.address
+            assert json.loads(references[0].read_text())["home"] == str(layout.home)
             observed = subprocess.run(
                 (*base, "hub"),
                 env=env,
@@ -1393,24 +1392,35 @@ with runtime_lock(status, location='guest', launch_id=entry['launch_id']):
         marker.unlink(missing_ok=True)
 
 
-def test_guest_can_unlink_a_reference_through_the_shared_registry_directory(
+def test_guest_reads_its_info_without_a_writable_host_registry(
     running_docker_agent: _RunningDockerAgent,
 ) -> None:
     agent = running_docker_agent
     directory = agent.layout.place / ".runtime" / "active" / agent.layout.address
-    probe = directory / "mount_probe.json"
+    probe = directory / "host_only.json"
     probe.write_text('{"probe": true}')
     script = """
+import errno, json
 from pathlib import Path
-from toolang.up.instance import read_instance
-from toolang.up.registry import _registration_guard
-from toolang.up.instance import runtime_lock_owner, LockRecovery
-home = Path('/root/.toolang/agents/alice')
-entry = read_instance(home / '.runtime/status.json', location='guest')
-registry = home / '.runtime/registration'
-with _registration_guard(registry, owner=runtime_lock_owner(location='guest', entry=entry),
-                         recovery=LockRecovery(), blocking=True):
-    (registry / 'mount_probe.json').unlink()
+runtime = Path('/root/.toolang/.runtime/active/alice')
+info = runtime / 'info.json'
+assert json.loads(info.read_text())['home'] == '/root/.toolang/agents/alice'
+assert (runtime / 'guest.sh').is_file() and (runtime / 'guest.py').is_file()
+assert not (runtime / 'docker').exists()
+assert not (runtime / 'config.toml').exists()
+assert Path('/root/.toolang/config.toml').is_file()
+assert not (runtime / 'host_only.json').exists()
+assert not Path('/root/.toolang/agents/alice/.runtime/registration').exists()
+lab = Path('/root/.toolang/workspaces/alice/lab')
+assert lab.is_dir()
+assert not Path('/root/.toolang/agents/alice/.lab').exists()
+(lab / 'mount-probe.txt').write_text('shared lab')
+try:
+    info.write_text('{}')
+except OSError as error:
+    assert error.errno == errno.EROFS, error
+else:
+    raise AssertionError('bootstrap info was writable')
 """
     try:
         result = subprocess.run(
@@ -1427,14 +1437,18 @@ with _registration_guard(registry, owner=runtime_lock_owner(location='guest', en
             timeout=15,
         )
         assert result.returncode == 0, result.stderr
-        assert not probe.exists()
-        assert (directory / "alice.json").exists()
-        assert not (directory / "register.lock").exists()
+        assert (agent.layout.lab / "mount-probe.txt").read_text() == "shared lab"
+        host = json.loads((directory / "info.json").read_text())
+        guest = json.loads((directory / "docker/active/info.json").read_text())
+        assert host["home"] == str(agent.layout.home)
+        assert host["launch"] == guest["launch"]
+        assert host["location"] == guest["location"] == "guest"
+        assert probe.exists()
     finally:
         probe.unlink(missing_ok=True)
 
 
-def test_guest_exit_withdraws_discovery_before_host_resource_release(
+def test_guest_exit_preserves_inputs_until_host_resource_release(
     running_docker_agent: _RunningDockerAgent,
 ) -> None:
     from toolang.up.instance import read_instance
@@ -1444,7 +1458,7 @@ def test_guest_exit_withdraws_discovery_before_host_resource_release(
     assert entry is not None
     pid = entry["workload"]["pid"]
     assert isinstance(pid, int) and pid > 0
-    reference = agent.layout.place / ".runtime" / "active" / "alice" / "alice.json"
+    reference = agent.layout.place / ".runtime" / "active" / "alice" / "info.json"
     assert reference.exists()
     signaled = subprocess.run(
         ("docker", "exec", agent.container_id, "sh", "-c", f"kill -TERM {pid}"),
@@ -1454,9 +1468,21 @@ def test_guest_exit_withdraws_discovery_before_host_resource_release(
     )
     assert signaled.returncode == 0, signaled.stderr
     deadline = time.monotonic() + 10
-    while reference.exists() and time.monotonic() < deadline:
+    while time.monotonic() < deadline:
+        entry = read_instance(agent.layout.runtime_status)
+        if entry is not None and entry["workload"]["status"] == "stopped":
+            break
         time.sleep(0.05)
-    assert not reference.exists(), "guest left its host registration behind"
-    entry = read_instance(agent.layout.runtime_status)
     assert entry is not None and entry["workload"]["status"] == "stopped"
+    assert reference.exists(), "inputs must retain their ownership record until release"
     assert SandboxState.load(agent.layout.runtime_status) is not None
+    import asyncio
+    from toolang.up.sandbox import release_stopped
+    from toolang.up.watcher import runtime_inventory
+
+    assert all(
+        item.state != "running"
+        for item in runtime_inventory(agent.layout.place).snapshot.instances
+    )
+    asyncio.run(release_stopped(agent.layout))
+    assert not reference.parent.exists()

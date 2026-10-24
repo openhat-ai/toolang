@@ -602,7 +602,7 @@ def test_docker_sandbox_prepares_and_launches(
     stage_mount = next(
         item
         for item in plan.mounts
-        if item.hosted_path == Path("/root/.toolang/agents/alice/.runtime/sandbox")
+        if item.hosted_path == Path("/root/.toolang/.runtime/active/alice")
     )
     assert stage_mount.read_only is True
     control_state = AgentLayout.resident(tmp_path, "alice").runtime_status.resolve()
@@ -611,31 +611,33 @@ def test_docker_sandbox_prepares_and_launches(
         for mount in plan.mounts
     )
     assert control_lock.read_text(encoding="utf-8") == "host control\n"
-    assert stage_dir.is_relative_to(tmp_path / ".sandbox" / "alice" / "launches")
+    assert stage_dir == tmp_path / ".runtime" / "active" / "alice" / "docker"
     assert diagnostic_path.is_file()
     assert stat.S_IMODE(diagnostic_path.stat().st_mode) == 0o600
     assert startup_events_path.is_file()
     assert stat.S_IMODE(startup_events_path.stat().st_mode) == 0o600
-    assert {item.name for item in stage_dir.iterdir()} == {
-        "docker_guest.sh",
-        "docker_guest.py",
+    assert {item.name for item in stage_dir.iterdir()} == {"active"}
+    assert {item.name for item in (stage_dir / "active").iterdir()} == {
+        "guest.sh",
+        "guest.py",
+        "info.json",
         "guest.env",
         "toolang-1.2.3-py3-none-any.whl",
     }
-    assert (stage_dir / "docker_guest.sh").read_bytes() == (
-        Path(docker_guest.__file__).with_name("docker_guest.sh").read_bytes()
+    assert (stage_dir / "active/guest.sh").read_bytes() == (
+        Path(docker_guest.__file__).with_name("guest.sh").read_bytes()
     )
-    assert (stage_dir / "docker_guest.py").read_bytes() == (
-        Path(docker_guest.__file__).with_name("docker_guest.py").read_bytes()
+    assert (stage_dir / "active/guest.py").read_bytes() == (
+        Path(docker_guest.__file__).with_name("guest.py").read_bytes()
     )
     assert plan.command == (
         "/bin/sh",
-        "/root/.toolang/agents/alice/.runtime/sandbox/docker_guest.sh",
-        "/root/.toolang/agents/alice/.runtime/sandbox/docker_guest.py",
+        "/root/.toolang/.runtime/active/alice/guest.sh",
+        "/root/.toolang/.runtime/active/alice/guest.py",
         f"/root/.toolang/agents/alice/.runtime/{diagnostic_path.name}",
         str(diagnostic_path),
         f"/root/.toolang/agents/alice/.runtime/{startup_events_path.name}",
-        "/root/.toolang/agents/alice/.runtime/sandbox/toolang-1.2.3-py3-none-any.whl",
+        "/root/.toolang/.runtime/active/alice/toolang-1.2.3-py3-none-any.whl",
         "/root/.toolang/agents/alice/.runtime/agent.log",
         "--",
         "too",
@@ -770,8 +772,8 @@ def test_docker_background_sandbox_uses_docker_output_and_durable_diagnostics(
     assert log_path.is_file()
     assert stat.S_IMODE(log_path.stat().st_mode) == 0o600
     stage_dir = Path(cast(str, plan.meta["stage_dir"]))
-    shell = (stage_dir / "docker_guest.sh").read_text(encoding="utf-8")
-    helper = (stage_dir / "docker_guest.py").read_text(encoding="utf-8")
+    shell = (stage_dir / "active/guest.sh").read_text(encoding="utf-8")
+    helper = (stage_dir / "active/guest.py").read_text(encoding="utf-8")
     assert 'exec "$PYTHON_BIN" "$HELPER" --install' in shell
     assert "PROGRESS_EVENTS" in shell
     assert "report_progress" in helper
@@ -808,7 +810,7 @@ def test_docker_background_log_must_be_inside_the_agent_home(
     assert not (tmp_path / "outside.log").exists()
 
 
-def test_docker_sandbox_does_not_reuse_a_released_stage_path(
+def test_docker_sandbox_reuses_stage_only_after_release(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -833,8 +835,7 @@ def test_docker_sandbox_does_not_reuse_a_released_stage_path(
 
     first_stage = Path(cast(str, first.meta["stage_dir"]))
     second_stage = Path(cast(str, second.meta["stage_dir"]))
-    assert first_stage != second_stage
-    assert not first_stage.exists()
+    assert first_stage == second_stage
     assert second_stage.is_dir()
 
 
@@ -912,8 +913,8 @@ def test_docker_guest_preserves_image_environment_and_scopes_uv_overrides(
     completed = subprocess.run(
         (
             "/bin/sh",
-            str(Path(docker_guest.__file__).with_name("docker_guest.sh")),
-            str(Path(docker_guest.__file__).with_name("docker_guest.py")),
+            str(Path(docker_guest.__file__).with_name("guest.sh")),
+            str(Path(docker_guest.__file__).with_name("guest.py")),
             str(diagnostic),
             str(diagnostic),
             "-",
@@ -983,8 +984,8 @@ def test_docker_guest_uses_python_and_pip_to_install_uv(tmp_path: Path) -> None:
     completed = subprocess.run(
         (
             "/bin/sh",
-            str(Path(docker_guest.__file__).with_name("docker_guest.sh")),
-            str(Path(docker_guest.__file__).with_name("docker_guest.py")),
+            str(Path(docker_guest.__file__).with_name("guest.sh")),
+            str(Path(docker_guest.__file__).with_name("guest.py")),
             str(diagnostic),
             str(diagnostic),
             "-",
@@ -1030,8 +1031,8 @@ def test_docker_guest_rejects_an_image_without_bootstrap_capabilities(
     completed = subprocess.run(
         (
             "/bin/sh",
-            str(Path(docker_guest.__file__).with_name("docker_guest.sh")),
-            str(Path(docker_guest.__file__).with_name("docker_guest.py")),
+            str(Path(docker_guest.__file__).with_name("guest.sh")),
+            str(Path(docker_guest.__file__).with_name("guest.py")),
             str(diagnostic),
             str(diagnostic),
             "-",
@@ -1073,8 +1074,8 @@ def test_docker_guest_requires_the_default_short_container_hostname(
     completed = subprocess.run(
         (
             "/bin/sh",
-            str(Path(docker_guest.__file__).with_name("docker_guest.sh")),
-            str(Path(docker_guest.__file__).with_name("docker_guest.py")),
+            str(Path(docker_guest.__file__).with_name("guest.sh")),
+            str(Path(docker_guest.__file__).with_name("guest.py")),
             str(diagnostic),
             str(diagnostic),
             "-",
@@ -1591,9 +1592,11 @@ def test_docker_foreground_sandbox_follows_logs_only_when_waiting(
     plan = sandbox.prepare(None, _request(tmp_path, foreground=True))
     _mock_docker_container(monkeypatch, plan)
     stage_dir = Path(cast(str, plan.meta["stage_dir"]))
-    assert {path.name for path in stage_dir.iterdir()} == {
-        "docker_guest.sh",
-        "docker_guest.py",
+    assert {path.name for path in stage_dir.iterdir()} == {"active"}
+    assert {path.name for path in (stage_dir / "active").iterdir()} == {
+        "guest.sh",
+        "guest.py",
+        "info.json",
         "guest.env",
     }
 
@@ -1756,17 +1759,28 @@ def test_docker_rejects_missing_or_inconsistent_request_identity_before_staging(
     assert not (request.local_home / ".runtime").exists()
 
 
-def test_docker_restart_keeps_name_but_not_generation_or_stage(tmp_path):
+def test_docker_restart_reuses_name_and_stage_after_release(tmp_path):
     sandbox = docker_sandbox.DockerSandbox({})
     request = _request(tmp_path)
     first = sandbox.prepare(
         None, replace(request, envs={"TOOLANG_HOST_LAUNCH": "a" * 32})
     )
+    with pytest.raises(FileExistsError):
+        sandbox.prepare(None, replace(request, envs={"TOOLANG_HOST_LAUNCH": "b" * 32}))
+    assert (
+        json.loads((Path(first.meta["stage_dir"]) / "active/info.json").read_text())[
+            "launch"
+        ]
+        == "a" * 32
+    )
+    docker_guest.remove_stage_directory(
+        Path(first.meta["stage_dir"]), launch_id="a" * 32
+    )
     second = sandbox.prepare(
         None, replace(request, envs={"TOOLANG_HOST_LAUNCH": "b" * 32})
     )
     assert first.meta["container_name"] == second.meta["container_name"]
-    assert first.meta["stage_dir"] != second.meta["stage_dir"]
+    assert first.meta["stage_dir"] == second.meta["stage_dir"]
     assert first.meta["docker_identity"] != second.meta["docker_identity"]
     other_root = replace(request, toolang_root=tmp_path / "other")
     assert (
@@ -1775,6 +1789,117 @@ def test_docker_restart_keeps_name_but_not_generation_or_stage(tmp_path):
         ).runtime_name
         != first.meta["container_name"]
     )
+
+
+@pytest.mark.parametrize("placement", ["resident", "visiting", "roaming"])
+def test_docker_bootstrap_has_a_guest_info_view_under_the_selected_root(
+    tmp_path, placement
+):
+    request = _request(tmp_path)
+    root = tmp_path / "selected"
+    source = tmp_path / "project/alice.too"
+    if placement == "resident":
+        layout = AgentLayout.resident(root, "alice")
+    elif placement == "visiting":
+        layout = AgentLayout.visiting(
+            "https://example.com/alice.too", "alice", root=root
+        )
+    else:
+        layout = AgentLayout.roaming(
+            source, root=root, place_code=roaming_place_code(str(source), 1)
+        )
+    guest_root = Path("/guest/toolang")
+    guest_place = guest_root
+    guest_home = guest_place / "agents/alice"
+    runtime = root / ".runtime/active" / layout.address
+    request = replace(
+        request,
+        toolang_root=root,
+        agent_address=layout.address,
+        local_place=layout.place,
+        local_home=layout.home,
+        log_path=layout.home / ".runtime/agent.log",
+        hosted_root=guest_root,
+        hosted_place=guest_place,
+        hosted_home=guest_home,
+        local_runtime=runtime,
+        hosted_runtime=guest_root / ".runtime/active" / layout.name,
+        hosted_source=Path("/workspace/project/alice.too")
+        if placement == "roaming"
+        else None,
+        source_ref=layout.source_ref,
+        envs={"TOOLANG_HOST_LAUNCH": "a" * 32},
+    )
+    plan = docker_sandbox.DockerSandbox({}).prepare(None, request)
+    stage = runtime / "docker"
+    assert Path(plan.meta["stage_dir"]) == stage
+    assert request.hosted_runtime is not None
+    assert (
+        SandboxMount(stage / "active", request.hosted_runtime, read_only=True)
+        in plan.mounts
+    )
+    info = json.loads((stage / "active/info.json").read_text())
+    assert info["address"] == layout.address
+    assert info["home"] == str(guest_home)
+    assert info["launch"] == "a" * 32
+    assert info["location"] == "guest"
+    assert info["sandbox"] == "docker:python:3.13-slim"
+    assert "status" not in info and "launch_id" not in info
+    if placement == "roaming":
+        assert info["source"] == "/workspace/project/alice.too"
+    if placement == "visiting":
+        assert info["source_ref"] == layout.source_ref
+    assert all(
+        "/.runtime/registration" not in str(item.hosted_path) for item in plan.mounts
+    )
+
+
+def test_delayed_docker_release_preserves_replacement_bootstrap(tmp_path, monkeypatch):
+    sandbox = docker_sandbox.DockerSandbox({})
+    request = _request(tmp_path)
+    old = sandbox.prepare(
+        None, replace(request, envs={"TOOLANG_HOST_LAUNCH": "a" * 32})
+    )
+    old_ref = sandbox.prepared_reference(old)
+    stage = Path(old.meta["stage_dir"])
+    docker_guest.remove_stage_directory(stage, launch_id="a" * 32)
+    sandbox.prepare(None, replace(request, envs={"TOOLANG_HOST_LAUNCH": "b" * 32}))
+    before = (stage / "active/info.json").read_bytes()
+    monkeypatch.setattr(docker_sandbox, "docker_reference_id", lambda _ref: None)
+    asyncio.run(sandbox.release(old_ref))
+    assert (stage / "active/info.json").read_bytes() == before
+    assert (stage / "active/guest.sh").is_file()
+
+
+def test_guest_config_and_active_mounts_have_disjoint_sources(tmp_path):
+    sandbox = docker_sandbox.DockerSandbox({})
+    request = replace(
+        _request(tmp_path), guest_config='[workspaces.alice]\nrepo = "/guest/repo"\n'
+    )
+    plan = sandbox.prepare(None, request)
+    stage = Path(plan.meta["stage_dir"])
+    active = next(m for m in plan.mounts if m.local_path == stage / "active")
+    config = next(m for m in plan.mounts if m.local_path == stage / "config.toml")
+    assert active.read_only and config.read_only
+    assert config.hosted_path == Path("/root/.toolang/config.toml")
+    assert active.hosted_path == Path("/root/.toolang/.runtime/active/alice")
+    assert not config.local_path.is_relative_to(active.local_path)
+    assert not (active.local_path / "config.toml").exists()
+    assert config.local_path.read_text() == request.guest_config
+
+
+def test_rejected_duplicate_preparation_preserves_current_diagnostics(tmp_path):
+    sandbox = docker_sandbox.DockerSandbox({})
+    request = replace(_request(tmp_path), envs={"TOOLANG_HOST_LAUNCH": "a" * 32})
+    plan = sandbox.prepare(None, request)
+    diagnostic = Path(plan.meta["diagnostic_path"])
+    events = Path(plan.meta["startup_events_path"])
+    diagnostic.write_text("current diagnostic")
+    events.write_text("uv.use\n")
+    with pytest.raises(FileExistsError):
+        sandbox.prepare(None, request)
+    assert diagnostic.read_text() == "current diagnostic"
+    assert events.read_text() == "uv.use\n"
 
 
 def test_docker_distinct_places_with_same_agent_have_distinct_names(tmp_path):

@@ -125,6 +125,77 @@ with management_operation(
     assert entry["workload"]["pid"] == 123
 
 
+def test_publication_waits_for_status_without_holding_the_registration_guard(
+    tmp_path, monkeypatch
+):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    from toolang.up import registry
+    from toolang.up.workload import begin_workload
+
+    layout = AgentLayout.resident(tmp_path, "alice")
+    begin_workload(
+        layout,
+        launch_id="starting",
+        toolang_root=tmp_path,
+        sandbox="host",
+        endpoint="http://localhost:7002",
+        drivers=frozenset(),
+        workload={"status": "preparing", "pid": None},
+    )
+    code = """
+import sys
+from pathlib import Path
+from toolang.up.instance import runtime_lock, update_instance
+status = Path(sys.argv[1])
+with runtime_lock(status):
+    print('owned', flush=True)
+    sys.stdin.readline()
+    update_instance(status, lambda entry: entry['workload'].update(writer='preserved'))
+"""
+    contended = Event()
+    original_lock = registry.runtime_lock
+
+    def status_lock(*args, **kwargs):
+        guard = original_lock(*args, **kwargs)
+
+        @contextmanager
+        def acquire():
+            try:
+                with guard:
+                    yield
+            except BlockingIOError:
+                contended.set()
+                raise
+
+        return acquire()
+
+    monkeypatch.setattr(registry, "runtime_lock", status_lock)
+    registration = RuntimeRegistration(
+        layout, toolang_root=tmp_path, launch_id="starting"
+    )
+    with worker(code, layout.runtime_status) as writer, ThreadPoolExecutor() as pool:
+        assert message(writer) == "owned"
+        published = pool.submit(registration.publish)
+        try:
+            assert contended.wait(5), "publisher did not encounter the status writer"
+            with registration_lock(tmp_path, layout):
+                assert not published.done(), (
+                    "publication failed on transient contention"
+                )
+                resume(writer)
+                finish(writer)
+            assert published.result(timeout=5) is registration
+        finally:
+            if writer.poll() is None:
+                resume(writer)
+                finish(writer)
+    assert registration.path.is_file()
+    entry = read_instance(layout.runtime_status)
+    assert entry is not None and entry["workload"]["writer"] == "preserved"
+
+
 def test_old_process_cleanup_preserves_a_replacement_registration(tmp_path):
     layout = AgentLayout.resident(tmp_path, "alice")
     code = """
@@ -152,7 +223,7 @@ registration.close()
                     layout, toolang_root=tmp_path, launch_id="replacement"
                 ).publish()
             finish(cleanup)
-        assert json.loads(old.path.read_text())["launch_id"] == "replacement"
+        assert json.loads(old.path.read_text())["launch"] == "replacement"
     assert replacement.path.exists()
     replacement.close()
 
@@ -180,7 +251,5 @@ print(layout.place_code, flush=True)
     for code in codes:
         layout = select_roaming(source, code, toolang_root=root)
         assert layout.runtime_status.is_file()
-        assert (
-            root / ".runtime" / "active" / layout.address / f"{layout.address}.json"
-        ).is_file()
+        assert (root / ".runtime" / "active" / layout.address / "info.json").is_file()
     assert select_roaming(source, toolang_root=root).place_code == max(codes)

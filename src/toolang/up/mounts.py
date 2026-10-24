@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from pathlib import Path
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
+from hashlib import sha256
 
 from toolang.base.types.sandbox import SandboxMount
 from toolang.catalog.types import CAP_DIRECTORY_NAMES
@@ -12,6 +13,37 @@ from toolang.common.layout import (
     ensure_scratch_workspace,
 )
 from toolang.state.source import observe_home_source, observe_root_source
+from toolang.common.config_sources import read_config
+
+
+def mapped_path(path: Path, mounts: Sequence[SandboxMount]) -> Path | None:
+    """Reuse the most specific existing file or directory mapping."""
+    path = path.resolve()
+    matches = [
+        mount
+        for mount in mounts
+        if path == mount.local_path.resolve()
+        or (
+            mount.local_path.is_dir()
+            and path.is_relative_to(mount.local_path.resolve())
+        )
+    ]
+    if not matches:
+        return None
+    mount = max(matches, key=lambda item: len(item.local_path.resolve().parts))
+    return mount.hosted_path / path.relative_to(mount.local_path.resolve())
+
+
+def prepare_catalog_mount(
+    path: Path, hosted_place: Path, *, mounts: Sequence[SandboxMount]
+) -> tuple[tuple[SandboxMount, ...], Path]:
+    """Keep selected catalogs in their owning scope, mapping external files once."""
+    covered = mapped_path(path, mounts)
+    if covered is not None:
+        return (), covered
+    identity = sha256(str(path.resolve()).encode()).hexdigest()[:16]
+    target = hosted_place / ".inputs" / "models" / identity / path.name
+    return (SandboxMount(path.resolve(), target, read_only=True),), target
 
 
 def prepare_place_mounts(
@@ -55,14 +87,15 @@ def prepare_linked_state_source_mounts(
     local_place: Path,
     agent_name: str,
     hosted_place: Path,
+    *,
+    include_home: bool = True,
 ) -> tuple[SandboxMount, ...]:
     """Mount every symbolic-linked State source at its logical guest path."""
 
     hosted_home = hosted_place / "agents" / agent_name
-    observations = (
-        (observe_root_source(local_place), hosted_place),
-        (observe_home_source(local_place, agent_name), hosted_home),
-    )
+    observations = ((observe_root_source(local_place), hosted_place),)
+    if include_home:
+        observations += ((observe_home_source(local_place, agent_name), hosted_home),)
     return tuple(
         SandboxMount(
             local_path=item.source.resolve(strict=True),
@@ -76,12 +109,14 @@ def prepare_linked_state_source_mounts(
 
 
 def prepare_workspace_mounts(
-    local_home: Path, hosted_home: Path, *, workspaces: Mapping[str, str]
+    local_home: Path,
+    hosted_workspaces: Path,
+    *,
+    workspaces: Mapping[str, str],
 ) -> tuple[tuple[SandboxMount, ...], dict[str, tuple[str, str]]]:
     """Capture mounted grants at sandbox startup; never mount later State additions."""
     scratch_root = ensure_scratch_workspace(local_home)
-    grants = {IMPLICIT_WORKSPACE_NAME: str(scratch_root)}
-    grants.update(
+    grants = dict(
         (name, source)
         for name, source in workspaces.items()
         if name != IMPLICIT_WORKSPACE_NAME
@@ -94,29 +129,50 @@ def prepare_workspace_mounts(
         ),
         key=lambda item: (len(item[2].parts), item[0]),
     )
-    mounts: list[SandboxMount] = []
-    mapping: dict[str, tuple[str, str]] = {}
-    # Preserve the nesting of State roots in the guest so OS-absolute paths
-    # select the same most-specific workspace on both sides of the boundary.
+    guest_lab = hosted_workspaces / IMPLICIT_WORKSPACE_NAME
+    mounts = [SandboxMount(scratch_root, guest_lab)]
+    mapping = {IMPLICIT_WORKSPACE_NAME: (str(scratch_root), str(guest_lab))}
     for name, source, root in available:
-        ancestors = [
-            (parent, mount.hosted_path)
-            for mount in mounts
-            if root.is_relative_to(parent := mount.local_path)
-        ]
-        if ancestors:
-            parent, guest_parent = max(ancestors, key=lambda item: len(item[0].parts))
-            guest = guest_parent / root.relative_to(parent)
-        else:
-            guest = hosted_home / ".workspaces" / name
-        if not any(mount.local_path == root for mount in mounts):
-            mounts.append(SandboxMount(local_path=root, hosted_path=guest))
+        guest = hosted_workspaces / name
+        mounts.append(SandboxMount(local_path=root, hosted_path=guest))
         mapping[name] = (source, str(guest))
     return tuple(mounts), mapping
 
 
+def prepare_guest_config(
+    local_place: Path,
+    root_config: Path,
+    key: str | None,
+    *,
+    workspaces: Mapping[str, str],
+    mapping: Mapping[str, tuple[str, str]],
+    temporary_names: Sequence[str] = (),
+) -> str:
+    """Project one guest root without modifying either authored configuration."""
+    import tomlkit
+
+    config = read_config(local_place / "config.toml", include_workspaces=False)
+    root = read_config(root_config, include_workspaces=False)
+    if "env" in root:
+        config["env"] = root["env"]
+    if key is not None:
+        config["workspaces"] = {
+            key: {
+                name: mapping[name][1] if name in mapping else source
+                for name, source in workspaces.items()
+                if name not in temporary_names and name != IMPLICIT_WORKSPACE_NAME
+            }
+        }
+    return tomlkit.dumps(config)
+
+
 def prepare_source_mounts(
-    local_place: Path, agent_name: str, hosted_place: Path
+    local_place: Path,
+    agent_name: str,
+    hosted_place: Path,
+    *,
+    capture_home: Path | None = None,
+    include_home: bool = True,
 ) -> tuple[SandboxMount, ...]:
     """Mount authored inputs with host-relative configuration paths already bound."""
     from toolang.common.config_sources import rebase_config_content
@@ -126,7 +182,9 @@ def prepare_source_mounts(
         mount.hosted_path: mount
         for mount in (
             *prepare_place_mounts(local_place, hosted_place),
-            *prepare_linked_state_source_mounts(local_place, agent_name, hosted_place),
+            *prepare_linked_state_source_mounts(
+                local_place, agent_name, hosted_place, include_home=include_home
+            ),
         )
     }
     local_home = local_place / "agents" / agent_name
@@ -135,6 +193,8 @@ def prepare_source_mounts(
         ("root", local_place, hosted_place),
         ("home", local_home, hosted_home),
     ):
+        if scope == "home" and not include_home:
+            continue
         config = local / "config.toml"
         if not config.is_file():
             continue
@@ -144,7 +204,14 @@ def prepare_source_mounts(
         )
         if resolved == original:
             continue
-        captured = local_home / ".runtime" / "config-inputs" / f"{scope}.toml"
+        identity = sha256(str(config).encode()).hexdigest()[:16]
+        captured = (
+            (capture_home or local_home)
+            / ".runtime"
+            / "config-inputs"
+            / identity
+            / config.name
+        )
         atomic_write_text(captured, resolved.decode("utf-8"))
         target = hosted / "config.toml"
         mounts[target] = SandboxMount(captured, target, read_only=True)

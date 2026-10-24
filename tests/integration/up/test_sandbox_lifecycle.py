@@ -424,8 +424,11 @@ def test_foreground_serve_is_one_process_and_kill_preserves_restart_settings(
             reference = next((layout.place / ".runtime" / "active").glob("*/*.json"))
             assert set(json.loads(reference.read_text())) == {
                 "version",
-                "status",
-                "launch_id",
+                "address",
+                "home",
+                "launch",
+                "location",
+                "sandbox",
             }
             monitored = subprocess.run(
                 (*base, "list"), capture_output=True, text=True, timeout=10

@@ -122,7 +122,7 @@ agic chat(_: Part[]) -> Part[]:
             assert session.list_runnables("runnable")["default"] == entry
             assert setting == entry
         thread_id = session.create_thread()
-        absolute_workspace = core.layout.home / ".lab" / "absolute"
+        absolute_workspace = core.layout.lab / "absolute"
         absolute_workspace.mkdir(parents=True)
         assert session.resolve_workdir(None, None, thread_id) == "lab://"
         assert session.resolve_workdir(str(absolute_workspace), None, thread_id) == (

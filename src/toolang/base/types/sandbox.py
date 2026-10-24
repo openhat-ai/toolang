@@ -66,6 +66,12 @@ class SandboxRequest:
     environment_path: Path | None = None
     agent_address: str | None = None
     toolang_root: Path | None = None
+    hosted_root: Path | None = None
+    local_runtime: Path | None = None
+    hosted_runtime: Path | None = None
+    hosted_source: Path | None = None
+    source_ref: str | None = None
+    guest_config: str | None = None
 
     def __post_init__(self) -> None:
         _validate_output(self.output, self.log_path)

@@ -8,6 +8,7 @@ from contextlib import suppress
 from dataclasses import dataclass, field
 from hashlib import sha256
 import os
+import json
 from pathlib import Path
 import re
 import shutil
@@ -31,6 +32,8 @@ from toolang.common.progress import emit_progress
 from toolang.common.environment import RUNTIME_ENV_NAMES
 from toolang.common.place_codes import root_code
 from toolang.plugin.catalogs.models_dev.path import MODEL_CATALOG_ENV
+from toolang.up.records import RuntimeReference
+from toolang.common.files import atomic_write_text
 
 from ._cli import (
     DEFAULT_HOST_GATEWAY,
@@ -134,6 +137,21 @@ def _hosted_model_catalog_mounts(
             (mount for mount in request.mounts if str(mount.hosted_path) == raw_path),
             None,
         )
+        if captured is None:
+            for mount in (
+                *request.mounts,
+                SandboxMount(request.local_home, request.hosted_home),
+            ):
+                guest_path = Path(raw_path)
+                if mount.local_path.is_dir() and guest_path.is_relative_to(
+                    mount.hosted_path
+                ):
+                    local_path = mount.local_path / guest_path.relative_to(
+                        mount.hosted_path
+                    )
+                    if local_path.is_file():
+                        captured = SandboxMount(local_path, guest_path, read_only=True)
+                        break
         if captured is not None:
             if not captured.local_path.is_file():
                 raise ValueError(
@@ -153,9 +171,9 @@ def _hosted_model_catalog_mounts(
         try:
             relative = local_path.relative_to(local_place)
         except ValueError:
-            digest = sha256(str(local_path).encode("utf-8")).hexdigest()[:12]
+            digest = sha256(str(local_path).encode("utf-8")).hexdigest()[:16]
             hosted_path = (
-                request.hosted_place / ".inputs" / "models" / f"catalog-{digest}.json"
+                request.hosted_place / ".inputs" / "models" / digest / local_path.name
             )
         else:
             hosted_path = request.hosted_place / relative
@@ -230,13 +248,16 @@ class DockerSandbox:
         """Persist a generation-bound locator before staging or container creation."""
         launch_id = request.envs.get("TOOLANG_HOST_LAUNCH", "")
         name, identity = _request_identity(request, launch_id)
+        assert request.toolang_root is not None
         stage = (
-            request.local_place
-            / ".sandbox"
-            / request.agent_name
-            / "launches"
-            / launch_id
-        )
+            request.local_runtime
+            or (
+                request.toolang_root
+                / ".runtime"
+                / "active"
+                / str(request.agent_address)
+            )
+        ) / "docker"
         return SandboxRef(
             name,
             request.endpoint,
@@ -261,20 +282,26 @@ class DockerSandbox:
     def prepare(self, spec: str | None, request: SandboxRequest) -> SandboxPlan:
         launch_id = request.envs.get("TOOLANG_HOST_LAUNCH", uuid4().hex)
         container_name, identity = _request_identity(request, launch_id)
+        assert request.toolang_root is not None
         stage_dir = (
-            request.local_place
-            / ".sandbox"
-            / request.agent_name
-            / "launches"
-            / launch_id
-        )
+            request.local_runtime
+            or (
+                request.toolang_root
+                / ".runtime"
+                / "active"
+                / str(request.agent_address)
+            )
+        ) / "docker"
         diagnostic_path = (
-            request.local_home / ".runtime" / f"docker-guest-{stage_dir.name}.log"
+            request.local_home / ".runtime" / f"docker-guest-{launch_id}.log"
         )
         startup_events_path = (
-            request.local_home / ".runtime" / f"docker-guest-{stage_dir.name}.events"
+            request.local_home / ".runtime" / f"docker-guest-{launch_id}.events"
         )
+        owned_stage = False
         try:
+            prepare_stage_directory(stage_dir)
+            owned_stage = True
             return self._prepare(
                 spec,
                 request,
@@ -285,10 +312,13 @@ class DockerSandbox:
                 identity=identity,
             )
         except BaseException:
-            remove_stage_directory(stage_dir, ignore_errors=True)
-            with suppress(OSError):
-                diagnostic_path.unlink(missing_ok=True)
-                startup_events_path.unlink(missing_ok=True)
+            if owned_stage:
+                remove_stage_directory(
+                    stage_dir, launch_id=launch_id, ignore_errors=True
+                )
+                with suppress(OSError):
+                    diagnostic_path.unlink(missing_ok=True)
+                    startup_events_path.unlink(missing_ok=True)
             raise
 
     def _prepare(
@@ -303,7 +333,24 @@ class DockerSandbox:
         identity: dict[str, JsonValue],
     ) -> SandboxPlan:
         image = _image(spec, self._default_image)
-        runtime_dir = request.hosted_home / ".runtime" / "sandbox"
+        runtime_dir = request.hosted_runtime or (
+            (request.hosted_root or request.hosted_place)
+            / ".runtime"
+            / "active"
+            / request.agent_name
+        )
+        active_dir = stage_dir / "active"
+        active_dir.mkdir()
+        guest_info = RuntimeReference(
+            request.hosted_home / ".runtime" / "status.json",
+            str(identity["launch_id"]),
+            location="guest",
+            sandbox=f"{self.name}:{image}",
+            source=request.hosted_source,
+            source_ref=request.source_ref,
+            address=request.agent_address,
+        )
+        atomic_write_text(active_dir / "info.json", json.dumps(guest_info.to_data()))
         dotenv_envs, process_envs = self._guest_environment_sections(request)
         model_catalog_mounts = _hosted_model_catalog_mounts(
             request,
@@ -313,22 +360,21 @@ class DockerSandbox:
         validate_guest_environment(dotenv_envs)
         validate_guest_environment(process_envs)
         hosted_log_path = prepare_background_log(request)
-        prepare_stage_directory(stage_dir)
         hosted_diagnostic_path = request.hosted_home / ".runtime" / diagnostic_path.name
         prepare_diagnostic(diagnostic_path)
         prepare_diagnostic(startup_events_path)
-        stage_guest_files(stage_dir)
+        stage_guest_files(active_dir)
 
         hosted_dev_artifact: Path | None = None
         if request.local_dev_artifact is not None:
             artifact = request.local_dev_artifact
             if not artifact.is_file() or artifact.suffix.casefold() != ".whl":
                 raise ValueError("docker development artifact must be a wheel file")
-            staged = stage_dir / artifact.name
+            staged = active_dir / artifact.name
             if artifact.resolve() != staged.resolve():
                 shutil.copy2(artifact, staged)
             hosted_dev_artifact = runtime_dir / staged.name
-        guest_env_path = stage_dir / "guest.env"
+        guest_env_path = active_dir / "guest.env"
         hosted_env_path = (
             request.environment_path
             or self._runtime_place / f".{request.agent_name}.env"
@@ -346,8 +392,18 @@ class DockerSandbox:
                 hosted_env_path,
                 read_only=True,
             ),
-            SandboxMount(stage_dir, runtime_dir, read_only=True),
+            SandboxMount(active_dir, runtime_dir, read_only=True),
         ]
+        if request.guest_config is not None:
+            guest_config = stage_dir / "config.toml"
+            atomic_write_text(guest_config, request.guest_config)
+            mounts.append(
+                SandboxMount(
+                    guest_config,
+                    (request.hosted_root or request.hosted_place) / "config.toml",
+                    read_only=True,
+                )
+            )
         package_source = (
             str(hosted_dev_artifact) if hosted_dev_artifact is not None else "toolang"
         )
@@ -358,8 +414,8 @@ class DockerSandbox:
             sandbox=f"{self.name}:{image}",
             command=(
                 "/bin/sh",
-                str(runtime_dir / "docker_guest.sh"),
-                str(runtime_dir / "docker_guest.py"),
+                str(runtime_dir / "guest.sh"),
+                str(runtime_dir / "guest.py"),
                 str(hosted_diagnostic_path),
                 str(diagnostic_path),
                 str(request.hosted_home / ".runtime" / startup_events_path.name),
@@ -470,6 +526,7 @@ class DockerSandbox:
             await asyncio.to_thread(
                 remove_stage_directory,
                 _plan_text(plan, "stage_dir"),
+                launch_id=str(plan.meta["docker_identity"]["launch_id"]),
                 ignore_errors=True,
             )
             await asyncio.to_thread(
@@ -564,7 +621,13 @@ class DockerSandbox:
             await asyncio.to_thread(docker_remove_container, runtime_id)
         stage_dir = ref.meta.get("stage_dir")
         if isinstance(stage_dir, str) and stage_dir:
-            await asyncio.to_thread(remove_stage_directory, stage_dir)
+            identity = ref.meta.get("docker_identity")
+            generation = (
+                identity.get("launch_id") if isinstance(identity, dict) else None
+            )
+            await asyncio.to_thread(
+                remove_stage_directory, stage_dir, launch_id=generation
+            )
         startup_events_path = ref.meta.get("startup_events_path")
         if isinstance(startup_events_path, str) and startup_events_path:
             await asyncio.to_thread(Path(startup_events_path).unlink, missing_ok=True)

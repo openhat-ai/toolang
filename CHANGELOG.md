@@ -334,6 +334,37 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   without merging.
   ([#946](https://github.com/openhat-ai/toolang/pull/946))
 
+- Docker guests read generated `config.toml` at read-only `ROOT/config.toml`
+  and, at `ROOT/.runtime/active/NAME`, `info.json` plus bootstrap inputs, from
+  separate host sources, where `ROOT` equals `PLACE` at the configured Docker
+  root.
+  ([#948](https://github.com/openhat-ai/toolang/pull/948))
+
+- Home workspace entries merge with agent-specific `[workspaces]` tables in the
+  Toolang root, keyed by resident name, visiting ref, or roaming source path.
+  ([#948](https://github.com/openhat-ai/toolang/pull/948))
+
+- Every guest workspace grant binds at a distinct writable named path, while
+  source-directory grants stay optional for roaming agents.
+  ([#948](https://github.com/openhat-ai/toolang/pull/948))
+
+- Guest `info.json` is read-only, while its `HOME` status stays writable.
+  ([#948](https://github.com/openhat-ai/toolang/pull/948))
+
+- Hub discovery and catalog filenames stay with their owning root and scope,
+  without `HOME` aliases.
+  ([#948](https://github.com/openhat-ai/toolang/pull/948))
+
+- **Breaking:** Runtime format 6 stores `info.json` at
+  `<root>/.runtime/active/<address>/` with the full address, absolute
+  reader-specific home, launch, location, and sandbox.
+  ([#948](https://github.com/openhat-ai/toolang/pull/948))
+
+- **Breaking:** The implicit `lab` workspace now lives at
+  `<place>/workspaces/<agent>/lab` instead of `<home>/.lab`, stays after the
+  agent is removed, and ignores old data there.
+  ([#948](https://github.com/openhat-ai/toolang/pull/948))
+
 ### Fixed
 
 - Failed preparation no longer leaves active registrations; runtime references
@@ -595,6 +626,10 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 - Serving agents select dotenv values through the shared root policy instead of
   retaining unrelated inherited variables.
   ([#946](https://github.com/openhat-ai/toolang/pull/946))
+
+- Host cleanup is generation-fenced and runs only after its resource is
+  released, leaving a newer launch's runtime records intact.
+  ([#948](https://github.com/openhat-ai/toolang/pull/948))
 
 - Model discovery, startup refreshes, tools, and child runs reuse the final
   launch environment snapshot.

@@ -323,7 +323,7 @@ agic chat(_: Part[]) -> Part[]:
     core = AgentCore(setup.layout)
     core.setup = _Snapshot(setup)
     core.state = _Snapshot(harness.state)
-    (core.layout.home / ".lab" / "subdir").mkdir(parents=True)
+    (core.layout.lab / "subdir").mkdir(parents=True)
     workloads.write_runtime_state(
         core.layout,
         endpoint="http://127.0.0.1:7001",
@@ -352,7 +352,7 @@ agic chat(_: Part[]) -> Part[]:
                 "/api/v0/runs/workdir/resolve",
                 json={
                     "thread_id": thread_id,
-                    "workdir": str(core.layout.home / ".lab" / "subdir"),
+                    "workdir": str(core.layout.lab / "subdir"),
                 },
             )
             relative_workdir = client.post(

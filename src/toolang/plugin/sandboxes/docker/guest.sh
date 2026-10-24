@@ -16,7 +16,7 @@ fail() {
 
 if [ "$#" -lt 8 ]; then
     printf '%s\n' \
-        "usage: docker_guest.sh HELPER DIAGNOSTIC DISPLAY EVENTS PACKAGE LOG -- COMMAND..." \
+        "usage: guest.sh HELPER DIAGNOSTIC DISPLAY EVENTS PACKAGE LOG -- COMMAND..." \
         >&2
     exit 64
 fi

@@ -19,7 +19,6 @@ from .place_codes import (
 AgentPlacement = Literal["resident", "visiting", "roaming"]
 
 IMPLICIT_WORKSPACE_NAME = "lab"
-IMPLICIT_WORKSPACE_DIRECTORY = ".lab"
 VISITING_BASE = Path("/tmp").resolve() / "toolang"
 _AGENT_NAME = re.compile(r"[a-z][a-z0-9_]{0,63}\Z")
 
@@ -46,6 +45,11 @@ def derive_agent_name(stem: str) -> str:
     if name and name[0].isdigit():
         name = f"script_{name}"
     return validate_agent_name(name)
+
+
+def agent_workspaces_path(place: Path, name: str) -> Path:
+    """Return the workspace namespace owned by one agent in a place."""
+    return place / "workspaces" / name
 
 
 @dataclass(frozen=True, slots=True)
@@ -167,8 +171,29 @@ class AgentLayout:
         return self.place / "agents" / self.name
 
     @property
+    def workspaces(self) -> Path:
+        return agent_workspaces_path(self.place, self.name)
+
+    @property
+    def lab(self) -> Path:
+        return self.workspaces / IMPLICIT_WORKSPACE_NAME
+
+    @property
     def place_config(self) -> Path:
         return self.place / "config.toml"
+
+    @property
+    def root_config(self) -> Path:
+        return (self.root or self.place) / "config.toml"
+
+    @property
+    def config_key(self) -> str | None:
+        """Stable identity for agent-specific root configuration."""
+        if self.placement == "resident":
+            return self.name
+        if self.placement == "roaming":
+            return str(self.source_path) if self.source_path is not None else None
+        return self.source_ref
 
     @property
     def place_env(self) -> Path:
@@ -269,7 +294,9 @@ class AgentLayout:
 
     @property
     def sandbox_stage(self) -> Path:
-        return self.place / ".sandbox" / self.name / "launches"
+        return (
+            (self.root or self.place) / ".runtime" / "active" / self.address / "docker"
+        )
 
 
 def place_edit_lock_path(place: Path) -> Path:
@@ -291,13 +318,20 @@ def _safe_log_label(value: str) -> str:
 def ensure_scratch_workspace(home: Path) -> Path:
     """Create and validate one agent-owned implicit scratch workspace."""
 
-    resolved_home = home.expanduser().resolve()
+    home = home.expanduser()
+    resolved_home = home.resolve()
     if not resolved_home.is_dir():
         raise FileNotFoundError(f"agent home is not available: {resolved_home}")
-    root = resolved_home / IMPLICIT_WORKSPACE_DIRECTORY
-    if root.is_symlink():
-        raise ValueError(f"implicit lab workspace must not be a symlink: {root}")
-    root.mkdir(exist_ok=True)
-    if not root.is_dir() or root.resolve().parent != resolved_home:
-        raise ValueError(f"implicit lab workspace is not a directory: {root}")
+    root = (
+        agent_workspaces_path(home.parent.parent.resolve(), home.name)
+        / IMPLICIT_WORKSPACE_NAME
+    )
+    for directory in (root.parent.parent, root.parent, root):
+        if directory.is_symlink():
+            raise ValueError(
+                f"implicit lab workspace must not be a symlink: {directory}"
+            )
+        directory.mkdir(exist_ok=True)
+        if not directory.is_dir() or directory.resolve() != directory:
+            raise ValueError(f"implicit lab workspace is not a directory: {directory}")
     return root

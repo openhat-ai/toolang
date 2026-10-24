@@ -14,6 +14,7 @@ from tests.support.setup import materialized_setup
 import asyncio
 import json
 import sys
+import tomllib
 from collections.abc import Mapping, Sequence
 from contextlib import asynccontextmanager, closing, contextmanager
 from dataclasses import replace
@@ -276,7 +277,7 @@ def test_workspace_list_excludes_implicit_lab_and_does_not_prepare_state(
     assert "Workdir:" not in result.stdout
     layout = AgentLayout.resident(root, "alice")
     assert not layout.agent_state.exists()
-    assert not (layout.home / ".lab").exists()
+    assert not (layout.lab).exists()
 
 
 def test_workspace_commands_preserve_config_and_never_delete_data(
@@ -293,10 +294,13 @@ def test_workspace_commands_preserve_config_and_never_delete_data(
     workspace.mkdir(parents=True)
 
     added = _invoke(root, "alice", "workspace", "add", str(workspace))
+    assert added.exit_code == 0, added.stderr
+    assert tomllib.loads(layout.config.read_text())["workspaces"] == {
+        "toolang-sdk": str(workspace.resolve())
+    }
     listed = _invoke(root, "alice", "workspace", "list")
     removed = _invoke(root, "alice", "workspace", "remove", "toolang-sdk")
 
-    assert added.exit_code == 0, added.stderr
     assert f"Workspace toolang-sdk added: {workspace}" in added.stdout
     assert listed.exit_code == 0, listed.stderr
     assert "WORKSPACE" in listed.stdout

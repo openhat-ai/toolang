@@ -6,13 +6,14 @@ from collections.abc import Mapping
 from importlib.resources import files
 from pathlib import Path
 import shutil
+import json
 
 from toolang.base.types.sandbox import SandboxRequest
 from toolang.common.files import atomic_write_text
 from toolang.common.environment import is_environment_name
 
 
-_GUEST_FILES = {"docker_guest.sh": 0o755, "docker_guest.py": 0o644}
+_GUEST_FILES = {"guest.sh": 0o755, "guest.py": 0o644}
 
 
 def stage_guest_files(directory: Path) -> None:
@@ -69,8 +70,24 @@ def remove_stage_directory(
     stage_dir: str | Path,
     *,
     ignore_errors: bool = False,
+    launch_id: str | None = None,
 ) -> None:
     path = Path(stage_dir)
+    if launch_id is not None and path.name == "docker":
+        try:
+            info_path = path / "active/info.json"
+            if not info_path.exists():
+                info_path = path / "info.json"
+            info = json.loads(info_path.read_text())
+        except (OSError, ValueError):
+            # A preparation failure may leave only an exclusively created empty dir.
+            try:
+                path.rmdir()
+            except OSError:
+                pass
+            return
+        if not isinstance(info, dict) or info.get("launch") != launch_id:
+            return
     if path.is_dir() and not path.is_symlink():
         shutil.rmtree(path, ignore_errors=ignore_errors)
     else:

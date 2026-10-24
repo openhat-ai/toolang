@@ -8,20 +8,54 @@ from toolang.up.registry import RuntimeReference, read_reference, registration_c
 
 
 def test_reference_round_trip_and_both_ownership_fences(tmp_path):
-    reference = RuntimeReference(tmp_path / "status.json", "launch")
+    reference = RuntimeReference(tmp_path / ".runtime" / "status.json", "launch")
     payload = {
-        "version": 5,
-        "status": str(tmp_path / "status.json"),
-        "launch_id": "launch",
+        "version": 6,
+        "home": str(tmp_path),
+        "launch": "launch",
+        "location": "host",
+        "sandbox": "host",
     }
     assert reference.to_data() == payload
     assert RuntimeReference.from_data(payload) == reference
     path = tmp_path / "alice.json"
     path.write_text(json.dumps(payload))
     assert read_reference(path) == reference
-    assert registration_current(path, "launch", tmp_path / "status.json")
+    assert registration_current(path, "launch", tmp_path / ".runtime" / "status.json")
     assert not registration_current(path, "replacement", tmp_path / "status.json")
     assert not registration_current(path, "launch", tmp_path / "other.json")
+
+
+def test_format_five_reference_remains_readable(tmp_path):
+    status = tmp_path / "agents/alice/.runtime/status.json"
+    reference = RuntimeReference.from_data(
+        {"version": 5, "status": str(status), "launch_id": "old-launch"}
+    )
+    assert reference.status == status and reference.launch_id == "old-launch"
+    assert reference.home == tmp_path / "agents/alice"
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("home", "agents/alice"),
+        ("home", "/root/../alice"),
+        ("home", "/root/./alice"),
+        ("launch", ""),
+        ("launch", 42),
+        ("location", "docker"),
+        ("location", []),
+        ("sandbox", None),
+        ("address", 42),
+        ("address", ""),
+        ("source", "relative.too"),
+    ],
+)
+def test_info_rejects_invalid_path_views_and_generation(tmp_path, field, value):
+    payload = RuntimeReference(tmp_path / ".runtime/status.json", "launch").to_data()
+    payload[field] = value
+    with pytest.raises(ValueError):
+        RuntimeReference.from_data(payload)
 
 
 @pytest.mark.parametrize(
@@ -101,7 +135,10 @@ def test_guest_cannot_reap_a_host_claim_even_with_a_dead_local_pid(monkeypatch):
     )
 
 
-def test_publication_converts_a_flat_reference_without_a_duplicate_member(tmp_path):
+@pytest.mark.parametrize("nested", [False, True])
+def test_publication_converts_legacy_reference_without_a_duplicate_member(
+    tmp_path, nested
+):
     from toolang.common.layout import AgentLayout
     from toolang.up.registry import RuntimeRegistration
     from toolang.up.watcher import RuntimeWatcher
@@ -111,8 +148,19 @@ def test_publication_converts_a_flat_reference_without_a_duplicate_member(tmp_pa
     with ForegroundWorkload(
         layout, toolang_root=tmp_path, drivers=frozenset()
     ) as active:
-        legacy = active.path.parent.parent / active.path.name
-        active.path.rename(legacy)
+        legacy = (
+            active.path.parent if nested else active.path.parent.parent
+        ) / f"{layout.address}.json"
+        active.path.unlink()
+        legacy.write_text(
+            json.dumps(
+                {
+                    "version": 5,
+                    "status": str(layout.runtime_status),
+                    "launch_id": active.token,
+                }
+            )
+        )
         assert (
             RuntimeWatcher(tmp_path).refresh().snapshot.instances[0].state == "running"
         )

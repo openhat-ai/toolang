@@ -9,9 +9,11 @@ import pytest
 
 from toolang.base.types.sandbox import SandboxMount
 from toolang.up.mounts import (
+    prepare_catalog_mount,
     prepare_linked_state_source_mounts,
     prepare_place_mounts,
     prepare_workspace_mounts,
+    prepare_source_mounts,
 )
 
 
@@ -114,25 +116,25 @@ def test_workspace_mounts_snapshot_only_available_grants(tmp_path: Path) -> None
         f'[workspaces]\nrepo = "{repo}"\nsdk = "{sdk}"\n'
         f'lab = "{configured_lab}"\nmissing = "{missing}"\n'
     )
-    hosted_home = Path("/root/.toolang/agents/alice")
+    hosted_workspaces = Path("/root/.toolang/workspaces/alice")
     mounts, mapping = prepare_workspace_mounts(
         local_home,
-        hosted_home,
+        hosted_workspaces,
         workspaces=prepare_agent_state(
             AgentLayout.resident(tmp_path, "alice")
         ).workspaces,
     )
-    lab_root = local_home / ".lab"
-    hosted_lab = hosted_home / ".workspaces/lab"
+    lab_root = tmp_path / "workspaces/alice/lab"
+    hosted_lab = hosted_workspaces / "lab"
     assert lab_root.is_dir()
     assert mounts == (
-        SandboxMount(repo.resolve(), hosted_home / ".workspaces/repo"),
-        SandboxMount(sdk.resolve(), hosted_home / ".workspaces/repo/sdk"),
-        SandboxMount(lab_root.resolve(), hosted_lab),
+        SandboxMount(lab_root, hosted_lab),
+        SandboxMount(repo.resolve(), hosted_workspaces / "repo"),
+        SandboxMount(sdk.resolve(), hosted_workspaces / "sdk"),
     )
     assert mapping == {
-        "repo": (str(repo), str(hosted_home / ".workspaces/repo")),
-        "sdk": (str(sdk), str(hosted_home / ".workspaces/repo/sdk")),
+        "repo": (str(repo), str(hosted_workspaces / "repo")),
+        "sdk": (str(sdk), str(hosted_workspaces / "sdk")),
         "lab": (str(lab_root.resolve()), str(hosted_lab)),
     }
     assert not any(mount.local_path == configured_lab for mount in mounts)
@@ -146,20 +148,20 @@ def test_workspace_mounts_include_configured_tmp_as_ordinary_grant(
     configured = tmp_path / "configured-tmp"
     configured.mkdir()
     (local_home / "config.toml").write_text(f'[workspaces]\ntmp = "{configured}"\n')
-    hosted_home = Path("/root/.toolang/agents/alice")
+    hosted_workspaces = Path("/root/.toolang/workspaces/alice")
 
     mounts, mapping = prepare_workspace_mounts(
         local_home,
-        hosted_home,
+        hosted_workspaces,
         workspaces=prepare_agent_state(
             AgentLayout.resident(tmp_path, "alice")
         ).workspaces,
     )
 
-    lab_root = local_home / ".lab"
+    lab_root = tmp_path / "workspaces/alice/lab"
     assert mapping == {
-        "lab": (str(lab_root.resolve()), str(hosted_home / ".workspaces/lab")),
-        "tmp": (str(configured), str(hosted_home / ".workspaces/tmp")),
+        "lab": (str(lab_root.resolve()), str(hosted_workspaces / "lab")),
+        "tmp": (str(configured), str(hosted_workspaces / "tmp")),
     }
     assert any(mount.local_path == configured for mount in mounts)
 
@@ -169,28 +171,32 @@ def test_workspace_mounts_reject_symlink_lab_directory(tmp_path: Path) -> None:
     local_home.mkdir(parents=True)
     target = tmp_path / "outside"
     target.mkdir()
-    (local_home / ".lab").symlink_to(target, target_is_directory=True)
+    lab = tmp_path / "workspaces/alice/lab"
+    lab.parent.mkdir(parents=True)
+    lab.symlink_to(target, target_is_directory=True)
 
     with pytest.raises(
         ValueError, match="implicit lab workspace must not be a symlink"
     ):
         prepare_workspace_mounts(
-            local_home, Path("/root/.toolang/agents/alice"), workspaces={}
+            local_home, Path("/root/.toolang/workspaces/alice"), workspaces={}
         )
 
 
 def test_workspace_mounts_reject_file_at_lab_path(tmp_path: Path) -> None:
     local_home = tmp_path / "agents/alice"
     local_home.mkdir(parents=True)
-    (local_home / ".lab").write_text("not a directory")
+    lab = tmp_path / "workspaces/alice/lab"
+    lab.parent.mkdir(parents=True)
+    lab.write_text("not a directory")
 
     with pytest.raises(FileExistsError):
         prepare_workspace_mounts(
-            local_home, Path("/root/.toolang/agents/alice"), workspaces={}
+            local_home, Path("/root/.toolang/workspaces/alice"), workspaces={}
         )
 
 
-def test_nested_mount_order_is_by_root_depth_not_workspace_name(tmp_path: Path) -> None:
+def test_nested_sources_keep_their_distinct_workspace_names(tmp_path: Path) -> None:
     local_home = tmp_path / "agents/alice"
     local_home.mkdir(parents=True)
     root = tmp_path / "repo"
@@ -201,18 +207,18 @@ def test_nested_mount_order_is_by_root_depth_not_workspace_name(tmp_path: Path) 
     )
     mounts, mapping = prepare_workspace_mounts(
         local_home,
-        Path("/guest/alice"),
+        Path("/guest/workspaces/alice"),
         workspaces=prepare_agent_state(
             AgentLayout.resident(tmp_path, "alice")
         ).workspaces,
     )
     assert [mount.local_path for mount in mounts] == [
+        tmp_path / "workspaces/alice/lab",
         root.resolve(),
         child.resolve(),
-        (local_home / ".lab").resolve(),
     ]
-    assert mapping["aa"][1] == "/guest/alice/.workspaces/zz/child"
-    assert mounts[1].hosted_path.is_relative_to(mounts[0].hosted_path)
+    assert mapping["aa"][1] == "/guest/workspaces/alice/aa"
+    assert mapping["zz"][1] == "/guest/workspaces/alice/zz"
 
 
 def test_workspace_mounts_keep_captured_state_when_source_changes(tmp_path):
@@ -226,6 +232,73 @@ def test_workspace_mounts_keep_captured_state_when_source_changes(tmp_path):
     state = prepare_agent_state(layout)
     layout.config.write_text(f'[workspaces]\nrepo = "{new}"\n')
     _, mapping = prepare_workspace_mounts(
-        layout.home, Path("/guest"), workspaces=state.workspaces
+        layout.home, Path("/guest/workspaces/alice"), workspaces=state.workspaces
     )
     assert mapping["repo"][0] == str(old)
+
+
+@pytest.mark.parametrize("scope", ["root", "place", "home"])
+def test_catalog_reuses_its_original_scope_and_filename(tmp_path, scope):
+    directory = tmp_path / scope
+    directory.mkdir()
+    catalog = directory / "catalog.json"
+    catalog.write_text("{}")
+    guest = Path("/guest") / scope
+    mounts = (SandboxMount(directory, guest),)
+    additional, target = prepare_catalog_mount(
+        catalog, Path("/guest/place"), mounts=mounts
+    )
+    assert additional == ()
+    assert target == guest / "catalog.json"
+
+
+def test_external_catalog_preserves_its_filename_and_is_read_only(tmp_path):
+    catalog = tmp_path / "custom-models.json"
+    catalog.write_text("{}")
+    mounts, target = prepare_catalog_mount(catalog, Path("/guest/place"), mounts=())
+    assert target.name == catalog.name
+    assert target.is_relative_to(Path("/guest/place/.inputs/models"))
+    assert mounts == (SandboxMount(catalog, target, read_only=True),)
+
+
+def test_workspace_keeps_writes_when_home_has_a_read_only_config_override(tmp_path):
+    home = tmp_path / "agents/alice"
+    home.mkdir(parents=True)
+    guest = Path("/guest/agents/alice")
+    (home / "config.toml").write_text('[workspaces]\nhome = "."\n')
+    inputs = prepare_source_mounts(tmp_path, "alice", Path("/guest"))
+    assert any(
+        mount.hosted_path == guest / "config.toml" and mount.read_only
+        for mount in inputs
+    )
+    guest_workspaces = Path("/guest/workspaces/alice")
+    mounts, mapping = prepare_workspace_mounts(
+        home,
+        guest_workspaces,
+        workspaces={"home": str(home)},
+    )
+    writable_home = guest_workspaces / "home"
+    assert mapping["home"] == (str(home), str(writable_home))
+    assert SandboxMount(home, writable_home) in mounts
+    assert mapping["lab"][1] == str(guest_workspaces / "lab")
+
+
+def test_root_inputs_do_not_expose_a_same_named_resident_home(tmp_path):
+    root = tmp_path / "global"
+    peer = root / "agents/alice"
+    peer.mkdir(parents=True)
+    secret = tmp_path / "private.too"
+    secret.write_text("private\n")
+    (peer / "agent.too").symlink_to(secret)
+    visitor_home = tmp_path / "visitor/agents/alice"
+    mounts = prepare_source_mounts(
+        root,
+        "alice",
+        Path("/guest/root"),
+        capture_home=visitor_home,
+        include_home=False,
+    )
+    assert not any(mount.local_path == secret for mount in mounts)
+    assert not any(
+        mount.hosted_path.is_relative_to(Path("/guest/root/agents")) for mount in mounts
+    )

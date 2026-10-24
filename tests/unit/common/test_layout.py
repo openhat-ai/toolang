@@ -12,21 +12,62 @@ from toolang.common.layout import (
 
 
 @pytest.mark.parametrize("existing", [False, True])
-def test_scratch_workspace_uses_hidden_directory(
+def test_scratch_workspace_uses_place_workspace_directory(
     tmp_path: Path, existing: bool
 ) -> None:
     home = tmp_path / "agents" / "alice"
     home.mkdir(parents=True)
-    scratch = home / ".lab"
+    scratch = tmp_path / "workspaces/alice/lab"
     if existing:
-        scratch.mkdir()
+        scratch.mkdir(parents=True)
         (scratch / "marker").write_text("keep")
 
     assert ensure_scratch_workspace(home) == scratch
     assert scratch.is_dir()
+    assert not (home / ".lab").exists()
     assert not (home / "lab").exists()
     if existing:
         assert (scratch / "marker").read_text() == "keep"
+
+
+def test_old_home_lab_is_ignored_without_moving_files(tmp_path):
+    home = tmp_path / "agents/alice"
+    legacy = home / ".lab"
+    legacy.mkdir(parents=True)
+    marker = legacy / "marker"
+    marker.write_text("keep")
+    root = ensure_scratch_workspace(home)
+    assert marker.read_text() == "keep"
+    assert root == tmp_path / "workspaces/alice/lab"
+    assert list(root.iterdir()) == []
+
+
+def test_workspace_owner_is_the_logical_agent_even_when_home_is_linked(tmp_path):
+    layout = AgentLayout.resident(tmp_path / "root", "alice")
+    layout.home.parent.mkdir(parents=True)
+    target = tmp_path / "external/other-name"
+    target.mkdir(parents=True)
+    layout.home.symlink_to(target, target_is_directory=True)
+    assert ensure_scratch_workspace(layout.home) == layout.lab
+    assert not (tmp_path / "workspaces").exists()
+
+
+@pytest.mark.parametrize(
+    "part", ["workspaces", "workspaces/alice", "workspaces/alice/lab"]
+)
+def test_scratch_workspace_rejects_linked_namespace_components(tmp_path, part):
+    home = tmp_path / "agents/alice"
+    home.mkdir(parents=True)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    link = tmp_path / part
+    link.parent.mkdir(parents=True, exist_ok=True)
+    link.symlink_to(outside, target_is_directory=True)
+    with pytest.raises(
+        ValueError, match="implicit lab workspace must not be a symlink"
+    ):
+        ensure_scratch_workspace(home)
+    assert list(outside.iterdir()) == []
 
 
 def test_resident_layout_derives_agent_paths(tmp_path: Path) -> None:
@@ -35,6 +76,8 @@ def test_resident_layout_derives_agent_paths(tmp_path: Path) -> None:
     assert layout.placement == "resident"
     assert layout.root == layout.place == (tmp_path / "toolang").resolve()
     assert layout.home == layout.place / "agents" / "alice"
+    assert layout.workspaces == layout.place / "workspaces/alice"
+    assert layout.lab == layout.workspaces / "lab"
     assert layout.place_state == layout.place / ".state" / "root"
     assert layout.home_state == layout.home / ".state" / "home"
     assert layout.agent_state == layout.home / ".state" / "agent"
@@ -42,7 +85,7 @@ def test_resident_layout_derives_agent_paths(tmp_path: Path) -> None:
     assert layout.runtime_status == layout.home / ".runtime" / "status.json"
     assert layout.previous_sandbox_state == layout.sandbox_home / "state.json"
     assert layout.legacy_sandbox_state == layout.runtime / "sandbox.json"
-    assert layout.sandbox_stage == layout.sandbox_home / "launches"
+    assert layout.sandbox_stage == layout.place / ".runtime/active/alice/docker"
     assert layout.runtime_status.is_relative_to(layout.home)
     assert layout.run_store == layout.home / ".runtime" / "runs.db"
     assert layout.stats_store == layout.home / ".runtime" / "stats.db"

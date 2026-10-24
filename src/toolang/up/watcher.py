@@ -16,6 +16,7 @@ from .observation import (
     webui_url,
 )
 from .types import AgentStatus, RuntimeInstanceSnapshot
+from .registry import reference_address
 
 
 def _repairable(status: AgentStatus) -> bool:
@@ -142,7 +143,7 @@ class RuntimeWatcher:
             complete
             and runtime.registrations is not None
             and all(
-                path in resolved or path.name in known_homes
+                path in resolved or f"{reference_address(path)}.json" in known_homes
                 for path in (runtime.registrations or ())
             )
         )

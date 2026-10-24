@@ -13,7 +13,7 @@ from toolang.common.place_codes import root_code
 from .identity import layout_from_control
 from .instance import SandboxState, read_document, read_instance
 from .observation import RuntimeInventory, RuntimeProbe, RuntimeSource, runtime_source
-from .registry import instance_filename, read_reference
+from .registry import read_reference, reference_address
 from .types import AgentStatus, RuntimeInstanceSnapshot
 
 
@@ -71,7 +71,9 @@ def active_runtime_endpoints(root: Path) -> tuple[dict, ...]:
 def active_layout(root: Path, address: str) -> tuple[AgentLayout, str]:
     """Resolve one exact active address without a historical or cross-root scan."""
     root = root.expanduser().resolve()
-    path = root / ".runtime" / "active" / address / f"{address}.json"
+    path = root / ".runtime" / "active" / address / "info.json"
+    if not path.is_file():
+        path = root / ".runtime" / "active" / address / f"{address}.json"
     if not path.is_file():
         path = root / ".runtime" / "active" / f"{address}.json"
     reference = read_reference(path)
@@ -122,7 +124,7 @@ def _fallback_layout(
     reference_path: Path, status_path: Path, toolang_root: Path
 ) -> AgentLayout | None:
     """Recover display identity from our stable registration filename."""
-    match = _REFERENCE_NAME.fullmatch(reference_path.name)
+    match = _REFERENCE_NAME.fullmatch(f"{reference_address(reference_path)}.json")
     if match is None or len(status_path.parents) < 4:
         return None
     name = match.group("name")
@@ -258,12 +260,12 @@ def registered_inventory(
                 for path in (
                     (child,)
                     if child.suffix == ".json"
-                    else (child / f"{child.name}.json",)
+                    else (child / "info.json", child / f"{child.name}.json")
                     if child.is_dir() and not child.is_symlink()
                     else ()
                 )
-                if (not residents_only or "@" not in path.stem)
-                and (agent is None or path.stem == agent)
+                if (not residents_only or "@" not in reference_address(path))
+                and (agent is None or reference_address(path) == agent)
                 and path.is_file()
             ),
             key=lambda path: str(path),
@@ -291,7 +293,9 @@ def registered_inventory(
                 and status_path is not None
                 and _resolved(status_path) != selected_status
             ):
-                name = _REFERENCE_NAME.fullmatch(reference_path.name)
+                name = _REFERENCE_NAME.fullmatch(
+                    f"{reference_address(reference_path)}.json"
+                )
                 if name is None or name.group("instance") is None:
                     diagnostics.append(
                         f"runtime registry {reference_path.name}: resident status does not match the selected agent"
@@ -358,7 +362,7 @@ def registered_inventory(
                     not isinstance(instance_key, str)
                     or layout.instance
                     != (None if instance_key == "default" else instance_key)
-                    or instance_filename(layout) != reference_path.name
+                    or layout.address != reference_address(reference_path)
                 ):
                     raise ValueError("runtime identity does not match its registration")
             except (KeyError, OSError, RuntimeError, TypeError, ValueError) as exc:

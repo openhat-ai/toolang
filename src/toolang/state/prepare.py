@@ -28,6 +28,7 @@ from .state import (
 )
 from .config import (
     canonical_state_config,
+    configured_workspaces,
     normalize_cap_overrides,
     parse_config,
     resolve_cap_allows,
@@ -41,6 +42,7 @@ from .source import (
     SourceManifest,
     SourceObservation,
     SourceSnapshot,
+    ROOT_WORKSPACE_SOURCE,
     parse_agent_program,
     observe_home_source,
     observe_root_source,
@@ -344,7 +346,12 @@ def inspect_agent_caps(
     """Resolve current agent capabilities without preparing executable State."""
     _require_agent_home(layout)
     root = prepare_root(layout, progress=progress)
-    authored = read_authored_source(layout.place, layout.name)
+    authored = read_authored_source(
+        layout.place,
+        layout.name,
+        root_config=layout.root_config,
+        workspace_key=layout.config_key,
+    )
     accepted = accept_sources(authored, scope="home", include_programs=False)
     for record in accepted.records:
         if not record.accepted:
@@ -410,7 +417,12 @@ def prepare_home(
     """Build or reuse one agent-home State layer."""
 
     _require_agent_home(layout)
-    source = scan_home_source(layout.place, layout.name)
+    source = scan_home_source(
+        layout.place,
+        layout.name,
+        root_config=layout.root_config,
+        workspace_key=layout.config_key,
+    )
     current = _matching_home(
         layout,
         source=source,
@@ -419,7 +431,12 @@ def prepare_home(
     if current is not None:
         return current
     with layer_build_lock(layout, "home", progress=progress):
-        source = scan_home_source(layout.place, layout.name)
+        source = scan_home_source(
+            layout.place,
+            layout.name,
+            root_config=layout.root_config,
+            workspace_key=layout.config_key,
+        )
         current = _matching_home(
             layout,
             source=source,
@@ -473,14 +490,21 @@ def _matching_home(
             return None
         if layer.source != source:
             return None
-        if "workspaces" in layer.config:
+        if (
+            "workspaces" in layer.config
+            or (layer.revision_dir / "source" / ROOT_WORKSPACE_SOURCE).is_file()
+        ):
             from toolang.common.config_sources import rebase_config
 
-            raw = parse_config((layer.revision_dir / "source/config.toml").read_bytes())
-            if (
-                rebase_config(raw, layout.home).get("workspaces")
-                != layer.config["workspaces"]
-            ):
+            config = layer.revision_dir / "source/config.toml"
+            raw = parse_config(config.read_bytes()) if config.is_file() else {}
+            expected = configured_workspaces(rebase_config(raw, layout.home))
+            policy = layer.revision_dir / "source" / ROOT_WORKSPACE_SOURCE
+            if policy.is_file():
+                expected.update(
+                    configured_workspaces(parse_config(policy.read_bytes()))
+                )
+            if expected != layer.config["workspaces"]:
                 return None
         acquired = _matching_program_acquisition(layout, source)
         expected = {"agent": acquired.resolution()} if acquired else {}
@@ -604,7 +628,12 @@ def _build_layer_revision(
             authored = (
                 read_root_source(layout.place)
                 if scope == "root"
-                else read_authored_source(layout.place, layout.name)
+                else read_authored_source(
+                    layout.place,
+                    layout.name,
+                    root_config=layout.root_config,
+                    workspace_key=layout.config_key,
+                )
             )
         except SourceChangedError:
             continue
@@ -741,7 +770,12 @@ def _observe_scope_source(
 ) -> SourceObservation:
     if scope == "root":
         return observe_root_source(layout.place)
-    return observe_home_source(layout.place, layout.name)
+    return observe_home_source(
+        layout.place,
+        layout.name,
+        root_config=layout.root_config,
+        workspace_key=layout.config_key,
+    )
 
 
 def _require_place(layout: AgentLayout) -> None:
@@ -844,4 +878,17 @@ def _snapshot_config(
         ),
         None,
     )
+    config = parse_config(item.content) if item else {}
+    if cap_scope == "home":
+        import tomlkit
+
+        for policy in authored.files:
+            if policy.category == "workspace-policy":
+                grants = {
+                    **configured_workspaces(config),
+                    **configured_workspaces(parse_config(policy.content)),
+                }
+                if grants or "workspaces" in config:
+                    config["workspaces"] = grants
+        return parse_config(canonical_state_config(tomlkit.dumps(config).encode()))
     return parse_config(canonical_state_config(item.content)) if item else {}
