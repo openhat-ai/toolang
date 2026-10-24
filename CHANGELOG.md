@@ -412,6 +412,16 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Fixed
 
+- Nonroot Linux hosts inspect and reuse a Docker home without permission errors
+  from RunStore database files created under the mounted runtime owner.
+
+- Docker recovery ignores creation helpers that conclusively exited, while
+  unknown live name-only launches still block it.
+
+- Restarting a managed Docker server in the same home keeps its authorized
+  provider bindings, and a missing launch environment snapshot fails instead of
+  falling back.
+
 - Failed preparation no longer leaves active registrations; runtime references
   remain until resource release, Stats works for embedded scripts, and
   incomplete replay seeds are rejected.
