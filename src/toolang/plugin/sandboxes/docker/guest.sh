@@ -248,6 +248,7 @@ if [ -n "${TOOLANG_FOREGROUND_OWNER_FILE:-}" ]; then
                 esac
             fi
             if [ "$OWNER_GRACE" -gt 0 ]; then sleep "$OWNER_GRACE"; fi
+            printf '%s\n' 'Foreground finalization deadline exceeded; records may be incomplete.' >&2
             kill -KILL "$OWNER_PID" 2>/dev/null || :
         ) </dev/null &
         printf '%s\n' 'foreground owner channel closed' >"$TOOLANG_FOREGROUND_OWNER_FILE"

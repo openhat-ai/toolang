@@ -1660,7 +1660,10 @@ def test_docker_script_owner_loss_finalizes_records(
     tmp_path, docker_wheel_dir, interruption, wait_kind
 ):
     from toolang.execution.store import RunStore
-    from toolang.plugin.sandboxes.docker._cli import docker_reference_running
+    from toolang.plugin.sandboxes.docker._cli import (
+        docker_container_running,
+        docker_reference_running,
+    )
     from toolang.up.instance import read_instance
     import psutil
 
@@ -1675,7 +1678,26 @@ def test_docker_script_owner_loss_finalizes_records(
         worker = _script_process(source, root, docker_wheel_dir)
         try:
             home, state = _wait_script_home(source, root, worker)
-            if interruption != "bootstrap-kill":
+            if interruption == "bootstrap-kill":
+                end = time.monotonic() + 60
+                while time.monotonic() < end:
+                    current = SandboxState.load(home.runtime_status)
+                    if (
+                        current is not None
+                        and len(current.ref.runtime_id) == 64
+                        and docker_container_running(current.ref.runtime_id)
+                    ):
+                        entry = read_instance(home.runtime_status)
+                        assert (
+                            entry is not None and entry["workload"].get("pid") is None
+                        )
+                        state = current
+                        break
+                    assert worker.poll() is None, worker.communicate()
+                    time.sleep(0.05)
+                else:
+                    pytest.fail("guest bootstrap never entered its running container")
+            else:
                 end = time.monotonic() + 180
                 while time.monotonic() < end:
                     if (
@@ -1954,3 +1976,76 @@ def test_foreground_launch_preserves_docker_error_after_stage_cleanup(
     assert SandboxState.load(home.runtime_status) is None
     assert not home.run_store.exists()
     assert not list((root / ".runtime" / "active").glob("*/info.json"))
+
+
+def test_owner_eof_stops_a_guest_whose_primary_process_cannot_handle_signals(
+    tmp_path, docker_wheel_dir
+):
+    from toolang.up.allocation import retained_roaming
+    from toolang.plugin.sandboxes.docker._cli import docker_reference_running
+    from toolang.up.instance import read_instance
+
+    source = tmp_path / "frozen.too"
+    source.write_text(
+        "agic main() -> Text:\n  context = none\n  recall = none\n  user: WAIT.\n"
+    )
+    root = tmp_path / "root"
+    scenario = _ScriptScenario(source, "model")
+    home = None
+    with _script_model(scenario):
+        worker = _script_process(source, root, docker_wheel_dir)
+        try:
+            home, _state = _wait_script_home(source, root, worker)
+            assert scenario.entered.wait(60)
+            state = SandboxState.load(home.runtime_status)
+            entry = read_instance(home.runtime_status)
+            assert state is not None and len(state.ref.runtime_id) == 64
+            assert entry is not None
+            pid = entry["workload"]["pid"]
+            # Fault injection only: freeze the actual workload, not Docker's init.
+            command = (
+                ["docker", "kill", "--signal", "STOP", state.ref.runtime_id]
+                if pid == 1
+                else [
+                    "docker",
+                    "exec",
+                    state.ref.runtime_id,
+                    "python3",
+                    "-c",
+                    "import os,signal,sys; os.kill(int(sys.argv[1]),signal.SIGSTOP)",
+                    str(pid),
+                ]
+            )
+            stopped = subprocess.run(
+                command, capture_output=True, text=True, timeout=10
+            )
+            assert stopped.returncode == 0, stopped.stderr
+            started = time.monotonic()
+            worker.kill()
+            worker.communicate(timeout=5)
+            deadline = started + 13
+            while time.monotonic() < deadline and docker_reference_running(state.ref):
+                time.sleep(0.05)
+            assert not docker_reference_running(state.ref), (
+                "unresponsive guest outlived its owner deadline"
+            )
+            assert time.monotonic() - started >= 8, (
+                "fault never reached forced finalization"
+            )
+            ended = subprocess.run(
+                ["docker", "wait", state.ref.runtime_id],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            assert ended.returncode == 0 and ended.stdout.strip() == "137", ended
+            logs = subprocess.run(
+                ["docker", "logs", "--tail", "20", state.ref.runtime_id],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            assert "records may be incomplete" in logs.stdout + logs.stderr
+        finally:
+            homes = retained_roaming(source, toolang_root=root)
+            _clean_script(worker, home or (homes[0] if homes else None))

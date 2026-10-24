@@ -462,8 +462,10 @@ precedence, including `7001`. Running processes are not relocated.
 
 ## Foreground ownership and finalization
 
-Scripts and foreground `serve --sandbox docker` use an attached `docker run -i`
-with no TTY. Only the host frontend holds the dedicated stdin writer; terminal
+Scripts and foreground `serve --sandbox docker` use an attached `docker run -i --init`
+with no TTY. Docker's init owns PID 1 and reaps children, leaving the workload
+terminable by its independent guest watchdog when it cannot handle signals.
+Only the host frontend holds the dedicated stdin writer; terminal
 input and tool subprocesses use separate descriptors. The guest watches EOF from
 bootstrap through shutdown, independently of model/tool execution. HTTP/SSE loss
 alone does not end ownership; EOF does. Background lifetimes are unchanged. This

@@ -380,7 +380,7 @@ async def docker_run_detached(
         f"{DEFAULT_HOST_GATEWAY}:host-gateway",
     ]
     if foreground:
-        args.extend(["--sig-proxy=false", "--stop-timeout", "10"])
+        args.extend(["--init", "--sig-proxy=false", "--stop-timeout", "10"])
     if remove_on_exit:
         args.append("--rm")
     for name, value in (labels or {}).items():
