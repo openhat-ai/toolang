@@ -7,20 +7,17 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-24
+
 ### Added
 
-- Roaming script and Chat launches each keep a fresh executor and a retained
-  `<source_dir>/.toolang/<agent>@<instance_id>/` root, while `--instance/-i`
-  selects retained history instead of restarting an old root.
-  ([#884](https://github.com/openhat-ai/toolang/pull/884))
+- Roaming launches keep a fresh executor under a retained
+  `<source_dir>/.toolang/` root, while an explicit address or Thread or Run
+  reference continues that home instead of copying history.
+  ([#884](https://github.com/openhat-ai/toolang/pull/884)) ([#919](https://github.com/openhat-ai/toolang/pull/919))
 
 - Host scripts expose the full shared Agent API on their existing event loop,
   restoring Top live activity and generation-fenced controls.
-  ([#884](https://github.com/openhat-ai/toolang/pull/884))
-
-- Roaming reruns and explicit Chat continuations snapshot SQLite into fresh
-  roots, keeping imported history inspectable without duplicate activity,
-  usage, or replayed events.
   ([#884](https://github.com/openhat-ai/toolang/pull/884))
 
 - Structured `[model]`, `[talk.model]`, `[talk.limit]`, and `[compact.model]`
@@ -69,16 +66,6 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   are incompatible with older releases.
   ([#884](https://github.com/openhat-ai/toolang/pull/884))
 
-- **Breaking:** Visiting roots move from `/tmp/toolang-<agent>-<source_id>` to
-  `/tmp/<agent>@v<source_id>`, and legacy directories stay in place for you to
-  retain separately.
-  ([#884](https://github.com/openhat-ai/toolang/pull/884))
-
-- **Breaking:** Legacy roaming shared and nested histories stay put without an
-  automatic migrator, so retain them separately and start fresh roots under
-  `<source_dir>/.toolang/<agent>@<instance_id>/`.
-  ([#884](https://github.com/openhat-ai/toolang/pull/884))
-
 - **Breaking:** Resident and visiting launches with different effective options,
   including `--enable`, now fail before preparation instead of joining the
   existing root; align those options or run `too AGENT stop` first.
@@ -121,14 +108,9 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   separate dim time ranges, omitting the running, total, and completed counts.
   ([#897](https://github.com/openhat-ai/toolang/pull/897))
 
-- Instance IDs use `v`/`r` plus 16 Base32 characters; roaming IDs order launches
-  per source, Top shows `A@I`, and `--instance/-i` takes `I`.
-  ([#902](https://github.com/openhat-ai/toolang/pull/902))
-
-- **Breaking:** Stop old workloads with the previous version, then archive old
-  visiting/roaming roots, resident `status.json` files, and global discovery
-  records outside runtime paths before restarting with format 4. Visiting homes
-  use `/tmp/toolang/A@I/agents/A/`; no migration or automatic deletion is provided.
+- **Breaking:** Stop old workloads with the previous version and archive old
+  visiting and roaming roots, resident `status.json` files, and discovery
+  records outside runtime paths; nothing migrates or deletes automatically.
   ([#902](https://github.com/openhat-ai/toolang/pull/902))
 
 - Agent, workspace, chore, and inspection lists start their tables at column
@@ -172,33 +154,22 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   when unset.
   ([#912](https://github.com/openhat-ai/toolang/pull/912))
 
-- `cd`, `info`, `start`, `stop`, `chat`, and `top` accept AGENT before or
-  after the command, while `serve` and `remove` require it after and `caps`,
-  `models`, `providers`, and `tools` before.
+- `caps`, `models`, `providers`, and `tools` accept an optional AGENT before
+  the command, while `remove` requires it after.
   ([#916](https://github.com/openhat-ai/toolang/pull/916))
 
-- **Breaking:** `serve` accepts AGENT only after the command, so rewrite
-  `too AGENT serve` as `too serve AGENT`, with global options before the
-  command or agent.
-  ([#916](https://github.com/openhat-ai/toolang/pull/916))
-
-- Known residents and explicit refs alone report `Missing command`;
-  unsupported agent positions show native command help and usage with exit 2.
+- An explicit `agent:NAME` selector alone reports `Missing command`, while a
+  bare resident name alone is an unknown command; unsupported agent positions
+  show command help and usage at exit 2.
   ([#916](https://github.com/openhat-ai/toolang/pull/916))
 
 - `too COMMAND --help` starts without loading server applications, state
   preparation, API schemas, or interactive UI, reducing measured startup time.
   ([#918](https://github.com/openhat-ai/toolang/pull/918))
 
-- **Breaking:** Agent-scoped invocations use `too AGENT COMMAND` without suffix
-  aliases, while `caps`, `models`, `providers`, and `tools` keep optional
-  `AGENT` prefixes; rewrite `too serve AGENT` as `too AGENT serve`.
-  ([#919](https://github.com/openhat-ai/toolang/pull/919))
-
-- **Breaking:** `--instance/-i` is removed; select an existing home with
-  complete `name@t...`, `name@s...`, or `file.too@s...` operands, not IDs
-  alone. Short roaming `name@s...` needs the selected root's active registry,
-  while `file.too@s...` works offline.
+- **Breaking:** `--instance/-i` is removed, so select an existing home with a
+  complete `name@<place_code>` or `file.too@<place_code>` operand; short
+  `name@<place_code>` needs the selected root's active registry.
   ([#919](https://github.com/openhat-ai/toolang/pull/919)) ([#922](https://github.com/openhat-ai/toolang/pull/922))
 
 - **Breaking:** Stop old workloads with the previous CLI and retain old roots
@@ -233,25 +204,15 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   sections.
   ([#919](https://github.com/openhat-ai/toolang/pull/919))
 
-- `too AGENT info` identifies the Toolang root, agent root, and home, and
-  emits complete shell-quoted copy commands retaining `--root` and instance
-  scope, escaping command-colliding names as `agent:NAME`.
-  ([#919](https://github.com/openhat-ai/toolang/pull/919)) ([#922](https://github.com/openhat-ai/toolang/pull/922))
-
 - Internal path names keep root, place, and home for the Toolang root, an
   agent environment, and its `agents/NAME`, while public text says Toolang
   root, agent root, and home.
   ([#922](https://github.com/openhat-ai/toolang/pull/922))
 
-- **Breaking:** Root codes derive from `place:v1` hashing and visiting
-  `t`/roaming `s` place codes from `visiting:v1`/`roaming:v1`, selecting new
-  homes under `/tmp/toolang/` and `<source_dir>/.toolang/`; stop workloads and
-  retain old homes.
-  ([#922](https://github.com/openhat-ai/toolang/pull/922))
-
-- **Breaking:** Runtime format 5 replaces persisted `status.json` and
-  active-reference binding fields with `root`, `place`, `place_code`, and
-  `address`; follow the same stop-and-retain step before adopting it.
+- **Breaking:** Root codes hash with `place:v1`, and visiting and roaming place
+  codes use `visiting:v1` and `roaming:v1`, selecting new homes under
+  `/tmp/toolang/` and `<source_dir>/.toolang/`; stop workloads and retain old
+  homes.
   ([#922](https://github.com/openhat-ai/toolang/pull/922))
 
 - **Breaking:** Sandbox integrations implement `runtime_place` with
@@ -278,9 +239,6 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   accepted admission without awaiting completion.
   ([#925](https://github.com/openhat-ai/toolang/pull/925))
 
-- `too AGENT info` labels one Root as the agent root, beside the home.
-  ([#928](https://github.com/openhat-ai/toolang/pull/928))
-
 - `info`, `chat`, `cd`, `start`, `stop`, and `serve` accept AGENT before or
   after the command, so both `too AGENT COMMAND` and `too COMMAND AGENT` work.
   ([#929](https://github.com/openhat-ai/toolang/pull/929))
@@ -293,7 +251,7 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 - `too AGENT info` prints the canonical address and home without redundant
   Root, Placement, or Agent rows.
-  ([#936](https://github.com/openhat-ai/toolang/pull/936))
+  ([#928](https://github.com/openhat-ai/toolang/pull/928)) ([#936](https://github.com/openhat-ai/toolang/pull/936))
 
 - `too help` groups topic sections by setting and clarifies cost and automatic
   output values.
@@ -335,9 +293,9 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   ([#946](https://github.com/openhat-ai/toolang/pull/946))
 
 - Docker guests read generated `config.toml` at read-only `ROOT/config.toml`
-  and, at `ROOT/.runtime/active/NAME`, `info.json` plus bootstrap inputs, from
-  separate host sources, where `ROOT` equals `PLACE` at the configured Docker
-  root.
+  and, at `ROOT/.runtime/active/<address>`, `info.json` plus bootstrap inputs,
+  from separate host sources, where `ROOT` equals `PLACE` at the configured
+  Docker root.
   ([#948](https://github.com/openhat-ai/toolang/pull/948))
 
 - Home workspace entries merge with agent-specific `[workspaces]` tables in the
@@ -355,10 +313,11 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   without `HOME` aliases.
   ([#948](https://github.com/openhat-ai/toolang/pull/948))
 
-- **Breaking:** Runtime format 6 stores `info.json` at
-  `<root>/.runtime/active/<address>/` with the full address, absolute
-  reader-specific home, launch, location, and sandbox.
-  ([#948](https://github.com/openhat-ai/toolang/pull/948))
+- **Breaking:** Runtime format 6 persists `root`, `place`, `place_code`, and
+  `address` in active references, while `info.json` at
+  `<root>/.runtime/active/<address>/` holds each reader's home, launch,
+  location, and sandbox; follow the stop-and-retain step above.
+  ([#948](https://github.com/openhat-ai/toolang/pull/948)) ([#922](https://github.com/openhat-ai/toolang/pull/922))
 
 - **Breaking:** The implicit `lab` workspace now lives at
   `<place>/workspaces/<agent>/lab` instead of `<home>/.lab`, stays after the
@@ -382,6 +341,9 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   ([#950](https://github.com/openhat-ai/toolang/pull/950))
 
 ### Fixed
+
+- `too FILE.too` help and legacy-input errors describe the accepted
+  invocation and arguments.
 
 - Failed preparation no longer leaves active registrations; runtime references
   remain until resource release, Stats works for embedded scripts, and
@@ -487,10 +449,6 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 - Help and native CLI parameter errors, including a repeated Chat
   `--workdir/-d`, no longer prepare agent sources or allocate instances.
-  ([#916](https://github.com/openhat-ai/toolang/pull/916))
-
-- A visiting `--instance` ID on a local `.too` agent target now reports a
-  parameter mismatch and exits 2, instead of invalid ID syntax and exit 1.
   ([#916](https://github.com/openhat-ai/toolang/pull/916))
 
 - Shell completion ignores invalid agent command forms, missing or invalid
@@ -3138,7 +3096,8 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 - The formatter normalizes `exec` statements consistently with other flow
   statements. (#676)
 
-[Unreleased]: https://github.com/openhat-ai/toolang/compare/v0.4.0a11...HEAD
+[Unreleased]: https://github.com/openhat-ai/toolang/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/openhat-ai/toolang/compare/v0.4.0a11...v0.4.0
 [0.4.0a11]: https://github.com/openhat-ai/toolang/compare/v0.4.0a10...v0.4.0a11
 [0.4.0a10]: https://github.com/openhat-ai/toolang/compare/v0.4.0a9...v0.4.0a10
 [0.4.0a9]: https://github.com/openhat-ai/toolang/compare/v0.4.0a8...v0.4.0a9
