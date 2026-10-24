@@ -204,7 +204,7 @@ class _ScriptParser(OptionalValueParser):
             if item == "--":
                 state.rargs[0] = _LINE_INPUT_MARKER
                 return
-            if item == "-" or not item.startswith("-"):
+            if item in {"-", "---"} or not item.startswith("-"):
                 return
             self._process_opts(state.rargs.pop(0), state)
 
@@ -349,7 +349,11 @@ class _ScriptGroup(OptionalValueGroup, CliGroup):
         self, ctx: Context, args: list[str]
     ) -> tuple[str | None, Any, list[str]]:
         token = args[0]
-        if token in {_LINE_INPUT_MARKER, "-"} or "=" in token or token.startswith(":"):
+        if (
+            token in {_LINE_INPUT_MARKER, "-", "---"}
+            or "=" in token
+            or token.startswith(":")
+        ):
             entry = self._require_entry(ctx)
             if token == _LINE_INPUT_MARKER:
                 args = ["--", *args[1:]]
