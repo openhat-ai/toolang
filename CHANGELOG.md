@@ -7,7 +7,7 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ## [Unreleased]
 
-## [0.4.0] - 2026-10-24
+## [0.4.0b1] - 2026-10-24
 
 ### Added
 
@@ -43,16 +43,20 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 - Roaming script operands accept `file.too` for a fresh home, `file.too@` for
   the latest existing home, and `file.too@P19` for an exact home, while
   explicit selectors fail instead of allocating.
+  ([#956](https://github.com/openhat-ai/toolang/pull/956))
 
 - Bare script `info` selects the latest home or prepares once without creating
   a Run or active registration.
+  ([#956](https://github.com/openhat-ai/toolang/pull/956))
 
 - Each roaming script home allows one owner from preparation through cleanup,
   so a busy home is rejected while different homes run concurrently on host and
   Docker.
+  ([#956](https://github.com/openhat-ai/toolang/pull/956))
 
 - Active script `info` observes saved runtime metadata without reprojecting
   inputs or changing grants.
+  ([#956](https://github.com/openhat-ai/toolang/pull/956))
 
 ### Changed
 
@@ -199,10 +203,10 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   their owners, remove or archive old registry records separately.
   ([#919](https://github.com/openhat-ai/toolang/pull/919))
 
-- Explicit instances and unique Thread/Run references keep Chat, rerun, fork,
-  rewind, and `--chat` in one home; only source-only roaming allocates a fresh
+- Explicit instances and unique Thread/Run references keep Chat and `--chat` in
+  resident and visiting homes, while only source-only roaming allocates a fresh
   home, never snapshotting history into another root.
-  ([#919](https://github.com/openhat-ai/toolang/pull/919))
+  ([#919](https://github.com/openhat-ai/toolang/pull/919)) ([#956](https://github.com/openhat-ai/toolang/pull/956))
 
 - `start`, `serve`, and `stop` reject roaming targets, while `steer` and
   `cancel` control Runs in every placement.
@@ -213,9 +217,9 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   ([#919](https://github.com/openhat-ai/toolang/pull/919))
 
 - Concise help uses `AGENT`, familiar placeholders, sentence case, and
-  uppercase `URL`/`ID`; `--allow`, `--limit`, and `--default` show
-  `<KEY>=<VALUE>` and refer to `too help` topics instead of inline field/model
-  sections.
+  uppercase `URL`/`ID`; `--allow`, `--limit`, `--default`, `--model`, and
+  `--compact-model` show `<KEY>=<VALUE>` and point to `too help` topics
+  instead of inline sections.
   ([#919](https://github.com/openhat-ai/toolang/pull/919))
 
 - Internal path names keep root, place, and home for the Toolang root, an
@@ -236,8 +240,8 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   ([#922](https://github.com/openhat-ai/toolang/pull/922))
 
 - Each Toolang root keeps its own Hub namespace for conversations, leases, Talk
-  cursors, events, and Lua keys, so roots sharing a backend no longer collide on
-  agent or DM names.
+  cursors, events, and Lua keys, so shared backends no longer collide on agent
+  or DM names.
   ([#923](https://github.com/openhat-ai/toolang/pull/923))
 
 - **Breaking:** Restart the Hub and reopen Talk after upgrading, because Hub keys
@@ -356,32 +360,50 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 - **Breaking:** Roaming Chat is removed; run standalone `file.too` commands with
   explicit home selectors, or use resident names and visiting sources for Chat.
+  ([#956](https://github.com/openhat-ai/toolang/pull/956))
 
 - **Breaking:** Roaming `fork`, `rewind`, and history requests reject `--chat`
   before mutation; omit the flag and continue in a standalone `file.too` run.
+  ([#956](https://github.com/openhat-ai/toolang/pull/956))
 
 - Legacy unnumbered `<source_dir>/.toolang/agents/<name>` roaming data stays
   untouched and is unused by home-selected launches.
+  ([#956](https://github.com/openhat-ai/toolang/pull/956))
 
 - Docker foreground scripts treat attached stdin as an exclusive owner channel,
   so EOF ends bootstrap or execution regardless of other activity.
+  ([#956](https://github.com/openhat-ai/toolang/pull/956))
 
 - Scripts and foreground serve share a ten-second closing deadline, drain
   execution writers, and exit the container before releasing host registration.
+  ([#956](https://github.com/openhat-ai/toolang/pull/956))
+
+- **Breaking:** Unnamed runnables are selected as `agic:` or `flow:` instead
+  of `_`; replace `_` selectors, which now fail as unknown runnables.
+
+- `too FILE.too` and runnable help show `[ARGUMENTS]` and `[INPUT...]` usage
+  with an `Input:` section covering `-- INPUT` and `-` for stdin.
+
+- Runnable listings keep each name and kind on one line at narrow widths and
+  render author descriptions as literal text.
+
+- Workspace, workdir, and file options show examples and `FILE`, and agent
+  commands state when `AGENT` may be omitted.
 
 ### Fixed
 
 - Nonroot Linux hosts inspect and reuse a Docker home without permission errors
   from RunStore database files created under the mounted runtime owner.
+  ([#956](https://github.com/openhat-ai/toolang/pull/956))
 
 - Docker recovery ignores creation helpers that conclusively exited, while
   unknown live name-only launches still block it.
+  ([#956](https://github.com/openhat-ai/toolang/pull/956))
 
 - Restarting a managed Docker server in the same home keeps its authorized
   provider bindings, and a missing launch environment snapshot fails instead of
   falling back.
-- `too FILE.too` help and legacy-input errors describe the accepted
-  invocation and arguments.
+  ([#956](https://github.com/openhat-ai/toolang/pull/956))
 
 - Failed preparation no longer leaves active registrations; runtime references
   remain until resource release, Stats works for embedded scripts, and
@@ -390,10 +412,6 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 - CLI controls attach to foreground roaming executors on their real published
   port, covering steer, cancel, profile, and Top.
-  ([#884](https://github.com/openhat-ai/toolang/pull/884))
-
-- Roaming `fork --chat` and `rewind --chat` enable chat in their fresh
-  continuation executor.
   ([#884](https://github.com/openhat-ai/toolang/pull/884))
 
 - Copied chore checkpoints and imported Talk receipts stay inert in the new
@@ -514,13 +532,14 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   root completion.
   ([#919](https://github.com/openhat-ai/toolang/pull/919))
 
-- `file.too` lookup chooses the last-created home by default, requires an
-  instance for ambiguous Thread or Run records, and diagnoses incompatible
-  stores with their path and required action without modifying them.
-  ([#919](https://github.com/openhat-ai/toolang/pull/919))
+- `file.too` inspection and history lookup default to the last-created home,
+  require an instance for ambiguous Thread or Run records, and diagnose
+  incompatible stores by path without modifying them.
+  ([#919](https://github.com/openhat-ai/toolang/pull/919)) ([#956](https://github.com/openhat-ai/toolang/pull/956))
 
-- A later launch cannot redirect a selected home, and a failed Chat after
-  `fork/rewind --chat` keeps the committed Thread history edit.
+- A later launch cannot redirect a selected home, and for resident and
+  visiting agents a failed Chat after `fork/rewind --chat` keeps the
+  committed Thread history edit.
   ([#919](https://github.com/openhat-ai/toolang/pull/919))
 
 - `workspace list`, `add`, and `remove` reject visiting references and URLs
@@ -677,12 +696,15 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 - Failed roaming script creation reclaims its owned intent and preserves Docker
   diagnostics, so a retry can reuse the same home.
+  ([#956](https://github.com/openhat-ai/toolang/pull/956))
 
 - Storage failures and forced exits report incomplete finalization while
   readable records and completed results remain available.
+  ([#956](https://github.com/openhat-ai/toolang/pull/956))
 
 - Foreground Docker containers stop within the ten-second deadline even when a
   guest blocks signals, instead of surviving it.
+  ([#956](https://github.com/openhat-ai/toolang/pull/956))
 
 - Docker guests write State caches, locks, and revision trees under the mounted
   runtime owner, so host `info` and later scripts still read and prepare the
@@ -697,6 +719,10 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 - Interrupting a foreground script keeps signaling the owned process group
   while output pipes close, so stops still meet their deadline.
   ([#956](https://github.com/openhat-ai/toolang/pull/956))
+
+- Missing or unknown runnable inputs report one concise error with the
+  invoked usage, and missing command arguments name the parameter without
+  full help.
 
 ### Security
 
@@ -3157,8 +3183,8 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 - The formatter normalizes `exec` statements consistently with other flow
   statements. (#676)
 
-[Unreleased]: https://github.com/openhat-ai/toolang/compare/v0.4.0...HEAD
-[0.4.0]: https://github.com/openhat-ai/toolang/compare/v0.4.0a11...v0.4.0
+[Unreleased]: https://github.com/openhat-ai/toolang/compare/v0.4.0b1...HEAD
+[0.4.0b1]: https://github.com/openhat-ai/toolang/compare/v0.4.0a11...v0.4.0b1
 [0.4.0a11]: https://github.com/openhat-ai/toolang/compare/v0.4.0a10...v0.4.0a11
 [0.4.0a10]: https://github.com/openhat-ai/toolang/compare/v0.4.0a9...v0.4.0a10
 [0.4.0a9]: https://github.com/openhat-ai/toolang/compare/v0.4.0a8...v0.4.0a9
