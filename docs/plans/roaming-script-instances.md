@@ -1,272 +1,197 @@
 # Roaming script HOMEs and foreground Docker shutdown
 
-Status: proposed for review. This is a feature definition, not an implementation.
+Status: proposed for review; definition only, no implementation.
 
 ## Goal and scope
 
-Separate a roaming agent's durable HOME from each script invocation. Users can
-create a new HOME or explicitly reuse one, inspect the latest HOME, and run
-different HOMEs concurrently on host and Docker. All HOMEs are isolated by the
-selected canonical ROOT. Runtime resources follow their foreground owner.
+Separate durable roaming HOMEs from script invocations: select or create a HOME,
+allow one script owner per HOME, and let different HOMEs run on host and Docker.
+Success requires ROOT isolation, preserved source evolution, and equivalent
+cancellation/record finalization for host Ctrl-C, Docker Ctrl-C and owner loss.
+Container exit alone does not prove successful finalization.
 
-Success requires consistent HOME selection, one script owner per HOME, and the
-same execution cancellation/persistence contract for host Ctrl-C, Docker Ctrl-C
-and Docker owner loss. Preserve source watching and in-process evolution for
-scripts and hosted agents, with existing publication/capture boundaries and live
-workspace I/O. A container disappearing alone is insufficient evidence of correct
-cleanup.
+Share owner detection and shutdown with resident/visiting foreground
+`serve --sandbox docker`. Preserve their HOME selection, background start and
+automatic client/work retention. Roaming has no Chat, start, stop or serve;
+Chat attachment, owner transfer and background roaming execution are out of scope.
 
-Include shared foreground Docker ownership for scripts and existing resident/
-visiting `serve --sandbox docker`. Roaming exposes no Chat, start, stop or serve.
-Preserve resident/visiting HOME selection, persistent background start, automatic
-client/work retention, authored run/spawn semantics and existing history formats
-unless owner provenance needed for safe recovery requires an additive field.
-Do not implement Chat attachment, owner transfer or background roaming execution.
+## HOME selection
 
-## HOME selection and preparation
-
-Use `too`, the alias for `toolang`. Script syntax is
-`too [run] OPERAND [RUNNABLE] ...`; optional `run` preserves existing command
-precedence and default-entry behavior. `info` accepts both existing command orders.
-The table defines proposed behavior, including currently unsupported syntax.
+Use `too` (the `toolang` alias). Script syntax is
+`too [run] OPERAND [RUNNABLE] ...`; preserve optional-run routing, default entries
+and both existing `info` command orders. This table includes proposed syntax:
 
 | Local source operand | Script execution | `info` |
 | --- | --- | --- |
-| `aid.too@P19` | Execute in that existing HOME; missing fails. | Inspect that existing HOME; missing fails. |
-| `aid.too@` | Execute in the latest existing HOME; none fails. | Inspect the latest existing HOME; none fails. |
-| `aid.too` | Allocate and prepare a fresh HOME, then execute. | Select the latest HOME; if none exists, allocate and prepare one, then inspect. |
+| `aid.too@P19` | Run in that existing HOME; missing fails. | Inspect that existing HOME; missing fails. |
+| `aid.too@` | Run in the latest existing HOME; none fails. | Inspect the latest existing HOME; none fails. |
+| `aid.too` | Create a fresh HOME and run. | Inspect the latest HOME; if none exists, prepare one. |
 
-Both `@` forms require an existing HOME and never fall back to creation. P19 here
-stands for the complete roaming place code. Match canonical source and ROOT;
-reject wrong-source/root codes, malformed identities and uncertain ownership.
-Empty trailing `@` means latest, not an incomplete code. Preserve remote revisions,
+P19 denotes the complete [roaming place code](../design/agent-addresses.md#short-codes).
+Resolve once by canonical source and ROOT, validating full ownership bindings;
+wrong-source/root codes, malformed identities or uncertain ownership fail.
+“Latest” means monotonic HOME creation order, unaffected by age, runtime status
+or reuse. Never fall back to an older HOME or create one for an explicit `@`.
+Parse selectors before file/runnable resolution; preserve remote revisions,
 filenames containing `@` before `.too`, and existing named instance addresses.
-Parse selectors before resolving files or generating runnable parameters.
 
-“Latest” means existing monotonic P19 creation order for this source and ROOT.
-Runtime status, age, completion and reuse do not reorder HOMEs. Resolve once and
-pin the target. Serialize latest-or-prepare info so concurrent first calls create
-one HOME; standalone bare-source scripts always allocate independently.
+Roaming HOMEs use `SOURCE_DIR/.toolang/ROOT_CODE/P19/agents/NAME/`. Remove creation and
+selection of `SOURCE_DIR/.toolang/agents/NAME`, preserving old data without automatic
+adoption/deletion. Other preparation call sites use ROOT-scoped resolution while
+retaining source-only and history operand requirements. Shared source edit locks
+remain shared across HOMEs and ROOTs.
 
-All roaming HOMEs use the existing [identity encoding](../design/agent-addresses.md):
+Serialize first-info allocation/preparation so concurrent calls produce one HOME;
+bare scripts allocate independently. Preparation records identity, projects inputs
+and prepares State, with no executor, Run or active registration. Show prepared/not
+running. Failed preparation remains diagnosable and retryable in the same HOME.
+An explicit `@` can subsequently run there; a bare script still creates another.
 
-```text
-SOURCE_DIR/.toolang/ROOT_CODE/P19/agents/NAME/
-```
+While a HOME is owned, `info` reads identity/status and available runtime metadata;
+it must not reproject source/config/catalog inputs, replace invocation workspace
+bindings or renew ownership. Mark unavailable guest facts rather than presenting
+host configuration as verified guest resources. Preparation errors remain visible
+alongside readable identity/status; never silently select a different HOME.
 
-Remove unnumbered roaming HOME creation/selection at
-`SOURCE_DIR/.toolang/agents/NAME`; preserve existing data without automatic adoption
-or deletion. Update every call site that materializes such a HOME. Commands that
-already prepare a HOME use ROOT-scoped latest-or-prepare resolution; historical
-readers that require existing storage retain that prerequisite. Source-only
-commands retain their operand restrictions. Shared source coordination locks are
-not agent HOMEs and retain their existing role.
+## Invocation ownership and inputs
 
-Preparation creates durable identity, source/configuration projection and State,
-without an executor, Run or active runtime registration. Show prepared/not running.
-A failed preparation remains diagnosable and retryable in that HOME. A later
-explicit `@` script may use it; a later bare script still creates another HOME.
+Claim a HOME atomically from preparation through final cleanup. A preparing,
+running, closing or unverifiable owner means busy: no queue, attach, takeover or
+fresh-HOME fallback. Each invocation has a new launch ID and Run identity; reuse
+retains P19/history/lab. Apply this gate to CLI execution including `rerun`, while
+preserving its history target/replay contract. Observation and live Run controls
+remain available; authored child/spawn semantics do not acquire another CLI owner.
+Reject roaming Chat/hosting and history `--chat` before allocation/history mutation.
 
-`info` may prepare resource metadata but never starts an executor, renews runtime
-ownership or modifies the active generation's bindings. Distinguish configured
-host resources from verified effective guest resources; report unavailable facts
-and preparation errors without hiding readable identity/status or changing target.
-Reject roaming Chat/hosting and `--chat` continuations before allocation or the
-associated history mutation. Other historical inspection/offline edits retain
-their existing contracts.
+Resolve workspace/workdir, environment grants, sandbox and development artifact
+per invocation. Omitted options use current defaults, not previous temporary
+bindings. After verified release, the same HOME may switch host/guest; different
+HOMEs can run concurrently with different grants. Preserve grant precedence,
+spaces, read-only inputs, writable lab/status and credential/development policies.
 
-## Script ownership and invocation context
+HOMEs share the canonical source and may share writable workspaces; they are not
+source checkouts or filesystem isolation boundaries. Guest paths are translated
+views of the same canonical host ROOT/source/HOME identity, never inputs for
+recomputing a different identity. Under existing
+[status ownership](../design/hosting.md#runtime-recovery-and-logs), the host owns
+global active registration/staging, and the guest owns workload status/execution
+writes. Do not add a writable global registry mount.
 
-One script owns a HOME at a time. Concurrent execution against a preparing,
-running or closing owner fails as busy; no queuing, attachment, takeover or new
-HOME fallback. Info remains available. Claim a released HOME atomically with a
-fresh launch ID and Run identity; preserve its P19, history and lab. Uncertain
-old resources prevent a new claim. Nested Runs do not allocate HOMEs.
+## Watching and evolution
 
-Resolve workspace, workdir, environment grants, sandbox and development artifact
-at each script command boundary, including explicit reuse. Omitted options use
-current normal configuration/defaults, without restoring previous temporary
-bindings. A stopped HOME may execute on host and later in Docker after verified
-release. Different HOMEs may execute simultaneously with different grants.
+Keep existing monitoring and explicit State sync for scripts, resident and visiting
+agents on host/Docker, including current invalid-publication and visiting-source
+acquisition rules. Host scripts monitor State; hosted servers monitor State and
+Setup. `too grow.too` must be able to edit source and use a valid new publication
+in subsequent calls during the same invocation. Edits require existing workspace
+authority; watching grants no write access. Workspace I/O remains live.
 
-Each HOME's `agent.too` still refers to the same canonical source; overlapping
-workspace grants can expose shared writable code/data. HOMEs are not source
-snapshots or independent workspace security boundaries. Preserve explicit-grant
-precedence, paths containing spaces, read-only inputs, writable lab/status,
-environment/credential policy and developer-wheel identity.
+Preserve [State capture](../design/execution.md#state-capture) and
+[Setup publication](../design/setup.md#publication-and-lifetime): accepted Runs and
+inline plans retain code; new named children/exec can adopt the latest valid State;
+Model Calls use existing resource-capture boundaries. Keep validation, authority,
+prepared frames and recorded revisions intact. Environment, installed resources
+and startup mounts/drivers/ports retain existing restart/capture limits. Reuse
+prepares current inputs while preserving history/lab. This plan changes no watch
+policy and does not resolve existing host/guest configuration-projection differences.
 
-Keep canonical host ROOT/source identity across guest mount translation. Preserve
-shared lock semantics and [host/guest status ownership](../design/hosting.md#runtime-recovery-and-logs):
-host owns global active registration and staged inputs; guest owns its workload
-status and execution writes. No writable global registry mount is added.
+## Foreground Docker owner channel
 
-## Source watching and evolution
+The script CLI owns its invocation; foreground serve owns its server. Work cannot
+retain either runtime after owner loss. Host scripts may remain embedded; no
+permanent supervisor or new host server is required.
 
-Preserve existing source monitoring and explicit State sync for scripts, resident
-and visiting agents on host and Docker. Startup still refreshes prepared inputs;
-do not replace monitoring with refresh-only loading or freeze executor State
-getters for the whole script. A script such as `too grow.too` can edit its source
-and use a valid new publication in subsequent calls during the same invocation.
-Keep watcher lifetime bounded by its runtime owner and include it in shutdown.
+Use attached Docker stdin (`-i`, no TTY) as a dedicated owner channel, with the host
+frontend exclusively holding the pipe's write end. Guest bootstrap/server detects
+EOF independently of model/tool execution, from bootstrap through shutdown.
+Keep script/terminal input separate; helpers/children must not inherit a writer
+that hides owner death. Isolate Docker helpers from terminal signals so Ctrl-C
+can request cancellation before the owner channel drops. Keep diagnostics/output
+and launch/resource verification. HTTP/SSE loss alone does not end ownership;
+owner-channel loss does, without reconnecting or resubmitting uncertain work.
 
-Retain the existing [State capture contract](../design/execution.md#state-capture)
-and [Setup publication contract](../design/setup.md#publication-and-lifetime).
-Accepted Runs and inline plans keep their captured code; newly accepted named
-children and exec operations can bind the latest valid State. Model-call resource
-resolution may adopt newer publications at its existing capture boundary, without
-rewriting prepared frames or widening captured authority. Preserve validation,
-signature checks and recorded revision provenance. Watching does not mean
-replacing every input immediately: environment, installed implementations,
-accepted Setup and startup mount/driver/port choices retain their current limits.
+Replace the current detach-plus-logs/wait path. Native Docker probes support
+[attached-stdin closure](https://github.com/docker/cli/blob/v29.4.0/cli/command/container/opts.go#L724),
+not detached launch followed by attach; they do not prove Toolang finalization.
+The initial guarantee covers local Docker Engine/Desktop. No periodic heartbeat
+or bounded remote-daemon blackhole/half-open detection is introduced.
 
-This definition adds no new watcher policy for scripts or serve. Host scripts
-currently monitor State; hosted servers monitor State and Setup. Keep these
-existing loops and sync paths, including current invalid-publication handling
-and visiting-source acquisition rules. Ordinary workspace I/O remains live.
-Reusing a HOME refreshes current inputs for a new invocation while retaining old
-history/lab. Existing host/guest configuration-projection differences require
-separate diagnosis; preserving watching does not establish full hot-reload parity.
+## Finalization and recovery
 
-## Common foreground Docker ownership
+Use host script Ctrl-C as the cancellation/persistence contract, verifying rather
+than assuming its completeness. Docker Ctrl-C and EOF use the same domain cleanup.
+Record `script interrupted` for script Ctrl-C and `foreground owner channel closed`
+for EOF; preserve serve's interruption semantics. EOF proves channel loss, not
+host PID death. One idempotent closing transition, fenced by HOME/launch/resource:
 
-A script CLI owns its invocation; foreground serve owns its server. Both use one
-Docker foreground lifecycle mechanism, separate from background start and
-visiting automatic idle retirement. Accepted work cannot retain a foreground
-runtime after its owner is lost. Host scripts may keep the embedded executor;
-no managed host server or permanent supervisor is introduced.
-
-Prefer attached, interactive Docker stdin without a TTY as a dedicated owner
-channel. The host frontend exclusively owns the pipe's write end; closing it or
-killing that frontend produces guest EOF. Guest bootstrap/server watches EOF
-independently of model/tool execution. Isolate the control stream from terminal
-input, script inputs and tool descriptors. Keep Docker helpers outside the
-terminal signal group so host Ctrl-C can request cancellation before dropping
-the channel; helpers/children must not inherit a write end that masks owner death.
-
-The channel must cover container creation, bootstrap, API readiness, execution
-and shutdown, including death before readiness. Keep source/startup diagnostics,
-stdout/stderr and launch/resource identity checks. A dropped HTTP/SSE result stream
-alone does not end ownership. Definitive owner-channel loss does; do not reconnect
-to a replacement or resubmit uncertain work.
-
-Current Docker launches use detach plus logs/wait, which does not provide this
-owner channel. Native Docker 29.4.0 probes on macOS verified EOF after frontend or
-Docker-client SIGKILL with foreground `-i`; `-d -i` plus later attach did not have
-the same closure behavior. Applications ignoring EOF continued running. Reuse
-[Docker's attached-stdin semantics](https://github.com/docker/cli/blob/v29.4.0/cli/command/container/opts.go#L724),
-then verify actual Toolang integration on Linux and Docker Desktop. These native
-fixture probes do not establish RunStore or cancellation correctness.
-
-No periodic heartbeat is included initially. Scope the owner-loss guarantee to
-local Docker Engine/Desktop connections. Remote-daemon network blackholes and
-half-open transports have no new bounded-detection guarantee; remote lease
-fallback is a separate definition if required.
-
-## Cancellation, records and shutdown ordering
-
-Use host script Ctrl-C as the common semantic contract, verifying and correcting
-its implementation rather than assuming it is already complete. Route Docker
-Ctrl-C and guest owner EOF through the same domain cancellation/finalization
-operations. Reuse execution controls, terminal projection and store transactions;
-keep transport detection outside execution persistence. Preserve trigger-specific
-reasons: `script interrupted` for Ctrl-C, `foreground owner channel closed` for
-EOF. EOF establishes channel loss, not verified host PID death.
-
-One idempotent, launch-fenced closing transition performs this order:
-
-1. Close admissions and persist the shutdown reason and affected invocation/owned
-   roots while storage is open. Racing signals, EOF and result completion must
-   not duplicate cancellation or overwrite a terminal result.
+1. Close admissions and persist shutdown intent/reason while storage is open.
 2. Cancel unfinished owned roots, descendants, independent spawns and tool
-   subprocesses using existing ownership semantics. Await their cancellation and
-   terminal Run/Step/control records, preserving committed output, usage and
-   errors. Already completed Runs/Steps keep their result; queued work is not
-   executed merely to drain shutdown.
-3. Finish execution resources and stream delivery, close providers/tools/watchers
-   and durable storage, and persist final workload status. Records must remain
-   readable after process/container exit. Never close the store while a task may
-   still write it, or mark runtime stopped before finalization completes.
+   subprocesses. Await terminal Run/Step/control records; preserve completed
+   results and committed output/usage/errors. Do not execute queued work to drain it.
+3. Stop writers, watchers/providers/tools and streams, persist final workload
+   status, then close storage. Never mark stopped or close the store while writers
+   can still run. Records must remain readable after process/container exit.
 
-Normally, host waits for the persisted script result, requests graceful guest
-shutdown, keeps the owner channel until closing is acknowledged, waits for
-container exit, releases host registration/staging and returns the script result.
-On Ctrl-C, return existing interruption exit code 130 after cleanup. A SIGKILLed
-host cannot return a result; guest still performs the same execution finalization.
-Do not force-remove the container as the first cleanup action.
+Normally: persist script result → graceful guest finalization → container exit →
+host registration/staging release → CLI return. Keep the owner channel until
+closing is acknowledged. Ctrl-C returns 130 after cleanup; host SIGKILL has no
+return path but still triggers guest cleanup. Never begin with force removal.
 
-Use a shared ten-second finalization budget, aligned with an explicit Docker stop
-grace of ten seconds. Repeated interruption and stuck tasks/tools/storage must
-not hang indefinitely. Force termination only after the grace; preserve committed
-shutdown intent/diagnostics and report incomplete finalization honestly. Recovery
-may repair records only after verified owner/resource death and proven generation
-ownership; never rewrite completed results or invent missing output. A forced
-exit cannot guarantee complete terminal records when storage is unavailable.
+Use one ten-second finalization deadline from closing; signals/retries do not
+reset it. The guest enforces its own deadline after EOF even when the host/Docker
+client is gone; enforcement must not depend on cooperative cancellation of the
+work being stopped. A live host bounds waiting/escalation too; align Docker stop
+grace to the same deadline, not an additional ten seconds. After expiry, force
+only the owned resources and report incomplete finalization honestly. Storage
+failure/forced exit cannot guarantee terminal records.
 
-Persist host PID/creation time and exact immutable container ID/labels for
-recovery; guest PID is not host liveness evidence. Fence cleanup by full HOME,
-launch and resource identity. Docker exit removal preserves mounted HOME/history/
-lab. If host died, a later observation may withdraw stale active references and
-release staging after verifying death. Preserve unknown resources. Delayed old
-cleanup cannot release a later invocation in the same HOME.
+Persist host PID/creation time and immutable container ID/labels. Before HOME
+reuse or stale-record repair, verify old resource death and full generation
+ownership; unknown resources block reuse. A later host observation may withdraw
+stale active references/staging. Guest PID is not host liveness evidence; delayed
+cleanup must not release a replacement launch. Preserve HOME/history/lab and
+completed results; never invent lost output during recovery.
 
 ## Implementation touchpoints
 
 - `up/{allocation,identity,source,records,registry,workload}.py`, `common/layout.py`:
-  ROOT-scoped preparation separate from active execution and fenced HOME claims.
-- `cli/toolang/{routing,commands/script,commands/agent}.py`, CLI context/argument
-  resolution, `up/addresses.py`: three operands, optional-run routing and concrete
-  HOME intent. Audit other preparation call sites; reject unsupported Chat/hosting
-  and history `--chat` paths early.
-- `up/{lifecycle,server,sandbox,core}.py`, Docker sandbox/CLI/bootstrap and script/
-  foreground serve call sites: common owner channel, signal ordering and deadlines.
-- Script/guest startup and watcher/executor integration: preserve monitoring,
-  explicit State sync and per-call capture while coordinating watcher shutdown
-  with the owner lifecycle.
-- Execution cancellation, tool runtime, owned-run bookkeeping and store/events:
-  reasoned cancellation, durable ordering and generation-proven recovery. Keep
-  parsing, orchestration, execution and persistence with their owning concepts.
-- Update CLI/help and current [CLI](../design/cli.md), [scripts](../design/scripts.md),
-  [Chat](../design/chat.md), addresses and hosting docs when implemented. Follow
-  the prescribed changelog workflow for user-visible compatibility changes.
+  ROOT-scoped preparation, durable identity, exclusive claims and recovery.
+- CLI routing/context, `commands/{script,agent,thread}.py`, `up/addresses.py`:
+  selectors, observing info, rerun admission and unsupported-command rejection.
+- `up/{lifecycle,server,sandbox,core}.py`, Docker `_cli`, adapter/bootstrap, execution
+  cancellation/store/tool ownership: owner channel, deadlines, durable teardown
+  and watcher shutdown; retain parsing/orchestration/execution ownership boundaries.
+- Update CLI/help, addresses, scripts, Chat and hosting design docs when implemented;
+  follow the prescribed changelog workflow. Add provenance fields only as needed,
+  preserving existing history formats/contracts.
 
 ## Acceptance and verification
 
 | Scenario | Pass condition |
 | --- | --- |
-| Three operands with optional run and both info orders | Match the selection table; missing explicit targets create nothing; invalid arguments fail before preparation. |
-| First/repeated/concurrent info and preparation failure | One ROOT-scoped P19, retryable metadata, no Run/server/active reference or unnumbered HOME. |
-| Bare script after info; explicit reuse and concurrent claim | Bare gets a new HOME; reuse keeps P19/history/lab with new launch/Run; one owner wins and the other reports busy. |
-| Latest ordering, same-name sources, symlinks and multiple ROOTs | Select by canonical source/ROOT and creation order; never skip newer stopped/prepared targets or cross identities. |
-| Host/guest simultaneous HOMEs and sequential reuse | Correct per-invocation workspace/workdir/env/sandbox/dev bindings; grants and source-sharing behavior remain explicit. |
-| Self-editing script on host and Docker, using normal file/shell tools | A valid edit becomes available through watching and explicit State sync; a later named child/exec uses the new revision while accepted code/inline plans stay bound; record each revision. |
-| New publication between Model Calls and invalid source edits | Existing capture, validation and last-valid/error behavior remain intact; prepared frames and captured authority are preserved. |
-| Reuse the same HOME after source/config edits | A new invocation prepares current inputs under normal validation rules and preserves old history/lab. |
-| Modify an ordinary workspace file during execution | Later filesystem/tool reads observe current content. |
-| Resident/visiting watch regression and shutdown during refresh | Supported source/config changes still publish under existing capture boundaries; startup-bound inputs remain bound; no watcher keeps a closing runtime alive. |
-| Info during execution and unsupported commands | Observation cannot change/prolong ownership; Chat/hosting/continuations reject before writes; existing background/automatic policies remain valid. |
-| Real CLI host Ctrl-C, Docker Ctrl-C and Docker owner EOF | Equivalent cancellation, persisted records and cleanup invariants across model wait, shell/file tools, nested/spawned work, pending work and terminal races. |
-| RunStore reopened after process/container exit | Valid Run/Step/control terminals and reasons, committed output/usage/errors retained, no unfinished owned execution after graceful close, inspect/stats usable. |
-| Docker script and foreground serve owner/client SIGKILL | Shared behavior before readiness and during work; no helper retains ownership; records commit before guest exit. |
-| Normal completion and Ctrl-C ordering | Container/resources finish before the live host CLI returns; correct script result or exit 130; no stale active/staging data on normal close. |
-| Slow cancellation, repeated signals, storage failure, ten-second grace | Bounded termination and honest incomplete-finalization diagnostics; no false success or cleanup of a replacement launch. |
-| Lost HTTP stream, descriptor leakage and stale recovery | HTTP loss alone preserves work; owner EOF ends it; late recovery is generation-fenced and preserves history/lab. |
+| Three selectors, optional run, both info orders | Selection table holds; missing explicit targets/invalid arguments create nothing. |
+| First/repeated/concurrent info; preparation failure | One ROOT-scoped HOME, retryable diagnostics, no Run/runtime/active registration or unnumbered HOME. |
+| Latest ordering, same-name/symlink sources, multiple ROOTs | Canonical source/ROOT and creation order select one target without fallback/cross-identity access. |
+| Bare run after info; reuse; concurrent script/rerun | Correct fresh/reused HOME; one owner wins, others report busy; history target remains fixed. |
+| Host/guest parallel HOMEs and sequential reuse | Stable identity, current per-invocation grants/settings, preserved history/lab. |
+| Info during owned execution; rejected Chat/hosting/continuations | No input projection, ownership renewal, binding change or rejected-command mutation. |
+| Authorized self-edit via normal tools on host/Docker, using watch and explicit sync | Later named child/exec adopts new valid code; accepted code/inline plans stay bound; revisions recorded; missing grants/read-only paths still deny writes. |
+| Model-frame changes, invalid edits, resident/visiting watch | Existing capture/validation/authority behavior retained; ordinary workspace reads see current files. |
+| Real host/Docker Ctrl-C; owner/client SIGKILL before readiness and during work | Equivalent cleanup invariants across model/tool waits, child/spawn/queued work and terminal races; no leaked owner descriptor. |
+| Reopen RunStore after graceful exit | Valid terminal Run/Step/control records/reasons, preserved output/usage/errors; inspect/stats usable. |
+| Normal completion and interruption ordering | Container exits before CLI returns; expected result/130; no active/staging residue. |
+| Stuck work, repeated signals, storage failure, owner already dead | Deadline works without a surviving host, incomplete finalization reported, no false success. |
+| Lost HTTP stream, stale recovery and replacement race | HTTP loss preserves work; EOF ends it; verified recovery cannot release a replacement or delete history. |
 
-Default tests remain offline and deterministic, using synchronized cancellation
-points and controlled deadlines. Add real CLI subprocess/PTY tests for actual
-SIGINT delivery, not only coroutine cancellation or mocked remote clients. Run
-bounded actual-container cases on Linux and Docker Desktop with deterministic
-provider/tool fixtures and normal product execution paths. Include read-only
-inputs, spaces, environment grants and custom toolchains; no live provider is
-required. Run the default verification for implementation changes.
+Keep default tests offline/deterministic with synchronized execution points. Use
+real CLI subprocess/PTY signals and bounded containers on Linux/Docker Desktop,
+normal product tool execution and deterministic provider fixtures. Cover spaces,
+read-only inputs, environment grants and custom toolchains. Run default checks
+for implementation; native owner-channel fixtures alone are insufficient.
 
-## Risks and deferred work
+## Risks and exclusions
 
-Roaming Chat removal and info-created HOMEs are user-visible compatibility
-changes. Explicit reuse makes launch/resource fences essential. EOF ownership
-requires changing the current detached foreground adapter and careful descriptor/
-signal isolation. Watch/sync tasks must terminate without losing execution
-records or changing publication/authority boundaries. Force deadlines trade
-complete records for bounded exit under faults; expose that limit instead of
-claiming guaranteed persistence. Legacy unnumbered HOME migration, roaming Chat,
-configuration-projection parity and remote-daemon lease fallback are outside this
-scope; there are no remaining decisions inside this scope.
+Roaming Chat removal/info-created HOMEs change public behavior. Descriptor/signal
+handling, guest deadline enforcement and generation fencing require integration
+coverage. Force deadlines limit persistence under faults. Legacy HOME migration,
+roaming Chat, configuration-projection parity and remote-daemon leases are deferred.
