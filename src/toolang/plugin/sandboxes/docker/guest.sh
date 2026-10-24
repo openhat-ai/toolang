@@ -27,7 +27,7 @@ prepare_runtime() {
         printf '%s\n' "docker guest runtime is not writable: $RUNTIME_ROOT" >&2
         exit 73
     }
-    : >"$DIAGNOSTIC" || {
+    printf '' >"$DIAGNOSTIC" || {
         printf '%s\n' "docker guest diagnostic is not writable: $DIAGNOSTIC_DISPLAY" >&2
         exit 73
     }
@@ -168,17 +168,22 @@ validate_toolang() {
     fi
 }
 
-prepare_workload() {
-    if [ "$WORKLOAD_LOG" != "-" ]; then
-        { : >>"$WORKLOAD_LOG" && chmod 600 "$WORKLOAD_LOG"; } ||
+prepare_workload() (
+    DIAGNOSTIC=$1
+    DIAGNOSTIC_DISPLAY=$2
+    PROGRESS_EVENTS=$3
+    if [ "$5" != "-" ]; then
+        # Change the opened file's mode, even if its name is rotated before exec.
+        chmod 600 /dev/fd/1 ||
             fail "Could not open workload log" 73
     fi
-    rm -f "$DIAGNOSTIC"
+    rm -f "$DIAGNOSTIC" || fail "Could not remove bootstrap diagnostic" 73
+    shift 6
     case "$1:${2:-}" in
         too:_serve|toolang:_serve) progress server.running "Starting agent..." ;;
         *) progress server.running "Starting command..." ;;
     esac
-}
+)
 
 # Bootstrap state and installer overrides stay out of the workload environment.
 bootstrap() (
@@ -193,7 +198,6 @@ bootstrap() (
     DIAGNOSTIC_DISPLAY=$2
     PROGRESS_EVENTS=$3
     PACKAGE_SOURCE=$4
-    WORKLOAD_LOG=$5
     if [ "$6" != "--" ]; then
         printf '%s\n' "docker guest command separator is missing" >&2
         exit 64
@@ -210,15 +214,11 @@ bootstrap() (
     prepare_python
     install_toolang
     validate_toolang
-    prepare_workload "$@"
 )
 
-# Arguments: LOG -- COMMAND...
 exec_workload() {
-    if [ "$1" != "-" ]; then
-        exec >>"$1" 2>&1
-    fi
-    shift 2
+    prepare_workload "$@" || exit "$?"
+    shift 6
     case "$1" in
         too|toolang)
             shift
@@ -227,10 +227,15 @@ exec_workload() {
     esac
     export TOOLANG_SANDBOX_INSTANCE=$HOSTNAME
     export PATH="$(tool_bin_dir)${PATH:+:$PATH}"
-    exec "$@"
+    exec 3>&-
+    exec "$@" || exit "$?"
 }
 
 bootstrap "$@"
-# Pass only LOG -- COMMAND... to the parent-shell launcher.
-shift 4
-exec_workload "$@"
+# Function redirections can report open failures without a POSIX shell exiting.
+if [ "$5" = "-" ]; then
+    exec_workload "$@" 3>&2
+elif ! exec_workload "$@" 3>&2 2>>"$1" >>"$5" 2>&1; then
+    printf '%s\nSee %s\n' "Could not open workload log" "$2" >&2
+    exit 73
+fi

@@ -350,6 +350,8 @@ installer through curl/wget. uv reuses Python 3.11+ or installs managed Python
 image packages. Bootstrap variables and uv directory overrides stay in a
 subshell; the parent retains the image environment and directly `exec`s the
 workload with its original arguments, container identity, and private bin path.
+Workload output is opened once before diagnostics are retired. Its opened file
+is marked `0600` and remains valid across log rotation.
 For a source-local roaming agent, Docker overlays linked `agent.too` and
 `config.toml` targets as explicit read-only guest files so host symlinks do not
 become broken paths in the container.

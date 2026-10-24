@@ -975,6 +975,8 @@ def test_docker_guest_executes_the_real_command_with_original_pid_and_arguments(
     diagnostic = tmp_path / "diagnostic.log"
     events = tmp_path / "startup.events"
     log = tmp_path / "workload log"
+    log.touch(mode=0o644)
+    log.chmod(0o644)
     arguments = ["argument with spaces", "$literal", "$(literal)", "", "line\nbreak"]
     workload = (
         [sys.executable, "-c", probe, *arguments]
@@ -1088,6 +1090,197 @@ def test_docker_guest_uses_python_and_pip_to_install_uv(tmp_path: Path) -> None:
     assert stat.S_IMODE(workload_log.stat().st_mode) == 0o600
     assert completed.stderr.splitlines()[0] == "Installing uv..."
     assert completed.stderr.splitlines()[1] == "Installed uv · test"
+
+
+@pytest.mark.parametrize("invalid_path", ["directory", "missing-parent"])
+def test_docker_guest_reports_unusable_workload_log(
+    tmp_path: Path, invalid_path: str
+) -> None:
+    tools = tmp_path / "tools"
+    tools.mkdir()
+    _link_guest_utilities(tools)
+    _write_fake_guest_tools(tools, python=sys.executable)
+    log = tmp_path / "workload.log"
+    if invalid_path == "directory":
+        log.mkdir()
+    else:
+        log = tmp_path / "missing" / "workload.log"
+    diagnostic = tmp_path / "diagnostic.log"
+    events = tmp_path / "events"
+    completed = subprocess.run(
+        (
+            "/bin/sh",
+            str(Path(docker_guest.__file__).with_name("guest.sh")),
+            str(diagnostic),
+            str(diagnostic),
+            str(events),
+            "toolang",
+            str(log),
+            "--",
+            "too",
+            "--version",
+        ),
+        capture_output=True,
+        text=True,
+        timeout=15,
+        env={
+            "HOSTNAME": _CONTAINER_ID[:12],
+            "PATH": str(tools),
+            "TOOLANG_GUEST_RUNTIME": str(tmp_path / "runtime"),
+            "TOOLANG_TEST_PYTHON": sys.executable,
+            "TOOLANG_TEST_TOO": str(tools / "too-template"),
+        },
+    )
+    assert completed.returncode == 73
+    assert completed.stdout == ""
+    assert completed.stderr.splitlines() == [
+        "Could not open workload log",
+        f"See {diagnostic}",
+    ]
+    assert diagnostic.is_file()
+    assert stat.S_IMODE(diagnostic.stat().st_mode) == 0o600
+    assert events.read_text().splitlines()[-1] == "toolang.check.ok"
+
+
+def test_docker_guest_keeps_the_open_workload_log_during_rotation(
+    tmp_path: Path,
+) -> None:
+    tools = tmp_path / "tools"
+    tools.mkdir()
+    _link_guest_utilities(tools)
+    _write_fake_guest_tools(tools, python=sys.executable)
+    log = tmp_path / "workload.log"
+    diagnostic = tmp_path / "diagnostic.log"
+    events = tmp_path / "events"
+    (tools / "rm").unlink()
+    # Synchronize rotation with diagnostic retirement, immediately before exec.
+    _write_executable(
+        tools / "rm",
+        f"#!{sys.executable}\n"
+        "import os, sys\n"
+        "from pathlib import Path\n"
+        "log = Path(os.environ['TOOLANG_TEST_LOG'])\n"
+        "log.rename(log.with_suffix('.rotated'))\n"
+        "log.mkdir()\n"
+        "Path(sys.argv[-1]).unlink()\n",
+    )
+    completed = subprocess.run(
+        (
+            "/bin/sh",
+            str(Path(docker_guest.__file__).with_name("guest.sh")),
+            str(diagnostic),
+            str(diagnostic),
+            str(events),
+            "toolang",
+            str(log),
+            "--",
+            sys.executable,
+            "-c",
+            "print('workload')",
+        ),
+        capture_output=True,
+        text=True,
+        timeout=15,
+        env={
+            "HOSTNAME": _CONTAINER_ID[:12],
+            "PATH": str(tools),
+            "TOOLANG_GUEST_RUNTIME": str(tmp_path / "runtime"),
+            "TOOLANG_TEST_PYTHON": sys.executable,
+            "TOOLANG_TEST_TOO": str(tools / "too-template"),
+            "TOOLANG_TEST_LOG": str(log),
+        },
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout == completed.stderr == ""
+    assert log.is_dir()
+    assert log.with_suffix(".rotated").read_text() == "workload\n"
+    assert stat.S_IMODE(log.with_suffix(".rotated").stat().st_mode) == 0o600
+    assert not diagnostic.exists()
+    assert events.read_text().splitlines()[-1] == "server.running"
+
+
+def test_docker_guest_reports_an_unusable_diagnostic(tmp_path: Path) -> None:
+    tools = tmp_path / "tools"
+    tools.mkdir()
+    _link_guest_utilities(tools)
+    diagnostic = tmp_path / "diagnostic"
+    diagnostic.mkdir()
+    completed = subprocess.run(
+        (
+            "/bin/sh",
+            str(Path(docker_guest.__file__).with_name("guest.sh")),
+            str(diagnostic),
+            str(diagnostic),
+            "-",
+            "toolang",
+            "-",
+            "--",
+            "too",
+            "--version",
+        ),
+        capture_output=True,
+        text=True,
+        timeout=15,
+        env={
+            "HOSTNAME": _CONTAINER_ID[:12],
+            "PATH": str(tools),
+            "TOOLANG_GUEST_RUNTIME": str(tmp_path / "runtime"),
+        },
+    )
+    assert completed.returncode == 73
+    assert completed.stdout == ""
+    assert f"docker guest diagnostic is not writable: {diagnostic}" in completed.stderr
+
+
+@pytest.mark.parametrize("failure", ["missing", "permission"])
+def test_docker_guest_preserves_command_exec_failure(
+    tmp_path: Path, failure: str
+) -> None:
+    tools = tmp_path / "tools"
+    tools.mkdir()
+    _link_guest_utilities(tools)
+    _write_fake_guest_tools(tools, python=sys.executable)
+    command = tmp_path / "command"
+    if failure == "permission":
+        command.write_text("#!/bin/sh\nexit 0\n")
+        command.chmod(0o644)
+    diagnostic = tmp_path / "diagnostic.log"
+    log = tmp_path / "workload.log"
+    completed = subprocess.run(
+        (
+            "/bin/sh",
+            str(Path(docker_guest.__file__).with_name("guest.sh")),
+            str(diagnostic),
+            str(diagnostic),
+            "-",
+            "toolang",
+            str(log),
+            "--",
+            str(command),
+        ),
+        capture_output=True,
+        text=True,
+        timeout=15,
+        env={
+            "HOSTNAME": _CONTAINER_ID[:12],
+            "PATH": str(tools),
+            "TOOLANG_GUEST_RUNTIME": str(tmp_path / "runtime"),
+            "TOOLANG_TEST_PYTHON": sys.executable,
+            "TOOLANG_TEST_TOO": str(tools / "too-template"),
+        },
+    )
+    # macOS's older /bin/sh and Linux shells report exec failures differently.
+    reference = subprocess.run(
+        ("/bin/sh", "-eu", "-c", 'exec "$@"', "sh", str(command)),
+        capture_output=True,
+        timeout=15,
+    )
+    assert completed.returncode == reference.returncode
+    assert completed.stdout == ""
+    assert "Could not open workload log" not in completed.stderr
+    assert str(command) in log.read_text()
+    assert stat.S_IMODE(log.stat().st_mode) == 0o600
+    assert not diagnostic.exists()
 
 
 @pytest.mark.parametrize(
