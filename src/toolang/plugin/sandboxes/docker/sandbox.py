@@ -45,6 +45,7 @@ from ._cli import (
     docker_reference_id,
     docker_reference_running,
     docker_run_detached,
+    docker_release_controller,
     docker_stop_container,
     docker_wait_container,
     finish_process,
@@ -435,6 +436,17 @@ class DockerSandbox:
                     "TOOLANG_WORKSPACE_MOUNTS", "{}"
                 ),
                 "TOOLANG_WORKSPACE_LOCATION": "guest",
+                **(
+                    {
+                        "TOOLANG_FOREGROUND_OWNER_FILE": str(
+                            request.hosted_home
+                            / ".runtime"
+                            / f"owner-{identity['launch_id']}"
+                        )
+                    }
+                    if request.foreground_owner
+                    else {}
+                ),
             },
             mounts=tuple(mounts),
             ports=(
@@ -446,6 +458,7 @@ class DockerSandbox:
             ),
             meta={
                 "remove_on_exit": request.remove_on_exit,
+                "foreground_owner": request.foreground_owner,
                 "container_name": container_name,
                 "docker_identity": identity,
                 "image": image,
@@ -497,8 +510,11 @@ class DockerSandbox:
                 published_port=port.local_port,
                 hosted_port=port.hosted_port,
                 env_values=plan.envs,
-                log_path=None,
+                log_path=Path(_plan_text(plan, "stage_dir")) / "controller.log"
+                if plan.meta.get("foreground_owner")
+                else None,
                 labels=labels,
+                **({"foreground": True} if plan.meta.get("foreground_owner") else {}),
                 **({"remove_on_exit": True} if plan.meta.get("remove_on_exit") else {}),
             )
         except BaseException as exc:
@@ -510,7 +526,12 @@ class DockerSandbox:
             async def remove_owned_container() -> None:
                 owned_id = await asyncio.to_thread(docker_reference_id, ref)
                 if owned_id is not None:
+                    if plan.meta.get("foreground_owner"):
+                        await asyncio.to_thread(
+                            docker_stop_container, owned_id, force=False
+                        )
                     await asyncio.to_thread(docker_remove_container, owned_id)
+                await asyncio.to_thread(docker_release_controller, container_name)
 
             try:
                 await asyncio.shield(remove_owned_container())
@@ -618,6 +639,7 @@ class DockerSandbox:
                 )
         if runtime_id is not None:
             await asyncio.to_thread(docker_remove_container, runtime_id)
+        await asyncio.to_thread(docker_release_controller, ref.runtime_id)
         stage_dir = ref.meta.get("stage_dir")
         if isinstance(stage_dir, str) and stage_dir:
             identity = ref.meta.get("docker_identity")
@@ -651,6 +673,7 @@ def _docker_ref(
         runtime_kind="container",
         runtime_name=container_name,
         meta={
+            "foreground_owner": bool(plan.meta.get("foreground_owner")),
             "docker_identity": plan.meta["docker_identity"],
             "stage_dir": _plan_text(plan, "stage_dir"),
             "diagnostic_path": _plan_text(plan, "diagnostic_path"),

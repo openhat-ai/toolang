@@ -281,7 +281,7 @@ def test_only_stable_placements_reuse_an_executor(
         "toolang.up.source.resolve_visiting_layout", lambda *_args, **_kwargs: layout
     )
     if placement == "roaming" and not attach_only:
-        with pytest.raises(agent_server.AgentServerAcquisitionError, match="fresh"):
+        with pytest.raises(agent_server.AgentServerAcquisitionError, match="claimed"):
             with agent_server.acquire_agent_server(
                 layout, sandbox=None, ui_base_url="https://ui.test", show_progress=False
             ):
@@ -329,7 +329,7 @@ def test_roaming_requires_its_callers_unstarted_identity(tmp_path, monkeypatch, 
         pytest.fail("a retained roaming place was restarted")
 
     monkeypatch.setattr(agent_server.sandbox_runtime, "launch", launch)
-    with pytest.raises(agent_server.AgentServerAcquisitionError, match="fresh"):
+    with pytest.raises(agent_server.AgentServerAcquisitionError, match="claimed"):
         with agent_server.acquire_agent_server(
             layout, sandbox=None, ui_base_url="https://ui.test", show_progress=False
         ):

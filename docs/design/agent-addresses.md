@@ -121,6 +121,7 @@ files. Preserve ownership/link validation.
 | `name@<P10>` | Visiting home derived directly from ROOT and the place code. |
 | `name@<P19>` | ROOT's active registry supplies the source path; then validate the home. |
 | `path/to/file.too@<P19>` | Derive the roaming place from the canonical source path; works offline. |
+| `path/to/file.too@` | Latest existing HOME for the canonical source and current ROOT; missing fails. |
 
 Require complete place codes; angle-bracketed values above are placeholders.
 A code alone is not an address. Nonresident place directory names contain only codes; addresses add a
@@ -136,27 +137,39 @@ Retained inspection needs ownership metadata/store, not source contents.
 ## Binding and execution
 
 The command contract determines whether an undecorated input denotes a source or
-an existing home. Home commands accept these shortcuts without preparing sources:
+an existing home. History commands resolve without preparing sources:
 resident name selects its fixed home, ref/URL derives its visiting home, and a bare
-local path selects its last-created matching roaming home. Missing homes fail.
-Source inspection/workspace edits never allocate retained roaming places or change
-that default. New source-only local execution allocates a fresh place.
+local path selects its last-created matching roaming home. Missing history homes fail.
+Source inspection/workspace preparation uses that ROOT-scoped HOME resolution;
+only preparation commands may allocate when none exists. Reuse never changes
+creation order. Unnumbered legacy homes are preserved and ignored.
 
-An explicit address fixes root/place/home/store throughout Chat, rerun, fork, rewind,
-and `--chat`. New Runs, Threads, or runtime generations stay there. A Thread/Run
+| Local source operand | Script execution | `info` |
+| --- | --- | --- |
+| `file.too@P19` | Run in that existing HOME. | Inspect that existing HOME. |
+| `file.too@` | Run in the latest existing HOME. | Inspect the latest existing HOME. |
+| `file.too` | Create a fresh HOME. | Inspect the latest HOME, or prepare one if absent. |
+
+Explicit selectors never allocate or fall back. Latest means HOME creation order
+under the canonical source and ROOT, independent of age, status or reuse. Preparation
+creates durable identity and State without an executor, Run or active registration.
+An owned HOME's `info` observes status and available saved resource metadata without
+projecting inputs, rebinding grants or renewing ownership.
+
+An explicit address fixes root/place/home/store throughout rerun, fork and rewind,
+and resident/visiting Chat. New Runs, Threads, or runtime generations stay there. A Thread/Run
 reference also binds its owning home: for a roaming source, search only that
 source's retained places under the current Toolang root. One match binds; no match
 fails; multiple matches require an address. Explicit address/record mismatches
 fail. Preserve imported-history control restrictions.
 
-Bare `-t` selects the latest Thread in the selected home; an unqualified roaming
-source first selects its last-created home. Missing Threads/history never cause
+Bare `-t` selects the latest Thread in the selected resident/visiting home. Missing Threads/history never cause
 fallback to an older home. Source/default changes cannot override record binding.
 
 Lookup fixes storage. Runtime operations separately validate owner liveness,
 endpoint, settings, drivers, and `launch_id` under the existing management guards:
 
-| Owner state | Chat/rerun action, including `fork/rewind --chat` |
+| Owner state | Resident/visiting Chat/rerun action, including `fork/rewind --chat` |
 | --- | --- |
 | Live, compatible | Attach to the same executor; retain its lifetime owner. |
 | Live, incompatible | Fail without changing settings or enabling drivers. |
@@ -169,6 +182,12 @@ fail without fetching a replacement source, copying history, or allocating a pla
 Preserve placement lifetimes: resident persistent, visiting automatic, roaming
 foreground. Attachments do not gain shutdown ownership. Existing Run admission
 and Thread locks govern concurrency; one home has at most one executor owner.
+
+Roaming scripts and rerun instead claim the HOME exclusively from preparation
+through cleanup: preparing, running, closing or unverifiable ownership fails
+immediately. Each invocation has a new launch identity, current grants and startup
+settings; history and lab remain. Different HOMEs may run concurrently on host/guest.
+Roaming Chat, including `fork/rewind --chat`, is rejected before mutation.
 
 `start/serve/stop` cover resident/visiting only. Roaming foreground shutdown belongs
 to its owner through Ctrl-C/signals/kill. `steer/cancel` control a live Run, including

@@ -29,12 +29,16 @@ def test_info_prepares_a_fresh_source_without_a_retained_instance(
     assert main(["info", selector]) == 0
     text = capsys.readouterr().out
     assert "Home:" in text and "not running" in text
+    if placement == "roaming":
+        from toolang.up.allocation import select_roaming
+
+        layout = select_roaming(source, toolang_root=tmp_path)
     assert layout.agent_state.exists()
     assert not layout.run_store.exists()
     assert not tuple((tmp_path / ".runtime" / "active").glob("*/*.json"))
 
 
-def test_info_preparation_failure_preserves_an_active_launch(
+def test_info_observes_an_active_launch_without_project_preparation(
     tmp_path, monkeypatch, capsys
 ):
     from toolang.up.instance import read_instance
@@ -53,12 +57,8 @@ def test_info_preparation_failure_preserves_an_active_launch(
             raise ValueError("invalid project configuration")
 
         monkeypatch.setattr(agent_sources, "_sync_roaming_project", fail)
-        assert main(["info", str(source)]) == 1
+        assert main(["info", str(source)]) == 0
         text = capsys.readouterr().out
-        assert (
-            "Home:" in text
-            and "running" in text
-            and "invalid project configuration" in text
-        )
+        assert "Home:" in text and "running" in text and "runtime-owned HOME" in text
         assert read_instance(layout.runtime_status) == before
         assert active.path.is_file()

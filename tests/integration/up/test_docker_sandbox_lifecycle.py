@@ -6,7 +6,9 @@ Run with ``uv run pytest -m live_docker --live-docker``.
 from __future__ import annotations
 
 from collections.abc import Generator, Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field as dataclass_field
+from contextlib import closing, contextmanager
+import asyncio
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
@@ -124,7 +126,13 @@ def test_visiting_chat_reclaims_or_explicitly_stops_an_automatic_container(
                     timeout=30,
                 )
                 assert started.returncode == 0, started.stderr
-                assert "drivers=chat lifetime=persistent" in started.stdout
+                assert "Agent remote running:" in started.stdout
+                from toolang.up.instance import read_instance
+
+                promoted = read_instance(layout.runtime_status)
+                assert promoted is not None
+                assert promoted["workload"]["drivers"] == ["chat"]
+                assert promoted["workload"]["lifetime"] == "persistent"
             assert client.stdin is not None
             client.stdin.close()
             assert client.wait(timeout=15) == 0
@@ -175,7 +183,7 @@ def test_nonresident_launch_uses_selected_root_environment_and_cleans_reference(
     from toolang.up.source import visiting_layout
     from toolang.up.instance import read_instance
     from toolang.common.environment import agent_environment_paths
-    from toolang.common.place_codes import roaming_place_code
+    from toolang.up.allocation import allocate_roaming
     from toolang.up.identity import InstanceIdentity
 
     program = "flow complete:\n  let result = Done\n"
@@ -200,11 +208,7 @@ def test_nonresident_launch_uses_selected_root_environment_and_cleans_reference(
         source.parent.mkdir(parents=True)
         source.write_text(program)
         selector = str(source)
-        layout = AgentLayout.roaming(
-            source,
-            root=root,
-            place_code=roaming_place_code(str(source), time.time_ns() // 1_000_000),
-        )
+        layout = allocate_roaming(source, toolang_root=root, register=False)
         agent_sources.materialize_roaming_program(source, layout=layout)
     else:
         selector = (
@@ -409,82 +413,52 @@ def test_docker_restart_reuses_settings_after_queries_reconcile_killed_guest(
 
 
 def test_killed_temporary_controller_is_recovered_by_next_control_operation(
-    tmp_path, docker_wheel_dir, local_model_port
+    tmp_path, docker_wheel_dir
 ):
-    from dataclasses import replace
     from toolang.up import sandbox
-    from toolang.up.instance import read_instance
+    from toolang.up.allocation import retained_roaming
+    from toolang.execution.store import RunStore
 
     source = tmp_path / "temporary.too"
-    source.write_text("flow complete:\n  let result = Done\n")
-    layout = agent_sources.materialize_roaming_program(source)
-    old = replace(layout, instance="abandoned")
-    code = """
-from pathlib import Path
-from dataclasses import replace
-import sys, time
-from toolang.up.source import materialize_roaming_program
-from toolang.cli.common.agent_server import acquire_agent_server
-layout = replace(materialize_roaming_program(Path(sys.argv[1])), instance='abandoned')
-with acquire_agent_server(layout, sandbox='docker', dev=Path(sys.argv[2]), temporary=True, show_progress=False):
-    print('ready', flush=True)
-    time.sleep(60)
-"""
-    env = {**os.environ, "OLLAMA_HOST": f"http://localhost:{local_model_port}"}
-    worker = subprocess.Popen(
-        (sys.executable, "-c", code, str(source), str(docker_wheel_dir)),
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        env=env,
+    source.write_text(
+        "agic main() -> Text:\n  context = none\n  recall = none\n  user: WAIT.\n"
     )
-    state = None
-    try:
-        assert worker.stdout is not None and worker.stdout.readline().strip() == "ready"
-        state = SandboxState.load(layout.runtime_status, instance=old.instance)
-        assert state is not None
-        worker.kill()
-        worker.wait(timeout=5)
-        entry = read_instance(layout.runtime_status, old.instance)
-        assert entry is not None and entry["control"]["owner"]["pid"] == worker.pid
-        assert (
-            subprocess.run(
-                (
-                    "docker",
-                    "inspect",
-                    "--format",
-                    "{{.State.Running}}",
-                    state.ref.runtime_id,
-                ),
+    root = tmp_path / "root"
+    scenario = _ScriptScenario(source, "model")
+    home = None
+    with _script_model(scenario):
+        worker = _script_process(source, root, docker_wheel_dir)
+        try:
+            home, state = _wait_script_home(source, root, worker)
+            assert scenario.entered.wait(60)
+            worker.kill()
+            worker.communicate(timeout=5)
+            ended = subprocess.run(
+                ("docker", "wait", state.ref.runtime_id),
                 capture_output=True,
                 text=True,
-                timeout=10,
-            ).stdout.strip()
-            == "true"
-        )
-        import asyncio
-
-        asyncio.run(sandbox.release_stopped(replace(layout, instance="next")))
-        assert read_instance(layout.runtime_status, old.instance) is None
-        assert (
-            subprocess.run(
-                ("docker", "inspect", state.ref.runtime_id),
-                capture_output=True,
-                timeout=10,
-            ).returncode
-            != 0
-        )
-        assert old.run_store.exists()
-    finally:
-        if worker.poll() is None:
-            worker.kill()
-            worker.wait(timeout=5)
-        if state is not None:
-            subprocess.run(
-                ("docker", "rm", "--force", state.ref.runtime_id),
-                capture_output=True,
-                timeout=10,
+                timeout=15,
             )
+            assert ended.returncode == 0, ended.stderr
+            asyncio.run(sandbox.release_stopped(home))
+            assert SandboxState.load(home.runtime_status) is None
+            assert home.run_store.exists()
+            scenario.resume.set()
+            worker = _script_process(
+                source, root, docker_wheel_dir, operand=f"{source}@{home.place_code}"
+            )
+            stdout, stderr = worker.communicate(timeout=180)
+            assert worker.returncode == 0, (stdout, stderr)
+            assert stdout == "done"
+            with closing(RunStore(home.run_store, read_only=True)) as store:
+                assert {run.status for run in store.list_runs()} == {
+                    "canceled",
+                    "succeeded",
+                }
+            assert len(retained_roaming(source, toolang_root=root)) == 1
+        finally:
+            homes = retained_roaming(source, toolang_root=root)
+            _clean_script(worker, home or (homes[0] if homes else None))
 
 
 @dataclass(frozen=True, slots=True)
@@ -787,7 +761,7 @@ def test_docker_script_runs_with_a_temporary_agent_server(
     source = tmp_path / "echo.too"
     source.write_text(_ECHO_PROGRAM, encoding="utf-8")
     layout = AgentLayout.roaming(source)
-    _write_local_model_env(layout.place_env, local_model_port)
+    _write_local_model_env(source.parent / ".toolang.env", local_model_port)
 
     result = subprocess.run(
         (
@@ -1486,3 +1460,497 @@ def test_guest_exit_preserves_inputs_until_host_resource_release(
     )
     asyncio.run(release_stopped(agent.layout))
     assert not reference.parent.exists()
+
+
+@dataclass
+class _ScriptScenario:
+    source: Path
+    mode: str
+    phase: int = 0
+    entered: threading.Event = dataclass_field(default_factory=threading.Event)
+    resume: threading.Event = dataclass_field(default_factory=threading.Event)
+
+
+def _script_handler(scenario: _ScriptScenario):
+    class Handler(_LocalModelHandler):
+        def do_POST(self) -> None:  # noqa: N802
+            if self.path != "/v1/chat/completions":
+                return super().do_POST()
+            payload = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            tool_name = None
+            arguments = {}
+            reply = "done"
+            if scenario.mode == "model":
+                scenario.entered.set()
+                scenario.resume.wait(60)
+            elif scenario.mode == "shell":
+                tool_name = "shell__execute"
+                arguments = {
+                    "command": "printf ready > owner-ready; sleep 60",
+                    "timeout_sec": 120,
+                }
+            elif scenario.mode == "write":
+                scenario.phase += 1
+                if scenario.phase == 1:
+                    tool_name = "shell__execute"
+                    arguments = {"command": "printf owned > owner-ready; cat input.txt"}
+            else:
+                raise AssertionError(f"unknown fixture mode: {scenario.mode}")
+            message: dict[str, Any] = {
+                "role": "assistant",
+                "content": None if tool_name else reply,
+            }
+            if tool_name:
+                message["tool_calls"] = [
+                    {
+                        "id": f"call_{scenario.phase}",
+                        "type": "function",
+                        "function": {
+                            "name": tool_name,
+                            "arguments": json.dumps(arguments),
+                        },
+                    }
+                ]
+            body = {
+                "id": "fixture-script",
+                "object": "chat.completion",
+                "created": 0,
+                "model": "test-ollama:latest",
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": message,
+                        "finish_reason": "tool_calls" if tool_name else "stop",
+                    }
+                ],
+                "usage": {
+                    "prompt_tokens": 3,
+                    "completion_tokens": 1,
+                    "total_tokens": 4,
+                },
+            }
+            try:
+                if payload.get("stream"):
+                    delta = dict(message)
+                    if tool_name:
+                        delta["tool_calls"] = [
+                            dict(item, index=index)
+                            for index, item in enumerate(message["tool_calls"])
+                        ]
+                    chunk = dict(
+                        body,
+                        object="chat.completion.chunk",
+                        choices=[
+                            {
+                                "index": 0,
+                                "delta": delta,
+                                "finish_reason": "tool_calls" if tool_name else "stop",
+                            }
+                        ],
+                    )
+                    data = f"data: {json.dumps(chunk)}\n\ndata: [DONE]\n\n".encode()
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/event-stream")
+                    self.send_header("Content-Length", str(len(data)))
+                    self.end_headers()
+                    self.wfile.write(data)
+                else:
+                    self._write_json(body)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+
+    return Handler
+
+
+@contextmanager
+def _script_model(scenario: _ScriptScenario):
+    server = ThreadingHTTPServer(("0.0.0.0", 0), _script_handler(scenario))
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    _write_local_model_env(
+        scenario.source.parent / ".toolang.env", int(server.server_port)
+    )
+    try:
+        yield
+    finally:
+        scenario.resume.set()
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+
+def _script_process(
+    source: Path,
+    root: Path,
+    wheel: Path,
+    *,
+    sandbox="docker",
+    operand=None,
+    grant=True,
+    workspace: Path | None = None,
+):
+    args = [
+        sys.executable,
+        "-m",
+        "toolang.cli.toolang",
+        operand or str(source),
+        "main",
+        "--quiet",
+        "--out",
+        "-",
+        "--model",
+        _MODEL,
+        "--sandbox",
+        sandbox,
+    ]
+    if sandbox == "docker":
+        args.extend(["--dev", str(wheel)])
+    workspace = workspace or (
+        source.parent if grant else source.parent / "other workspace"
+    )
+    workspace.mkdir(exist_ok=True)
+    args.extend(["-w", f"repo={workspace}", "--workdir", "repo://"])
+    return subprocess.Popen(
+        args,
+        cwd=_repository(),
+        env={**os.environ, "TOOLANG_ROOT": str(root)},
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
+    )
+
+
+def _wait_script_home(source: Path, root: Path, process):
+    from toolang.up.allocation import retained_roaming
+
+    end = time.monotonic() + 180
+    while time.monotonic() < end:
+        homes = retained_roaming(source, toolang_root=root)
+        if homes:
+            state = SandboxState.load(homes[0].runtime_status)
+            if state is not None:
+                return homes[0], state
+        if process.poll() is not None:
+            stdout, stderr = process.communicate()
+            pytest.fail(f"script exited before container creation: {stdout}\n{stderr}")
+        time.sleep(0.05)
+    pytest.fail("script did not create its container")
+
+
+def _clean_script(process, home):
+    if process.poll() is None:
+        process.kill()
+    process.communicate(timeout=15)
+    state = SandboxState.load(home.runtime_status) if home is not None else None
+    if state is not None:
+        from toolang.up.sandbox import load_state_sandbox
+
+        implementation = load_state_sandbox(home, state)
+        asyncio.run(implementation.stop(state.ref, force=True))
+        asyncio.run(implementation.release(state.ref))
+
+
+@pytest.mark.parametrize(
+    "interruption", ["sigint", "owner-kill", "client-kill", "bootstrap-kill"]
+)
+@pytest.mark.parametrize("wait_kind", ["model", "shell"])
+def test_docker_script_owner_loss_finalizes_records(
+    tmp_path, docker_wheel_dir, interruption, wait_kind
+):
+    from toolang.execution.store import RunStore
+    from toolang.plugin.sandboxes.docker._cli import docker_reference_running
+    from toolang.up.instance import read_instance
+    import psutil
+
+    source = tmp_path / "wait.too"
+    source.write_text(
+        "agic main() -> Text:\n  tools = shell/*\n  context = none\n  recall = none\n  user: WAIT.\n"
+    )
+    root = tmp_path / "root"
+    scenario = _ScriptScenario(source, wait_kind)
+    home = None
+    with _script_model(scenario):
+        worker = _script_process(source, root, docker_wheel_dir)
+        try:
+            home, state = _wait_script_home(source, root, worker)
+            if interruption != "bootstrap-kill":
+                end = time.monotonic() + 180
+                while time.monotonic() < end:
+                    if (
+                        (source.parent / "owner-ready").exists()
+                        if wait_kind == "shell"
+                        else scenario.entered.is_set()
+                    ):
+                        break
+                    if worker.poll() is not None:
+                        pytest.fail(str(worker.communicate()))
+                    time.sleep(0.05)
+                else:
+                    pytest.fail("script did not reach its controlled model/tool wait")
+            before = time.monotonic()
+            if interruption == "sigint":
+                worker.send_signal(signal.SIGINT)
+            elif interruption == "client-kill":
+                clients = [
+                    child
+                    for child in psutil.Process(worker.pid).children()
+                    if "docker" in child.name() and "run" in child.cmdline()
+                ]
+                assert len(clients) == 1
+                clients[0].kill()
+            else:
+                worker.kill()
+            end = before + 13
+            while time.monotonic() < end and docker_reference_running(state.ref):
+                time.sleep(0.05)
+            assert not docker_reference_running(state.ref), (
+                "guest outlived the owner deadline"
+            )
+            assert time.monotonic() - before < 13
+            stdout, stderr = worker.communicate(timeout=15)
+            if interruption == "sigint":
+                assert worker.returncode == 130, (stdout, stderr)
+            if interruption != "bootstrap-kill":
+                with closing(RunStore(home.run_store, read_only=True)) as store:
+                    roots = [run for run in store.list_runs() if run.parent is None]
+                    assert roots and all(run.status == "canceled" for run in roots)
+                    reason = (
+                        "script interrupted"
+                        if interruption == "sigint"
+                        else "foreground owner channel closed"
+                    )
+                    assert any(
+                        reason in str(store.resolve_error(run.error))
+                        for run in roots
+                        if run.error
+                    )
+                    for run in roots:
+                        assert all(
+                            step.status not in {"pending", "running"}
+                            for step in store.list_steps(run_id=run.id)
+                        )
+                        assert any(
+                            control.kind == "cancel"
+                            for control in store.list_run_controls(run_id=run.id)
+                        )
+            entry = read_instance(home.runtime_status)
+            assert entry is not None
+            assert home.home.exists()
+        finally:
+            if home is None:
+                from toolang.up.allocation import retained_roaming
+
+                homes = retained_roaming(source, toolang_root=root)
+                home = homes[0] if homes else None
+            _clean_script(worker, home)
+
+
+@pytest.mark.parametrize(
+    "locations", [("docker", "host"), ("host", "docker"), ("docker", "docker")]
+)
+def test_script_home_reuse_resolves_current_workspace_grants(
+    tmp_path, docker_wheel_dir, locations
+):
+    from toolang.up.allocation import select_roaming, retained_roaming
+    from toolang.up.instance import read_instance
+    from toolang.execution.store import RunStore
+
+    source = tmp_path / "write.too"
+    source.write_text(
+        "agic main() -> Text:\n  tools = shell/*\n  context = none\n  recall = none\n  user: WRITE.\n"
+    )
+    root = tmp_path / "root"
+    home = None
+    worker = None
+    launches = []
+    scenario = _ScriptScenario(source, "write")
+    with _script_model(scenario):
+        try:
+            for index, location in enumerate(locations):
+                workspace = source.parent / f"workspace {index}"
+                workspace.mkdir()
+                (workspace / "input.txt").write_text(f"workspace-{index}")
+                scenario.phase = 0
+                worker = _script_process(
+                    source,
+                    root,
+                    docker_wheel_dir,
+                    sandbox=location,
+                    operand=f"{source}@{home.place_code}" if home else None,
+                    workspace=workspace,
+                )
+                stdout, stderr = worker.communicate(timeout=180)
+                assert worker.returncode == 0, (stdout, stderr)
+                assert stdout == "done"
+                home = select_roaming(source, toolang_root=root)
+                entry = read_instance(home.runtime_status)
+                assert entry is not None
+                launches.append(entry["launch_id"])
+                assert (workspace / "owner-ready").read_text() == "owned"
+                if index == 0:
+                    (home.lab / "kept.txt").write_text("keep")
+                else:
+                    assert (home.lab / "kept.txt").read_text() == "keep"
+            assert len(set(launches)) == 2
+            assert len(retained_roaming(source, toolang_root=root)) == 1
+            assert home is not None
+            with closing(RunStore(home.run_store, read_only=True)) as store:
+                assert len(store.list_runs()) == 2
+                assert all(run.status == "succeeded" for run in store.list_runs())
+            assert not (source.parent / "owner-ready").exists()
+            assert not list((root / ".runtime" / "active").glob("*/info.json"))
+        finally:
+            if worker is not None:
+                homes = retained_roaming(source, toolang_root=root)
+                _clean_script(worker, home or (homes[0] if homes else None))
+
+
+@pytest.mark.parametrize("wait_kind", ["model", "shell"])
+def test_host_script_ctrl_c_finalizes_records(tmp_path, wait_kind):
+    from toolang.up.allocation import retained_roaming
+    from toolang.execution.store import RunStore
+
+    source = tmp_path / "wait.too"
+    source.write_text(
+        "agic main() -> Text:\n  tools = shell/*\n  context = none\n  recall = none\n  user: WAIT.\n"
+    )
+    root = tmp_path / "root"
+    scenario = _ScriptScenario(source, wait_kind)
+    with _script_model(scenario):
+        worker = _script_process(source, root, tmp_path, sandbox="host")
+        try:
+            deadline = time.monotonic() + 30
+            while time.monotonic() < deadline:
+                if (
+                    (source.parent / "owner-ready").exists()
+                    if wait_kind == "shell"
+                    else scenario.entered.is_set()
+                ):
+                    break
+                assert worker.poll() is None, worker.communicate()
+                time.sleep(0.05)
+            else:
+                pytest.fail("host script did not reach controlled work")
+            worker.send_signal(signal.SIGINT)
+            stdout, stderr = worker.communicate(timeout=13)
+            assert worker.returncode == 130, (stdout, stderr)
+            (home,) = retained_roaming(source, toolang_root=root)
+            with closing(RunStore(home.run_store, read_only=True)) as store:
+                roots = [run for run in store.list_runs() if run.parent is None]
+                assert roots and all(run.status == "canceled" for run in roots)
+                assert all(
+                    "script interrupted" in str(store.resolve_error(run.error))
+                    for run in roots
+                    if run.error
+                )
+                assert all(
+                    step.status not in {"pending", "running"}
+                    for run in roots
+                    for step in store.list_steps(run_id=run.id)
+                )
+            assert not list((root / ".runtime" / "active").glob("*/info.json"))
+        finally:
+            if worker.poll() is None:
+                worker.kill()
+            worker.communicate(timeout=5)
+
+
+def test_distinct_homes_run_on_host_and_guest_with_independent_workspaces(
+    tmp_path, docker_wheel_dir
+):
+    from toolang.up.allocation import retained_roaming
+    from toolang.up.instance import read_instance
+
+    source = tmp_path / "parallel.too"
+    source.write_text(
+        "agic main() -> Text:\n  tools = shell/*\n  context = none\n  recall = none\n  user: WAIT.\n"
+    )
+    root = tmp_path / "root"
+    workers = []
+    scenario = _ScriptScenario(source, "shell")
+    with _script_model(scenario):
+        try:
+            for location in ("host", "docker"):
+                workspace = tmp_path / f"{location} workspace"
+                workspace.mkdir()
+                workers.append(
+                    _script_process(
+                        source,
+                        root,
+                        docker_wheel_dir,
+                        sandbox=location,
+                        workspace=workspace,
+                    )
+                )
+            deadline = time.monotonic() + 180
+            while time.monotonic() < deadline:
+                if all(
+                    (tmp_path / f"{location} workspace" / "owner-ready").exists()
+                    for location in ("host", "docker")
+                ):
+                    break
+                assert all(worker.poll() is None for worker in workers)
+                time.sleep(0.05)
+            else:
+                pytest.fail("both isolated HOMEs did not enter tool execution")
+            homes = retained_roaming(source, toolang_root=root)
+            assert len(homes) == 2 and homes[0].place_code != homes[1].place_code
+            assert all(
+                home.source_path == source.resolve() and home.root == root.resolve()
+                for home in homes
+            )
+            assert {
+                (read_instance(home.runtime_status) or {})["control"][
+                    "sandbox"
+                ].partition(":")[0]
+                for home in homes
+            } == {"host", "docker"}
+            for worker in workers:
+                worker.send_signal(signal.SIGINT)
+            for worker in workers:
+                stdout, stderr = worker.communicate(timeout=13)
+                assert worker.returncode == 130, (stdout, stderr)
+            assert not list((root / ".runtime" / "active").glob("*/info.json"))
+        finally:
+            homes = retained_roaming(source, toolang_root=root)
+            for worker in workers:
+                _clean_script(worker, None)
+            for home in homes:
+                _clean_script(workers[0], home)
+
+
+def test_foreground_launch_preserves_docker_error_after_stage_cleanup(
+    tmp_path, docker_wheel_dir
+):
+    from toolang.up.allocation import retained_roaming
+
+    source = tmp_path / "invalid_image.too"
+    source.write_text("flow main():\n  pass\n")
+    root = tmp_path / "root"
+    worker = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "toolang.cli.toolang",
+            str(source),
+            "main",
+            "--quiet",
+            "--sandbox",
+            "docker:invalid image",
+            "--dev",
+            str(docker_wheel_dir),
+        ],
+        env={**os.environ, "TOOLANG_ROOT": str(root)},
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert worker.returncode == 1
+    assert "invalid reference format" in worker.stderr.lower(), worker.stderr
+    (home,) = retained_roaming(source, toolang_root=root)
+    assert SandboxState.load(home.runtime_status) is None
+    assert not home.run_store.exists()
+    assert not list((root / ".runtime" / "active").glob("*/info.json"))

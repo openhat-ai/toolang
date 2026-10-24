@@ -167,6 +167,7 @@ def gate_env(docs_only: str, event: str = "pull_request") -> dict[str, str]:
         "CHANGES_RESULT": "success",
         "QUALITY_RESULT": expected,
         "TESTS_RESULT": expected,
+        "DOCKER_RESULT": expected,
         "PACKAGE_RESULT": expected,
     }
 
@@ -197,7 +198,7 @@ def test_gate_accepts_successful_jobs(
     [
         pytest.param(docs_only, job, result, id=f"docs-{docs_only}-{job}-{result}")
         for docs_only in ("false", "true")
-        for job in ("changes", "quality", "tests", "package")
+        for job in ("changes", "quality", "tests", "docker", "package")
         for result in ("success", "failure", "cancelled", "skipped")
         if result
         != ("success" if job == "changes" or docs_only == "false" else "skipped")

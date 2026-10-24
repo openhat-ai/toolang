@@ -323,6 +323,7 @@ def test_run_resolves_sandbox_inputs_and_runs_in_foreground(
         on_ready: Any,
         progress: Any,
         cleanup_progress: Any,
+        closing: Any,
     ) -> int:
         captured["run"] = spec
         captured["progress"] = progress

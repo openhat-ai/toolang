@@ -95,6 +95,10 @@ def test_caps_inspects_the_selected_agent_layout(
         assert "english-coach" in output.out
     else:
         assert f"0 {command[0]}s" in output.out
+    if target == "source":
+        from toolang.up.allocation import select_roaming
+
+        layout = select_roaming(source, toolang_root=prepared[0].root)
     assert prepared == [layout]
 
 
@@ -683,45 +687,16 @@ def test_cli_script_rejects_inbox_option(
     assert "No such option: --inbox" in strip_ansi(capsys.readouterr().err)
 
 
-def test_cli_opens_roaming_chat_with_its_exact_layout(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_cli_rejects_roaming_chat_before_acquiring_a_runtime(tmp_path, monkeypatch):
     source = tmp_path / "demo.too"
-    source.write_text("agic chat:\n  Reply directly.\n", encoding="utf-8")
-    captured: dict[str, object] = {}
-
-    class Session:
-        def __init__(self, endpoint: str, **_kwargs: object) -> None:
-            assert endpoint == "http://runtime.test:7001"
-
-        def close(self) -> None:
-            captured["closed"] = True
-
-        def thread_title(self, thread_id: str) -> str | None:
-            return None
-
-        def initial_setting(self) -> SessionSetting:
-            return SessionSetting(model=None, runnable=None)
-
-    def end_input(_prompt: str) -> str:
-        raise EOFError
-
-    @contextmanager
-    def acquire(selected: AgentLayout, **_kwargs: object) -> Iterator[AgentServerRef]:
-        captured["layout"] = selected
-        yield AgentServerRef(sandbox="host", endpoint="http://runtime.test:7001")
-
-    monkeypatch.setattr(chat_commands, "acquire_agent_server", acquire)
-    monkeypatch.setattr(chat_commands, "RemoteChatSession", Session)
-    monkeypatch.setattr("builtins.input", end_input)
-    monkeypatch.setattr(chat_commands.sys.stdin, "isatty", lambda: False)
-
-    assert cli.main([str(source), "chat"]) == 0
-    assert captured == {
-        "layout": captured["layout"],
-        "closed": True,
-    }
+    source.write_text("agic chat:\n  Reply directly.\n")
+    monkeypatch.setattr(
+        chat_commands,
+        "acquire_agent_server",
+        lambda *_args, **_kwargs: pytest.fail("roaming Chat acquired a runtime"),
+    )
+    assert cli.main([str(source), "chat"]) == 2
+    assert not (tmp_path / ".toolang").exists()
 
 
 @pytest.mark.parametrize("agent_first", [False, True])
@@ -730,7 +705,9 @@ def test_cli_routes_chat_development_artifact_to_the_exact_layout(
     monkeypatch: pytest.MonkeyPatch,
     agent_first: bool,
 ) -> None:
-    source = tmp_path / "demo.too"
+    source = tmp_path / "agents" / "demo" / "agent.too"
+    source.parent.mkdir(parents=True)
+    monkeypatch.setenv("TOOLANG_ROOT", str(tmp_path))
     source.write_text("agic chat:\n  Reply directly.\n", encoding="utf-8")
     development = tmp_path / "dist"
     captured: dict[str, object] = {}
@@ -757,7 +734,7 @@ def test_cli_routes_chat_development_artifact_to_the_exact_layout(
     assert (
         cli.main(
             [
-                *([str(source), "chat"] if agent_first else ["chat", str(source)]),
+                *(["demo", "chat"] if agent_first else ["chat", "demo"]),
                 "--sandbox",
                 "docker",
                 "--dev",

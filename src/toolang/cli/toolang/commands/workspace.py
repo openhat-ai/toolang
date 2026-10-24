@@ -93,9 +93,6 @@ def list_workspaces(
         assert source is not None
         if not source.is_file():
             raise ClickException(f"agent program not found: {source}")
-        from toolang.up.source import roaming_layout
-
-        user_call(roaming_layout, source)
         config_path = source.parent / "toolang.toml"
     else:
         config_path = layout.config
@@ -168,4 +165,4 @@ def _refresh_project(layout: AgentLayout) -> None:
     if layout.placement == "roaming":
         from toolang.up.source import materialize_roaming_program
 
-        materialize_roaming_program(layout.program.resolve(strict=True))
+        materialize_roaming_program(layout.program.resolve(strict=True), layout=layout)

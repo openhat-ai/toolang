@@ -31,6 +31,9 @@ from toolang.up.types import (
     ServerLifetime,
 )
 from toolang.up.config import placement_policy
+from toolang.up.closing import ClosingDeadline
+
+from .foreground import run_foreground
 
 from .context import load_root_environ, load_runtime_environment, resolve_root
 from .server_lease import ServerLease
@@ -73,6 +76,7 @@ def acquire_agent_server(
     expected_launch_id: str | None = None,
     attachment_requirements: Mapping[str, object] | None = None,
     bound: bool = False,
+    closing: ClosingDeadline | None = None,
 ) -> Iterator[AgentServerRef | None]:
     """Acquire an executor using the placement's reuse and ownership policy."""
 
@@ -108,6 +112,7 @@ def acquire_agent_server(
                     attachment_requirements=attachment_requirements,
                     bound=bound,
                     expected_launch_id=expected_launch_id,
+                    closing=closing,
                 )
                 try:
                     selected_server = (
@@ -121,10 +126,11 @@ def acquire_agent_server(
                     )
                 except ValueError:
                     if isinstance(acquired, sandbox_runtime.SandboxHandle):
-                        asyncio.run(
+                        run_foreground(
                             sandbox_runtime.stop_handle(
                                 layout, acquired, progress=progress.sink
-                            )
+                            ),
+                            closing=closing,
                         )
                     raise
                 if not temporary and selected_server is not None:
@@ -190,12 +196,13 @@ def acquire_agent_server(
             )
             try:
                 with shutdown_progress:
-                    asyncio.run(
+                    run_foreground(
                         sandbox_runtime.stop_handle(
                             layout,
                             handle,
                             progress=shutdown_progress.sink,
-                        )
+                        ),
+                        closing=closing,
                     )
             except KeyboardInterrupt:
                 raise
@@ -310,6 +317,7 @@ def _prepare_agent_server(
     attachment_requirements: Mapping[str, object] | None = None,
     bound: bool = False,
     expected_launch_id: str | None = None,
+    closing: ClosingDeadline | None = None,
 ) -> AgentServerRef | sandbox_runtime.SandboxHandle | None:
     policy = placement_policy(layout.placement)
     entry = read_instance(layout.runtime_status, layout.instance) or {}
@@ -317,7 +325,7 @@ def _prepare_agent_server(
     if not policy.reuse_executor and not attach_only and not bound:
         if not owns_preparation(layout, entry):
             raise AgentServerAcquisitionError(
-                "roaming execution requires a fresh instance owned by this caller; controls may attach to its live owner"
+                "roaming execution requires a HOME claimed by this script caller; controls may attach to its live owner"
             )
         status = None
     else:
@@ -415,7 +423,7 @@ def _prepare_agent_server(
             "Toolang installation."
         )
     if selected == "host" and temporary:
-        asyncio.run(sandbox_runtime.release_stopped(layout))
+        run_foreground(sandbox_runtime.release_stopped(layout), closing=closing)
         return None
 
     launch = _resolve_launch(
@@ -434,7 +442,9 @@ def _prepare_agent_server(
         warn_development_package_source(launch)
 
     try:
-        handle = asyncio.run(sandbox_runtime.launch(launch, progress=progress.sink))
+        handle = run_foreground(
+            sandbox_runtime.launch(launch, progress=progress.sink), closing=closing
+        )
     except KeyboardInterrupt:
         raise
     except (

@@ -147,7 +147,7 @@ def test_info_prepares_current_resources_for_all_placements(
     elif placement == "roaming":
         source = tmp_path / "alice.too"
         source.write_text(content)
-        layout = allocate_roaming(source, toolang_root=tmp_path)
+        layout = allocate_roaming(source, toolang_root=tmp_path, register=False)
         selector = str(source)
     else:
         selector = "https://example.com/alice.too"
@@ -162,6 +162,11 @@ def test_info_prepares_current_resources_for_all_placements(
     ):
         assert main([selector, "info"]) == 0
         text = capsys.readouterr().out
+        if running:
+            assert "Resources: unavailable" in text
+            assert "Status: running" in text
+            assert not layout.run_store.exists()
+            return
         assert "Tools:" in text and "0 tools" not in text
         assert "Models:" in text and "models" in text
         assert "Caps:" in text

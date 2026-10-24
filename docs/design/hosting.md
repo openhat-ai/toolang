@@ -258,8 +258,8 @@ Agent entrypoints also share one logging policy resolver:
 
 The lifecycle saves intent before creation and binds recoverable references as
 soon as they are available, then attaches output observers and performs
-the readiness check. The Docker sandbox follows container output locally from
-container creation for foreground `serve`. Background `start` instead creates the
+the readiness check. Foreground Docker uses attached stdin without a TTY as
+its owner channel, retaining separate output/diagnostics. Background `start` creates the
 host `agent_log` with mode `0600` and writes Docker launch diagnostics,
 bootstrap errors, and AgentServer output there. Early container diagnostics are
 copied to that log before a failed or stopped workload is released, bounded to
@@ -460,6 +460,31 @@ An agent recorded on `7001` receives a new port on its next default start.
 Explicit CLI, environment, or home configuration port overrides still take
 precedence, including `7001`. Running processes are not relocated.
 
+## Foreground ownership and finalization
+
+Scripts and foreground `serve --sandbox docker` use an attached `docker run -i`
+with no TTY. Only the host frontend holds the dedicated stdin writer; terminal
+input and tool subprocesses use separate descriptors. The guest watches EOF from
+bootstrap through shutdown, independently of model/tool execution. HTTP/SSE loss
+alone does not end ownership; EOF does. Background lifetimes are unchanged. This
+channel covers local Docker Engine/Desktop; remote-daemon blackhole detection is
+not provided.
+
+Closing stops admission, records the first shutdown reason, cancels and drains
+unfinished roots/descendants/spawns/tools, then closes writers and storage.
+Completed results remain intact. Normal order is persisted result, guest cleanup,
+container exit, host registration/staging release, then CLI return. Ctrl-C returns
+130 after cleanup; owner loss records `foreground owner channel closed` in the
+guest. The host owns global active/staging records; the guest writes only workload
+status and execution data.
+
+One ten-second closing budget covers cancellation and cleanup; repeated signals
+do not reset it. The guest enforces the deadline even if the frontend/Docker client
+is gone. Forced exit or storage failure may leave incomplete records and is not
+reported as successful finalization. Recovery verifies process creation time and
+container identity/labels before releasing resources; unknown ownership blocks
+HOME reuse. Cleanup preserves HOME/history/lab and cannot release a newer launch.
+
 ## Server lifetime and client leases
 
 Terminal Chat shares a compatible AgentServer for the same agent, Toolang root,
@@ -467,11 +492,10 @@ and source identity, retaining its startup settings. Resident implicit servers
 remain running; visiting implicit servers exit once no client leases or accepted
 work remain.
 Fresh implicit servers enable chat only. Fresh start/serve keep placement
-defaults: resident chat,chore,talk; visiting chat,talk. Source-only roaming Chat
-allocates a fresh home; instance/Thread continuation reuses its bound home.
-A roaming client stops the server it created on exit; attachment retains the
-existing lifetime owner. Standalone scripts use embedded host execution or stop
-the guest server they created when the command exits.
+defaults: resident chat,chore,talk; visiting chat,talk. Roaming has no Chat.
+Standalone scripts exclusively own embedded host execution or a foreground guest
+server until final cleanup. Reusing a HOME starts a new launch with current inputs;
+it does not attach to an existing script owner.
 
 Use `too AGENT start` for unattended availability. It promotes an
 automatic visiting server in place or reuses a persistent server, reports actual

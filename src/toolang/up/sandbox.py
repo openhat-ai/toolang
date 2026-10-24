@@ -35,6 +35,7 @@ from toolang.common.files import file_lock_path
 from toolang.common.environment import agent_environment_paths
 from toolang.common.progress import emit_progress
 from toolang.common.layout import AgentLayout, agent_workspaces_path
+from .closing import ClosingDeadline
 from toolang.common.config_sources import config_sources
 from toolang.plugin.catalogs.models_dev.path import (
     resolve_model_catalog_path,
@@ -504,6 +505,7 @@ async def _launch_locked(
             ),
             local_dev_artifact=spec.dev_artifact,
             remove_on_exit=spec.serve.lifetime == "automatic",
+            foreground_owner=spec.serve.lifetime == "foreground",
         )
         intent_reference = getattr(implementation, "intent_reference", None)
         if intent_reference is not None:
@@ -691,14 +693,29 @@ async def _launch_locked(
                 status="failed",
                 detail=str(exc),
             )
+        if ref is None:
+            candidate = SandboxState.from_instance(entry)
+            if candidate is not None and candidate.launch_id == launch_id:
+                ref, state = candidate.ref, candidate
         await asyncio.shield(
             _recover_failed_launch(
                 spec.serve.layout,
                 implementation,
                 ref=ref,
                 state=state,
+                force=spec.serve.lifetime != "foreground",
             )
         )
+        current = read_instance(
+            spec.serve.layout.runtime_status, spec.serve.layout.instance
+        )
+        if (
+            current is not None
+            and current["launch_id"] == launch_id
+            and current["control"].get("ref") is None
+            and current["workload"].get("pid") is None
+        ):
+            fail_workload(spec.serve.layout, launch_id, str(exc), updated_at=_now())
         if bind_error is not None:
             raise bind_error from exc
         raise
@@ -710,6 +727,7 @@ async def run(
     on_ready: Callable[[SandboxState], None] | None = None,
     progress: ProgressSink | None = None,
     cleanup_progress: ProgressSink | None = None,
+    closing: ClosingDeadline | None = None,
 ) -> int:
     """Launch, follow, and release one foreground AgentServer."""
 
@@ -719,6 +737,8 @@ async def run(
             on_ready(handle.state)
         exit_code = await handle.implementation.wait(handle.state.ref)
     except asyncio.CancelledError:
+        if closing is not None:
+            closing.begin("server interrupted")
         await asyncio.shield(
             _stop_and_release(
                 spec.serve.layout,
@@ -729,15 +749,19 @@ async def run(
         )
         raise
     except BaseException:
+        if closing is not None:
+            closing.begin("server failed")
         await asyncio.shield(
             _stop_and_release(
                 spec.serve.layout,
                 handle,
-                force=True,
+                force=spec.serve.lifetime != "foreground",
                 progress=cleanup_progress,
             )
         )
         raise
+    if closing is not None:
+        closing.begin("server completed")
     await _release(spec.serve.layout, handle, progress=cleanup_progress)
     return exit_code
 
@@ -788,11 +812,12 @@ async def _recover_failed_launch(
     *,
     ref: SandboxRef | None,
     state: SandboxState | None,
+    force: bool = True,
 ) -> None:
     if ref is None:
         return
     with suppress(BaseException):
-        await implementation.stop(ref, force=True)
+        await implementation.stop(ref, force=force)
     try:
         if await implementation.running(ref):
             return

@@ -46,6 +46,8 @@ from toolang.plugin.models.query import first_model_ref
 
 from ...common.terminal_surfaces import resolve_terminal_surfaces
 from ...common.context import (
+    cli_context,
+    context_layout,
     load_runtime_environ,
     startup_environ,
     resolve_model_catalog_option,
@@ -116,7 +118,9 @@ def script_context(
 
     if not parent.resilient_parsing:
         root_state = cli_context(parent)
-        state = target_context(root_state.root, Path(label).expanduser().resolve())
+        from toolang.up.source import parse_agent_selector
+
+        state = target_context(root_state.root, parse_agent_selector(label))
         state.root_environment = root_state.root_environment
         state.shell_environment = root_state.shell_environment
         extra["obj"] = state
@@ -128,7 +132,16 @@ def _source_command(label: str) -> TyperGroup:
     if ":" in label.split("/", 1)[0]:
         raise BadParameter(f"URLs are not supported: {label}", param_hint=["FILE"])
     try:
-        source = Path(label).expanduser().resolve()
+        from toolang.up.addresses import parse_address
+
+        address = parse_address(label)
+        source = (
+            address.source
+            if address is not None
+            else Path(label).expanduser().resolve()
+        )
+        if source is None:
+            raise ValueError("script execution requires a .too source path")
         if source.is_dir():
             raise BadParameter(
                 f"expected a file, got a directory: {label}", param_hint=["FILE"]
@@ -512,6 +525,9 @@ def _runnable_command(
         override = _materialize_script_runnable_override(override, program=program)
         return _run(
             source_path,
+            selected_home=context_layout(ctx)
+            if cli_context(ctx).address is not None
+            else None,
             runnable=identity,
             runnable_kind=runnable.kind,
             override=override,
@@ -701,12 +717,13 @@ def _run(
     quiet: bool,
     workspace_options: tuple[str, ...] = (),
     workdir: str | None = None,
+    selected_home: AgentLayout | None = None,
 ) -> int:
     from toolang.common.ids import IdIssuer
     from toolang.execution.store import RunStore
     from toolang.state.prepare import prepare_agent_state
     from toolang.up import source as agent_sources
-    from toolang.up.workload import ForegroundWorkload
+    from toolang.up.workload import ForegroundWorkload, script_invocation
     from toolang.cli.common.context import resolve_root
     from toolang.up.logging import configure_logging_plan, resolve_agent_logging
 
@@ -720,11 +737,16 @@ def _run(
     run_id: str | None = None
     log_path: Path | None = None
     accepted: list[str] = []
+    closing = None
+    ownership = ExitStack()
     runnable_ref = f"{runnable_kind}:{runnable}"
     try:
         from toolang.up.allocation import allocate_roaming
 
-        layout = allocate_roaming(source_path, toolang_root=resolve_root(None))
+        layout = selected_home or allocate_roaming(
+            source_path, toolang_root=resolve_root(None), register=False
+        )
+        closing = ownership.enter_context(script_invocation(layout))
         from toolang.up.instance import read_instance
 
         prepared = read_instance(layout.runtime_status)
@@ -764,6 +786,7 @@ def _run(
                 dev=dev,
                 show_progress=not quiet,
                 workspace_additions=workspaces.additions,
+                closing=closing,
             ) as server,
         ):
 
@@ -796,7 +819,9 @@ def _run(
                         progress=progress.sink,
                         workspace_additions=workspaces.additions,
                     )
-                    result = asyncio.run(
+                    from ...common.foreground import run_foreground
+
+                    result = run_foreground(
                         _execute(
                             layout=layout,
                             state=state,
@@ -812,11 +837,15 @@ def _run(
                             quiet=quiet,
                             progress=progress,
                             workload=workload,
-                        )
+                            closing=closing,
+                        ),
+                        closing=closing,
                     )
             else:
                 log_path = layout.runtime_log
-                result = asyncio.run(
+                from ...common.foreground import run_foreground
+
+                result = run_foreground(
                     _execute_remote(
                         layout=layout,
                         endpoint=server.endpoint,
@@ -828,16 +857,24 @@ def _run(
                         session_override=session_override,
                         quiet=quiet,
                         on_accept=accept,
-                    )
+                        closing=closing,
+                    ),
+                    closing=closing,
                 )
                 run_id = accepted[0] if accepted else None
     except KeyboardInterrupt:
+        if closing is not None:
+            closing.begin("script interrupted")
         if layout is not None:
             from toolang.up.workload import fail_preparation
             from toolang.up.instance import read_instance
 
             entry = read_instance(layout.runtime_status)
-            if entry is not None and entry["workload"].get("status") == "preparing":
+            if (
+                preparation_launch_id is not None
+                and entry is not None
+                and entry["workload"].get("status") == "preparing"
+            ):
                 fail_preparation(
                     layout,
                     RuntimeError("script interrupted"),
@@ -856,7 +893,7 @@ def _run(
             typer.echo(f"Log: {log_path}", err=True)
         return 130
     except (OSError, ValueError, ToolangError, RuntimeError) as exc:
-        if layout is not None:
+        if layout is not None and preparation_launch_id is not None:
             from toolang.up.workload import fail_preparation
 
             fail_preparation(layout, exc, expected_launch_id=preparation_launch_id)
@@ -873,6 +910,7 @@ def _run(
     finally:
         if store is not None:
             store.close()
+        ownership.close()
     if layout is None:
         raise RuntimeError("script layout was not prepared")
     return _emit_result(
@@ -929,6 +967,7 @@ async def _execute_remote(
     quiet: bool,
     on_accept: Callable[[str], None] | None = None,
     transport: httpx.AsyncBaseTransport | None = None,
+    closing=None,
 ) -> RunRecord:
     """Execute one script request through a validated AgentServer."""
 
@@ -1025,6 +1064,12 @@ async def _execute_remote(
             try:
                 detail = await handle.wait()
             except BaseException as exc:
+                if closing is not None:
+                    closing.begin(
+                        "script interrupted"
+                        if isinstance(exc, asyncio.CancelledError | KeyboardInterrupt)
+                        else "script client failed"
+                    )
                 await _cancel_remote_script_run(
                     client,
                     handle.run_id,
@@ -1043,6 +1088,8 @@ async def _execute_remote(
                 )
             return record
         finally:
+            if closing is not None:
+                closing.begin("script completed")
             await client.disconnect()
             if tracer is not None:
                 tracer.close()
@@ -1246,6 +1293,7 @@ async def _execute(
     quiet: bool,
     progress: CliProgress | None = None,
     workload: ForegroundWorkload | None = None,
+    closing=None,
 ) -> RunRecord:
     from toolang.base.types.policy import RunBindings
     from toolang.execution.calls import resolve_spec
@@ -1341,6 +1389,9 @@ async def _execute(
     executor.start()
     stop_watching = asyncio.Event()
     watching = asyncio.create_task(state_watcher.run(stop_signal=stop_watching))
+    from toolang.up.closing import ClosingDeadline
+
+    deadline = closing or ClosingDeadline(enabled=False)
     try:
         from contextlib import AsyncExitStack
 
@@ -1354,25 +1405,35 @@ async def _execute(
                 client_id=client_id,
                 request_id=f"request_{uuid4().hex}",
             )
-            return await await_script_run(handle)
-    finally:
-        try:
-            await core.close()
-        finally:
-            stop_watching.set()
             try:
-                await watching
+                return await await_script_run(handle, closing=deadline)
+            finally:
+                deadline.begin("script completed")
+                if core.lifecycle is not None:
+                    core.lifecycle.closing = True
+    finally:
+        deadline.begin("script completed")
+        if core.lifecycle is not None:
+            core.lifecycle.closing = True
+        stop_watching.set()
+        try:
+            await watching
+        finally:
+            try:
+                await core.close(reason=deadline.reason)
             finally:
                 if tracer is not None:
                     tracer.close()
 
 
-async def await_script_run(handle: LocalRunHandle) -> RunRecord:
+async def await_script_run(handle: LocalRunHandle, *, closing=None) -> RunRecord:
     """Cancel an owned one-shot run when its script caller is interrupted."""
 
     try:
         return await handle
     except asyncio.CancelledError:
+        if closing is not None:
+            closing.begin("script interrupted")
         if not handle.task.done():
             try:
                 handle.cancel(reason="script interrupted")

@@ -1703,7 +1703,7 @@ def test_script_routes_quiet_execution_through_a_remote_runtime(
     assert {
         key: value
         for key, value in runtime_options.items()
-        if key != "workspace_additions"
+        if key not in {"workspace_additions", "closing"}
     } == {
         "temporary": True,
         "sandbox": "docker",
@@ -1711,6 +1711,7 @@ def test_script_routes_quiet_execution_through_a_remote_runtime(
         "show_progress": False,
     }
     execute = cast(dict[str, object], captured["execute"])
+    assert execute["closing"] is runtime_options["closing"]
     assert execute["sandbox"] == "docker:python:3.13-slim"
     assert execute["quiet"] is True
     assert capsys.readouterr() == ("", "")

@@ -209,20 +209,13 @@ def test_chat_latest_preserves_history_ties_and_includes_other_thread_kinds(
     assert selected[-1] == "work_latest"
 
 
-@pytest.mark.parametrize("placement", ["resident", "roaming", "visiting"])
+@pytest.mark.parametrize("placement", ["resident", "visiting"])
 def test_chat_latest_uses_selected_history_for_agent_sessions(
     placement, chat_layout, tmp_path, monkeypatch
 ):
     layout = chat_layout
     selector = "alice"
-    if placement == "roaming":
-        source = tmp_path / "alice.too"
-        source.write_text("agic chat:\n  Reply directly.\n")
-        from toolang.up.allocation import allocate_roaming
-
-        layout = allocate_roaming(source, toolang_root=chat_layout.place)
-        selector = str(source)
-    elif placement == "visiting":
+    if placement == "visiting":
         selector = "gh:owner/alice"
         layout = agent_sources.visiting_layout(selector, toolang_root=chat_layout.place)
         from toolang.up.identity import visiting_home_guard
@@ -263,7 +256,7 @@ def test_chat_latest_uses_selected_history_for_agent_sessions(
     monkeypatch.setattr(chat, "_chat_interactive_prompt_toolkit", open_tui)
     monkeypatch.setattr(chat.sys.stdin, "isatty", lambda: True)
     monkeypatch.setattr(chat.sys.stdout, "isatty", lambda: True)
-    prefix = [] if placement == "roaming" else ["--root", str(chat_layout.place)]
+    prefix = ["--root", str(chat_layout.place)]
     monkeypatch.setenv("TOOLANG_ROOT", str(chat_layout.place))
     assert too_main([*prefix, selector, "chat", "--thread"]) == 0
     assert captured == {

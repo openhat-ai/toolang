@@ -378,6 +378,31 @@ def _serve_once(
     launch_id: str | None,
     location: str,
 ) -> int:
+    from .closing import ClosingDeadline
+
+    deadline = ClosingDeadline(enabled=spec.lifetime == "foreground")
+    try:
+        return _serve_workload(
+            spec,
+            environ=environ,
+            sandbox=sandbox,
+            launch_id=launch_id,
+            location=location,
+            deadline=deadline,
+        )
+    finally:
+        deadline.close()
+
+
+def _serve_workload(
+    spec: ServeSpec,
+    *,
+    environ: Mapping[str, str],
+    sandbox: str,
+    launch_id: str | None,
+    location: str,
+    deadline,
+) -> int:
     """Run one AgentServer as the current process's primary workload."""
 
     from toolang.up.sandbox import register_host_server
@@ -425,13 +450,52 @@ def _serve_once(
     initialized_core: AgentCore | None = None
     core_closed = False
     failure: str | None = None
+    from .closing import OWNER_CHANNEL_REASON
+
+    shutdown_reason: str | None = None
+
+    def begin_closing() -> None:
+        nonlocal shutdown_reason
+        if shutdown_reason is not None:
+            return
+        marker = environ.get("TOOLANG_FOREGROUND_OWNER_FILE")
+        from .instance import read_instance
+
+        previous = (
+            read_instance(spec.layout.runtime_status, location=location) or {}
+        ).get("workload", {})
+        shutdown_reason = (
+            OWNER_CHANNEL_REASON
+            if marker and Path(marker).is_file()
+            else previous.get("shutdown_reason", "server interrupted")
+        )
+        started = previous.get("shutdown_started_at")
+        deadline.begin(
+            shutdown_reason,
+            started_at=started if isinstance(started, int | float) else None,
+        )
+        if initialized_core is not None and initialized_core.lifecycle is not None:
+            initialized_core.lifecycle.closing = True
+        patch_workload(
+            spec.layout.runtime_status,
+            launch_id,
+            {
+                "shutdown_reason": shutdown_reason,
+                "shutdown_started_at": deadline.started,
+            },
+            instance=spec.layout.instance,
+            location=location,
+        )
 
     async def close_core() -> None:
         nonlocal core_closed, failure
         if initialized_core is not None and not core_closed:
             core_closed = True
             try:
-                await initialized_core.close()
+                if shutdown_reason is None:
+                    await initialized_core.close()
+                else:
+                    await initialized_core.close(reason=shutdown_reason)
             except BaseException as exc:
                 message = str(exc) or type(exc).__name__
                 failure = (
@@ -653,10 +717,12 @@ def _serve_once(
                 ),
             ),
             on_stopping=lambda: (
+                begin_closing(),
                 app.state.subscriptions.stop(),
                 logger.info("Agent stopping"),
             ),
             on_stopped=lambda: logger.info("Agent stopped"),
+            foreground=spec.lifetime == "foreground",
         )
         return 0
     except BaseException as exc:
@@ -667,6 +733,8 @@ def _serve_once(
         raise
     finally:
         try:
+            if spec.lifetime == "foreground":
+                begin_closing()
             asyncio.run(close_core())
         finally:
             from .registry import finalize_runtime
@@ -687,6 +755,7 @@ def _serve_once(
                 _clear_state(
                     spec.layout, expected=SandboxState(sandbox, host_ref, launch_id)
                 )
+            deadline.close()
 
 
 def _format_allow(values: tuple[str, ...] | None) -> str:
@@ -773,11 +842,13 @@ class _ToolangServer(uvicorn.Server):
         shutdown_signal: threading.Event,
         on_running: Callable[[], None] | None,
         on_stopping: Callable[[], None] | None,
+        foreground: bool = False,
     ) -> None:
         super().__init__(config=config)
         self._shutdown_signal = shutdown_signal
         self._on_running = on_running
         self._on_stopping = on_stopping
+        self._foreground = foreground
 
     async def startup(self, sockets: Any | None = None) -> None:
         await super().startup(sockets=sockets)
@@ -796,6 +867,11 @@ class _ToolangServer(uvicorn.Server):
 
     def handle_exit(self, sig: int, frame: FrameType | None) -> None:
         self._shutdown_signal.set()
+        if self._on_stopping is not None:
+            callback, self._on_stopping = self._on_stopping, None
+            callback()
+        if self.should_exit and self._foreground:
+            return
         super().handle_exit(sig, frame)
 
 
@@ -810,6 +886,7 @@ def _run_uvicorn_app(
     on_running: Callable[[], None] | None,
     on_stopping: Callable[[], None] | None,
     on_stopped: Callable[[], None] | None,
+    foreground: bool = False,
 ) -> None:
     config = uvicorn.Config(
         app,
@@ -823,6 +900,7 @@ def _run_uvicorn_app(
         shutdown_signal=shutdown_signal,
         on_running=on_running,
         on_stopping=on_stopping,
+        foreground=foreground,
     )
     if on_starting is not None:
         on_starting()

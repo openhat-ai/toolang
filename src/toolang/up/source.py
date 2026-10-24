@@ -7,7 +7,6 @@ from hashlib import sha256
 import json
 import os
 from pathlib import Path
-from stat import S_ISLNK
 import time
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlsplit
@@ -229,27 +228,18 @@ def resolve_agent_source(
 VISITING_PROGRAM_CACHE_TTL_SEC = 3600
 
 
-def roaming_layout(source_path: Path) -> AgentLayout:
-    """Resolve a roaming home without reading another source's state or writing."""
-    source = source_path.expanduser().resolve()
-    layout = AgentLayout.roaming(source)
-    try:
-        mode = layout.program.lstat().st_mode
-    except FileNotFoundError:
-        return layout
-    if S_ISLNK(mode):
-        owner = layout.program.resolve()
-        if owner != source:
-            raise FileExistsError(
-                f"agent home {layout.home} already belongs to {owner}"
-            )
-    else:
-        raise FileExistsError(f"cannot replace authored file: {layout.program}")
-    return layout
+def roaming_layout(source_path: Path, *, toolang_root: Path) -> AgentLayout:
+    """Prepare a ROOT-scoped retained identity without starting a runtime."""
+    from .allocation import prepare_roaming_home
+
+    return prepare_roaming_home(source_path, toolang_root=toolang_root)
 
 
 def materialize_roaming_program(
-    source_path: Path, *, layout: AgentLayout | None = None
+    source_path: Path,
+    *,
+    layout: AgentLayout | None = None,
+    toolang_root: Path | None = None,
 ) -> AgentLayout:
     """Materialize one local .too source into its fixed roaming place."""
 
@@ -258,7 +248,19 @@ def materialize_roaming_program(
         raise FileNotFoundError(f"agent program not found: {resolved_source}")
     if resolved_source.suffix != ".too":
         raise ValueError(f"agent program must point to a .too file: {resolved_source}")
-    layout = layout or roaming_layout(resolved_source)
+    if layout is None:
+        if toolang_root is None:
+            raise ValueError("roaming preparation requires an explicit Toolang root")
+        layout = roaming_layout(resolved_source, toolang_root=toolang_root)
+    if (
+        layout.source_path != resolved_source
+        or layout.place_code is None
+        or layout.root is None
+    ):
+        raise ValueError("roaming preparation requires a bound ROOT-scoped HOME")
+    from .identity import read_home_identity
+
+    read_home_identity(layout, toolang_root=layout.root)
     _link_roaming_program(layout, resolved_source)
     _sync_roaming_project(layout, resolved_source)
     return layout

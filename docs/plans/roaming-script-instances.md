@@ -1,6 +1,10 @@
 # Roaming script HOMEs and foreground Docker shutdown
 
-Status: proposed for review; definition only, no implementation.
+Status: approved in [#953](https://github.com/openhat-ai/toolang/pull/953).
+
+Implementation scope update (2026-10-24): defer source-evolution and mount changes
+at the user's request. Preserve existing State/Setup monitoring; do not add workspace
+watching. Complete HOME selection, exclusive script ownership and foreground shutdown.
 
 ## Goal and scope
 

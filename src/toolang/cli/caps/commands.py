@@ -170,7 +170,7 @@ def list_caps(
         if selected_agent is not None
         else AgentLayout.resident(context_root(ctx), agent_name)
     )
-    entries, allowed = _cap_entries(
+    layout, entries, allowed = _cap_entries(
         ctx,
         layout,
         include_agent=selected_agent is not None,
@@ -231,7 +231,7 @@ def _make_cap_list_command(kind: CapKind, title: str) -> Callable[..., None]:
             if selected_agent is not None
             else AgentLayout.resident(context_root(ctx), agent_name)
         )
-        entries, allowed = _cap_entries(
+        layout, entries, allowed = _cap_entries(
             ctx,
             layout,
             include_agent=selected_agent is not None,
@@ -477,14 +477,14 @@ def _cap_entries(
     *,
     include_agent: bool,
     kinds: set[EntryKind],
-) -> "tuple[tuple[StateCap, ...], tuple[StateCap, ...]]":
+) -> "tuple[AgentLayout, tuple[StateCap, ...], tuple[StateCap, ...]]":
     """Inspect root caps, optionally overlaid with the selected agent's caps."""
 
     from toolang.state.prepare import inspect_agent_caps, inspect_root_caps
     from ..common.progress import make_cli_progress
 
     if not include_agent and not layout.place.exists():
-        return (), ()
+        return layout, (), ()
     progress = make_cli_progress(preparation=True)
     try:
         with progress:
@@ -501,7 +501,7 @@ def _cap_entries(
                     inspect_agent_caps, layout, kinds=kinds, progress=progress.sink
                 )
             progress.complete_preparation()
-            return result
+            return layout, *result
     except Exception as exc:
         if progress.failure_stage is not None:
             raise ClickException(progress.failure_message(exc)) from exc

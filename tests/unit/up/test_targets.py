@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from errno import ENOENT
 import os
 from pathlib import Path
 import subprocess
@@ -330,9 +329,11 @@ def test_materialize_roaming_program_links_source_and_config(tmp_path: Path) -> 
     config = tmp_path / "toolang.toml"
     config.write_text("[models]\n", encoding="utf-8")
 
-    layout = agent_sources.materialize_roaming_program(source)
+    layout = agent_sources.materialize_roaming_program(source, toolang_root=tmp_path)
 
-    assert layout == AgentLayout.roaming(source)
+    assert layout == AgentLayout.roaming(
+        source, place_code=layout.place_code, root=tmp_path
+    )
     assert layout.program.is_symlink()
     assert layout.config.is_file()
     assert (layout.program.parent / os.readlink(layout.program)).resolve() == source
@@ -348,7 +349,12 @@ def test_concurrent_roaming_materialization_accepts_the_same_program_link(tmp_pa
     source = tmp_path / "aid.too"
     source.write_text("flow run():\n  pass\n")
     with ThreadPoolExecutor(max_workers=2) as pool:
-        layouts = list(pool.map(materialize_roaming_program, [source, source]))
+        layouts = list(
+            pool.map(
+                lambda path: materialize_roaming_program(path, toolang_root=tmp_path),
+                [source, source],
+            )
+        )
     assert layouts[0] == layouts[1]
     assert layouts[0].program.resolve() == source
 
@@ -361,26 +367,27 @@ def test_roaming_link_published_after_missing_stat_is_checked_at_claim(
     source.write_text("flow main():\n  pass\n")
     competitor = source if same_source else tmp_path / "aid-.too"
     competitor.write_text(source.read_text())
-    layout = AgentLayout.roaming(source)
-    lstat = Path.lstat
+    layout = agent_sources.roaming_layout(source, toolang_root=tmp_path)
+    symlink = Path.symlink_to
     published = False
 
-    def race(path, *args, **kwargs):
+    def race(path, target, *args, **kwargs):
         nonlocal published
         if path == layout.program and not published:
             published = True
-            path.parent.mkdir(parents=True)
-            path.symlink_to(competitor)
-            # The observation was missing just before another caller published.
-            raise FileNotFoundError(ENOENT, "No such file or directory", str(path))
-        return lstat(path, *args, **kwargs)
+            symlink(path, competitor)
+            raise FileExistsError(str(path))
+        return symlink(path, target, *args, **kwargs)
 
-    monkeypatch.setattr(Path, "lstat", race)
+    monkeypatch.setattr(Path, "symlink_to", race)
     if same_source:
-        assert agent_sources.materialize_roaming_program(source) == layout
+        assert (
+            agent_sources.materialize_roaming_program(source, toolang_root=tmp_path)
+            == layout
+        )
     else:
         with pytest.raises(FileExistsError, match="already belongs"):
-            agent_sources.materialize_roaming_program(source)
+            agent_sources.materialize_roaming_program(source, toolang_root=tmp_path)
     assert published
     assert layout.program.resolve() == competitor
 
@@ -395,19 +402,20 @@ def test_visiting_aliases_share_a_root_and_normalized_name(tmp_path, prefix):
     assert layout.name == "daily_report_v2"
 
 
-def test_roaming_normalization_rejects_source_collision_without_replacing_state(
+def test_normalized_source_names_have_independent_homes(
     tmp_path,
 ):
     first = tmp_path / "daily-report.too"
     other = tmp_path / "daily_report.too"
     for source in (first, other):
         source.write_text("flow main():\n  pass\n")
-    layout = agent_sources.materialize_roaming_program(first)
+    layout = agent_sources.materialize_roaming_program(first, toolang_root=tmp_path)
     marker = layout.home / "keep.txt"
     marker.write_text("history")
     before = {path.relative_to(layout.home) for path in layout.home.rglob("*")}
-    with pytest.raises(FileExistsError, match="already belongs"):
-        agent_sources.materialize_roaming_program(other)
+    second = agent_sources.materialize_roaming_program(other, toolang_root=tmp_path)
+    assert second.home != layout.home and second.name == layout.name
+    assert second.program.resolve() == other
     assert layout.program.resolve() == first
     assert marker.read_text() == "history"
     assert {path.relative_to(layout.home) for path in layout.home.rglob("*")} == before
@@ -418,7 +426,7 @@ def test_invalid_script_name_creates_no_agent_state(tmp_path, stem):
     source = tmp_path / f"{stem}.too"
     source.write_text("flow main():\n  pass\n")
     with pytest.raises(ValueError, match="invalid agent name"):
-        agent_sources.materialize_roaming_program(source)
+        agent_sources.materialize_roaming_program(source, toolang_root=tmp_path)
     assert not (tmp_path / ".toolang").exists()
 
 
@@ -433,7 +441,7 @@ def test_explicit_agent_prefix_cannot_normalize_or_select_a_remote_source(name):
 @pytest.mark.parametrize(
     "command", [["info"], ["inspect", "runs"], ["workspace", "list"]]
 )
-def test_roaming_queries_reject_normalized_home_owned_by_another_source(
+def test_roaming_queries_do_not_select_legacy_unnumbered_homes(
     tmp_path, capsys, command
 ):
     from toolang.cli.toolang import main as cli
@@ -442,16 +450,16 @@ def test_roaming_queries_reject_normalized_home_owned_by_another_source(
     other = tmp_path / "daily_report.too"
     for source in (original, other):
         source.write_text("flow main():\n  pass\n")
-    layout = agent_sources.materialize_roaming_program(original)
-    args = [str(other), *command]
-    result = cli.main(args)
-    assert result == 1
+    layout = AgentLayout.roaming(original)
+    layout.home.mkdir(parents=True)
+    layout.program.symlink_to(original)
+    before = layout.program.read_bytes()
+    result = cli.main([str(other), *command])
+    assert result == (1 if command[0] == "inspect" else 0)
     output = capsys.readouterr()
-    assert (
-        "already belongs"
-        if command[0] in {"workspace", "info"}
-        else "no retained instance"
-    ) in " ".join((output.out + output.err).split())
+    if command[0] == "inspect":
+        assert "no retained instance" in output.err
+    assert layout.program.read_bytes() == before
     assert layout.program.resolve() == original
 
 

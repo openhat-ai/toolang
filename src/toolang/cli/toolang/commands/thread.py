@@ -219,6 +219,9 @@ def rewind_command(
 ) -> None:
     """Rewind one idle thread before a terminal anchor run."""
 
+    if chat and context_layout(ctx).placement == "roaming":
+        raise ClickException("Chat is not supported for roaming HOMEs")
+
     with open_execution(ctx, required=True, record=point) as resources:
         if resources is None:  # pragma: no cover
             raise RuntimeError("execution resources were not opened")
@@ -268,6 +271,9 @@ def fork_command(
     ] = False,
 ) -> None:
     """Fork one thread through a terminal anchor run."""
+
+    if chat and context_layout(ctx).placement == "roaming":
+        raise ClickException("Chat is not supported for roaming HOMEs")
 
     with open_execution(ctx, required=True, record=point) as resources:
         if resources is None:  # pragma: no cover
@@ -394,8 +400,13 @@ def _run_rerun(
     model_catalog: Path | None = None,
     expected_launch_id: str | None = None,
 ) -> RunDetail:
+    from toolang.up.workload import script_invocation
+
     try:
         with (
+            script_invocation(
+                layout, prepare=False, expected_launch_id=expected_launch_id
+            ) as closing,
             prepare_terminal(
                 "rerun",
                 layout=layout,
@@ -411,11 +422,14 @@ def _run_rerun(
                 show_progress=show_progress,
                 bound=True,
                 expected_launch_id=expected_launch_id,
+                closing=closing,
             ) as server,
         ):
             if server is None:
                 raise AgentServerAcquisitionError("agent acquisition requires a server")
-            return asyncio.run(
+            from ...common.foreground import run_foreground
+
+            return run_foreground(
                 _execute_rerun(
                     layout=layout,
                     server=server,
@@ -424,7 +438,9 @@ def _run_rerun(
                     model_override=model_override,
                     show_progress=show_progress,
                     on_accept=terminal.set_run,
-                )
+                    closing=closing,
+                ),
+                closing=closing,
             )
     except AgentServerAcquisitionError as exc:
         raise ClickException(str(exc)) from exc
@@ -464,6 +480,7 @@ async def _execute_rerun(
     model_override: ModelOverride | None,
     show_progress: bool,
     on_accept: Callable[[str], None] | None = None,
+    closing=None,
 ) -> RunDetail:
     from ...common.script_progress import ScriptRunPresenter
 
@@ -498,6 +515,8 @@ async def _execute_rerun(
             try:
                 return await handle.wait()
             except (asyncio.CancelledError, KeyboardInterrupt):
+                if closing is not None:
+                    closing.begin("rerun interrupted")
                 if server.check_retention is not None:
                     try:
                         server.check_retention()
@@ -513,7 +532,12 @@ async def _execute_rerun(
                     status_code=exc.status_code,
                     detail=exc.detail,
                 ) from exc
+            finally:
+                if closing is not None:
+                    closing.begin("script completed")
     finally:
+        if closing is not None:
+            closing.begin("script completed")
         if tracer is not None:
             tracer.close()
 

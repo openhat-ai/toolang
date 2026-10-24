@@ -125,14 +125,15 @@ class AgentCore:
             "workspaces": list(setup.workspace_grants(state.workspaces)),
         }
 
-    async def close(self) -> None:
+    async def close(self, *, reason: str | None = None) -> None:
         """Stop local execution and close durable storage."""
 
         if self._closed:
             return
         self._closed = True
-        try:
+        if reason is None:
             await self.executor.stop()
-        finally:
-            if self._owns_store:
-                self.store.close()
+        else:
+            await self.executor.stop(reason=reason)
+        if self._owns_store:
+            self.store.close()

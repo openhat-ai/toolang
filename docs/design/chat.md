@@ -7,16 +7,15 @@ boundary, and [Execution presentation](execution-presentation.md) shared renderi
 
 ## Session and submissions
 
-Chat connects through RemoteRunClient to a compatible AgentServer for resident,
-visiting, and roaming placements. It creates a `chat_` thread on first execution,
+Chat connects through RemoteRunClient to a compatible resident or visiting
+AgentServer. Local roaming scripts do not support Chat. It creates a `chat_` thread on first execution,
 not merely when showing help or exiting an empty session. Subsequent turns reuse
 the thread. Startup `--thread`/`-t` accepts an explicit Thread or Run ID; bare
 `--thread` selects the most recently updated recorded thread and fails when none
 exists. Omission starts a new session. An empty explicit value is invalid.
 
-Source-only roaming Chat allocates a fresh home. An instance or explicit Thread/Run
-selects an existing home; bare `-t` uses the latest Thread in the selected home,
-without falling back to older homes. [agent addresses](agent-addresses.md#binding-and-execution)
+An instance or explicit Thread/Run selects an existing home; bare `-t` uses the
+latest Thread in that home. [agent addresses](agent-addresses.md#binding-and-execution)
 defines lookup and same-home attachment/restart behavior.
 
 The client keeps model parameters, runnable selection, workdir, resource ceilings,
@@ -122,8 +121,7 @@ explicit requirements, including sandbox and workspace bindings, must match it.
 Without a server, hosting resolves CLI, configuration, remembered selector, then
 host. Concurrent starters for the same home converge on one generation. Fresh
 implicit Chat servers enable chat only: residents persist, visiting servers
-automatically reclaim after leases and accepted work finish, and roaming servers
-stop with their creating client.
+automatically reclaim after leases and accepted work finish.
 Explicit start retains resident/visiting availability. See [Hosting](hosting.md) and
 [server lifetime](hosting.md#server-lifetime-and-client-leases) for concrete timing and cleanup.
 
