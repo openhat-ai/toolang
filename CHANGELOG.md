@@ -390,6 +390,9 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 - Workspace, workdir, and file options show examples and `FILE`, and agent
   commands state when `AGENT` may be omitted.
 
+- The locked tree-sitter-toolang grammar pins stable 0.4.0 instead of alpha
+  0.4.0a6, with parser, formatting, and script CLI behavior unchanged.
+
 ### Fixed
 
 - Nonroot Linux hosts inspect and reuse a Docker home without permission errors
