@@ -226,10 +226,10 @@ def test_guest_workspace_roots_require_matching_captured_mounts(
     import json
 
     layout = AgentLayout.resident(tmp_path / "host", "alice")
-    guest = Path("/srv/toolang/agents/alice/.workspaces/repo")
+    guest = Path("/srv/toolang/workspaces/alice/repo")
     repo = tmp_path / "repo"
     lab_source = layout.lab
-    guest_lab = Path("/srv/toolang/agents/alice/.workspaces/lab")
+    guest_lab = Path("/srv/toolang/workspaces/alice/lab")
     monkeypatch.setenv(
         "TOOLANG_WORKSPACE_MOUNTS",
         json.dumps(
@@ -273,8 +273,8 @@ def test_guest_workspace_roots_include_configured_tmp_mount(
 
     layout = AgentLayout.resident(tmp_path / "host", "alice")
     configured = tmp_path / "configured-tmp"
-    lab_guest = Path("/srv/toolang/agents/alice/.workspaces/lab")
-    tmp_guest = Path("/srv/toolang/agents/alice/.workspaces/tmp")
+    lab_guest = Path("/srv/toolang/workspaces/alice/lab")
+    tmp_guest = Path("/srv/toolang/workspaces/alice/tmp")
     monkeypatch.setenv(
         "TOOLANG_WORKSPACE_MOUNTS",
         json.dumps(

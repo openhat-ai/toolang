@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import tomllib
 
 import pytest
 
@@ -95,6 +96,35 @@ def test_configured_workspaces_preserve_unavailable_absolute_path_order() -> Non
         "alpha": "/unavailable/alpha",
     }
     assert tuple(workspaces) == ("zeta", "alpha")
+
+
+@pytest.mark.parametrize("path_kind", ["absolute", "relative", "symlink"])
+def test_configured_workspaces_add_persists_canonical_absolute_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    path_kind: str,
+) -> None:
+    workspace = tmp_path / "source/repo"
+    workspace.mkdir(parents=True)
+    config = tmp_path / "root/agents/alice/config.toml"
+    config.parent.mkdir(parents=True)
+    monkeypatch.chdir(workspace.parent)
+    if path_kind == "relative":
+        path = Path("repo")
+    elif path_kind == "symlink":
+        path = tmp_path / "alias"
+        path.symlink_to(workspace, target_is_directory=True)
+    else:
+        path = workspace
+    configured = ConfiguredWorkspaces(
+        config, lock_path=home_edit_lock_path(config.parent)
+    )
+
+    assert configured.add(path, name="repo") == ("repo", str(workspace.resolve()))
+    assert tomllib.loads(config.read_text())["workspaces"] == {
+        "repo": str(workspace.resolve())
+    }
+    assert configured.list() == {"repo": str(workspace.resolve())}
 
 
 def test_configured_workspaces_load_unresolvable_absolute_path(

@@ -47,6 +47,11 @@ def derive_agent_name(stem: str) -> str:
     return validate_agent_name(name)
 
 
+def agent_workspaces_path(place: Path, name: str) -> Path:
+    """Return the workspace namespace owned by one agent in a place."""
+    return place / "workspaces" / name
+
+
 @dataclass(frozen=True, slots=True)
 class AgentLayout:
     """Immutable paths for one agent under its resolved place."""
@@ -167,7 +172,7 @@ class AgentLayout:
 
     @property
     def workspaces(self) -> Path:
-        return self.place / "workspaces" / self.name
+        return agent_workspaces_path(self.place, self.name)
 
     @property
     def lab(self) -> Path:
@@ -318,9 +323,7 @@ def ensure_scratch_workspace(home: Path) -> Path:
     if not resolved_home.is_dir():
         raise FileNotFoundError(f"agent home is not available: {resolved_home}")
     root = (
-        home.parent.parent.resolve()
-        / "workspaces"
-        / home.name
+        agent_workspaces_path(home.parent.parent.resolve(), home.name)
         / IMPLICIT_WORKSPACE_NAME
     )
     for directory in (root.parent.parent, root.parent, root):

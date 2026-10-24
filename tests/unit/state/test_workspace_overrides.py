@@ -112,3 +112,29 @@ def test_workspace_management_lists_root_grants_and_preserves_root_ownership(tmp
     with pytest.raises(ValueError, match="is configured in"):
         configured.remove("repo")
     assert config.read_text() == '[workspaces.check]\nrepo = "./repo"\n'
+
+
+@pytest.mark.parametrize("unrelated", ["catalog", "another-agent"])
+def test_workspace_inspection_resolves_only_the_selected_root_policy(
+    tmp_path, unrelated
+):
+    from toolang.state.config import ConfiguredWorkspaces
+
+    home = tmp_path / "agents/check"
+    home.mkdir(parents=True)
+    config = tmp_path / "config.toml"
+    policies: dict[str, object] = {"check": {"repo": "./repo"}}
+    document: dict[str, object] = {"workspaces": policies}
+    if unrelated == "catalog":
+        document["plugin"] = {"model_catalog": {"models_dev": {"path": "\x00"}}}
+    else:
+        policies["peer"] = "\x00"
+    config.write_text(tomlkit.dumps(document))
+    configured = ConfiguredWorkspaces(
+        home / "config.toml",
+        lock_path=home / "edit.lock",
+        root_config=config,
+        key="check",
+    )
+
+    assert configured.list() == {"repo": str(tmp_path / "repo")}

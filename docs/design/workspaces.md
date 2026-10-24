@@ -10,9 +10,11 @@ owns invocation syntax and [Hosting](hosting.md) owns sandbox mounts.
 State reads HOME `[workspaces]` and matching ROOT `[workspaces.KEY]` declarations.
 KEY is the resident agent name, canonical visiting ref/URL, or canonical roaming
 source path. ROOT wins for a shared workspace name; HOME supplies the other names.
+Absolute host paths are recommended in both HOME and ROOT configuration.
+`workspace add` resolves paths at the client's procdir and writes canonical
+absolute paths. Authored relative paths resolve at their declaring file.
 Roaming source-local declarations are captured in HOME; ancestor project
-configuration grants no access. Relative paths resolve at their declaring file;
-CLI additions resolve at the client's procdir. Home State captures only the selected
+configuration grants no access. Home State captures only the selected
 ROOT workspace policy, so unrelated ROOT Setup edits do not change its revision.
 Source discovery and process directories are distinct from execution workdir.
 

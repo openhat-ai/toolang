@@ -709,6 +709,16 @@ def test_mount_layout_preserves_root_place_and_home_scopes(
         assert request.hosted_root == guest_root
         assert request.hosted_place == guest_place
         assert request.hosted_home == guest_place / "agents/alice"
+        host_lab = layout.place / "workspaces/alice/lab"
+        guest_lab = guest_place / "workspaces/alice/lab"
+        assert layout.lab == host_lab
+        assert host_lab.is_dir()
+        assert SandboxMount(host_lab, guest_lab) in request.mounts
+        assert json.loads(request.envs["TOOLANG_WORKSPACE_MOUNTS"])["lab"] == [
+            str(host_lab),
+            str(guest_lab),
+        ]
+        assert not (layout.home / ".lab").exists()
         if placement == "roaming" and source_workspace:
             assert (
                 request.hosted_source

@@ -21,6 +21,8 @@ by a separate change.
   name with ROOT precedence. KEY is the resident name, canonical visiting ref,
   or canonical roaming source path. Resolve relative paths at their declaring
   file and capture ROOT overrides in immutable State with reload support.
+  Recommend absolute host paths in ROOT and HOME; CLI additions persist canonical
+  absolute paths. Keep lab path derivation shared across preparation and hosting.
   Generate a guest `config.toml` using captured guest paths; preserve host source
   identities for Run authority and client compatibility.
 - Mount the selected `ROOT/hub/` read-only at the corresponding guest path.
@@ -54,8 +56,8 @@ by a separate change.
 | --- | --- |
 | All placements | Host placement remains unchanged; each guest has ROOT = PLACE and correct HOME, including roaming without a source-directory grant. |
 | Runtime views | Both info files retain the full address and locate their respective homes; guest active uses NAME. Config and active mounts have disjoint sources. |
-| Workspaces | Lab and named guest grants share one namespace outside HOME; nested and alias sources keep distinct names; grants stay writable; removal retains lab. |
-| Configuration | ROOT overrides select the exact name/ref/path; HOME supplies other grants; State captures, reloads, and preserves prior grants without reacting to unrelated ROOT Setup edits. Guest config contains mapped paths while Run/client authority retains host sources. |
+| Workspaces | All placements create and mount lab at the documented place-relative path; named grants stay writable; nested and alias sources keep distinct names; removal retains lab. |
+| Configuration | ROOT overrides select the exact name/ref/path; HOME supplies other grants; State captures, reloads, and preserves prior grants without reacting to unrelated ROOT Setup edits. Guest config contains mapped paths while Run/client authority retains host sources; CLI additions persist absolute host paths. |
 | Catalog reuse | Selected catalogs keep their owning scope without additional home aliases. |
 | Registration | Discovery recognizes current info and legacy references without duplicate membership; guests cannot write peer registrations. |
 | Recovery | Failed startup and stopped workloads release owned inputs; stale cleanup cannot delete replacement metadata or bootstrap. Unknown resources remain recoverable. |

@@ -29,7 +29,7 @@ _ACRONYM_TO_WORD_RE = re.compile(r"([A-Z]+)([A-Z][a-z])")
 
 
 class ConfiguredWorkspaces:
-    """Manage agent-home workspace grants in one explicit config file."""
+    """Manage HOME workspace declarations with read-only ROOT overrides."""
 
     def __init__(
         self,
@@ -67,10 +67,19 @@ class ConfiguredWorkspaces:
         return grants
 
     def _overrides(self) -> dict[str, str]:
+        """Resolve the selected policy without processing unrelated ROOT paths."""
         if self.root_config is None:
             return {}
+        if not self.root_config.exists() and not self.root_config.is_symlink():
+            return {}
+        try:
+            config = parse_config(self.root_config.read_bytes())
+        except (OSError, ValueError) as exc:
+            raise ValueError(
+                f"could not read configuration {self.root_config}: {exc}"
+            ) from exc
         return root_workspace_overrides(
-            read_config(self.root_config, include_workspaces=True),
+            config,
             self.key,
             self.root_config.parent,
         )
@@ -83,7 +92,7 @@ class ConfiguredWorkspaces:
         return configured_workspaces(config)
 
     def add(self, path: Path, *, name: str | None = None) -> tuple[str, str]:
-        """Grant one existing directory under a unique stable name."""
+        """Grant one directory by canonical absolute path under a stable name."""
 
         candidate = path.expanduser()
         if not candidate.exists():
@@ -106,9 +115,7 @@ class ConfiguredWorkspaces:
             document = _load_config_document(self.config_path)
             table = _workspace_document_table(document, create=True)
             assert table is not None
-            table[selected_name] = os.path.relpath(
-                resolved, self.config_path.parent.resolve()
-            )
+            table[selected_name] = str(resolved)
             atomic_write_text(self.config_path, tomlkit.dumps(document))
         return selected_name, str(resolved)
 

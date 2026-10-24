@@ -34,7 +34,7 @@ from toolang.base.types.sandbox import SandboxOutput, SandboxRef, SandboxRequest
 from toolang.common.files import file_lock_path
 from toolang.common.environment import agent_environment_paths
 from toolang.common.progress import emit_progress
-from toolang.common.layout import AgentLayout
+from toolang.common.layout import AgentLayout, agent_workspaces_path
 from toolang.common.config_sources import config_sources
 from toolang.plugin.catalogs.models_dev.path import (
     resolve_model_catalog_path,
@@ -380,7 +380,7 @@ async def _launch_locked(
             )
             workspace_mounts, workspace_mapping = prepare_workspace_mounts(
                 layout.home,
-                hosted_place / "workspaces" / layout.name,
+                agent_workspaces_path(hosted_place, layout.name),
                 workspaces=state.workspaces,
             )
         catalog_mounts: tuple[SandboxMount, ...] = ()
