@@ -115,8 +115,8 @@ def rules(
         typer.Option(
             "--output",
             "-o",
-            metavar="PATH",
-            help="Retrieve rules to PATH; - selects stdout",
+            metavar="FILE",
+            help="Write rules to FILE; - for stdout",
         ),
     ] = None,
     update: Annotated[
@@ -124,8 +124,8 @@ def rules(
         typer.Option(
             "--update",
             "-u",
-            metavar="[PATH]",
-            help="Update rules from PATH; omitted PATH or - reads stdin",
+            metavar="[FILE]",
+            help="Update rules from FILE; omit FILE or use - to read stdin",
         ),
     ] = None,
     revision: Annotated[

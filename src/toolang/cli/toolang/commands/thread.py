@@ -164,8 +164,8 @@ def rerun_command(
         str | None,
         typer.Option(
             "--model",
-            help="Override the model; see 'too help model'",
-            metavar="MODEL",
+            help="Set model settings for this run; see 'too help model'",
+            metavar="<KEY>=<VALUE>",
         ),
     ] = None,
     dev: Annotated[

@@ -22,7 +22,14 @@ from toolang.common.typer.options import BARE_VALUE, OptionalValue, OptionalValu
 
 from ...common import version as _version
 from ..common.context import CliContext, resolve_root
-from ..common.help import CliCommand, CliGroup, HelpContext, MetadataCommand, show_help
+from ..common.help import (
+    CliCommand,
+    CliGroup,
+    HelpContext,
+    MetadataCommand,
+    parameter_usage,
+    show_help,
+)
 from ..common.lazy import LazyCommand, lazy_typer_command, lazy_typer_group
 from . import routing
 
@@ -89,6 +96,14 @@ class _ServeCommand(OptionalValueCommand, CliCommand):
 class _ScriptEntryCommand(CliCommand):
     """Show static help when the required Script file is omitted."""
 
+    def collect_usage_pieces(self, ctx: Context) -> list[str]:
+        pieces = []
+        for param in self.get_params(ctx):
+            pieces.extend(parameter_usage(param, ctx))
+            if param.name == "runnable" and self.options_metavar:
+                pieces.append(self.options_metavar)
+        return pieces
+
     def parse_args(self, ctx: Context, args: list[str]) -> list[str]:
         if args in ([], ["--"]) and not ctx.resilient_parsing:
             show_help(ctx)
@@ -115,26 +130,20 @@ class _ScriptEntryCommand(CliCommand):
                     raise
         return super().make_context(info_name, args, parent=parent, **extra)
 
-    def format_help(self, ctx: Context, formatter: NativeHelpFormatter) -> None:
-        super().format_help(ctx, formatter)
-        formatter.write_paragraph()
-        formatter.write_text(
-            "Omit run if RUNNABLE is not a Toolang command, e.g. "
-            f"{ctx.find_root().command_path} aid.too whats_for."
-        )
-
 
 def script_entry(
     file: Annotated[str, typer.Argument(metavar="FILE", help="Path to a .too file")],
     runnable: Annotated[
         str | None,
-        typer.Argument(
-            metavar="RUNNABLE", help="Agic or flow to run", show_default=False
-        ),
+        typer.Argument(metavar="RUNNABLE", help="Runnable name", show_default=False),
     ] = None,
     arguments: Annotated[
+        str | None,
+        typer.Argument(metavar="ARGUMENTS", help="Named runnable inputs"),
+    ] = None,
+    input: Annotated[
         list[str] | None,
-        typer.Argument(metavar="ARGS", help="Arguments for the selected agic or flow"),
+        typer.Argument(metavar="INPUT", help="Primary runnable input"),
     ] = None,
 ) -> None:
     """Describe static entry help; the command resolves FILE before invocation."""
@@ -392,8 +401,9 @@ _registered_command(
 _registered_command(
     "cd",
     "toolang.cli.toolang.commands.cd:cd",
-    help="Enter an agent home, or the Toolang root if no agent is specified",
+    help="Enter an agent home",
     short_help="Enter an agent home",
+    epilog="Omit AGENT to open a shell in the Toolang root.",
     rich_help_panel=AGENT_COMMAND_PANEL,
 )
 _registered_group(
@@ -523,24 +533,28 @@ _registered_command(
     "models",
     "toolang.cli.toolang.commands.model_catalog:models_command",
     help="List available models",
+    epilog="Omit AGENT to use settings from the Toolang root.",
     rich_help_panel=INSPECTION_COMMAND_PANEL,
 )
 _registered_command(
     "top",
     "toolang.cli.toolang.commands.top:top",
     help="Monitor agent runs",
+    epilog="Omit AGENT to monitor all agents in the Toolang root.",
     rich_help_panel=INSPECTION_COMMAND_PANEL,
 )
 _registered_command(
     "providers",
     "toolang.cli.toolang.commands.model_catalog:providers_command",
     help="List available model providers",
+    epilog="Omit AGENT to use settings from the Toolang root.",
     rich_help_panel=INSPECTION_COMMAND_PANEL,
 )
 _registered_command(
     "tools",
     "toolang.cli.toolang.commands.plugin:list_tools",
     help="List available tools",
+    epilog="Omit AGENT to use settings from the Toolang root.",
     rich_help_panel=INSPECTION_COMMAND_PANEL,
 )
 _registered_command(
@@ -604,6 +618,7 @@ _registered_command(
     "caps",
     "toolang.cli.caps.commands:list_caps",
     help="List available caps",
+    epilog="Omit AGENT to list caps from the Toolang root.",
     rich_help_panel=INSPECTION_COMMAND_PANEL,
 )
 

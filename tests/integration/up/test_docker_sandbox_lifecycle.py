@@ -863,9 +863,10 @@ def test_docker_script_runs_with_a_temporary_agent_server(
     local_model_port: int,
     tmp_path: Path,
 ) -> None:
+    from toolang.up.allocation import select_roaming
+
     source = tmp_path / "echo.too"
     source.write_text(_ECHO_PROGRAM, encoding="utf-8")
-    layout = AgentLayout.roaming(source)
     _write_local_model_env(source.parent / ".toolang.env", local_model_port)
 
     result = subprocess.run(
@@ -900,6 +901,8 @@ def test_docker_script_runs_with_a_temporary_agent_server(
 
     assert result.returncode == 0, result.stderr
     assert result.stdout == _MODEL_REPLY
+    layout = select_roaming(source, toolang_root=Path(os.environ["TOOLANG_ROOT"]))
+    assert layout.run_store.is_file()
     assert SandboxState.load(layout.runtime_status) is None
 
 

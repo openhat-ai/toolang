@@ -60,7 +60,7 @@ class ArgumentUsageTest(unittest.TestCase):
                 self.assertEqual(result.exit_code, code, result.exception)
                 output = result.stderr if code else result.stdout
                 self.assertIn(_usage, output)
-                if "--unknown" in args or "invalid" in args:
+                if code:
                     self.assertTrue(output.startswith("Error:"))
                     self.assertIn("\n\n" + _usage, output)
                 else:

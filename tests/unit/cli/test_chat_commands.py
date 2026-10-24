@@ -526,10 +526,7 @@ def test_model_none_is_rejected_without_loading_resources() -> None:
     result = _outcome(commands.handle(app, ChatCommand("model", "none", prefix=":")))
 
     assert result.kind == "error"
-    assert commands.outcome_lines(result) == (
-        "Error: model identity 'none' was removed; use /model unset for a "
-        "model-free run",
-    )
+    assert commands.outcome_lines(result) == ("Error: Invalid model ref 'none'.",)
     assert app.setting.model == ModelRequest("openai/gpt-5")
     assert app.client.resource_calls == []
     assert app.status_refreshes == 0

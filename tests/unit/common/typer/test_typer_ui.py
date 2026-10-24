@@ -118,8 +118,14 @@ class TyperUITest(unittest.TestCase):
             self.reset_output()
             self.assertEqual(self.run_app(app, args), status)
             output = (self.stderr if status else self.stdout).getvalue()
-            self.assertTrue(output.startswith("Custom description.\n\nUsage:"))
-            self.assertTrue(output.endswith("Custom footer.\n"))
+            if status:
+                self.assertTrue(output.startswith("Error: Missing argument 'name'."))
+                self.assertIn("Usage: demo [OPTIONS] <NAME>", output)
+                self.assertNotIn("Custom description.", output)
+                self.assertNotIn("Custom footer.", output)
+            else:
+                self.assertTrue(output.startswith("Custom description.\n\nUsage:"))
+                self.assertTrue(output.endswith("Custom footer.\n"))
         self.reset_output()
         self.assertEqual(self.run_app(app, ["example"]), 0)
         self.assertTrue(returned[0].startswith("Custom description."))
@@ -170,14 +176,40 @@ class TyperUITest(unittest.TestCase):
                         self.assertEqual(other, "")
                         self.assertEqual(result.output, "")
 
-    def test_missing_required_argument_displays_help_on_stderr(self):
+    def test_missing_required_argument_displays_error_and_usage_on_stderr(self):
         self.assertEqual(self.run_app(sample_app(), ["process"]), 2)
         output = self.stderr.getvalue()
-        self.assertTrue(output.startswith("Process one named job.\n\nUsage:"))
-        self.assertIn("  * NAME  Job name.", output)
-        self.assertNotIn("[required]", output)
-        self.assertNotIn("Error:", output)
+        self.assertEqual(
+            output,
+            "Error: Missing argument 'name'.\n\nUsage: demo process [OPTIONS] <NAME>\n",
+        )
         self.assertEqual(self.stdout.getvalue(), "")
+
+    def test_missing_required_option_displays_error_and_usage_on_stderr(self):
+        app = typer.Typer(add_completion=False)
+
+        @app.command()
+        def show(token: Annotated[str, typer.Option("--token")]):
+            self.fail("missing option executed the command")
+
+        self.assertEqual(self.run_app(app, []), 2)
+        self.assertEqual(
+            self.stderr.getvalue(),
+            "Error: Missing option '--token'.\n\nUsage: demo [OPTIONS]\n",
+        )
+        self.assertEqual(self.stdout.getvalue(), "")
+
+    def test_no_args_is_help_still_displays_help(self):
+        app = typer.Typer(add_completion=False)
+
+        @app.command(no_args_is_help=True)
+        def show(name: str):
+            """Show a named item."""
+            self.fail("help executed the command")
+
+        self.assertEqual(self.run_app(app, []), 0)
+        self.assertTrue(self.stdout.getvalue().startswith("Show a named item."))
+        self.assertEqual(self.stderr.getvalue(), "")
 
     def test_get_help_returns_text_without_printing_or_changing_output_width(self):
         app = typer.Typer(add_completion=False)
@@ -386,7 +418,7 @@ class TyperUITest(unittest.TestCase):
                 self.reset_output()
                 self.assertEqual(self.run_app(root, ["nested", "execute"]), 2)
                 self.assertTrue(
-                    self.stderr.getvalue().startswith("Execute a nested job.")
+                    self.stderr.getvalue().startswith("Error: Missing argument 'name'.")
                 )
                 self.assertIn("Usage: demo nested execute", self.stderr.getvalue())
 
@@ -422,7 +454,9 @@ class TyperUITest(unittest.TestCase):
             pass
 
         self.assertEqual(self.run_app(required, []), 2)
-        self.assertTrue(self.stderr.getvalue().startswith("Select a named workspace."))
+        self.assertTrue(
+            self.stderr.getvalue().startswith("Error: Missing argument 'name'.")
+        )
 
     def test_required_environment_metadata_and_empty_short_column(self):
         app = typer.Typer(add_completion=False)
@@ -448,7 +482,7 @@ class TyperUITest(unittest.TestCase):
         for args, status, first_line in (
             ([], 0, "Process named jobs."),
             (["--help"], 0, "Process named jobs."),
-            (["process"], 2, "Process one named job."),
+            (["process"], 2, "Error: Missing argument 'name'."),
             (["--unknown"], 2, "Error: No such option: --unknown"),
             (["runtime"], 1, "Error: Request timed out."),
         ):
@@ -597,7 +631,7 @@ class TyperUITest(unittest.TestCase):
                     self.assertEqual(unstyled, plain_help)
                 plain_help = unstyled
                 for args, status, prefix in (
-                    (["process"], 2, "Process one named job."),
+                    (["process"], 2, "Error: Missing argument 'name'."),
                     (["--unknown"], 2, "Error: No such option:"),
                     (["runtime"], 1, "Error: Request timed out."),
                 ):

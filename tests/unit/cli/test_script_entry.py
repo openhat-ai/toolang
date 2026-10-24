@@ -395,27 +395,28 @@ def test_script_defaults_to_unnamed_entry(explicit, declaration, monkeypatch):
     assert captured[0]["runnable_kind"] == declaration.split("(")[0].split()[0]
 
 
-@pytest.mark.parametrize("selector", ["_", "agic:_", "runnable:_"])
-def test_explicit_unnamed_entry_selection(selector, monkeypatch):
-    path = _source()
+@pytest.mark.parametrize("explicit", [False, True])
+@pytest.mark.parametrize("kind", ["agic", "flow"])
+def test_explicit_unnamed_entry_selection(explicit, kind, monkeypatch):
+    path = _source(f"{kind}():\n  pass\n")
     captured = []
     monkeypatch.setattr(
         script, "_run", lambda *args, **kwargs: captured.append(kwargs) or 0
     )
-    assert cli.main(["run", path, selector]) == 0
+    assert cli.main([*(["run"] if explicit else []), path, f"{kind}:"]) == 0
     assert captured[0]["runnable"].startswith("<entry:")
+    assert captured[0]["runnable_kind"] == kind
 
 
 @pytest.mark.parametrize("kind", ["agic", "flow"])
-@pytest.mark.parametrize("selector", ["_", "{kind}:_", "runnable:_"])
-def test_underscore_selects_the_same_entry_as_omission(kind, selector, monkeypatch):
+def test_typed_selector_selects_the_same_entry_as_omission(kind, monkeypatch):
     path = _source(f"{kind}():\n  pass\n\nagic main():\n  Named.\n")
     captured = []
     monkeypatch.setattr(
         script, "_run", lambda *args, **kwargs: captured.append(kwargs) or 0
     )
     assert cli.main([path]) == 0
-    assert cli.main([path, selector.format(kind=kind)]) == 0
+    assert cli.main([path, f"{kind}:"]) == 0
     assert [call["runnable"] for call in captured] == ["<entry:1>", "<entry:1>"]
     assert [call["runnable_kind"] for call in captured] == [kind, kind]
 
@@ -429,15 +430,27 @@ def test_entry_selector_requires_an_entry_of_the_requested_kind(
         script, "_run", lambda *args, **kwargs: pytest.fail("ran wrong kind")
     )
     other = "flow" if kind == "agic" else "agic"
-    assert cli.main([path, f"{other}:_"]) == 2
-    article = "an" if other == "agic" else "a"
-    assert f"runnable is not {article} {other}" in capsys.readouterr().err
+    assert cli.main([path, f"{other}:"]) == 2
+    assert f"runnable not found: {other}:" in capsys.readouterr().err
     Path(path).write_text("agic main():\n  Named.\n")
-    assert cli.main([path, "_"]) != 0
+    assert cli.main([path, f"{kind}:"]) == 2
+    assert f"runnable not found: {kind}:" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize(
-    "selector", ["<entry>", "agic:<entry>", "runnable:<entry>", "<entry:1>", "entry"]
+    "selector",
+    [
+        "_",
+        "agic:_",
+        "flow:_",
+        "runnable:_",
+        "runnable:",
+        "<entry>",
+        "agic:<entry>",
+        "runnable:<entry>",
+        "<entry:1>",
+        "entry",
+    ],
 )
 def test_script_rejects_legacy_entry_selectors(selector, monkeypatch):
     path = _source()
@@ -459,7 +472,7 @@ def test_explicit_run_preserves_command_like_runnable_names(name, monkeypatch):
 
 
 @pytest.mark.parametrize("explicit", [False, True])
-@pytest.mark.parametrize("selector", [[], ["_"]])
+@pytest.mark.parametrize("selector", [[], ["agic:"]])
 @pytest.mark.parametrize("primary", [["--", "hello", "--root", "literal"], ["-"]])
 def test_unnamed_entry_preserves_options_named_inputs_and_stdin(
     explicit, selector, primary, monkeypatch
@@ -494,7 +507,7 @@ def test_unnamed_entry_preserves_options_named_inputs_and_stdin(
     )
 
 
-@pytest.mark.parametrize("arguments", [[], ["--help"], ["_", "--help"]])
+@pytest.mark.parametrize("arguments", [[], ["--help"], ["agic:", "--help"]])
 def test_entry_help_and_missing_input_never_execute(arguments, monkeypatch, capsys):
     path = _source("## Handle the request.\nagic:\n  {{_}}\n")
     monkeypatch.setattr(
@@ -508,9 +521,44 @@ def test_entry_help_and_missing_input_never_execute(arguments, monkeypatch, caps
 
         monkeypatch.setattr("sys.stdin", Unreadable())
     assert cli.main(["run", path, *arguments]) == (0 if arguments else 2)
-    text = strip_ansi(capsys.readouterr().out)
-    assert "too run demo.too" in text
-    assert "Handle the request" in text
+    captured = capsys.readouterr()
+    if arguments:
+        assert not captured.err
+        assert "too run demo.too" in captured.out
+        assert "Handle the request" in captured.out
+    else:
+        assert not captured.out
+        assert "Error: Missing required primary input." in captured.err
+        assert "Usage: too run demo.too [OPTIONS] [INPUT...]" in captured.err
+
+
+@pytest.mark.parametrize("explicit", [False, True])
+@pytest.mark.parametrize("kind", ["agic", "flow"])
+@pytest.mark.parametrize(
+    ("arguments", "message"),
+    [
+        ([], "Missing required inputs: tone=<TONE>, INPUT."),
+        (["tone=warm"], "Missing required primary input."),
+        (["style=warm"], "Unknown named input 'style'."),
+    ],
+)
+def test_implicit_entry_errors_preserve_the_invoked_usage(
+    explicit, kind, arguments, message, monkeypatch, capsys
+):
+    path = _source(f"{kind}(_: Part[], tone: Text):\n  pass\n")
+    monkeypatch.setattr(
+        script,
+        "_run",
+        lambda *args, **kwargs: pytest.fail("invalid input must not run"),
+    )
+    assert cli.main([*(["run"] if explicit else []), path, *arguments]) == 2
+    output = capsys.readouterr()
+    assert not output.out
+    error = strip_ansi(output.err)
+    prefix = "run " if explicit else ""
+    assert error.startswith(f"Error: {message}\n\nUsage:")
+    assert f"Usage: too {prefix}demo.too [OPTIONS] [ARGUMENTS] [INPUT...]" in error
+    assert f"{kind}:" not in error and "demo.too _" not in error
 
 
 @pytest.mark.parametrize(
@@ -533,21 +581,117 @@ def test_static_run_help(executable, arguments, monkeypatch, capsys):
     monkeypatch.setattr("sys.argv", [executable])
     assert cli.main(["run", *arguments]) == 0
     output = " ".join(capsys.readouterr().out.split())
-    assert f"{executable} run [OPTIONS] <FILE> [RUNNABLE] [ARGS...]" in output
+    assert (
+        f"{executable} run <FILE> [RUNNABLE] [OPTIONS] [ARGUMENTS] [INPUT...]" in output
+    )
     assert "* FILE" in output
     assert "Path to a .too file" in output
     assert "RUNNABLE" in output
     assert "Execute a .too file." in output
-    assert "ARGS Arguments for the selected agic or flow" in output
+    assert "RUNNABLE Runnable name" in output
+    assert "ARGUMENTS Named runnable inputs" in output
+    assert "INPUT Primary runnable input" in output
+    assert "Input:" not in output
     assert "script" not in output.lower()
     assert "NAME=VALUE" not in output
     assert "local" not in output.lower()
-    assert "ARGUMENTS" not in output
-    assert (
-        "Omit run if RUNNABLE is not a Toolang command, e.g. "
-        f"{executable} aid.too whats_for." in output
-    )
+    assert "Omit run" not in output
     assert "Add --help after FILE or RUNNABLE for details." in output
+
+
+@pytest.mark.parametrize("kind", ["agic", "flow"])
+def test_runnable_listing_leaves_unnamed_names_and_missing_descriptions_empty(
+    kind, monkeypatch, capsys
+):
+    path = _source(f"{kind}():\n  pass\n\n{kind} helper():\n  pass\n")
+    monkeypatch.setattr(
+        script, "_run", lambda *args, **kwargs: pytest.fail("help executed")
+    )
+    assert cli.main(["run", path, "--help"]) == 0
+    output = strip_ansi(capsys.readouterr().out)
+    rows = output.split("Runnables:\n", 1)[1].split("\n\n", 1)[0].splitlines()
+    assert [row.split() for row in rows] == [[kind], ["helper", kind]]
+
+
+@pytest.mark.parametrize("width", [44, 80, 120])
+@pytest.mark.parametrize("description", ["", "## Explain the research findings.\n"])
+def test_runnable_listing_keeps_names_and_kinds_on_one_line(
+    width, description, monkeypatch, capsys
+):
+    path = _source(
+        f"flow():\n  pass\n\n{description}agic synthesize_report():\n  pass\n"
+    )
+    monkeypatch.setenv("COLUMNS", str(width))
+    assert cli.main(["run", path, "--help"]) == 0
+    output = strip_ansi(capsys.readouterr().out)
+    rows = output.split("Runnables:\n", 1)[1].split("\n\n", 1)[0].splitlines()
+    assert rows[0].split() == ["flow"]
+    assert rows[1].split()[:2] == ["synthesize_report", "agic"]
+    assert all(cell_len(line) <= width for line in output.splitlines())
+
+
+@pytest.mark.parametrize("kind", ["agic", "flow"])
+def test_unnamed_runnable_help_uses_a_readable_title(kind, monkeypatch, capsys):
+    path = _source(f"{kind}():\n  pass\n")
+    monkeypatch.setattr(
+        script, "_run", lambda *args, **kwargs: pytest.fail("help executed")
+    )
+    assert cli.main(["run", path, f"{kind}:", "--help"]) == 0
+    assert strip_ansi(capsys.readouterr().out).startswith(f"Run the unnamed {kind}.\n")
+
+
+@pytest.mark.parametrize("kind", ["agic", "flow"])
+@pytest.mark.parametrize("named", [False, True])
+@pytest.mark.parametrize("doc", ["Compare [a] and [b].", "Render [/literal]."])
+def test_runnable_help_preserves_literal_author_descriptions(
+    kind, named, doc, monkeypatch, capsys
+):
+    name = " helper" if named else ""
+    path = _source(f"## {doc}\n{kind}{name}():\n  pass\n")
+    monkeypatch.setattr(
+        script, "_run", lambda *args, **kwargs: pytest.fail("help executed")
+    )
+    for selection in ([], ["helper" if named else f"{kind}:"]):
+        assert cli.main(["run", path, *selection, "--help"]) == 0
+        output = capsys.readouterr()
+        assert doc in strip_ansi(output.out)
+        assert not output.err
+
+
+@pytest.mark.parametrize("explicit", [False, True])
+@pytest.mark.parametrize("suffix", [[], ["--", "text"], ["count=2"], ["--help"]])
+@pytest.mark.parametrize("token", ["---", "----", "-----"])
+def test_unnamed_entry_rejects_unknown_options_before_reading_or_running(
+    explicit, suffix, token, monkeypatch, capsys
+):
+    path = _source("agic:\n  {{_}}\n")
+    monkeypatch.setattr(
+        "sys.stdin.read", lambda *_args: pytest.fail("invalid input read stdin")
+    )
+    monkeypatch.setattr(
+        script, "_run", lambda *_args, **_kwargs: pytest.fail("invalid input ran")
+    )
+
+    assert cli.main([*(["run"] if explicit else []), path, token, *suffix]) == 2
+
+    error = " ".join(strip_ansi(capsys.readouterr().err).split())
+    assert error.startswith(f"Error: No such option: {token}")
+    assert "fenced input" not in error
+
+
+@pytest.mark.parametrize("selector", ["agic:", "echo"])
+@pytest.mark.parametrize("prefix", [["--"], ["hello"]])
+@pytest.mark.parametrize("token", ["---", "----", "-----"])
+def test_hyphens_after_the_input_boundary_remain_primary_input(
+    selector, prefix, token, monkeypatch
+):
+    path = _source("agic:\n  {{_}}\n\nagic echo(_):\n  {{_}}\n")
+    captured = []
+    monkeypatch.setattr(
+        script, "_run", lambda *args, **kwargs: captured.append(kwargs["input"]) or 0
+    )
+    assert cli.main(["run", path, selector, *prefix, token]) == 0
+    assert captured == [{"_": token if prefix == ["--"] else f"hello {token}"}]
 
 
 @pytest.mark.parametrize("explicit", [False, True])
@@ -564,7 +708,7 @@ def test_missing_script_entry_uses_one_concise_diagnostic(explicit, arguments, c
 
 @pytest.mark.parametrize("root_boundary", [[], ["--"]])
 @pytest.mark.parametrize("file_boundary", [[], ["--"]])
-@pytest.mark.parametrize("tail", [[], ["_"], ["--", "literal --help"]])
+@pytest.mark.parametrize("tail", [[], ["agic:"], ["--", "literal --help"]])
 def test_explicit_run_preserves_arguments_after_option_boundaries(
     root_boundary, file_boundary, tail, monkeypatch
 ):
@@ -593,7 +737,7 @@ def test_explicit_run_preserves_special_filenames(monkeypatch, name):
     assert len(captured) == 1
 
 
-@pytest.mark.parametrize("tail", [["--help"], ["_", "--help"]])
+@pytest.mark.parametrize("tail", [["--help"], ["agic:", "--help"]])
 def test_file_help_after_option_boundary_does_not_execute(tail, monkeypatch, capsys):
     path = _source()
     monkeypatch.setattr(
@@ -612,7 +756,7 @@ def test_file_help_after_option_boundary_does_not_execute(tail, monkeypatch, cap
         ["run", "--help"],
         ["serve", "--help"],
         ["run", "demo.too", "--help"],
-        ["run", "demo.too", "_", "--help"],
+        ["run", "demo.too", "agic:", "--help"],
     ],
 )
 def test_script_and_hosting_help_use_consistent_usage_and_fit_the_terminal(
@@ -630,7 +774,9 @@ def test_script_and_hosting_help_use_consistent_usage_and_fit_the_terminal(
     assert f"Usage: {executable} {prefix}{page[0]}" in output
     assert all(cell_len(line) <= width for line in output.splitlines())
     if page == ["run", "demo.too", "--help"]:
-        assert "agic: <entry:1>" in " ".join(output.split())
+        assert "<entry:" not in output
+        assert "agic:" not in output
+        assert "agic" in output
         assert "Arguments:" not in output
         assert "Omit RUNNABLE" not in output
         assert "Pass primary input" not in output
@@ -659,7 +805,7 @@ def test_run_reports_invalid_files_without_hosting_advice(
     output = " ".join(capsys.readouterr().err.split())
     assert f"{reason}: {target}" in output
     assert "Invalid value for 'FILE'" in output
-    assert "Usage: too run [OPTIONS] <FILE> [RUNNABLE] [ARGS...]" in output
+    assert "Usage: too run <FILE> [RUNNABLE] [OPTIONS] [ARGUMENTS] [INPUT...]" in output
     assert "serve" not in output
     assert "local" not in output.lower()
 
@@ -723,8 +869,8 @@ def test_script_help_allows_unnamed_entry_with_explicit_main(
     )
     assert cli.main(["run", str(source), "--help"]) == 0
     output = capsys.readouterr().out
-    assert f"{kind}: <entry:1>" in " ".join(output.split())
-    assert f"main {kind}" in " ".join(output.split())
+    rows = output.split("Runnables:\n", 1)[1].split("\n\n", 1)[0].splitlines()
+    assert [row.split() for row in rows] == [[kind], ["main", kind]]
 
 
 @pytest.mark.parametrize("explicit_run", [False, True])

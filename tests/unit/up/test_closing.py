@@ -67,7 +67,9 @@ while True:
         assert "records may be incomplete" in stderr
         assert time.monotonic() - started < 2
         with suppress(psutil.NoSuchProcess):
-            assert not child.is_running() or child.status() == psutil.STATUS_ZOMBIE
+            # The owner can exit before the kernel finishes terminating its child.
+            _, alive = psutil.wait_procs([child], timeout=1)
+            assert not alive or child.status() == psutil.STATUS_ZOMBIE
     finally:
         if worker.poll() is None:
             worker.kill()

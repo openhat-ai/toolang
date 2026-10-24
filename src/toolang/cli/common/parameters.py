@@ -58,14 +58,14 @@ DefaultOptions = Annotated[
     typer.Option(
         "--default",
         metavar="<KEY>=<VALUE>",
-        help="Set run defaults; see 'too help default'",
+        help="Set runtime or Chat session defaults; see 'too help default'",
     ),
 ]
 CompactModelOption = Annotated[
     str | None,
     typer.Option(
         "--compact-model",
-        metavar="MODEL",
+        metavar="<KEY>=<VALUE>",
         help="Set the compaction model; see 'too help model'",
     ),
 ]

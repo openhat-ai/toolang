@@ -267,9 +267,9 @@ print(json.dumps("toolang.up.core" in sys.modules))
         (["--help"], 0, "Runnables:"),
         # The unnamed flow is the script's default runnable, so a bare
         # invocation runs it instead of printing group help.
-        ([], 2, "The flow proceeds as follows:"),
-        (["_", "--help"], 0, "The flow proceeds as follows:"),
-        (["_"], 2, "The flow proceeds as follows:"),
+        ([], 2, "Missing required primary input."),
+        (["flow:", "--help"], 0, "The flow proceeds as follows:"),
+        (["flow:"], 2, "Missing required primary input."),
     ],
 )
 def test_script_help_does_not_load_execution_dependencies(
@@ -305,9 +305,17 @@ raise SystemExit(status)
     )
 
     assert completed.returncode == status, completed.stderr
-    assert "Usage:" in completed.stdout
-    assert expected in completed.stdout
-    assert json.loads(completed.stderr) == []
+    diagnostic, _, loaded = completed.stderr.rstrip("\n").rpartition("\n")
+    assert json.loads(loaded) == []
+    if status:
+        assert not completed.stdout
+        assert "Usage:" in diagnostic
+        assert expected in diagnostic
+        assert "The flow proceeds as follows:" not in diagnostic
+    else:
+        assert not diagnostic
+        assert "Usage:" in completed.stdout
+        assert expected in completed.stdout
 
 
 @pytest.mark.parametrize(

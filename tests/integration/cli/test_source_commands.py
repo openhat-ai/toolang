@@ -85,7 +85,7 @@ def test_alpha6_initializer_across_language_commands(tmp_path):
     raw = runner.invoke(app, ["parse", "-", "--cst", "--json"], input=source)
     assert raw.exit_code == 0, raw.stderr
     tree = json.loads(raw.stdout)
-    assert tree["grammar"]["version"] == "0.4.0a6"
+    assert tree["grammar"]["version"] == "0.4.0"
     flow = next(node for node in tree["root"]["children"] if node["type"] == "flow")
     body = next(node for node in flow["children"] if node["field"] == "body")
     reducer = next(node for node in body["children"] if node["field"] == "stmt")

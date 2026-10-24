@@ -144,16 +144,16 @@ def _default(formatter: HelpFormatter) -> None:
     _setting(
         formatter,
         "model",
-        "MODEL",
+        "SETTINGS",
         "Set the runtime or Chat session model; see 'too help model'",
     )
     _setting(
         formatter,
         "runnable",
         "REF|none",
-        "Select the entry ref; Chat only",
+        "Select the Chat session runnable",
         choices=[
-            ("REF", "Entry ref"),
+            ("REF", "Runnable ref"),
             ("none", "Use automatic entry selection"),
         ],
     )
@@ -168,14 +168,8 @@ def _default(formatter: HelpFormatter) -> None:
         "Chat defaults do not reconfigure the runtime or other sessions.",
     )
     with formatter.section("Configuration"):
-        formatter.write_text(
-            "Configuration uses [model]; legacy [default] tables are ignored."
-        )
+        formatter.write_text("Use [model] for model configuration.")
         formatter.write_text("TOOLANG_DEFAULT_MODEL supplies runtime model defaults.")
-        formatter.write_text(
-            "TOOLANG_DEFAULT_RUNNABLE and runtime runnable defaults are unsupported; "
-            "use driver handlers."
-        )
     _examples(
         formatter,
         [
@@ -184,7 +178,7 @@ def _default(formatter: HelpFormatter) -> None:
                 "too gus chat --default \\\n  'model=openai/gpt-5 effort=high'",
             ),
             (
-                "Select the session entry",
+                "Select the session runnable",
                 "too gus chat \\\n  --default runnable=flow:review",
             ),
         ],
@@ -209,37 +203,38 @@ def _model(formatter: HelpFormatter) -> None:
                     description,
                 )
                 for option, value, description in (
-                    ("--model", " <MODEL>", "Script or rerun"),
-                    ("--default", " model=<MODEL>", "Runtime or Chat defaults"),
+                    ("--model", " <KEY>=<VALUE>", "Script runs or reruns"),
+                    (
+                        "--default",
+                        " model=<SETTINGS>",
+                        "Runtime or Chat session defaults",
+                    ),
                     (
                         "--compact-model",
-                        " <MODEL>",
+                        " <KEY>=<VALUE>",
                         "Compaction model for a new runtime",
                     ),
                 )
             ],
             col_max=formatter.width,
         )
-    with formatter.section("Model body"):
-        formatter.write_text(
-            Text("[ref=]MODEL [effort=VALUE] [max_output=VALUE]", style="cli.usage")
-        )
+    with formatter.section("Model settings"):
         for note in (
-            "An exact model ref may be bare or use ref=. Put a bare ref first.",
+            "A model ref may also be given without ref=. Put a bare ref first.",
             "Omit the ref to change parameters on an effective model.",
-            "Quote multi-token values. Duplicate refs or parameters are rejected.",
-            "--compact-model requires an exact ref; it rejects default, unset, "
-            "and parameter-only values.",
+            "Pass multiple settings in one quoted value.",
+            "Each setting may appear only once.",
+            "--compact-model requires an exact model ref. "
+            "It also accepts effort and max_output settings.",
         ):
             formatter.write_text(note)
-    with formatter.section("Parameters"):
         _setting(
             formatter,
             "ref",
             "MODEL|default|unset",
-            "Select the model identity",
-            "In Chat and per-run overrides, unset selects model-free execution.",
-            "none is not a model selection value.",
+            "Select a model",
+            "Script runs and Chat per-run overrides accept unset for model-free execution.",
+            "Rerun accepts an exact model ref, default, or parameter overrides.",
             choices=[
                 ("MODEL", "Exact model ref"),
                 ("default", "Use the inherited model or session baseline"),
@@ -250,7 +245,7 @@ def _model(formatter: HelpFormatter) -> None:
             formatter,
             "effort",
             "LEVEL|INTEGER|auto",
-            "Set model reasoning",
+            "Set reasoning effort",
             choices=[
                 ("LEVEL", "Reasoning level supported by the selected model"),
                 ("INTEGER", "Non-negative token budget"),
@@ -271,12 +266,16 @@ def _model(formatter: HelpFormatter) -> None:
         formatter,
         [
             (
+                "Set the model for a script run",
+                "too run demo.too process --model \\\n  'ref=openai/gpt-5 effort=high'",
+            ),
+            (
                 "Set a model with reasoning",
                 "too gus chat --default \\\n  'model=openai/gpt-5 effort=high'",
             ),
             (
                 "Set the compaction model",
-                "too gus start --compact-model \\\n  'openai/gpt-5 max_output=2048'",
+                "too gus start --compact-model \\\n  'ref=openai/gpt-5 max_output=2048'",
             ),
         ],
     )

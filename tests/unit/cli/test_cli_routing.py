@@ -354,7 +354,7 @@ def test_cli_exposes_plural_list_resources_and_removes_channels() -> None:
     group = typer.main.get_command(cli.app)
     expected_help = {
         "inspect": "Inspect agent runs",
-        "cd": "Enter an agent home, or the Toolang root if no agent is specified",
+        "cd": "Enter an agent home",
         "caps": "List available caps",
         "models": "List available models",
         "providers": "List available model providers",
@@ -471,16 +471,18 @@ def test_cli_argument_panels_show_only_metavars_without_type_or_usage_syntax(
         ["alice", "steer", "run_1"],
     ),
 )
-def test_cli_incomplete_command_shows_help_before_target_validation(
+def test_cli_incomplete_command_reports_missing_argument_before_target_validation(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
     arguments: list[str],
 ) -> None:
-    _call_main(["--root", str(tmp_path), *arguments])
+    assert _call_main(["--root", str(tmp_path), *arguments]) == 2
     output = capsys.readouterr()
 
-    assert "Usage:" in output.out + output.err
-    assert "Steer an active run" in output.out + output.err
+    missing = "MESSAGE" if arguments[-1] == "run_1" else "RUN"
+    assert not output.out
+    assert output.err.startswith(f"Error: Missing argument '{missing}'.\n\nUsage:")
+    assert "Steer an active run" not in output.err
     assert "Agent alice not found" not in output.err
 
 

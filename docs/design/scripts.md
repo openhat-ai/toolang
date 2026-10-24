@@ -65,6 +65,9 @@ The selected language signature generates the CLI's named inputs, primary input,
 requiredness, and help. File help lists declaration metadata without building every runnable signature;
 only the selected runnable gets a complete native parameter set. Runnable help
 explains that declaration and derives a Flow outline from its statements/docs.
+Usage summarizes named arguments as `[ARGUMENTS]` and primary input as `[INPUT...]`.
+Arguments and Input sections expand them separately; stdin-capable primary input
+has no required marker, while named arguments retain signature requiredness.
 Explicit `run` disambiguates runnable names that collide with CLI commands.
 [CLI](cli.md#routing) owns routing and entry selection.
 
@@ -91,8 +94,8 @@ repeatable workspace/allow/limit options accumulate in command-line order.
 Workdir occurs once across both levels. Script mode rejects global root overrides.
 
 Explicit help does not read stdin or prepare State and exits 0. Missing required
-input/arguments show runnable help and exit 2. Neither accepts a Run. Complete
-request validation still precedes admission. Progress uses
+inputs produce a specific error and short usage on stderr and exit 2. Neither
+accepts a Run. Complete request validation still precedes admission. Progress uses
 stderr; durable results are emitted to stdout or a file only when `--out` selects
 that destination. Failed/canceled Runs do not write it. [Execution presentation](execution-presentation.md)
 owns progress semantics.
