@@ -4,7 +4,7 @@ set -u
 
 usage() {
     printf '%s\n' \
-        "usage: scripts/try_guest.sh IMAGE [--dev WHEEL_OR_DIST] [--keep] [-- COMMAND...]" \
+        "usage: scripts/try_docker_guest.sh IMAGE [--dev WHEEL_OR_DIST] [--keep] [-- COMMAND...]" \
         >&2
     exit 64
 }

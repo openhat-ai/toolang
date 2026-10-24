@@ -345,7 +345,9 @@ Docker uses the engine's default missing-image pull behavior. Its shell guest
 bootstrap installs the selected package directly with an image interpreter's pip
 when that interpreter is Python 3.11+. Otherwise it reuses standalone uv or
 installs pinned uv through curl/wget, then uses uv to install managed Python 3.13
-and Toolang. Installation failures retain diagnostics without changing installers.
+and Toolang. Guest startup allows up to 180 seconds for installation and API
+readiness; host startup keeps its 30-second budget. Installation failures retain
+diagnostics without changing installers.
 The pip path requires a writable interpreter environment and can replace image
 packages; it does not override externally managed environment protections.
 

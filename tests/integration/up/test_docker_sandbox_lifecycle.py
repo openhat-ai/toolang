@@ -492,6 +492,7 @@ class _RunningDockerAgent:
     layout: AgentLayout
     endpoint: str
     container_id: str
+    python: str
     started: subprocess.CompletedProcess[str]
 
 
@@ -605,10 +606,19 @@ def _docker_agent(
         state = SandboxState.load(layout.runtime_status)
         assert state is not None
         container_id = state.ref.runtime_id
+        command_line = subprocess.run(
+            ("docker", "exec", container_id, "cat", "/proc/1/cmdline"),
+            capture_output=True,
+            check=True,
+            timeout=10,
+        ).stdout
+        # Preserve the running CLI's interpreter path, including a uv tool venv.
+        python = os.fsdecode(command_line.split(b"\0", 1)[0])
         yield _RunningDockerAgent(
             layout=layout,
             endpoint=endpoint,
             container_id=container_id,
+            python=python,
             started=started,
         )
     finally:
@@ -671,7 +681,7 @@ print(json.dumps({'output': result.output['stdout'], 'cargo_home': environ.get('
                 "docker",
                 "exec",
                 agent.container_id,
-                "/tmp/toolang-runtime/tools/toolang/bin/python",
+                agent.python,
                 "-c",
                 code,
             ),
@@ -1224,7 +1234,7 @@ assert patch_workload(status, entry['launch_id'], {'message': 'mount-test'}, loc
                     "docker",
                     "exec",
                     agent.container_id,
-                    "/tmp/toolang-runtime/tools/toolang/bin/python",
+                    agent.python,
                     "-c",
                     script,
                 ),
@@ -1277,7 +1287,7 @@ for line in sys.stdin:
                 "exec",
                 "-i",
                 agent.container_id,
-                "/tmp/toolang-runtime/tools/toolang/bin/python",
+                agent.python,
                 "-u",
                 "-c",
                 rounds_script,
@@ -1350,7 +1360,7 @@ with runtime_lock(status, location='guest', launch_id=entry['launch_id']):
             "docker",
             "exec",
             agent.container_id,
-            "/tmp/toolang-runtime/tools/toolang/bin/python",
+            agent.python,
             "-c",
             script,
             "terminal" if terminal else "active",
@@ -1405,7 +1415,7 @@ from pathlib import Path
 runtime = Path('/root/.toolang/.runtime/active/alice')
 info = runtime / 'info.json'
 assert json.loads(info.read_text())['home'] == '/root/.toolang/agents/alice'
-assert (runtime / 'guest.sh').is_file() and (runtime / 'guest.py').is_file()
+assert (runtime / 'guest.sh').is_file() and not (runtime / 'guest.py').exists()
 assert not (runtime / 'docker').exists()
 assert not (runtime / 'config.toml').exists()
 assert Path('/root/.toolang/config.toml').is_file()
@@ -1428,7 +1438,7 @@ else:
                 "docker",
                 "exec",
                 agent.container_id,
-                "/tmp/toolang-runtime/tools/toolang/bin/python",
+                agent.python,
                 "-c",
                 script,
             ),

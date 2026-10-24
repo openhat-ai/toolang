@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import threading
 from typing import Any, cast
+from types import SimpleNamespace
 
 import pytest
 
@@ -1186,6 +1187,50 @@ def test_canceled_run_stops_releases_and_clears_state(
     assert ("stop", ref, False) in implementation.calls
     assert ("release", ref) in implementation.calls
     assert SandboxState.load(spec.serve.layout.runtime_status) is None
+
+
+@pytest.mark.parametrize(
+    "location,ready_at,succeeds",
+    [
+        ("guest", 45, True),
+        ("host", 45, False),
+        ("guest", 181, False),
+        ("host", 5, True),
+    ],
+)
+def test_launch_allows_guest_bootstrap_without_extending_host_readiness(
+    tmp_path, monkeypatch, location, ready_at, succeeds
+):
+    implementation = FakeSandbox()
+    implementation.location = location
+    monkeypatch.setattr(sandbox, "create_sandbox", lambda _name, config: implementation)
+    elapsed = 0
+
+    def profile(_url, _launch_id):
+        nonlocal elapsed
+        if elapsed == 0:
+            elapsed = ready_at
+            return False
+        return True
+
+    monkeypatch.setattr(
+        sandbox,
+        "time",
+        SimpleNamespace(
+            monotonic=lambda: elapsed,
+            gmtime=sandbox.time.gmtime,
+            strftime=sandbox.time.strftime,
+        ),
+    )
+    monkeypatch.setattr(sandbox, "_launch_ready", profile)
+    spec = _launch_spec(tmp_path)
+    if succeeds:
+        handle = asyncio.run(sandbox.launch(spec))
+        assert handle.state.ref.runtime_id == "workload-1"
+    else:
+        with pytest.raises(TimeoutError, match="did not become ready"):
+            asyncio.run(sandbox.launch(spec))
+        assert SandboxState.load(spec.serve.layout.runtime_status) is None
 
 
 def test_readiness_fails_when_workload_exits() -> None:

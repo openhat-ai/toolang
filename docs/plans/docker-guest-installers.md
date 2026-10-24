@@ -31,14 +31,16 @@ This supersedes the installer and helper design in
   real command using `exec`.
 - Mount `guest.env` at the existing root agent policy path. Only Toolang's common
   environment loader reads it; the shell neither parses nor sources it.
+- Allow 180 seconds for guest bootstrap and API readiness, while keeping the
+  host startup budget at 30 seconds. Readiness remains independent of progress.
 - Keep concise progress, private diagnostics and workload logs, and closed event
   tokens. Permit `python.use` as the pip path's first startup event.
 
 ## Touchpoints
 
 Guest shell, helper deletion, host staging and command construction, standalone
-harness, focused sandbox/harness tests, opt-in Docker image checks, and current
-hosting documentation.
+harness, startup readiness budgets, focused sandbox/harness tests, opt-in Docker
+image and lifecycle checks, and current hosting documentation.
 
 ## Acceptance
 
@@ -54,7 +56,9 @@ hosting documentation.
    An unrelated image CLI cannot shadow the installed executable.
 5. Installation failure retains private diagnostics and never retries via another
    installer. Unsupported images and invalid container identity fail clearly.
-6. Live Docker checks cover pip, uv-only, and curl-only images. Default offline
+6. A guest becoming ready after 45 seconds succeeds; an over-budget guest is
+   cleaned up. Host startup still times out after 30 seconds.
+7. Live Docker checks cover pip, uv-only, and curl-only images. Default offline
    Ruff, formatting, ty, and pytest checks pass.
 
 ## Compatibility
