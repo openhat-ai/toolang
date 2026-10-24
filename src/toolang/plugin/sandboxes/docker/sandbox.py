@@ -84,7 +84,7 @@ _STARTUP_EVENT_MAP: dict[str, tuple[ProgressStage, str, ProgressStatus]] = {
     "server.running": ("start", "Starting agent...", "running"),
 }
 _STARTUP_EVENT_TRANSITIONS = {
-    None: frozenset({"uv.use", "uv.install.running"}),
+    None: frozenset({"python.use", "uv.use", "uv.install.running"}),
     "uv.install.running": frozenset({"uv.install.ok", "uv.install.failed"}),
     "uv.use": frozenset({"python.use", "python.install.running"}),
     "uv.install.ok": frozenset({"python.use", "python.install.running"}),
@@ -415,7 +415,6 @@ class DockerSandbox:
             command=(
                 "/bin/sh",
                 str(runtime_dir / "guest.sh"),
-                str(runtime_dir / "guest.py"),
                 str(hosted_diagnostic_path),
                 str(diagnostic_path),
                 str(request.hosted_home / ".runtime" / startup_events_path.name),

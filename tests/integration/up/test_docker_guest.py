@@ -19,11 +19,11 @@ pytestmark = pytest.mark.live_docker
     ("image", "uv_line", "python_line"),
     (
         (
-            "ghcr.io/astral-sh/uv:python3.13-bookworm-slim",
+            "ghcr.io/astral-sh/uv:debian-slim",
             "Using uv · ",
-            "Using Python · ",
+            "Installed Python · ",
         ),
-        ("python:3.13-slim", "Installed uv · ", "Using Python · "),
+        ("python:3.13-slim", None, "Using Python · "),
         (
             "buildpack-deps:bookworm-curl",
             "Installed uv · ",
@@ -33,7 +33,7 @@ pytestmark = pytest.mark.live_docker
 )
 def test_guest_harness_installs_and_runs_current_wheel(
     image: str,
-    uv_line: str,
+    uv_line: str | None,
     python_line: str,
     tmp_path: Path,
 ) -> None:
@@ -66,7 +66,11 @@ def test_guest_harness_installs_and_runs_current_wheel(
     )
 
     assert completed.returncode == 0, completed.stderr
-    assert uv_line in completed.stderr
+    if uv_line is None:
+        assert "Using uv" not in completed.stderr
+        assert "Installing uv" not in completed.stderr
+    else:
+        assert uv_line in completed.stderr
     assert python_line in completed.stderr
     assert "Installed Toolang · v" in completed.stderr
     assert completed.stdout.startswith("v")

@@ -621,7 +621,6 @@ def test_docker_sandbox_prepares_and_launches(
     assert {item.name for item in stage_dir.iterdir()} == {"active"}
     assert {item.name for item in (stage_dir / "active").iterdir()} == {
         "guest.sh",
-        "guest.py",
         "info.json",
         "guest.env",
         "toolang-1.2.3-py3-none-any.whl",
@@ -629,13 +628,9 @@ def test_docker_sandbox_prepares_and_launches(
     assert (stage_dir / "active/guest.sh").read_bytes() == (
         Path(docker_guest.__file__).with_name("guest.sh").read_bytes()
     )
-    assert (stage_dir / "active/guest.py").read_bytes() == (
-        Path(docker_guest.__file__).with_name("guest.py").read_bytes()
-    )
     assert plan.command == (
         "/bin/sh",
         "/root/.toolang/.runtime/active/alice/guest.sh",
-        "/root/.toolang/.runtime/active/alice/guest.py",
         f"/root/.toolang/agents/alice/.runtime/{diagnostic_path.name}",
         str(diagnostic_path),
         f"/root/.toolang/agents/alice/.runtime/{startup_events_path.name}",
@@ -774,12 +769,8 @@ def test_docker_background_sandbox_uses_docker_output_and_durable_diagnostics(
     assert log_path.is_file()
     assert stat.S_IMODE(log_path.stat().st_mode) == 0o600
     stage_dir = Path(cast(str, plan.meta["stage_dir"]))
-    shell = (stage_dir / "active/guest.sh").read_text(encoding="utf-8")
-    helper = (stage_dir / "active/guest.py").read_text(encoding="utf-8")
-    assert 'exec "$PYTHON_BIN" "$HELPER" --install' in shell
-    assert "PROGRESS_EVENTS" in shell
-    assert "report_progress" in helper
-    assert 'source "$GUEST_ENV"' not in shell
+    assert (stage_dir / "active/guest.sh").is_file()
+    assert not (stage_dir / "active/guest.py").exists()
 
 
 def test_docker_sandbox_orders_nested_mounts_after_the_agent_home(
@@ -873,14 +864,19 @@ def test_docker_background_attach_is_quiet_without_progress(
     assert followed == []
 
 
+@pytest.mark.parametrize("installer", ["pip", "uv"])
 @pytest.mark.parametrize("native_uv", [False, True])
 def test_docker_guest_preserves_image_environment_and_scopes_uv_overrides(
-    tmp_path: Path, native_uv: bool
+    tmp_path: Path, native_uv: bool, installer: str
 ) -> None:
     tools = tmp_path / "tools"
     tools.mkdir()
     _link_guest_utilities(tools)
     _write_fake_guest_tools(tools, python=sys.executable)
+    scripts = tmp_path / "scripts"
+    scripts.mkdir()
+    if installer == "pip":
+        _write_fake_pip_python(tools)
     diagnostic = tmp_path / "diagnostic.log"
     runtime = tmp_path / "runtime"
     uv_names = (
@@ -894,10 +890,19 @@ def test_docker_guest_preserves_image_environment_and_scopes_uv_overrides(
     uv_values = {name: f"image-{name}" for name in uv_names} if native_uv else {}
     environ = {
         "HOSTNAME": _CONTAINER_ID[:12],
-        "PATH": f"{tools}{os.pathsep}{os.environ['PATH']}",
+        "PATH": str(tools),
         "TOOLANG_TEST_PYTHON": sys.executable,
         "TOOLANG_TEST_INSTALL_ENV_LOG": str(tmp_path / "install-env"),
         "TOOLANG_TEST_TOO": str(tools / "too-template"),
+        "TOOLANG_TEST_SCRIPTS": str(scripts),
+        "TOOLANG_TEST_PIP_LOG": str(tmp_path / "pip-install.json"),
+        "TOOL_BIN_DIR": "image-bin",
+        "TOO_BIN": "image-too",
+        "PYTHON_BIN": "image-python",
+        "DIAGNOSTIC": "image-diagnostic",
+        "PACKAGE_SOURCE": "image-package",
+        "PROGRESS_EVENTS": "image-events",
+        "PIP_ROOT_USER_ACTION": "warn",
         "IMAGE_CUSTOM": "image-value",
         "PYTHON_VERSION": "image-python-version",
         "UV_VERSION": "image-uv-version",
@@ -916,7 +921,6 @@ def test_docker_guest_preserves_image_environment_and_scopes_uv_overrides(
         (
             "/bin/sh",
             str(Path(docker_guest.__file__).with_name("guest.sh")),
-            str(Path(docker_guest.__file__).with_name("guest.py")),
             str(diagnostic),
             str(diagnostic),
             "-",
@@ -941,44 +945,134 @@ def test_docker_guest_preserves_image_environment_and_scopes_uv_overrides(
     assert observed["TOOLANG_SANDBOX_INSTANCE"] == _CONTAINER_ID[:12]
     assert {name: observed[name] for name in uv_names if name in observed} == uv_values
     assert (runtime / "bin/too").is_file()
+    python_version = (
+        f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
+    )
+    python_lines = (
+        [f"Using Python · {python_version}"]
+        if installer == "pip"
+        else [
+            "Using uv · test",
+            "Installing Python · 3.13...",
+            f"Installed Python · {python_version}",
+        ]
+    )
     assert completed.stderr.splitlines() == [
-        "Using uv · test",
-        f"Using Python · {sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
+        *python_lines,
         "Installing Toolang · toolang-test.whl...",
         "Installed Toolang · toolang test",
         "Starting command...",
     ]
-    assert (tmp_path / "install-env").read_text() == "http://image-proxy/$literal\n"
+    if installer == "uv":
+        assert (tmp_path / "install-env").read_text() == "http://image-proxy/$literal\n"
     assert not diagnostic.exists()
 
 
-def test_docker_guest_uses_python_and_pip_to_install_uv(tmp_path: Path) -> None:
+@pytest.mark.parametrize("installer", ["pip", "uv"])
+@pytest.mark.parametrize("command", ["too", "toolang", "custom"])
+def test_docker_guest_executes_the_real_command_with_original_pid_and_arguments(
+    tmp_path: Path, installer: str, command: str
+) -> None:
     tools = tmp_path / "tools"
     tools.mkdir()
     _link_guest_utilities(tools)
-    driver = tools / "uv-driver"
-    _write_fake_guest_tools(tools, python=sys.executable, uv_path=driver)
-    _write_executable(
-        tools / "python3",
-        "#!/bin/sh\n"
-        'if [ "$1" = "-c" ]; then exit 0; fi\n'
-        'if [ "$1" = "-m" ] && [ "$2" = "pip" ]; then exit 0; fi\n'
-        'if [ "$1" = "-m" ] && [ "$2" = "uv" ]; then\n'
-        "  shift 2\n"
-        '  exec "$TOOLANG_TEST_UV" "$@"\n'
-        "fi\n"
-        "exit 1\n",
+    _write_fake_guest_tools(tools, python=sys.executable)
+    scripts = tmp_path / "scripts"
+    scripts.mkdir()
+    if installer == "pip":
+        _write_fake_pip_python(tools)
+    probe = (
+        "import json, os, sys\n"
+        "if sys.argv[1:] == ['_serve', '--help']: sys.exit(0)\n"
+        "print(json.dumps({'pid': os.getpid(), 'args': sys.argv[1:]}))\n"
+        "sys.exit(37)\n"
     )
-    guest_env = tmp_path / "guest.env"
-    docker_guest.write_guest_env(
-        guest_env,
-        dotenv_envs={},
-        process_envs={
+    _write_executable(tools / "too-template", f"#!{sys.executable}\n{probe}")
+    # A preexisting image CLI must never shadow the newly installed entry point.
+    _write_executable(tools / "too", "#!/bin/sh\nexit 99\n")
+    diagnostic = tmp_path / "diagnostic.log"
+    events = tmp_path / "startup.events"
+    log = tmp_path / "workload log"
+    arguments = ["argument with spaces", "$literal"]
+    workload = (
+        [sys.executable, "-c", probe, *arguments]
+        if command == "custom"
+        else [command, "_serve", *arguments]
+    )
+    with subprocess.Popen(
+        [
+            "/bin/sh",
+            str(Path(docker_guest.__file__).with_name("guest.sh")),
+            str(diagnostic),
+            str(diagnostic),
+            str(events),
+            "/packages with spaces/toolang.whl",
+            str(log),
+            "--",
+            *workload,
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env={
+            "HOSTNAME": _CONTAINER_ID[:12],
             "PATH": str(tools),
+            "TOOLANG_GUEST_RUNTIME": str(tmp_path / "runtime with spaces"),
+            "TOOLANG_TEST_PYTHON": sys.executable,
             "TOOLANG_TEST_TOO": str(tools / "too-template"),
-            "TOOLANG_TEST_UV": str(driver),
+            "TOOLANG_TEST_SCRIPTS": str(scripts),
+            "TOOLANG_TEST_PIP_LOG": str(tmp_path / "pip-install.json"),
         },
-    )
+    ) as process:
+        stdout, stderr = process.communicate(timeout=15)
+    assert process.returncode == 37, stderr
+    assert stdout == stderr == ""
+    assert json.loads(log.read_text()) == {
+        "pid": process.pid,
+        "args": arguments if command == "custom" else ["_serve", *arguments],
+    }
+    assert stat.S_IMODE(log.stat().st_mode) == 0o600
+    assert not diagnostic.exists()
+    assert events.read_text().splitlines() == [
+        *(
+            ["python.use"]
+            if installer == "pip"
+            else ["uv.use", "python.install.running", "python.install.ok"]
+        ),
+        "toolang.install.running",
+        "toolang.install.ok",
+        "toolang.check.running",
+        "toolang.check.ok",
+        "server.running",
+    ]
+
+
+@pytest.mark.parametrize(
+    "package_source", ["toolang", "/packages with spaces/toolang.whl"]
+)
+@pytest.mark.parametrize("preinstalled_uv", [False, True])
+def test_docker_guest_installs_toolang_directly_with_pip(
+    tmp_path: Path, package_source: str, preinstalled_uv: bool
+) -> None:
+    tools = tmp_path / "tools"
+    tools.mkdir()
+    _link_guest_utilities(tools)
+    driver = tools / ("uv" if preinstalled_uv else "uv-driver")
+    _write_fake_guest_tools(tools, python=sys.executable, uv_path=driver)
+    _write_fake_pip_python(tools)
+    scripts = tmp_path / "scripts with spaces"
+    scripts.mkdir()
+    install_log = tmp_path / "pip-install.json"
+    uv_log = tmp_path / "uv.log"
+    image_env = {
+        "PATH": str(tools),
+        "TOOLANG_TEST_TOO": str(tools / "too-template"),
+        "TOOLANG_TEST_SCRIPTS": str(scripts),
+        "TOOLANG_TEST_PIP_LOG": str(install_log),
+        "TOOLANG_TEST_UV_LOG": str(uv_log),
+        "HTTPS_PROXY": "http://proxy/$literal",
+    }
+    _write_executable(tools / "too", "#!/bin/sh\nexit 99\n")
     diagnostic = tmp_path / "diagnostic.log"
     diagnostic.touch()
     workload_log = tmp_path / "workload.log"
@@ -987,36 +1081,127 @@ def test_docker_guest_uses_python_and_pip_to_install_uv(tmp_path: Path) -> None:
         (
             "/bin/sh",
             str(Path(docker_guest.__file__).with_name("guest.sh")),
-            str(Path(docker_guest.__file__).with_name("guest.py")),
             str(diagnostic),
             str(diagnostic),
             "-",
-            "toolang",
+            package_source,
             str(workload_log),
             "--",
-            sys.executable,
-            "-c",
-            "print('workload')",
+            "too",
+            "--version",
         ),
         check=False,
         capture_output=True,
         text=True,
         env={
             "HOSTNAME": _CONTAINER_ID[:12],
-            "PATH": str(tools),
-            "TOOLANG_TEST_PYTHON": sys.executable,
-            "TOOLANG_TEST_TOO": str(tools / "too-template"),
-            "TOOLANG_TEST_UV": str(driver),
+            **image_env,
             "TOOLANG_GUEST_RUNTIME": str(tmp_path / "runtime"),
         },
     )
 
     assert completed.returncode == 0, completed.stderr
     assert completed.stdout == ""
-    assert workload_log.read_text(encoding="utf-8") == "workload\n"
+    assert workload_log.read_text(encoding="utf-8") == "toolang test\n"
     assert stat.S_IMODE(workload_log.stat().st_mode) == 0o600
-    assert completed.stderr.splitlines()[0] == "Installing uv..."
-    assert completed.stderr.splitlines()[1] == "Installed uv · test"
+    assert completed.stderr.splitlines()[0].startswith("Using Python · ")
+    assert "uv" not in completed.stderr
+    assert not uv_log.exists()
+    installed = json.loads(install_log.read_text())
+    assert installed["args"] == [
+        "-m",
+        "pip",
+        "install",
+        "--disable-pip-version-check",
+        "--no-input",
+        "--quiet",
+        "--upgrade",
+        "--force-reinstall",
+        "--no-user",
+        package_source,
+    ]
+    assert installed["proxy"] == "http://proxy/$literal"
+    assert installed["root_action"] == "ignore"
+    assert not diagnostic.exists()
+
+
+@pytest.mark.parametrize(
+    "version,pip_available", [((3, 10), True), ((3, 11), False), (None, False)]
+)
+@pytest.mark.parametrize("uv_source", ["preinstalled", "curl", "wget"])
+def test_docker_guest_uses_uv_without_supported_pip(
+    tmp_path: Path, version: tuple[int, int] | None, pip_available: bool, uv_source: str
+) -> None:
+    tools = tmp_path / "tools"
+    tools.mkdir()
+    _link_guest_utilities(tools)
+    driver = tools / ("uv" if uv_source == "preinstalled" else "uv-driver")
+    _write_fake_guest_tools(tools, python=sys.executable, uv_path=driver)
+    if version is not None:
+        _write_fake_pip_python(tools, version=version, pip_available=pip_available)
+    download_log = tmp_path / "download.log"
+    uv_log = tmp_path / "uv.log"
+    if uv_source != "preinstalled":
+        output_argument = '"$4"' if uv_source == "curl" else '"$2"'
+        _write_executable(
+            tools / uv_source,
+            "#!/bin/sh\n"
+            'printf "%s\\n" "$@" >"$TOOLANG_TEST_DOWNLOAD_LOG"\n'
+            f"cat >{output_argument} <<'INSTALLER'\n"
+            'mkdir -p "$UV_UNMANAGED_INSTALL"\n'
+            'cp "$TOOLANG_TEST_UV_DRIVER" "$UV_UNMANAGED_INSTALL/uv"\n'
+            'chmod 755 "$UV_UNMANAGED_INSTALL/uv"\n'
+            "INSTALLER\n",
+        )
+
+    completed = _run_guest(
+        tmp_path,
+        tools,
+        {
+            "TOOLANG_TEST_UV_DRIVER": str(driver),
+            "TOOLANG_TEST_UV_LOG": str(uv_log),
+            "TOOLANG_TEST_DOWNLOAD_LOG": str(download_log),
+        },
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout == "toolang test\n"
+    assert "Installing Python · 3.13..." in completed.stderr
+    uv_commands = uv_log.read_text().splitlines()
+    assert "python install 3.13 --no-progress" in uv_commands
+    assert "python find --managed-python 3.13" in uv_commands
+    if uv_source == "preinstalled":
+        assert not download_log.exists()
+    else:
+        assert "https://astral.sh/uv/0.12.6/install.sh" in download_log.read_text()
+
+
+def test_docker_guest_does_not_retry_pip_failure_with_uv(tmp_path: Path) -> None:
+    tools = tmp_path / "tools"
+    tools.mkdir()
+    _link_guest_utilities(tools)
+    _write_fake_guest_tools(tools, python=sys.executable)
+    _write_fake_pip_python(tools)
+    scripts = tmp_path / "scripts"
+    scripts.mkdir()
+    uv_log = tmp_path / "uv.log"
+
+    completed = _run_guest(
+        tmp_path,
+        tools,
+        {
+            "TOOLANG_TEST_SCRIPTS": str(scripts),
+            "TOOLANG_TEST_PIP_LOG": str(tmp_path / "pip-install.json"),
+            "TOOLANG_TEST_PIP_STATUS": "1",
+            "TOOLANG_TEST_UV_LOG": str(uv_log),
+        },
+    )
+
+    assert completed.returncode == 1
+    assert "Could not install Toolang" in completed.stderr
+    assert "private pip failure" not in completed.stderr
+    assert "private pip failure" in (tmp_path / "diagnostic.log").read_text()
+    assert not uv_log.exists()
 
 
 def test_docker_guest_rejects_an_image_without_bootstrap_capabilities(
@@ -1025,8 +1210,6 @@ def test_docker_guest_rejects_an_image_without_bootstrap_capabilities(
     tools = tmp_path / "tools"
     tools.mkdir()
     _link_guest_utilities(tools)
-    guest_env = tmp_path / "guest.env"
-    docker_guest.write_guest_env(guest_env, dotenv_envs={}, process_envs={})
     diagnostic = tmp_path / "diagnostic.log"
     diagnostic.touch()
 
@@ -1034,7 +1217,6 @@ def test_docker_guest_rejects_an_image_without_bootstrap_capabilities(
         (
             "/bin/sh",
             str(Path(docker_guest.__file__).with_name("guest.sh")),
-            str(Path(docker_guest.__file__).with_name("guest.py")),
             str(diagnostic),
             str(diagnostic),
             "-",
@@ -1057,7 +1239,7 @@ def test_docker_guest_rejects_an_image_without_bootstrap_capabilities(
     assert completed.returncode == 69
     assert completed.stderr.splitlines() == [
         "Installing uv...",
-        "Unsupported image: provide uv, Python 3.8+ with pip, curl, or wget",
+        "Unsupported image: provide Python 3.11+ with pip, uv, curl, or wget",
         f"See {diagnostic}",
     ]
     assert diagnostic.is_file()
@@ -1069,15 +1251,12 @@ def test_docker_guest_requires_the_default_short_container_hostname(
     tools = tmp_path / "tools"
     tools.mkdir()
     _link_guest_utilities(tools)
-    guest_env = tmp_path / "guest.env"
-    docker_guest.write_guest_env(guest_env, dotenv_envs={}, process_envs={})
     diagnostic = tmp_path / "diagnostic.log"
 
     completed = subprocess.run(
         (
             "/bin/sh",
             str(Path(docker_guest.__file__).with_name("guest.sh")),
-            str(Path(docker_guest.__file__).with_name("guest.py")),
             str(diagnostic),
             str(diagnostic),
             "-",
@@ -1104,13 +1283,14 @@ def test_docker_guest_requires_the_default_short_container_hostname(
     ]
 
 
+@pytest.mark.parametrize("installer", ["pip", "uv"])
 def test_docker_startup_observer_preserves_order_and_curated_failure(
     tmp_path: Path,
+    installer: str,
 ) -> None:
     path = tmp_path / "startup.events"
     path.write_text(
-        "python.use\n"
-        "uv.use\n"
+        ("python.use\n" if installer == "pip" else "python.install.ok\n") + "uv.use\n"
         "uv.use\n"
         "unknown\n"
         "python.use\n"
@@ -1131,10 +1311,16 @@ def test_docker_startup_observer_preserves_order_and_curated_failure(
         )
     )
 
+    expected = (
+        [
+            ("runtime", "create", "running", None),
+        ]
+        if installer == "uv"
+        else []
+    )
     assert [
         (event.kind, event.stage, event.status, event.detail) for event in events
-    ] == [
-        ("runtime", "create", "running", None),
+    ] == expected + [
         ("runtime", "create", "running", None),
         ("runtime", "create", "running", "toolang.whl"),
         ("runtime", "create", "running", None),
@@ -1146,8 +1332,9 @@ def test_docker_startup_observer_preserves_order_and_curated_failure(
             "The installed Toolang package cannot start the required AgentServer.",
         ),
     ]
-    assert [event.label for event in events] == [
-        "Using uv",
+    assert [event.label for event in events] == (
+        ["Using uv"] if installer == "uv" else []
+    ) + [
         "Using Python",
         "Installing Toolang from toolang.whl...",
         "Installed Toolang from toolang.whl",
@@ -1597,7 +1784,6 @@ def test_docker_foreground_sandbox_follows_logs_only_when_waiting(
     assert {path.name for path in stage_dir.iterdir()} == {"active"}
     assert {path.name for path in (stage_dir / "active").iterdir()} == {
         "guest.sh",
-        "guest.py",
         "info.json",
         "guest.env",
     }
@@ -2251,6 +2437,9 @@ def _write_fake_guest_tools(
     _write_executable(
         uv,
         "#!/bin/sh\n"
+        'if [ -n "${TOOLANG_TEST_UV_LOG:-}" ]; then\n'
+        '  printf "%s\\n" "$*" >>"$TOOLANG_TEST_UV_LOG"\n'
+        "fi\n"
         'if [ "$1" = "--version" ]; then echo "uv test"; exit 0; fi\n'
         'if [ "$1" = "python" ] && [ "$2" = "find" ]; then\n'
         '  if [ "${3:-}" = "--help" ]; then exit 0; fi\n'
@@ -2263,6 +2452,7 @@ def _write_fake_guest_tools(
         '  if [ -n "${TOOLANG_TEST_INSTALL_ENV_LOG:-}" ]; then\n'
         '    printf "%s\\n" "${HTTPS_PROXY:-}" >"$TOOLANG_TEST_INSTALL_ENV_LOG"\n'
         "  fi\n"
+        '  mkdir -p "$UV_TOOL_BIN_DIR"\n'
         '  cp "$TOOLANG_TEST_TOO" "$UV_TOOL_BIN_DIR/too"\n'
         '  chmod 755 "$UV_TOOL_BIN_DIR/too"\n'
         "  exit 0\n"
@@ -2280,7 +2470,7 @@ def _write_fake_guest_tools(
 
 
 def _link_guest_utilities(directory: Path) -> None:
-    for name in ("cat", "chmod", "cp", "mkdir", "rm"):
+    for name in ("cat", "chmod", "cp", "ln", "mkdir", "rm", "sh"):
         source = shutil.which(name)
         assert source is not None
         (directory / name).symlink_to(source)
@@ -2384,3 +2574,70 @@ def test_docker_rejects_names_the_common_dotenv_parser_cannot_load(tmp_path, nam
     with pytest.raises(ValueError, match="invalid guest environment variable name"):
         create_sandbox("docker", config={}).prepare(None, request)
     assert not list(tmp_path.glob(".sandbox/alice/launches/*"))
+
+
+def _write_fake_pip_python(
+    directory: Path, *, version: tuple[int, int] = (3, 11), pip_available: bool = True
+) -> None:
+    _write_executable(
+        directory / "python3",
+        f"#!{sys.executable}\n"
+        "import json, os, shutil, sys\n"
+        "from pathlib import Path\n"
+        "args = sys.argv[1:]\n"
+        "if args[:1] == ['-c']:\n"
+        "    if 'sys.version_info' in args[1]:\n"
+        f"        sys.version_info = {version!r}\n"
+        "        exec(args[1])\n"
+        "        sys.exit(0)\n"
+        "    if 'sysconfig.get_path' in args[1]:\n"
+        "        print(os.environ['TOOLANG_TEST_SCRIPTS'])\n"
+        "        sys.exit(0)\n"
+        "if args[:2] == ['-m', 'pip']:\n"
+        "    if args[2:] == ['--version']:\n"
+        f"        sys.exit({0 if pip_available else 1})\n"
+        "    Path(os.environ['TOOLANG_TEST_PIP_LOG']).write_text(json.dumps({\n"
+        "        'args': args, 'proxy': os.environ.get('HTTPS_PROXY'),\n"
+        "        'root_action': os.environ.get('PIP_ROOT_USER_ACTION')}))\n"
+        "    status = int(os.environ.get('TOOLANG_TEST_PIP_STATUS', '0'))\n"
+        "    if status:\n"
+        "        print('private pip failure', file=sys.stderr)\n"
+        "        sys.exit(status)\n"
+        "    too = Path(os.environ['TOOLANG_TEST_SCRIPTS']) / 'too'\n"
+        "    shutil.copyfile(os.environ['TOOLANG_TEST_TOO'], too)\n"
+        "    too.chmod(0o755)\n"
+        "    sys.exit(0)\n"
+        f"os.execv({sys.executable!r}, [{sys.executable!r}, *args])\n",
+    )
+
+
+def _run_guest(
+    tmp_path: Path, tools: Path, extra_env: dict[str, str]
+) -> subprocess.CompletedProcess[str]:
+    environ = {
+        "HOSTNAME": _CONTAINER_ID[:12],
+        "PATH": str(tools),
+        "TOOLANG_TEST_PYTHON": sys.executable,
+        "TOOLANG_TEST_TOO": str(tools / "too-template"),
+        "TOOLANG_GUEST_RUNTIME": str(tmp_path / "runtime"),
+        **extra_env,
+    }
+    diagnostic = tmp_path / "diagnostic.log"
+    return subprocess.run(
+        (
+            "/bin/sh",
+            str(Path(docker_guest.__file__).with_name("guest.sh")),
+            str(diagnostic),
+            str(diagnostic),
+            "-",
+            "toolang",
+            "-",
+            "--",
+            "too",
+            "--version",
+        ),
+        check=False,
+        capture_output=True,
+        text=True,
+        env=environ,
+    )

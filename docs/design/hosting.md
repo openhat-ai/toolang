@@ -341,14 +341,26 @@ the [launch boundary](../../src/toolang/up/sandbox.py), and the
 
 ## Guest bootstrap
 
-Docker uses the engine's default missing-image pull behavior. Its guest script
-quietly bootstraps uv and installs the selected package with `uv tool install`.
+Docker uses the engine's default missing-image pull behavior. Its shell guest
+bootstrap installs the selected package directly with an image interpreter's pip
+when that interpreter is Python 3.11+. Otherwise it reuses standalone uv or
+installs pinned uv through curl/wget, then uses uv to install managed Python 3.13
+and Toolang. Installation failures retain diagnostics without changing installers.
+The pip path requires a writable interpreter environment and can replace image
+packages; it does not override externally managed environment protections.
+
+Installation runs in a subshell so private variables and uv directory overrides
+cannot replace image environment values. The parent shell prepends the private
+runtime bin directory and uses `exec` to start the installed CLI or custom command.
+The mounted `guest.env` is read by Toolang's common environment loader, without
+shell parsing or sourcing.
+
 For a source-local roaming agent, Docker overlays linked `agent.too` and
 `config.toml` targets as explicit read-only guest files so host symlinks do not
 become broken paths in the container.
-Successful installation suppresses ensurepip chatter, pip's container root-user
-warning, package lists, and uv progress bars; installer failure stderr remains
-available. Before execution, the guest checks that the installed CLI can start
+Successful installation suppresses pip's container root-user warning, package
+lists, and uv progress bars; installer failure stderr remains in private
+diagnostics. Before execution, the guest checks that the installed CLI can start
 the required AgentServer. Structured startup errors identify whether package
 index or wheel installation failed and recommend a source-appropriate fix. A
 compatibility failure from a development CLI recommends `uv build --wheel` and
