@@ -4,18 +4,51 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from contextlib import suppress
+from dataclasses import dataclass
 from hashlib import sha256
 from importlib.resources import files
 from pathlib import Path
 import shutil
 import json
 
-from toolang.base.types.sandbox import SandboxRequest
+from toolang.base.types.sandbox import JsonValue, SandboxRequest
 from toolang.common.files import atomic_write_text
 from toolang.common.environment import is_environment_name
 
 
 _GUEST_FILES = {"guest.sh": 0o755}
+
+
+@dataclass(frozen=True)
+class GuestLaunchFiles:
+    """Host bootstrap and diagnostic paths belonging to one Docker launch."""
+
+    stage: Path
+    diagnostic: Path
+    startup_events: Path
+
+    @classmethod
+    def for_launch(cls, request: SandboxRequest, launch_id: str) -> GuestLaunchFiles:
+        assert request.toolang_root is not None
+        runtime = request.local_runtime or (
+            request.toolang_root / ".runtime" / "active" / str(request.agent_address)
+        )
+        return cls(
+            stage=runtime / "docker" / sha256(launch_id.encode()).hexdigest(),
+            diagnostic=request.local_home
+            / ".runtime"
+            / f"docker-guest-{launch_id}.log",
+            startup_events=request.local_home
+            / ".runtime"
+            / f"docker-guest-{launch_id}.events",
+        )
+
+    def metadata(self) -> dict[str, JsonValue]:
+        return {
+            "stage_dir": str(self.stage),
+            "diagnostic_path": str(self.diagnostic),
+            "startup_events_path": str(self.startup_events),
+        }
 
 
 def stage_guest_files(directory: Path) -> None:

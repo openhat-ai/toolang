@@ -213,37 +213,17 @@ def run(
                 )
             else:
                 from ...common.foreground import run_foreground
-                from toolang.up.closing import ClosingDeadline
-                from toolang.up.instance import control_owner, read_instance
-                from toolang.up.workload import begin_foreground_closing
+                from toolang.up.invocation import ForegroundServerOwner
 
-                owner = control_owner()
-                generation: str | None = None
+                with ForegroundServerOwner(launch.serve.layout) as owner:
 
-                def begin_closing(started: float, reason: str) -> None:
-                    nonlocal generation
-                    assert launch is not None
-                    layout = launch.serve.layout
-                    if generation is None:
-                        snapshot = read_instance(layout.runtime_status, layout.instance)
-                        operation = (
-                            (snapshot or {}).get("control", {}).get("operation", {})
+                    def ready(state: SandboxState) -> None:
+                        owner.bind(state.launch_id)
+                        assert launch is not None
+                        _report_foreground_ready(
+                            launch.serve.layout.name, state, progress
                         )
-                        if not snapshot or any(
-                            operation.get(key) != value for key, value in owner.items()
-                        ):
-                            return
-                        generation = snapshot["launch_id"]
-                    begin_foreground_closing(layout, generation, started, reason)
 
-                def ready(state: SandboxState) -> None:
-                    nonlocal generation
-                    generation = state.launch_id
-                    assert launch is not None
-                    _report_foreground_ready(launch.serve.layout.name, state, progress)
-
-                closing = ClosingDeadline(on_begin=begin_closing)
-                try:
                     exit_code = user_call(
                         run_foreground,
                         sandbox_runtime.run(
@@ -251,13 +231,11 @@ def run(
                             on_ready=ready,
                             progress=progress.sink,
                             cleanup_progress=cleanup_progress.sink,
-                            closing=closing,
+                            closing=owner.closing,
                         ),
-                        closing=closing,
+                        closing=owner.closing,
                         interrupt_reason="server interrupted",
                     )
-                finally:
-                    closing.close()
     except KeyboardInterrupt:
         raise typer.Exit(130) from None
     except (

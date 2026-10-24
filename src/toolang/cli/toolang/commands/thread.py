@@ -400,7 +400,7 @@ def _run_rerun(
     model_catalog: Path | None = None,
     expected_launch_id: str | None = None,
 ) -> RunDetail:
-    from toolang.up.workload import script_invocation
+    from toolang.up.invocation import script_invocation
 
     try:
         with (

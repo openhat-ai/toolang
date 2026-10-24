@@ -51,6 +51,7 @@ from ._cli import (
     finish_process,
 )
 from ._guest import (
+    GuestLaunchFiles,
     prepare_background_log,
     prepare_diagnostic,
     prepare_stage_directory,
@@ -249,20 +250,7 @@ class DockerSandbox:
         """Persist a generation-bound locator before staging or container creation."""
         launch_id = request.envs.get("TOOLANG_HOST_LAUNCH", "")
         name, identity = _request_identity(request, launch_id)
-        assert request.toolang_root is not None
-        stage = (
-            (
-                request.local_runtime
-                or (
-                    request.toolang_root
-                    / ".runtime"
-                    / "active"
-                    / str(request.agent_address)
-                )
-            )
-            / "docker"
-            / sha256(launch_id.encode()).hexdigest()
-        )
+        files = GuestLaunchFiles.for_launch(request, launch_id)
         return SandboxRef(
             name,
             request.endpoint,
@@ -270,13 +258,7 @@ class DockerSandbox:
             runtime_name=name,
             meta={
                 "docker_identity": identity,
-                "stage_dir": str(stage),
-                "diagnostic_path": str(
-                    request.local_home / ".runtime" / f"docker-guest-{launch_id}.log"
-                ),
-                "startup_events_path": str(
-                    request.local_home / ".runtime" / f"docker-guest-{launch_id}.events"
-                ),
+                **files.metadata(),
             },
         )
 
@@ -287,47 +269,26 @@ class DockerSandbox:
     def prepare(self, spec: str | None, request: SandboxRequest) -> SandboxPlan:
         launch_id = request.envs.get("TOOLANG_HOST_LAUNCH", uuid4().hex)
         container_name, identity = _request_identity(request, launch_id)
-        assert request.toolang_root is not None
-        stage_dir = (
-            (
-                request.local_runtime
-                or (
-                    request.toolang_root
-                    / ".runtime"
-                    / "active"
-                    / str(request.agent_address)
-                )
-            )
-            / "docker"
-            / sha256(launch_id.encode()).hexdigest()
-        )
-        diagnostic_path = (
-            request.local_home / ".runtime" / f"docker-guest-{launch_id}.log"
-        )
-        startup_events_path = (
-            request.local_home / ".runtime" / f"docker-guest-{launch_id}.events"
-        )
+        files = GuestLaunchFiles.for_launch(request, launch_id)
         owned_stage = False
         try:
-            prepare_stage_directory(stage_dir)
+            prepare_stage_directory(files.stage)
             owned_stage = True
             return self._prepare(
                 spec,
                 request,
-                stage_dir=stage_dir,
-                diagnostic_path=diagnostic_path,
-                startup_events_path=startup_events_path,
+                files=files,
                 container_name=container_name,
                 identity=identity,
             )
         except BaseException:
             if owned_stage:
                 remove_stage_directory(
-                    stage_dir, launch_id=launch_id, ignore_errors=True
+                    files.stage, launch_id=launch_id, ignore_errors=True
                 )
                 with suppress(OSError):
-                    diagnostic_path.unlink(missing_ok=True)
-                    startup_events_path.unlink(missing_ok=True)
+                    files.diagnostic.unlink(missing_ok=True)
+                    files.startup_events.unlink(missing_ok=True)
             raise
 
     def _prepare(
@@ -335,9 +296,7 @@ class DockerSandbox:
         spec: str | None,
         request: SandboxRequest,
         *,
-        stage_dir: Path,
-        diagnostic_path: Path,
-        startup_events_path: Path,
+        files: GuestLaunchFiles,
         container_name: str,
         identity: dict[str, JsonValue],
     ) -> SandboxPlan:
@@ -348,7 +307,7 @@ class DockerSandbox:
             / "active"
             / request.agent_name
         )
-        active_dir = stage_dir / "active"
+        active_dir = files.stage / "active"
         active_dir.mkdir()
         guest_info = RuntimeReference(
             request.hosted_home / ".runtime" / "status.json",
@@ -369,9 +328,11 @@ class DockerSandbox:
         validate_guest_environment(dotenv_envs)
         validate_guest_environment(process_envs)
         hosted_log_path = prepare_background_log(request)
-        hosted_diagnostic_path = request.hosted_home / ".runtime" / diagnostic_path.name
-        prepare_diagnostic(diagnostic_path)
-        prepare_diagnostic(startup_events_path)
+        hosted_diagnostic_path = (
+            request.hosted_home / ".runtime" / files.diagnostic.name
+        )
+        prepare_diagnostic(files.diagnostic)
+        prepare_diagnostic(files.startup_events)
         stage_guest_files(active_dir)
 
         hosted_dev_artifact: Path | None = None
@@ -404,7 +365,7 @@ class DockerSandbox:
             SandboxMount(active_dir, runtime_dir, read_only=True),
         ]
         if request.guest_config is not None:
-            guest_config = stage_dir / "config.toml"
+            guest_config = files.stage / "config.toml"
             atomic_write_text(guest_config, request.guest_config)
             mounts.append(
                 SandboxMount(
@@ -427,8 +388,8 @@ class DockerSandbox:
                 "/bin/sh",
                 str(runtime_dir / "guest.sh"),
                 str(hosted_diagnostic_path),
-                str(diagnostic_path),
-                str(request.hosted_home / ".runtime" / startup_events_path.name),
+                str(files.diagnostic),
+                str(request.hosted_home / ".runtime" / files.startup_events.name),
                 package_source,
                 str(hosted_log_path) if hosted_log_path is not None else "-",
                 "--",
@@ -472,9 +433,7 @@ class DockerSandbox:
                 "container_name": container_name,
                 "docker_identity": identity,
                 "image": image,
-                "stage_dir": str(stage_dir),
-                "diagnostic_path": str(diagnostic_path),
-                "startup_events_path": str(startup_events_path),
+                **files.metadata(),
                 "package_source": (
                     request.local_dev_artifact.name
                     if request.local_dev_artifact is not None

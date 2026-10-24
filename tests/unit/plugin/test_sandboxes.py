@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import replace
 from hashlib import sha256
+from io import BytesIO
 import json
 import os
 from pathlib import Path
@@ -45,6 +46,38 @@ from toolang.up.mounts import prepare_place_mounts
 
 
 _CONTAINER_ID = "176191c1528b8e2861cc16422dee13ade59d4977c2148a9ebf5d36a06f090abb"
+
+
+@pytest.mark.parametrize("terminal_phase", ["running", "exited"])
+def test_foreground_launch_waits_until_creation_has_finished(
+    monkeypatch, terminal_phase
+):
+    process = SimpleNamespace(stdin=BytesIO(), returncode=None)
+    process.poll = lambda: process.returncode
+    observations = []
+
+    def inspect(identities):
+        phase = "created" if not observations else terminal_phase
+        observations.append(phase)
+        if phase == "exited":
+            process.returncode = 0
+        return {
+            identities[0]: docker_cli._Container(_CONTAINER_ID, phase == "running", {})
+        }
+
+    controllers = {}
+    monkeypatch.setattr(docker_cli, "_FOREGROUND_CONTROLLERS", controllers)
+    monkeypatch.setattr(docker_cli.subprocess, "Popen", lambda *args, **kwargs: process)
+    monkeypatch.setattr(docker_cli, "_inspect_containers", inspect)
+    try:
+        runtime_id = asyncio.run(
+            docker_cli._run_foreground(["docker"], "toolang-alice", {}, None)
+        )
+        assert runtime_id == _CONTAINER_ID
+        assert observations[-1] == terminal_phase
+        assert controllers == {_CONTAINER_ID: process}
+    finally:
+        process.stdin.close()
 
 
 def _mock_docker_container(

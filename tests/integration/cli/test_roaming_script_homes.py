@@ -8,7 +8,7 @@ from toolang.cli.toolang.main import main
 from toolang.execution.store import RunStore
 from toolang.up.allocation import retained_roaming, select_roaming
 from toolang.up.instance import read_instance
-from toolang.up.workload import script_invocation
+from toolang.up.invocation import script_invocation
 
 
 @pytest.fixture

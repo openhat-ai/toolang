@@ -723,7 +723,8 @@ def _run(
     from toolang.execution.store import RunStore
     from toolang.state.prepare import prepare_agent_state
     from toolang.up import source as agent_sources
-    from toolang.up.workload import ForegroundWorkload, script_invocation
+    from toolang.up.invocation import script_invocation
+    from toolang.up.workload import ForegroundWorkload
     from toolang.cli.common.context import resolve_root
     from toolang.up.logging import configure_logging_plan, resolve_agent_logging
 

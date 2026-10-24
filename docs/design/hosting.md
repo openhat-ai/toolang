@@ -60,6 +60,11 @@ modes, not additional placement implementations.
   own preparation/finalization. Source-only roaming execution begins with a newly
   allocated identity; bound continuation validates the retained home instead.
   Discovery publication does not own execution state.
+- [Foreground invocations](../../src/toolang/up/invocation.py) claim script HOMEs
+  and bind controller shutdown to the owned launch. The CLI supplies readiness
+  and interruption events; invocation code publishes the fenced closing state.
+- [Closing deadlines](../../src/toolang/up/closing.py) bound process finalization
+  independently of the event loop, without interpreting HOME or launch records.
 - [Application assembly](../../src/toolang/up/application.py) supplies the complete
   Agent API and Stats to both embedded and hosted `AgentCore` instances. Each
   execution host starts/closes those services within its existing resource scope.

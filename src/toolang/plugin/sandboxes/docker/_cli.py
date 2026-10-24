@@ -444,16 +444,20 @@ async def _run_foreground(
         while True:
             containers = await asyncio.to_thread(_inspect_containers, (name,))
             container = containers.get(name)
+            returncode = process.poll()
             if container is not None:
                 if any(
                     container.labels.get(key) != value for key, value in labels.items()
                 ):
                     raise RuntimeError(f"docker container ownership mismatch: {name}")
-                _FOREGROUND_CONTROLLERS[container.id] = _FOREGROUND_CONTROLLERS.pop(
-                    name
-                )
-                return container.id
-            if process.poll() is not None:
+                # Docker publishes the ID before starting the workload. Keep
+                # creation owned until it runs or the attached client exits.
+                if container.running or returncode is not None:
+                    _FOREGROUND_CONTROLLERS[container.id] = _FOREGROUND_CONTROLLERS.pop(
+                        name
+                    )
+                    return container.id
+            if returncode is not None:
                 detail = ""
                 if log_path is not None:
                     with log_path.open("rb") as diagnostic:
