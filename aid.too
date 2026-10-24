@@ -6,8 +6,8 @@ psyche changelog:
   unclear user impact or migration. Apart from the current changelog and Git
   metadata for baseline and links, read no repository files, including AGENTS.md,
   or commit diffs. Never read or restore historical changelogs.
-  Preserve existing records; prepend missing changes. Correct only verified
-  factual errors or necessary migration guidance, explaining each correction.
+  Preserve released records; prepend missing changes to Unreleased. Correct only
+  verified factual errors or necessary migration guidance, explaining each correction.
   Summarize final user impact; omit internal details, boilerplate, and unsourced claims.
   Link available PRs; each new entry uses one sentence of at most 30 words.
   Group breaking changes by migration action, splitting a PR when actions differ.
@@ -26,6 +26,10 @@ agic update_changelog(since?: Text, version?: Text, date?: Text):
   return the no-change response without reviewing history.
   Verify the supplied baseline or use the latest release tag reachable from HEAD.
   Review full git log messages from the baseline through HEAD.
+  Reconcile all Unreleased statements with final behavior in that range, including
+  removed options, operand order, instance layouts, and history continuation.
+  Replace superseded statements with final behavior and migration actions,
+  retaining links to contributing PRs.
   Update Unreleased with a comparison link from baseline to HEAD; new files state the baseline.
   With release inputs, move Unreleased entries unchanged under that version and
   date; keep empty Unreleased above, linking baseline to target tag to HEAD.
