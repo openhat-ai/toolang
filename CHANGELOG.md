@@ -684,6 +684,10 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   Python 3.13.
   ([#951](https://github.com/openhat-ai/toolang/pull/951))
 
+- Docker guests may take 180 seconds to install Toolang before API readiness,
+  while hosts keep a 30-second launch deadline.
+  ([#951](https://github.com/openhat-ai/toolang/pull/951))
+
 ### Security
 
 - The locked certifi trust store advances to 2026.10.19, resolving trust-store
