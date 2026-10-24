@@ -13,7 +13,7 @@ from toolang.common.files import atomic_write_text
 from toolang.common.environment import is_environment_name
 
 
-_GUEST_FILES = {"guest.sh": 0o755, "guest.py": 0o644}
+_GUEST_FILES = {"guest.sh": 0o755}
 
 
 def stage_guest_files(directory: Path) -> None:

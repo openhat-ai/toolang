@@ -167,7 +167,6 @@ ROOT/.runtime/active/<address>/
       info.json                     # Guest path view
       guest.env
       guest.sh
-      guest.py
       <development-wheel>.whl        # Optional
 ```
 

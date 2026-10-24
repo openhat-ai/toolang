@@ -36,12 +36,10 @@ fi
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 REPOSITORY_DIR=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
 GUEST_SOURCE=$REPOSITORY_DIR/src/toolang/plugin/sandboxes/docker
-for FILE in guest.sh guest.py; do
-    [ -f "$GUEST_SOURCE/$FILE" ] || {
-        printf 'Guest file not found · %s\n' "$GUEST_SOURCE/$FILE" >&2
-        exit 66
-    }
-done
+[ -f "$GUEST_SOURCE/guest.sh" ] || {
+    printf 'Guest file not found · %s\n' "$GUEST_SOURCE/guest.sh" >&2
+    exit 66
+}
 command -v docker >/dev/null 2>&1 || {
     printf '%s\n' "Docker is not available" >&2
     exit 69
@@ -113,7 +111,7 @@ resolve_wheel() {
 trap cleanup 0
 trap interrupt INT TERM HUP
 mkdir "$GUEST_DIR" "$STATE_DIR" || exit 73
-cp "$GUEST_SOURCE/guest.sh" "$GUEST_SOURCE/guest.py" "$GUEST_DIR" || exit 73
+cp "$GUEST_SOURCE/guest.sh" "$GUEST_DIR" || exit 73
 chmod 755 "$GUEST_DIR/guest.sh"
 : >"$DIAGNOSTIC"
 chmod 600 "$DIAGNOSTIC"
@@ -135,7 +133,6 @@ CONTAINER_ID=$(docker create \
     --volume "$STATE_DIR:/tmp/toolang-guest-state" \
     "$IMAGE" \
     /bin/sh /tmp/toolang-guest/guest.sh \
-    /tmp/toolang-guest/guest.py \
     /tmp/toolang-guest-state/diagnostic.log \
     "$DIAGNOSTIC_DISPLAY" - "$PACKAGE_SOURCE" - -- "$@") || exit $?
 

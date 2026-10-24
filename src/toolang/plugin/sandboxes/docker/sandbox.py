@@ -415,7 +415,6 @@ class DockerSandbox:
             command=(
                 "/bin/sh",
                 str(runtime_dir / "guest.sh"),
-                str(runtime_dir / "guest.py"),
                 str(hosted_diagnostic_path),
                 str(diagnostic_path),
                 str(request.hosted_home / ".runtime" / startup_events_path.name),

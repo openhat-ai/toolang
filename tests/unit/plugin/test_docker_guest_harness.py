@@ -61,7 +61,8 @@ def test_harness_forwards_dev_wheel_and_command_without_requoting(
     create = calls[0]
     assert create[0] == "create"
     assert any(item.endswith(":/tmp/toolang-guest:ro") for item in create)
-    assert "/tmp/toolang-guest/guest.py" in create
+    assert "/tmp/toolang-guest/guest.sh" in create
+    assert "/tmp/toolang-guest/guest.py" not in create
     assert "/tmp/toolang-guest/toolang-0.3.0-py3-none-any.whl" in create
     assert create[-3:] == ["printf", "argument with spaces", "$literal"]
     assert calls[1] == ["start", "--attach", _CONTAINER_ID]
