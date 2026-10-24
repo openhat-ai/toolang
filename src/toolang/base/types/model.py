@@ -127,10 +127,7 @@ class ModelOverride:
     def __post_init__(self) -> None:
         if self.identity is not None:
             if self.identity == "none":
-                raise ValueError(
-                    "model identity 'none' was removed; use 'unset' for a "
-                    "model-free selection"
-                )
+                raise ValueError("Invalid model ref 'none'.")
             if self.identity not in {"default", "unset"}:
                 ModelRequest(self.identity)
         if self.effort is not None:

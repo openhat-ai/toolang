@@ -39,10 +39,7 @@ def parse_model_body(body: str) -> ModelOverride:
                 raise ValueError("model identity must be the first token")
             sentinel = token.lower()
             if sentinel == "none":
-                raise ValueError(
-                    "model identity 'none' was removed; use /model unset for "
-                    "a model-free run"
-                )
+                raise ValueError("Invalid model ref 'none'.")
             identity = sentinel if sentinel in {"default", "unset"} else token
             if identity not in {"default", "unset"}:
                 ModelRequest(identity)

@@ -32,6 +32,7 @@ def hub_app() -> typer.Typer:
         cls=CliGroup,
         help="Manage the hub service",
         epilog="Run 'too hub' to show hub and agent status.",
+        subcommand_metavar="[COMMAND] [ARGUMENTS]",
         add_completion=False,
         invoke_without_command=True,
         no_args_is_help=False,

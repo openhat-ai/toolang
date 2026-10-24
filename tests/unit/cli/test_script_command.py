@@ -328,12 +328,14 @@ class _UnreadableStdin(StringIO):
 
 @pytest.mark.parametrize("suffix", [[], ["--", "text"], ["count=2"], ["--help"]])
 @pytest.mark.parametrize("stdin", ["", "body\n---\n", "unclosed"])
-def test_script_rejects_fenced_marker_before_reading_or_running(
+@pytest.mark.parametrize("token", ["---", "----", "-----"])
+def test_script_rejects_unknown_options_before_reading_or_running(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys,
     suffix: list[str],
     stdin: str,
+    token: str,
 ) -> None:
     source = _write_source(tmp_path)
     monkeypatch.setattr(
@@ -342,19 +344,16 @@ def test_script_rejects_fenced_marker_before_reading_or_running(
         lambda *_args, **_kwargs: pytest.fail("invalid input must not run"),
     )
     result = invoke_script(
-        [str(source), "demo", "---", *suffix],
+        [str(source), "demo", token, *suffix],
         prog_name="too",
         stdin=_UnreadableStdin(stdin),
     )
     output = capsys.readouterr()
     assert result == 2
     error = " ".join(strip_ansi(output.err).replace("│", " ").split())
-    assert (
-        "fenced input marker '---' is not supported in script mode; "
-        "use '-' to read stream input from stdin"
-    ) in error
+    assert error.startswith(f"Error: No such option: {token}")
     assert "Unclosed" not in error
-    assert "No such option" not in error
+    assert "fenced input" not in error
 
 
 def test_script_preserves_explicit_empty_stream_input(
@@ -488,7 +487,7 @@ def test_script_includes_an_image(
     assert input.get("_") == "@sample.png"
 
 
-def test_script_shows_runnable_help_for_a_missing_required_parameter(
+def test_script_reports_a_missing_required_named_input(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys,
@@ -508,13 +507,15 @@ def test_script_shows_runnable_help_for_a_missing_required_parameter(
     output = capsys.readouterr()
 
     assert result == 2
-    assert "Usage:" in output.out
-    assert "count=<COUNT>" in output.out
-    assert "Run:" not in output.err
+    assert not output.out
+    assert output.err.startswith(
+        "Error: Missing required named input: count=<COUNT>.\n\nUsage:"
+    )
+    assert "Options:" not in output.err and "Arguments:" not in output.err
 
 
 @pytest.mark.parametrize("color", [False, True])
-def test_script_shows_runnable_help_for_missing_primary_input(
+def test_script_reports_missing_required_primary_input(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys,
@@ -546,12 +547,100 @@ agic demo(_: Part[]):
     output = capsys.readouterr()
 
     assert result == 2
-    assert "Usage:" in output.out
-    assert "* INPUT Primary input" in " ".join(strip_ansi(output.out).split())
-    assert ("\x1b[" in output.out) is color
-    assert "Arguments:" in strip_ansi(output.out)
-    assert "requires primary input" not in output.err
-    assert "Run:" not in output.err
+    assert not output.out
+    assert strip_ansi(output.err).startswith(
+        "Error: Missing required primary input.\n\nUsage:"
+    )
+    assert ("\x1b[" in output.err) is color
+    assert "Input:" not in output.err and "Arguments:" not in output.err
+    assert "Use " not in output.err
+
+
+@pytest.mark.parametrize(
+    ("tokens", "message"),
+    [
+        ([], "Missing required inputs: count=<COUNT>, INPUT."),
+        (["style=warm"], "Unknown named input 'style'."),
+        (
+            ["--count", "2"],
+            "No such option: --count. Use count=<COUNT> before primary input.",
+        ),
+        (
+            ["--count=2"],
+            "No such option: --count. Use count=<COUNT> before primary input.",
+        ),
+        (
+            ["--enabled", "true"],
+            "No such option: --enabled. Use enabled=<ENABLED> before primary input.",
+        ),
+    ],
+)
+def test_script_input_errors_use_short_stderr_diagnostics(
+    tmp_path, monkeypatch, capsys, tokens, message
+):
+    source = _write_source(tmp_path)
+    monkeypatch.setenv("COLUMNS", "120")
+    monkeypatch.setattr(
+        script,
+        "_run",
+        lambda *args, **kwargs: pytest.fail("invalid input must not run"),
+    )
+    assert invoke_script([str(source), "demo", *tokens], stdin=StringIO()) == 2
+    output = capsys.readouterr()
+    assert not output.out
+    error = strip_ansi(output.err)
+    assert error.startswith(f"Error: {message}\n\nUsage:")
+    assert "Options:" not in error and "Arguments:" not in error
+    assert "Accepted named inputs:" not in error and "Possible options:" not in error
+
+
+@pytest.mark.parametrize("primary", [False, True])
+def test_script_reports_all_missing_required_named_inputs(
+    tmp_path, monkeypatch, capsys, primary
+):
+    source = _write_source(
+        tmp_path, "agic demo(_: Part[], tone: Text, length: Text):\n  {{_}}\n"
+    )
+    monkeypatch.setenv("COLUMNS", "120")
+    monkeypatch.setattr(
+        script,
+        "_run",
+        lambda *args, **kwargs: pytest.fail("incomplete input must not run"),
+    )
+    assert (
+        invoke_script(
+            [str(source), "demo", *(["hello"] if primary else [])], stdin=StringIO()
+        )
+        == 2
+    )
+    output = capsys.readouterr()
+    assert not output.out
+    if primary:
+        message = "Missing required named inputs: tone=<TONE>, length=<LENGTH>."
+    else:
+        message = "Missing required inputs: tone=<TONE>, length=<LENGTH>, INPUT."
+    assert strip_ansi(output.err).startswith(f"Error: {message}\n\nUsage:")
+
+
+def test_script_named_option_hint_omits_primary_input_when_not_accepted(
+    tmp_path, monkeypatch, capsys
+):
+    source = _write_source(tmp_path, "agic demo(tone: Text):\n  {{tone}}\n")
+    monkeypatch.setattr(
+        script,
+        "_run",
+        lambda *args, **kwargs: pytest.fail("invalid input must not run"),
+    )
+    assert (
+        invoke_script([str(source), "demo", "--tone", "warm"], stdin=_UnreadableStdin())
+        == 2
+    )
+    output = capsys.readouterr()
+    assert not output.out
+    assert output.err.startswith(
+        "Error: No such option: --tone. Use tone=<TONE>.\n\nUsage:"
+    )
+    assert "primary input" not in output.err and "[INPUT...]" not in output.err
 
 
 def test_script_validates_before_creating_a_thread(
@@ -612,7 +701,10 @@ def test_script_uses_typer_help_and_authored_docs(
     normalized = " ".join(stdout.split())
 
     assert result == 0
-    assert "Usage: toolang run demo.too demo [OPTIONS] [ARGUMENTS]" in normalized
+    assert (
+        "Usage: toolang run demo.too demo [OPTIONS] [ARGUMENTS] [INPUT...]"
+        in normalized
+    )
     assert "Run the documented demo." in stdout
     assert "Arguments" in stdout
     assert "count=<COUNT>" in stdout
@@ -621,12 +713,12 @@ def test_script_uses_typer_help_and_authored_docs(
     assert "* count=<COUNT>" in stdout
     assert "[required]" not in stdout
     assert "PART[]" not in stdout
-    assert "Input:" not in stdout
+    assert "Input:" in stdout
     assert "<str>" not in stdout
     for option, metavar in (
         ("--allow", "<KEY>=<VALUE>"),
         ("--limit", "<KEY>=<VALUE>"),
-        ("--model", "<MODEL>"),
+        ("--model", "<KEY>=<VALUE>"),
         ("--sandbox", "<SANDBOX>"),
         ("--out", "<FILE>"),
         ("--workspace", "[NAME=]<DIR>"),
@@ -641,7 +733,7 @@ def test_script_uses_typer_help_and_authored_docs(
     assert "--save" not in stdout
     assert "--sandbox" in stdout
     assert "--dev" in stdout
-    assert "Save output to FILE; - for stdout" in " ".join(
+    assert "Write run output to FILE; - for stdout" in " ".join(
         stdout.replace("│", " ").split()
     )
     assert "stdout" in stdout
@@ -728,10 +820,10 @@ def test_script_without_public_runnables_still_shows_common_options(
     [
         ("", None),
         ("## Documented runnable.\n", "Documented runnable."),
-        ("## Use [bold]care[/bold]\n", "Use care."),
+        ("## Use [bold]care[/bold]\n", "Use [bold]care[/bold]."),
         (
             "## Use [bold]care[/bold].\n## Keep context.\n",
-            "Use care. Keep context.",
+            "Use [bold]care[/bold]. Keep context.",
         ),
     ],
 )
@@ -758,20 +850,17 @@ def test_script_runnable_description_uses_docs_or_kind(
         == 0
     )
     output = strip_ansi(capsys.readouterr().out)
-    summary = f"Run {kind} demo - {description}" if description else f"Run {kind} demo."
+    title = f"Run the {kind} 'demo'"
+    summary = f"{title} - {description}" if description else f"{title}."
     assert " ".join(output.split("\n\n", 1)[0].split()) == summary
     assert " ".join(output.split()).count(summary) == 1
-    assert (
-        output.index(f"Run {kind} demo")
-        < output.index("Usage:")
-        < output.index("Options:")
-    )
+    assert output.index(title) < output.index("Usage:") < output.index("Options:")
     assert "Unused body text." not in output
     assert "Arguments:" not in output
     assert "Input:" not in output and "─ Flow" not in output
     if kind == "flow":
         assert (
-            output.index(f"Run {kind} demo")
+            output.index(title)
             < output.index("Options:")
             < output.index("The flow proceeds as follows:")
         )
@@ -845,15 +934,17 @@ def test_script_help_groups_signature_categories(
         output.split("Usage:", 1)[1].split("\n\n", 1)[0].split()
     )
     expected = f"Usage: {prog_name} run demo.too demo [OPTIONS]"
-    if arguments or input_type:
+    if arguments:
         expected += " [ARGUMENTS]"
+    if input_type:
+        expected += " [INPUT...]"
     assert usage == expected
     assert "---" not in output
     assert all(cell_len(line) <= width for line in output.splitlines())
     assert "Documented runnable." in output
     panel = _help_panel(output, "Arguments")
-    assert bool(panel) == bool(arguments or input_type)
-    assert "Input:" not in output
+    assert bool(panel) == bool(arguments)
+    assert ("Input:" in output) == bool(input_type)
     positions = []
     for name, type_name, required in arguments:
         label = f"{name}=<{name.upper()}>"
@@ -865,23 +956,31 @@ def test_script_help_groups_signature_categories(
     assert "Arguments may appear" not in panel
     if input_type:
         label = "INPUT"
-        assert f"{label} Primary input ({input_type});" in panel
-        positions.append(panel.index(f"{label} Primary input ({input_type});"))
-        assert f"* {label}" in panel
-        assert "reads stdin with - or when input is omitted" in panel
+        input_panel = _help_panel(output, "Input")
+        assert f"{label} Primary input ({input_type})" in input_panel
+        assert f"* {label}" not in input_panel
+        assert "-- INPUT Treat the following text as primary input" in input_panel
+        assert "- Read primary input from stdin" in input_panel
+        assert (
+            "If INPUT is omitted, read from stdin when piped or redirected."
+            in " ".join(output.split())
+        )
+        assert output.index("Input:") < output.index("Options:")
     else:
         assert "stdin" not in output and "TEXT..." not in output
     assert positions == sorted(positions)
     if panel:
-        assert output.index("demo - Documented runnable.") < output.index("Arguments:")
+        assert output.index("'demo' - Documented runnable.") < output.index(
+            "Arguments:"
+        )
         assert output.index("Arguments:") < output.index("Options:")
 
 
 @pytest.mark.parametrize("kind", ["agic", "flow"])
 @pytest.mark.parametrize("doc", ["", "## Documented entry.\n"])
-@pytest.mark.parametrize("explicit_help", [False, True])
-def test_unnamed_script_signature_help_uses_compact_entry_label(
-    tmp_path, monkeypatch, capsys, kind, doc, explicit_help
+@pytest.mark.parametrize("selector", ["omitted", "explicit"])
+def test_unnamed_script_signature_help_uses_a_readable_title(
+    tmp_path, monkeypatch, capsys, kind, doc, selector
 ):
     body = "  {{topic}} {{_}}" if kind == "agic" else "  pass"
     source = _write_source(tmp_path, f"{doc}{kind}(_: Text, topic: Text):\n{body}\n")
@@ -889,16 +988,27 @@ def test_unnamed_script_signature_help_uses_compact_entry_label(
     monkeypatch.setattr(
         script, "_run", lambda *_args, **_kwargs: pytest.fail("help must not run")
     )
-    arguments = ["_", "--help"] if explicit_help else []
+    arguments = [f"{kind}:", "--help"] if selector == "explicit" else []
     result = invoke_script([source.name, *arguments], prog_name="too", stdin=StringIO())
-    output = strip_ansi(capsys.readouterr().out)
-
-    assert result == (0 if explicit_help else 2)
-    description = f"Run {kind}: - Documented entry." if doc else f"Run {kind}:."
+    captured = capsys.readouterr()
+    assert result == (0 if selector == "explicit" else 2)
+    if selector == "omitted":
+        assert not captured.out
+        error = strip_ansi(captured.err)
+        assert "Missing required inputs: topic=<TOPIC>, INPUT." in error
+        assert "Usage: too run demo.too [OPTIONS] [ARGUMENTS] [INPUT...]" in error
+        return
+    output = strip_ansi(captured.out)
+    assert not captured.err
+    description = (
+        f"Run the unnamed {kind} - Documented entry."
+        if doc
+        else f"Run the unnamed {kind}."
+    )
     assert description in output
     assert f"{kind}:_" not in output
     assert f"Run {kind} _" not in output
-    assert "Usage: too run demo.too _ [OPTIONS] [ARGUMENTS]" in output
+    assert f"Usage: too run demo.too {kind}: [OPTIONS] [ARGUMENTS] [INPUT...]" in output
     assert "topic=<TOPIC>" in output
     assert "Primary input (Text)" in output
 
@@ -1016,6 +1126,7 @@ def test_script_line_input_preserves_includes_and_quoted_newlines(
         (["count=2", "text", "---"], "text ---"),
         (["count=2", "--", "--help"], "--help"),
         (["count=2", "--", "unknown=value"], "unknown=value"),
+        (["count=2", "--", "_"], "_"),
         (["count=2", "equation a=b"], "equation a=b"),
     ],
 )
@@ -1068,7 +1179,7 @@ def test_script_stream_input_keeps_fence_lines_until_eof(
 @pytest.mark.parametrize(
     ("tokens", "message"),
     [
-        (["unknown=value"], "unknown argument: unknown; use '--' to start input"),
+        (["unknown=value"], "Unknown named input 'unknown'."),
         (["count=1", "count=2"], "argument count was provided more than once"),
         (["----"], "No such option: ----"),
         (["--save", "result.txt"], "No such option: --save"),
@@ -1103,7 +1214,7 @@ def test_script_invalid_headers_fail_before_reading_or_running(
     assert message in error
 
 
-def test_script_omitted_terminal_input_shows_help_without_reading(
+def test_script_omitted_terminal_input_reports_an_error_without_reading(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys,
@@ -1124,7 +1235,10 @@ def test_script_omitted_terminal_input_shows_help_without_reading(
         )
         == 2
     )
-    assert "Arguments:" in strip_ansi(capsys.readouterr().out)
+    output = capsys.readouterr()
+    assert not output.out
+    assert "Error: Missing required primary input." in output.err
+    assert "Usage:" in output.err and "Arguments:" not in output.err
 
 
 def _flow_outline_lines(output: str) -> list[str]:
@@ -1132,9 +1246,8 @@ def _flow_outline_lines(output: str) -> list[str]:
     return [line.rstrip() for line in block.splitlines() if line.strip()]
 
 
-@pytest.mark.parametrize("explicit_help", [False, True])
 def test_script_flow_help_keeps_aligned_steps_in_the_epilog(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys, explicit_help: bool
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
 ) -> None:
     source = _write_source(
         tmp_path,
@@ -1158,29 +1271,28 @@ agic search:
     monkeypatch.setattr(
         script, "_run", lambda *_args, **_kwargs: pytest.fail("help must not run")
     )
-    if explicit_help:
-        monkeypatch.setattr(
-            script,
-            "_collect_call",
-            lambda *_args, **_kwargs: pytest.fail("explicit help must not read input"),
-        )
+    monkeypatch.setattr(
+        script,
+        "_collect_call",
+        lambda *_args, **_kwargs: pytest.fail("explicit help must not read input"),
+    )
 
     result = invoke_script(
-        [str(source), "research", *(["--help"] if explicit_help else [])],
+        [str(source), "research", "--help"],
         prog_name="too",
         stdin=StringIO(),
     )
     output = capsys.readouterr()
     stdout = strip_ansi(output.out)
 
-    assert result == (0 if explicit_help else 2), output.err
+    assert result == 0, output.err
     assert output.err == ""
     assert stdout.count("Research a topic from several sources.") == 1
-    assert "research - Research a topic from several sources." in stdout
+    assert "Run the flow 'research' - Research a topic from several sources." in stdout
     assert (
         stdout.index("Research a topic")
         < stdout.index("Usage:")
-        < stdout.index("Arguments:")
+        < stdout.index("Input:")
         < stdout.index("Options:")
         < stdout.index("The flow proceeds as follows:")
     )
@@ -1440,12 +1552,15 @@ flow pipeline:
     descriptions = _help_panel(stdout, "Runnables")
     assert "visible agic Run the visible command." in descriptions
     assert "pipeline flow Run the pipeline." in descriptions
-    assert "undocumented agic Agic undocumented" in descriptions
-    assert "undocumented_flow flow Flow undocumented_flow" in descriptions
+    assert "undocumented agic" in descriptions
+    assert "undocumented_flow flow" in descriptions
+    assert "Agic undocumented" not in descriptions
+    assert "Flow undocumented_flow" not in descriptions
     assert "visible -" not in descriptions
     assert "Use RUNNABLE --help" not in stdout
     assert "default" not in descriptions
-    assert "agic: <entry:2>" in descriptions
+    assert descriptions.startswith("agic ")
+    assert "<entry:" not in descriptions
     assert "agic:<adhoc:" not in stdout
     assert "The flow proceeds as follows:" not in stdout
 
@@ -1474,7 +1589,7 @@ def test_script_help_orders_entry_then_agics_and_flows(
     assert invoke_script([str(source), "--help"], prog_name="too") == 0
     panel = _help_panel(strip_ansi(capsys.readouterr().out), "Runnables")
     labels = [
-        *([f"{entry_kind}:"] if entry_kind else []),
+        *([entry_kind] if entry_kind else []),
         "zebra_agic agic",
         "alpha_agic agic",
         "zebra_flow flow",
@@ -1483,10 +1598,9 @@ def test_script_help_orders_entry_then_agics_and_flows(
     positions = [panel.index(label) for label in labels]
     assert positions == sorted(positions)
     if entry_kind:
-        line = 6 if entry_doc else 5
         description = " Entry description." if entry_doc else ""
-        assert f"{entry_kind}: <entry:{line}>{description}" in panel
-        assert f"{entry_kind.capitalize()} <entry>" not in panel
+        assert panel.startswith(f"{entry_kind}{description} ")
+        assert "<entry:" not in panel
 
 
 @pytest.mark.parametrize("width", [44, 80])
@@ -1513,7 +1627,7 @@ def test_script_long_runnable_names_keep_descriptions_visible(
     output = strip_ansi(capsys.readouterr().out)
     panel = _help_panel(output, "Runnables")
     assert "Documented." in panel
-    assert "Agic brief" in panel
+    assert "brief agic" in panel
     assert "…" not in panel
     assert all(cell_len(line) <= width for line in output.splitlines())
 

@@ -59,6 +59,10 @@ def test_script_help_keeps_compact_policy_options(theme, width, color_system):
             assert section not in output.plain
         assert "<KEY>=<VALUE>" in output.plain
         normalized = " ".join(output.plain.split())
+        assert "workspace (repeatable), e.g. 'repo=.'" in normalized
+        assert "(once per invocation)" in normalized
+        assert "e.g. 'repo://src'." in normalized
+        assert "A directory also adds a temporary workspace" in normalized
         for topic in ("allow", "limit", "model"):
             assert f"'too help {topic}'" in normalized
         if ctx is child:
@@ -147,9 +151,18 @@ def test_all_command_policy_options_share_key_value_and_topic_references():
     expected = {
         "--allow": ("<KEY>=<VALUE>", "Select allowed resources; see 'too help allow'"),
         "--limit": ("<KEY>=<VALUE>", "Set run limits; see 'too help limit'"),
-        "--default": ("<KEY>=<VALUE>", "Set run defaults; see 'too help default'"),
-        "--model": ("MODEL", "Override the model; see 'too help model'"),
-        "--compact-model": ("MODEL", "Set the compaction model; see 'too help model'"),
+        "--default": (
+            "<KEY>=<VALUE>",
+            "Set runtime or Chat session defaults; see 'too help default'",
+        ),
+        "--model": (
+            "<KEY>=<VALUE>",
+            "Set model settings for this run; see 'too help model'",
+        ),
+        "--compact-model": (
+            "<KEY>=<VALUE>",
+            "Set the compaction model; see 'too help model'",
+        ),
     }
     found = set()
 
@@ -330,7 +343,12 @@ def test_command_descriptions_match_root_and_command_help(
     ]
     assert f"{command} {description}" in rows
     assert too_main(["--root", str(tmp_path), command, "--help"]) == 0
-    assert strip_ansi(capsys.readouterr().out).startswith(f"{description}.\n")
+    command_help = strip_ansi(capsys.readouterr().out)
+    assert command_help.startswith(f"{description}.\n")
+    if command == "top":
+        assert "Omit AGENT to monitor all agents in the Toolang root." in " ".join(
+            command_help.split()
+        )
     if command not in {"hub", "talk", "convo"}:
         assert too_main(["--root", str(tmp_path), "agent:sample", "--help"]) == 0
         rows = " ".join(strip_ansi(capsys.readouterr().out).split())
@@ -344,9 +362,15 @@ def test_command_descriptions_match_root_and_command_help(
         ("hub", ("start", "serve", "stop")),
     ],
 )
-def test_chore_and_hub_help_lists_supported_commands(group, commands, tmp_path, capsys):
+def test_chore_and_hub_help_lists_supported_commands(
+    group, commands, tmp_path, capsys, monkeypatch
+):
+    monkeypatch.setattr("sys.argv", ["too"])
     assert too_main(["--root", str(tmp_path), group, "--help"]) == 0
     output = strip_ansi(capsys.readouterr().out)
+    if group == "hub":
+        assert "Usage: too hub [OPTIONS] [COMMAND] [ARGUMENTS]" in output
+        assert "Run 'too hub' to show hub and agent status." in output
     section = output.split("Commands:\n", 1)[1].split("\n\n", 1)[0]
     assert (
         tuple(
@@ -366,6 +390,9 @@ def test_cd_summary_omits_root_fallback(arguments, tmp_path, capsys):
 
     assert "cd Enter an agent home" in rows
     assert "if no agent is specified" not in output
+    assert too_main(["--root", str(tmp_path), "cd", "--help"]) == 0
+    help_text = " ".join(strip_ansi(capsys.readouterr().out).split())
+    assert "Omit AGENT to open a shell in the Toolang root." in help_text
 
 
 def test_declared_help_omits_final_period():
@@ -425,6 +452,34 @@ def test_unknown_option_during_command_resolution_keeps_usage(capsys, monkeypatc
     assert output.startswith("Error: No such option: --missing")
     assert "\n\nUsage: too [OPTIONS] [AGENT] <COMMAND> [ARGUMENTS]\n" in output
     assert "Try '" not in output
+
+
+@pytest.mark.parametrize(
+    ("arguments", "missing", "usage"),
+    [
+        (
+            ["chat"],
+            "AGENT",
+            "too <AGENT> chat [OPTIONS]\nUsage: too chat [OPTIONS] <AGENT>",
+        ),
+        (["alice", "cancel"], "RUN", "too <AGENT> cancel [OPTIONS] <RUN>"),
+        (
+            ["alice", "steer", "run_abcd1234"],
+            "MESSAGE",
+            "too <AGENT> steer [OPTIONS] <RUN> <MESSAGE>",
+        ),
+    ],
+)
+def test_missing_static_argument_names_the_parameter_without_full_help(
+    arguments, missing, usage, tmp_path, capsys, monkeypatch
+):
+    monkeypatch.setattr("sys.argv", ["too"])
+    assert too_main(["--root", str(tmp_path), *arguments]) == 2
+    output = capsys.readouterr()
+    assert not output.out
+    assert strip_ansi(output.err) == (
+        f"Error: Missing argument '{missing}'.\n\nUsage: {usage}\n"
+    )
 
 
 def test_root_help_shows_the_agent_prefix_without_loading_commands(capsys, monkeypatch):
@@ -800,13 +855,15 @@ def test_agent_help_matches_leaf_scope(command, metavar, description, tmp_path, 
 
 
 @pytest.mark.parametrize("kind", ["psyche", "skill", "service", "prompt"])
-@pytest.mark.parametrize("command", ["new", "list"])
+@pytest.mark.parametrize("command", ["new", "edit", "delete", "add", "remove", "list"])
 def test_cap_children_own_their_agent_contract(kind, command, tmp_path, capsys):
     assert too_main(["--root", str(tmp_path), kind, command, "--help"]) == 0
     output = " ".join(strip_ansi(capsys.readouterr().out).split())
     assert f"[AGENT] {kind} {command}" in output
-    description = "Agent name" if command == "new" else "Agent name, path, ref or URL"
+    description = "Agent name, path, ref or URL" if command == "list" else "Agent name"
     assert f"AGENT {description}" in output
+    scope = "list caps from" if command == "list" else "modify caps in"
+    assert f"Omit AGENT to {scope} the Toolang root." in output
     assert too_main(["--root", str(tmp_path), kind, "--help"]) == 0
     group_help = " ".join(strip_ansi(capsys.readouterr().out).split())
     assert "See subcommand help for accepted agent forms." in group_help
@@ -818,6 +875,8 @@ def test_inspection_help_describes_all_agent_targets(command, tmp_path, capsys):
     assert too_main(["--root", str(tmp_path), command, "--help"]) == 0
     output = " ".join(strip_ansi(capsys.readouterr().out).split())
     assert "AGENT Agent name, path, ref or URL" in output
+    scope = "list caps from" if command == "caps" else "use settings from"
+    assert f"Omit AGENT to {scope} the Toolang root." in output
 
 
 @pytest.mark.parametrize("kind", ["psyche", "skill", "service", "prompt"])
@@ -893,8 +952,8 @@ def test_help_uses_semantic_configuration_metavars(
         "--allow": "<KEY>=<VALUE>",
         "--limit": "<KEY>=<VALUE>",
         "--default": "<KEY>=<VALUE>",
-        "--compact-model": "<MODEL>",
-        "--model": "<MODEL>",
+        "--compact-model": "<KEY>=<VALUE>",
+        "--model": "<KEY>=<VALUE>",
         "--log": "<LOG_SPEC>",
     }
     assert too_main(["--root", str(tmp_path), *arguments, "--help"]) == 0

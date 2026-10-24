@@ -29,7 +29,7 @@ WorkspaceOptions = Annotated[
         "--workspace",
         "-w",
         metavar="[NAME=]<DIR>",
-        help="Add a temporary workspace (repeatable)",
+        help="Add a temporary workspace (repeatable), e.g. 'repo=.'",
     ),
 ]
 WorkdirOption = Annotated[
@@ -38,7 +38,8 @@ WorkdirOption = Annotated[
         "--workdir",
         "-d",
         metavar="[NAME=]<DIR>|<URI>",
-        help="Set workdir to a directory or workspace URI; a directory also adds a workspace",
+        help="Set the working directory (once per invocation), e.g. 'repo://src'. "
+        "A directory also adds a temporary workspace",
     ),
 ]
 _URI = re.compile(r"^[^/=]+://")

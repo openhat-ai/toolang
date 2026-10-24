@@ -45,6 +45,13 @@ def test_convo_help_uses_consistent_short_descriptions():
         ("rules", "Retrieve or update rules"),
     ):
         assert f"  {command:<7} {description}\n" in output
+    result = CliRunner().invoke(cli.app, ["convo", "rules", "--help"])
+    assert result.exit_code == 0, result.output
+    output = " ".join(strip_ansi(result.output).split())
+    assert "--output <FILE>" in output
+    assert "Write rules to FILE; - for stdout" in output
+    assert "--update [FILE]" in output
+    assert "Update rules from FILE; omit FILE or use - to read stdin" in output
 
 
 def test_missing_rules_and_byte_exact_upload_download(conversations):

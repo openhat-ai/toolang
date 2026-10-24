@@ -127,7 +127,7 @@ def test_topics_wrap_and_distinguish_definitions_from_explanations(
     key, label, explanation = {
         "allow": ("models", "QUERY", "Match models"),
         "limit": ("agic_model_calls", "INTEGER", "Non-negative"),
-        "default": ("runnable", "REF", "Entry ref"),
+        "default": ("runnable", "REF", "Runnable ref"),
         "model": ("effort", "LEVEL", "Reasoning level"),
     }[topic]
     assignment = re.search(rf"^ *({key})=", output.plain, re.M)
@@ -208,22 +208,34 @@ def test_topic_content_preserves_value_rules_and_default_lifetimes():
     assert "current session" in outputs["default"]
     assert "do not reconfigure the runtime or other sessions" in outputs["default"]
     assert "Use --model for one run" in outputs["default"]
-    assert "legacy [default] tables are ignored" in outputs["default"]
+    assert "Use [model] for model configuration" in outputs["default"]
     assert "TOOLANG_DEFAULT_MODEL supplies runtime model defaults" in outputs["default"]
-    assert (
-        "TOOLANG_DEFAULT_RUNNABLE and runtime runnable defaults are unsupported"
-        in outputs["default"]
-    )
-    assert "Select the entry ref; Chat only" in outputs["default"]
+    assert "legacy" not in outputs["default"]
+    assert "TOOLANG_DEFAULT_RUNNABLE" not in outputs["default"]
+    assert "Select the Chat session runnable" in outputs["default"]
     assert "none Use automatic entry selection" in outputs["default"]
     assert "Omit the ref to change parameters on an effective model" in outputs["model"]
     assert "Non-negative token budget" in outputs["model"]
     assert "auto Clear the reasoning parameter" in outputs["model"]
     assert "Positive output token count" in outputs["model"]
     assert "auto Use automatic output sizing" in outputs["model"]
-    assert "unset selects model-free execution" in outputs["model"]
-    assert "--compact-model requires an exact ref" in outputs["model"]
-    assert "none is not a model selection value" in outputs["model"]
+    assert (
+        "Script runs and Chat per-run overrides accept unset for model-free execution"
+        in outputs["model"]
+    )
+    assert (
+        "Rerun accepts an exact model ref, default, or parameter overrides"
+        in outputs["model"]
+    )
+    assert "--compact-model requires an exact model ref" in outputs["model"]
+    assert "It also accepts effort and max_output settings" in outputs["model"]
+    assert "none is not a model selection value" not in outputs["model"]
+    assert "Model settings:" in outputs["model"]
+    assert "A model ref may also be given without ref=" in outputs["model"]
+    assert "Pass multiple settings in one quoted value" in outputs["model"]
+    assert "Each setting may appear only once" in outputs["model"]
+    assert "--model <KEY>=<VALUE>" in outputs["model"]
+    assert "--compact-model <KEY>=<VALUE>" in outputs["model"]
 
 
 def test_cost_help_includes_the_accounting_range_and_precision():
@@ -260,9 +272,12 @@ def test_topic_examples_keep_shell_argument_boundaries_at_44_columns(topic):
         command = "\n".join(lines).replace("\\\n", "")
         tokens = shlex.split(command)
         assert tokens[0] == "too"
-        assert tokens[1] == "gus" and tokens[2] in {"chat", "start"}
+        if tokens[1] == "run":
+            assert tokens[2:4] == ["demo.too", "process"]
+        else:
+            assert tokens[1] == "gus" and tokens[2] in {"chat", "start"}
         commands.append(tokens)
-    assert len(commands) == 2
+    assert len(commands) == (3 if topic == "model" else 2)
     for tokens in commands:
         for flag, resolver in (
             ("--allow", resolve_ceiling_overrides),
@@ -279,6 +294,10 @@ def test_topic_examples_keep_shell_argument_boundaries_at_44_columns(topic):
             )
         if "--compact-model" in tokens:
             resolve_compact_override({}, tokens[tokens.index("--compact-model") + 1])
+        if "--model" in tokens:
+            assert tokens[-2] == "--model"
+            model = parse_model_body(tokens[-1])
+            assert model.identity == "openai/gpt-5" and model.effort == "high"
 
 
 def test_explicit_agent_and_script_selectors_escape_the_help_command(tmp_path):
@@ -370,5 +389,5 @@ def test_installed_executable_displays_topic_help(executable, tmp_path):
     )
     assert completed.returncode == 0, completed.stderr
     assert completed.stdout.startswith("Model selection\n")
-    assert "Parameters:" in completed.stdout
+    assert "Model settings:" in completed.stdout
     assert not completed.stderr and not tuple(tmp_path.iterdir())

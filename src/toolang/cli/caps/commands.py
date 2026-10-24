@@ -132,6 +132,11 @@ def create_cap_apps(
             cap_app.command(
                 spec.name,
                 help=spec.help(kind),
+                epilog=(
+                    "Omit AGENT to list caps from the Toolang root."
+                    if spec.name == "list"
+                    else "Omit AGENT to modify caps in the Toolang root."
+                ),
                 no_args_is_help=spec.no_args_is_help,
                 cls=CliCommand,
             )(spec.factory(kind, title))

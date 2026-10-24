@@ -93,7 +93,7 @@ when invoking the command.
 | `SOURCE` | Authored source; describe whether it accepts an agent name, ref, or URL. |
 | `RUN`, `THREAD`, `CHORE`, `CONVO` | Domain target; describe accepted names/IDs and what a thread ID selects. |
 | `QUERY` | Selection expression; distinguish TQ filters from inspection record queries in the description and examples. |
-| `RUNNABLE`, `ARGS`, `MESSAGE` | Agic/flow, its arguments, or message text. |
+| `RUNNABLE`, `ARGUMENTS`, `INPUT`, `MESSAGE` | Runnable name, named runnable inputs, primary runnable input, or message text. |
 | `PORT`, `SECONDS`, `SPACES` | Numeric input's purpose or unit, rather than its Python type. |
 
 `--allow`, `--limit`, and `--default` use `<KEY>=<VALUE>` and short descriptions
@@ -108,11 +108,13 @@ and special-value behavior with the key they describe.
 ## Script selection and output
 
 Omitting RUNNABLE selects the unnamed entry; without one, it shows file help.
-`_`, `agic:_`, and `flow:_` explicitly select an unnamed entry. Help and progress
-label it `agic:` or `flow:`. File help can also show `<entry:LINE>` as the entry's
-source identity; `_` remains the invocation selector.
+`agic:` and `flow:` explicitly select an unnamed entry of the corresponding kind.
+Implicit selection omits the selector from usage. File help leaves its name empty
+and displays its kind;
+descriptions contain only authored text for both named and unnamed runnables.
 Script help does not read stdin, prepare State, or create execution records.
-Required input failures show the runnable's dynamic help before Run admission.
+Missing required inputs produce a specific error and short usage on stderr,
+with exit code 2, before Run admission.
 
 ```sh
 too aid.too --help

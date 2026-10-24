@@ -91,7 +91,7 @@ def test_prefix_merges_allow_lines_and_multiple_fields() -> None:
         ("/model", "requires"),
         ("/model openai/gpt-5 high", "first token"),
         ("/model reasoning=high", "unknown model parameter"),
-        ("/model none", "was removed"),
+        ("/model none", "Invalid model ref 'none'"),
         ("/allow", "requires"),
         ("/allow unknown=value", "unknown allow field"),
         ("/limit tokens=-1", "non-negative"),

@@ -111,7 +111,10 @@ def resolve_compact_override(
         return None
     override = parse_model_body(body)
     if override.identity in (None, "default", "unset"):
-        raise ValueError("compact.model requires an exact model")
+        source = (
+            "--compact-model" if model_spec is not None else "TOOLANG_COMPACT_MODEL"
+        )
+        raise ValueError(f"{source} requires an exact model ref.")
     return override
 
 

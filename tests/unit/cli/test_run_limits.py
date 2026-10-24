@@ -91,9 +91,15 @@ def test_compact_override_replaces_environment_without_inheriting_effort():
         ("model=test/a", "unknown model parameter"),
     ],
 )
-def test_compact_override_rejects_invalid_model_specs(model_spec, error):
-    with pytest.raises(ValueError, match=error):
-        resolve_compact_override({}, model_spec)
+@pytest.mark.parametrize("source", ["cli", "environment"])
+def test_compact_override_rejects_invalid_model_specs(model_spec, error, source):
+    environ = {"TOOLANG_COMPACT_MODEL": model_spec} if source == "environment" else {}
+    option = model_spec if source == "cli" else None
+    with pytest.raises(ValueError, match=error) as caught:
+        resolve_compact_override(environ, option)
+    if error == "exact model":
+        label = "--compact-model" if source == "cli" else "TOOLANG_COMPACT_MODEL"
+        assert str(caught.value) == f"{label} requires an exact model ref."
 
 
 @pytest.mark.parametrize("field", ["CAPS", "CHANNELS"])
@@ -169,8 +175,9 @@ def test_named_and_bare_model_refs_match_across_string_boundaries(body):
 
 
 @pytest.mark.parametrize("source", ["environment", "startup"])
-def test_default_model_none_is_rejected(source):
-    environ = {"TOOLANG_DEFAULT_MODEL": "none"} if source == "environment" else {}
-    options = ("model=none",) if source == "startup" else ()
-    with pytest.raises(ValueError, match="model identity 'none' was removed"):
+@pytest.mark.parametrize("body", ["none", "ref=none"])
+def test_default_model_none_is_rejected(source, body):
+    environ = {"TOOLANG_DEFAULT_MODEL": body} if source == "environment" else {}
+    options = (f"model={body}",) if source == "startup" else ()
+    with pytest.raises(ValueError, match="Invalid model ref 'none'"):
         resolve_default_overrides(environ, options)

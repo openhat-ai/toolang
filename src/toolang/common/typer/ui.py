@@ -16,7 +16,6 @@ from rich.theme import Theme
 from typer._click.core import Command, Context, augment_usage_errors
 from typer._click.exceptions import (
     ClickException,
-    MissingParameter,
     NoArgsIsHelpError,
     UsageError,
 )
@@ -112,10 +111,7 @@ def run(
         )
         return result if isinstance(result, int) else 0
     except ClickException as exc:
-        if (
-            isinstance(exc, (MissingParameter, NoArgsIsHelpError))
-            and exc.ctx is not None
-        ):
+        if isinstance(exc, NoArgsIsHelpError) and exc.ctx is not None:
             show_help(exc.ctx, error=True)
         else:
             show_error(
@@ -196,20 +192,12 @@ class HelpFormatter(TyperHelpFormatter):
         command = ctx.command
         self.write_description(ctx)
         self.write_usage(ctx)
-        params = command.get_params(ctx)
-        self._sections(
-            (
-                (param.rich_help_panel, self._argument_row(param, ctx))
-                for param in params
-                if isinstance(param, TyperArgument) and not param.hidden
-            ),
-            "Arguments",
-        )
+        self.write_arguments(ctx)
         self.write_commands(ctx)
         self._sections(
             (
                 (param.rich_help_panel, self._option_row(param, ctx))
-                for param in params
+                for param in command.get_params(ctx)
                 if isinstance(param, TyperOption) and not param.hidden
             ),
             "Options",
@@ -219,6 +207,17 @@ class HelpFormatter(TyperHelpFormatter):
         if callable(write_sections):
             write_sections(ctx, self)
         self.write_epilog(ctx)
+
+    def write_arguments(self, ctx: Context) -> None:
+        """Render the command's declared argument panels."""
+        self._sections(
+            (
+                (param.rich_help_panel, self._argument_row(param, ctx))
+                for param in ctx.command.get_params(ctx)
+                if isinstance(param, TyperArgument) and not param.hidden
+            ),
+            "Arguments",
+        )
 
     def write_description(self, ctx: Context) -> None:
         if description := _command_description(ctx.command, short=False):
@@ -285,7 +284,7 @@ class HelpFormatter(TyperHelpFormatter):
         if not rows:
             return
         available = max(2, self.width - self.current_indent)
-        prefix_width = min(_width(row[0] for row in rows), max(1, available // 4))
+        prefix_width = min(_width(row[0] for row in rows), max(1, available // 2))
         prefix_gap = self.column_gap if prefix_width else 0
         body_width = max(2, available - prefix_width - prefix_gap - col_spacing)
         label_width = min(

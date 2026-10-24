@@ -17,9 +17,14 @@ from rich.text import Text
 import typer
 from typer._click import Context, HelpFormatter
 from typer._click.core import ParameterSource
-from typer._click.exceptions import BadParameter, ClickException, UsageError
+from typer._click.exceptions import (
+    BadParameter,
+    ClickException,
+    NoSuchOption,
+    UsageError,
+)
 from typer._click.parser import _ParsingState
-from typer.core import TyperCommand, TyperGroup, TyperOption
+from typer.core import TyperArgument, TyperCommand, TyperGroup, TyperOption
 from typer.main import get_command_from_info
 from typer.models import CommandInfo
 
@@ -41,7 +46,6 @@ from toolang.lang.ast import (
 )
 from toolang.lang.description import statement_description
 from toolang.lang.input import CallInput, parse_input
-from toolang.lang.types import display_runnable_ref
 from toolang.plugin.models.query import first_model_ref
 
 from ...common.terminal_surfaces import resolve_terminal_surfaces
@@ -67,7 +71,11 @@ from ...common.parameters import (
     LimitOptions,
 )
 from ...common.terminal_session import prepare_terminal
-from ...common.runnable_parameters import runnable_parameters, runnable_usage
+from ...common.runnable_parameters import (
+    RunnableArgument,
+    runnable_parameters,
+    runnable_usage,
+)
 
 if TYPE_CHECKING:
     from toolang.cli.common.agent_argument import AgentParameter
@@ -88,6 +96,7 @@ Runnable = AgicDecl | FlowDecl
 _LINE_INPUT_MARKER = "\ue002"
 _UNPERSISTED_THREAD = "<unpersisted-script-thread>"
 _IMPLICIT_ENTRY = f"{__name__}.implicit"
+_IMPLICIT_RUNNABLE = f"{__name__}.implicit_runnable"
 
 
 def implicit_entry(ctx: Context) -> None:
@@ -158,8 +167,21 @@ def _source_command(label: str) -> TyperGroup:
     )
 
 
-class _IncompleteRunnableInput(Exception):
+class _IncompleteRunnableInput(UsageError):
     """A dynamic runnable command is missing required input."""
+
+    def __init__(self, named: list[str], *, primary: bool) -> None:
+        if not named:
+            message = "Missing required primary input."
+        else:
+            labels = [f"{name}=<{name.upper()}>" for name in named]
+            if primary:
+                labels.append("INPUT")
+                role = "inputs"
+            else:
+                role = "named input" if len(named) == 1 else "named inputs"
+            message = f"Missing required {role}: {', '.join(labels)}."
+        super().__init__(message)
 
 
 class _RunnableParser(OptionalValueParser):
@@ -168,12 +190,6 @@ class _RunnableParser(OptionalValueParser):
     def _process_args_for_options(self, state: _ParsingState) -> None:
         while state.rargs:
             item = state.rargs[0]
-            if item == "---":
-                raise UsageError(
-                    "fenced input marker '---' is not supported in script mode; "
-                    "use '-' to read stream input from stdin",
-                    ctx=self.ctx,
-                )
             if item == "-":
                 if len(state.rargs) != 1:
                     raise UsageError(
@@ -185,7 +201,32 @@ class _RunnableParser(OptionalValueParser):
                 state.rargs[0] = _LINE_INPUT_MARKER
                 return
             if item.startswith("-") and len(item) > 1:
-                self._process_opts(state.rargs.pop(0), state)
+                try:
+                    self._process_opts(state.rargs.pop(0), state)
+                except NoSuchOption as exc:
+                    parameters = self.ctx.command.params if self.ctx is not None else []
+                    parameter = next(
+                        (
+                            param
+                            for param in parameters
+                            if isinstance(param, RunnableArgument)
+                            and param.name != "_"
+                            and exc.option_name == f"--{param.name}"
+                        ),
+                        None,
+                    )
+                    if parameter is None:
+                        raise
+                    placement = (
+                        " before primary input"
+                        if any(param.name == "_" for param in parameters)
+                        else ""
+                    )
+                    raise UsageError(
+                        f"No such option: {exc.option_name}. "
+                        f"Use {parameter.metavar}{placement}.",
+                        ctx=self.ctx,
+                    ) from exc
                 continue
             name, separator, _value = item.partition("=")
             if separator and name.isidentifier():
@@ -204,18 +245,56 @@ class _ScriptParser(OptionalValueParser):
             if item == "--":
                 state.rargs[0] = _LINE_INPUT_MARKER
                 return
-            if item in {"-", "---"} or not item.startswith("-"):
+            if item == "-" or not item.startswith("-"):
                 return
             self._process_opts(state.rargs.pop(0), state)
 
 
 class _ScriptHelpFormatter(UIHelpFormatter):
+    def write_arguments(self, ctx: Context) -> None:
+        if not isinstance(ctx.command, _RunnableCommand):
+            return super().write_arguments(ctx)
+        arguments = []
+        primary = None
+        for param in ctx.command.get_params(ctx):
+            if not isinstance(param, TyperArgument) or param.hidden:
+                continue
+            if param.name == "_":
+                primary = param
+            else:
+                arguments.append(
+                    (param.rich_help_panel, self._argument_row(param, ctx))
+                )
+        self._sections(arguments, "Arguments")
+        if primary is not None:
+            _, label, description = self._argument_row(primary, ctx)
+            with self.section("Input"):
+                self.write_dl(
+                    [
+                        (label, description),
+                        (
+                            Text("-- INPUT", style="cli.argument.name"),
+                            "Treat the following text as primary input",
+                        ),
+                        (
+                            Text("-", style="cli.argument.name"),
+                            "Read primary input from stdin",
+                        ),
+                    ],
+                    col_max=self.width,
+                    col_spacing=self.description_gap,
+                )
+            self.write_paragraph()
+            self.write_text(
+                "If INPUT is omitted, read from stdin when piped or redirected."
+            )
+
     def write_description(self, ctx: Context) -> None:
         command = ctx.command
         if not isinstance(command, _RunnableCommand):
             return super().write_description(ctx)
         if command.help:
-            description = Text.from_markup(command.help)
+            description = Text(command.help)
             if not description.plain.endswith("."):
                 description.append(".")
             self.write_text(description)
@@ -239,19 +318,15 @@ class _ScriptHelpFormatter(UIHelpFormatter):
             command = ctx.command.get_command(ctx, label.plain)
             if isinstance(command, (_RunnableCommand, _RunnableStub)):
                 kind = "flow" if command._flow is not None else "agic"
-                shown = display_runnable_ref(
-                    f"{kind}:{label.plain}",
-                    surface="help",
-                )
-                unnamed = label.plain == "_"
-                if not unnamed:
-                    shown = shown.removeprefix(f"{kind}:")
                 yield (
                     "Runnables",
                     (
-                        Text(shown, style="cli.command.name"),
-                        Text("" if unnamed else kind, style="cli.meta"),
-                        Text.from_markup(command.short_help or ""),
+                        Text(
+                            "" if label.plain == f"{kind}:" else label.plain,
+                            style="cli.command.name",
+                        ),
+                        Text(kind, style="cli.meta"),
+                        Text(command.short_help or ""),
                     ),
                 )
 
@@ -261,7 +336,7 @@ class _ScriptHelpContext(HelpContext):
 
 
 class _RunnableCommand(OptionalValueCommand, CliCommand):
-    """Show runnable help when its collected call is incomplete."""
+    """Execute one runnable with signature-aware usage and input errors."""
 
     context_class = _ScriptHelpContext
     optional_values = {"dev": OptionalValue(bare_value=".")}
@@ -276,39 +351,26 @@ class _RunnableCommand(OptionalValueCommand, CliCommand):
         return [*pieces, *runnable_usage(self.params)]
 
     def format_usage(self, ctx: Context, formatter: HelpFormatter) -> None:
-        formatter.write_usage(
-            ctx.command_path, " ".join(self.collect_usage_pieces(ctx))
+        path = (
+            ctx.parent.command_path
+            if ctx.parent is not None and ctx.meta.get(_IMPLICIT_RUNNABLE)
+            else ctx.command_path
         )
+        formatter.write_usage(path, " ".join(self.collect_usage_pieces(ctx)))
 
     def invoke(self, ctx: Context) -> Any:
-        try:
-            result = CliCommand.invoke(self, ctx)
-            if isinstance(result, int) and result:
-                raise typer.Exit(result)
-            return result
-        except _IncompleteRunnableInput:
-            typer.echo(ctx.get_help(), color=ctx.color)
-            ctx.exit(2)
-
-
-def _runnable_short_help(runnable: Runnable | None, name: str, identity: str) -> str:
-    """Share descriptions between the file listing and the selected command."""
-    if runnable is None:
-        return f"Runnable {name}"
-    doc = (runnable.doc or "").strip()
-    if runnable.name is None:
-        return f"{identity} {doc}".rstrip()
-    return doc or f"{runnable.kind.capitalize()} {name}"
+        result = CliCommand.invoke(self, ctx)
+        if isinstance(result, int) and result:
+            raise typer.Exit(result)
+        return result
 
 
 class _RunnableStub(LazyCommand):
     """File help needs declaration metadata, not a runnable's full signature."""
 
-    def __init__(
-        self, name: str, runnable: Runnable, *, identity: str, **kwargs: Any
-    ) -> None:
+    def __init__(self, name: str, runnable: Runnable, **kwargs: Any) -> None:
         self._flow = runnable if isinstance(runnable, FlowDecl) else None
-        short_help = _runnable_short_help(runnable, name, identity)
+        short_help = (runnable.doc or "").strip()
         super().__init__(name, help=short_help, short_help=short_help, **kwargs)
 
     def agent_parameters(self) -> tuple[AgentParameter, ...]:
@@ -317,7 +379,7 @@ class _RunnableStub(LazyCommand):
 
 
 def _entry_command_name(group: TyperGroup) -> str | None:
-    return "_" if "_" in group.commands else None
+    return next((name for name in ("agic:", "flow:") if name in group.commands), None)
 
 
 class _ScriptGroup(OptionalValueGroup, CliGroup):
@@ -343,18 +405,16 @@ class _ScriptGroup(OptionalValueGroup, CliGroup):
         rest = super().parse_args(ctx, args)
         if not ctx._protected_args and not ctx.resilient_parsing:
             ctx._protected_args = [self._require_entry(ctx)]
+            ctx.meta[_IMPLICIT_RUNNABLE] = True
         return rest
 
     def resolve_command(
         self, ctx: Context, args: list[str]
     ) -> tuple[str | None, Any, list[str]]:
         token = args[0]
-        if (
-            token in {_LINE_INPUT_MARKER, "-", "---"}
-            or "=" in token
-            or token.startswith(":")
-        ):
+        if token in {_LINE_INPUT_MARKER, "-"} or "=" in token or token.startswith(":"):
             entry = self._require_entry(ctx)
+            ctx.meta[_IMPLICIT_RUNNABLE] = True
             if token == _LINE_INPUT_MARKER:
                 args = ["--", *args[1:]]
             args = [entry, *args]
@@ -363,8 +423,8 @@ class _ScriptGroup(OptionalValueGroup, CliGroup):
         requested_kind = None
         lookup = token
         if separator and kind in {"agic", "flow", "runnable"}:
-            lookup = name.strip()
-            if not lookup:
+            lookup = name.strip() or token
+            if not name.strip() and kind == "runnable":
                 raise UsageError(f"{kind} target cannot be empty", ctx)
             requested_kind = None if kind == "runnable" else kind
         else:
@@ -431,12 +491,11 @@ def _program_command(
         subcommand_metavar="[RUNNABLE]" if default is not None else "<RUNNABLE>",
     )
     for name, runnable in runnables.items():
-        command_name = "_" if name.startswith("<entry:") else name
+        command_name = f"{runnable.kind}:" if name.startswith("<entry:") else name
         group.add_command(
             _RunnableStub(
                 command_name,
                 runnable,
-                identity=name,
                 loader=lambda runnable=runnable, command_name=command_name, name=name: (
                     _runnable_command(
                         runnable,
@@ -475,15 +534,15 @@ def _runnable_command(
                 "--out",
                 "-o",
                 metavar="FILE",
-                help="Save output to FILE; - for stdout",
+                help="Write run output to FILE; - for stdout",
             ),
         ] = None,
         model: Annotated[
             str | None,
             typer.Option(
                 "--model",
-                metavar="MODEL",
-                help="Set the model; see 'too help model'",
+                metavar="<KEY>=<VALUE>",
+                help="Set model settings for this run; see 'too help model'",
             ),
         ] = None,
         workspace: WorkspaceOptions = None,
@@ -550,16 +609,16 @@ def _runnable_command(
 
     kind = runnable.kind if runnable is not None else "runnable"
     doc = (runnable.doc or "").strip() if runnable is not None else ""
-    label = f"{kind} {name}"
+    label = f"the {kind} '{name}'"
     if runnable is not None and runnable.name is None:
-        label = display_runnable_ref(f"{kind}:{identity}", surface="help")
+        label = f"the unnamed {kind}"
     command = get_command_from_info(
         CommandInfo(
             name=name,
             cls=_RunnableCommand,
             callback=callback,
             help=f"Run {label} - {doc}" if doc else f"Run {label}",
-            short_help=_runnable_short_help(runnable, name, identity),
+            short_help=doc,
         ),
         pretty_exceptions_short=True,
         rich_markup_mode="rich",
@@ -569,7 +628,6 @@ def _runnable_command(
         command._flow = runnable if isinstance(runnable, FlowDecl) else None
         arguments = runnable_parameters(
             runnable,
-            input_help="reads stdin with - or when input is omitted",
             help_only=True,
         )
         command.params[-1:-1] = arguments
@@ -605,7 +663,7 @@ def collect_named_arguments(
                 raise typer.BadParameter(f"argument {name} was provided more than once")
             raw_args[name] = value
             continue
-        raise UsageError(f"unknown argument: {name}; use '--' to start input")
+        raise UsageError(f"Unknown named input '{name}'.")
 
     return CallInput(raw_args), input_items
 
@@ -623,10 +681,9 @@ def _collect_call(
         for parameter in runnable.params
         if not parameter.optional and parameter.name not in raw_args
     ]
-    if call_input is None and (
-        missing or (runnable.input is not None and not runnable.input.optional)
-    ):
-        raise _IncompleteRunnableInput
+    required_primary = runnable.input is not None and not runnable.input.optional
+    if call_input is None and (missing or required_primary):
+        raise _IncompleteRunnableInput(missing, primary=required_primary)
 
     from toolang.execution.input import parse_call
 
@@ -636,14 +693,9 @@ def _collect_call(
         input = parse_input(call_input)
     has_runnable_override = override.runnable is not None
     if not has_runnable_override:
-        if missing:
-            raise _IncompleteRunnableInput
-        if (
-            runnable.input is not None
-            and not runnable.input.optional
-            and "_" not in input
-        ):
-            raise _IncompleteRunnableInput
+        missing_primary = required_primary and "_" not in input
+        if missing or missing_primary:
+            raise _IncompleteRunnableInput(missing, primary=missing_primary)
     return (
         override,
         input,
