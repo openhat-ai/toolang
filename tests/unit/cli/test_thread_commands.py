@@ -21,7 +21,7 @@ def test_rerun_model_option_uses_the_shared_model_body() -> None:
 def test_rerun_model_option_rejects_model_removal() -> None:
     with pytest.raises(ValueError, match="does not accept unset"):
         thread._rerun_model_override(model_body="unset")
-    with pytest.raises(ValueError, match="was removed"):
+    with pytest.raises(ValueError, match=r"Invalid model ref 'none'\."):
         thread._rerun_model_override(model_body="none")
 
 
