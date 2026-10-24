@@ -133,6 +133,54 @@ def registration_lock(toolang_root: Path, layout: AgentLayout):
     )
 
 
+@contextmanager
+def _publication_guard(layout: AgentLayout, root: Path, launch_id: str):
+    """Retry transient contention after releasing every acquired mutation guard."""
+    deadline = time.monotonic() + 2
+    legacy = root / ".runtime" / "active" / instance_filename(layout)
+    while True:
+        legacy_guard = (
+            _registration_guard(
+                legacy.parent,
+                owner=runtime_lock_owner(),
+                recovery=LockRecovery(probes=0),
+                blocking=False,
+            )
+            if legacy.is_file()
+            else None
+        )
+        guard = _registration_guard(
+            registration_directory(layout, toolang_root=root),
+            owner=runtime_lock_owner(),
+            recovery=LockRecovery(),
+            blocking=False,
+        )
+        status_guard = runtime_lock(
+            layout.runtime_status,
+            instance=layout.instance,
+            launch_id=launch_id,
+            blocking=False,
+        )
+        guards = ExitStack()
+        try:
+            if legacy_guard is not None:
+                guards.enter_context(legacy_guard)
+            guards.enter_context(guard)
+            guards.enter_context(status_guard)
+        except BlockingIOError:
+            guards.close()
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(0.02)
+        except BaseException:
+            guards.close()
+            raise
+        else:
+            break
+    with guards:
+        yield
+
+
 def verify_registration(
     layout: AgentLayout, *, toolang_root: Path, require_absent: bool = False
 ) -> None:
@@ -167,72 +215,48 @@ class RuntimeRegistration:
 
     def publish(self) -> RuntimeRegistration:
         """Publish after checking identity and collisions under the registry guard."""
-        legacy = (
-            self.toolang_root / ".runtime" / "active" / instance_filename(self.layout)
-        )
-        legacy_guard = (
-            _registration_guard(
-                legacy.parent,
-                owner=runtime_lock_owner(),
-                recovery=LockRecovery(probes=0),
-                blocking=False,
-            )
-            if legacy.is_file()
-            else None
-        )
-        guard = registration_lock(self.toolang_root, self.layout)
-        status_guard = runtime_lock(
-            self.layout.runtime_status,
-            instance=self.layout.instance,
-            launch_id=self.token,
-            blocking=False,
-        )
-        with ExitStack() as guards:
-            if legacy_guard is not None:
-                guards.enter_context(legacy_guard)
-            guards.enter_context(guard)
-            with status_guard:
-                verify_registration(self.layout, toolang_root=self.toolang_root)
-                entry = read_instance(self.layout.runtime_status, self.layout.instance)
-                if (
-                    entry is None
-                    or entry["launch_id"] != self.token
-                    or entry["workload"].get("status")
-                    not in {"preparing", "starting", "running"}
-                ):
-                    raise ValueError(
-                        "runtime publication requires matching instance identity"
-                    )
-                verify_identity(self.layout, entry["control"])
-                try:
-                    control = entry["control"]
-                    sandbox = control.get("sandbox", "host")
-                    self.payload = RuntimeReference(
-                        self.layout.runtime_status,
-                        self.token,
-                        location=entry["workload"].get(
-                            "location", "host" if sandbox == "host" else "guest"
-                        ),
-                        sandbox=sandbox,
-                        source=Path(control["source_path"])
-                        if control.get("source_path")
-                        else None,
-                        source_ref=control.get("source_ref"),
-                        address=self.layout.address,
-                    ).to_data()
-                    atomic_write_text(self.path, json.dumps(self.payload))
-                    for previous_path in _reference_paths(
-                        self.layout, self.toolang_root
-                    )[1:]:
-                        previous = read_reference(previous_path)
-                        if (
-                            previous is not None
-                            and previous.status == self.layout.runtime_status
-                        ):
-                            previous_path.unlink(missing_ok=True)
-                except BaseException:
-                    self.close()
-                    raise
+        with _publication_guard(self.layout, self.toolang_root, self.token):
+            verify_registration(self.layout, toolang_root=self.toolang_root)
+            entry = read_instance(self.layout.runtime_status, self.layout.instance)
+            if (
+                entry is None
+                or entry["launch_id"] != self.token
+                or entry["workload"].get("status")
+                not in {"preparing", "starting", "running"}
+            ):
+                raise ValueError(
+                    "runtime publication requires matching instance identity"
+                )
+            verify_identity(self.layout, entry["control"])
+            try:
+                control = entry["control"]
+                sandbox = control.get("sandbox", "host")
+                self.payload = RuntimeReference(
+                    self.layout.runtime_status,
+                    self.token,
+                    location=entry["workload"].get(
+                        "location", "host" if sandbox == "host" else "guest"
+                    ),
+                    sandbox=sandbox,
+                    source=Path(control["source_path"])
+                    if control.get("source_path")
+                    else None,
+                    source_ref=control.get("source_ref"),
+                    address=self.layout.address,
+                ).to_data()
+                atomic_write_text(self.path, json.dumps(self.payload))
+                for previous_path in _reference_paths(self.layout, self.toolang_root)[
+                    1:
+                ]:
+                    previous = read_reference(previous_path)
+                    if (
+                        previous is not None
+                        and previous.status == self.layout.runtime_status
+                    ):
+                        previous_path.unlink(missing_ok=True)
+            except BaseException:
+                self.close()
+                raise
         return self
 
     def __enter__(self) -> RuntimeRegistration:

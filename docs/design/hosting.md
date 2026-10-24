@@ -398,8 +398,9 @@ reuses that evidence. Terminal reports need no ordinary sandbox liveness probe.
 Prepare recovery evidence in registry-then-status order before acquiring either
 guard, so recovery progresses even when their orphaned owners differ.
 
-Publication waits at most two seconds for the registry guard. Query repair is
-nonblocking. Liveness probes happen before mutation guards. Mutation order is
+Publication shares a two-second contention budget across the registry and status
+guards, releasing all acquired guards before retrying. Query repair is nonblocking.
+Liveness probes happen before mutation guards. Mutation order is
 registry guard, then status guard: repair compares the full probed entry and
 reference under both, marks a dead active workload stopped, and withdraws its
 reference. Deferred repairs, including entries beyond the repair budget, recheck
