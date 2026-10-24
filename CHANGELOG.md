@@ -376,6 +376,11 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   epoch.
   ([#950](https://github.com/openhat-ai/toolang/pull/950))
 
+- Root codes grow to eight Base32 characters from the first 40 root-path hash
+  bits and name nonresident placement directories, Docker containers, and Hub
+  namespaces.
+  ([#950](https://github.com/openhat-ai/toolang/pull/950))
+
 ### Fixed
 
 - Failed preparation no longer leaves active registrations; runtime references

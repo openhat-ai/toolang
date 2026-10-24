@@ -59,8 +59,9 @@ Keep leading zeroes and use raw digest bits, without hex shortening.
 are notation, never literal prefixes. The same `R8` identifies nonresident
 directories, Docker names, and Hub namespaces.
 
-The two high bits identify placement; `01` and `10` are reserved. Roaming starts
-with `0–7`, visiting with `rstvwxyz`. No literal `s`/`t` marker is prepended.
+In place codes, the two high bits identify placement; `01` and `10` are reserved.
+Roaming starts with `0–7`, visiting with `rstvwxyz`. No literal `s`/`t` marker
+is prepended.
 Reject incorrect widths, type/width combinations, and noncanonical spelling.
 Both source IDs are raw 48-bit hashes encoded in 10 chars; roaming's first
 10 chars also form its stable type/hash prefix.
