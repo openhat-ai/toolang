@@ -727,6 +727,20 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 - Foreground Docker containers stop within the ten-second deadline even when a
   guest blocks signals, instead of surviving it.
 
+- Docker guests write State caches, locks, and revision trees under the mounted
+  runtime owner, so host `info` and later scripts still read and prepare the
+  same home.
+  ([#956](https://github.com/openhat-ai/toolang/pull/956))
+
+- Repeated Docker Desktop launches into an existing home stage inputs in a
+  per-launch bootstrap directory, so reused mounts no longer fail or discard
+  newer inputs.
+  ([#956](https://github.com/openhat-ai/toolang/pull/956))
+
+- Interrupting a foreground script keeps signaling the owned process group
+  while output pipes close, so stops still meet their deadline.
+  ([#956](https://github.com/openhat-ai/toolang/pull/956))
+
 ### Security
 
 - The locked certifi trust store advances to 2026.10.19, resolving trust-store
