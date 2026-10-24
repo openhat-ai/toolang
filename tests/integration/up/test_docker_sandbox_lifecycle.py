@@ -1714,7 +1714,7 @@ def _script_process(
         "--sandbox",
         sandbox,
     ]
-    if sandbox == "docker":
+    if sandbox.partition(":")[0] == "docker":
         args.extend(["--dev", str(wheel)])
     workspace = workspace or (
         source.parent if grant else source.parent / "other workspace"
@@ -2087,6 +2087,65 @@ def test_foreground_launch_preserves_docker_error_after_stage_cleanup(
     assert SandboxState.load(home.runtime_status) is None
     assert not home.run_store.exists()
     assert not list((root / ".runtime" / "active").glob("*/info.json"))
+
+
+def test_foreground_launch_preserves_finalization_with_an_image_stop_signal(
+    tmp_path, docker_wheel_dir
+):
+    from uuid import uuid4
+    from toolang.execution.store import RunStore
+    from toolang.plugin.sandboxes.docker._cli import docker_stop_container
+
+    image = f"toolang-test-stop-signal:{uuid4().hex}"
+    home = None
+    worker = None
+    try:
+        built = subprocess.run(
+            ["docker", "build", "--tag", image, "-"],
+            input="FROM python:3.13-slim\nSTOPSIGNAL SIGQUIT\n",
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        assert built.returncode == 0, built.stderr
+        source = tmp_path / "custom-stop.too"
+        source.write_text(
+            "agic main() -> Text:\n  context = none\n  recall = none\n  user: WAIT.\n"
+        )
+        root = tmp_path / "root"
+        scenario = _ScriptScenario(source, "model")
+        with _script_model(scenario):
+            worker = _script_process(
+                source, root, docker_wheel_dir, sandbox=f"docker:{image}"
+            )
+            home, _state = _wait_script_home(source, root, worker)
+            assert scenario.entered.wait(60)
+            state = SandboxState.load(home.runtime_status)
+            assert state is not None
+            docker_stop_container(state.ref.runtime_id, force=False)
+            stdout, stderr = worker.communicate(timeout=15)
+            assert worker.returncode != 0, (stdout, stderr)
+            with closing(RunStore(home.run_store, read_only=True)) as store:
+                roots = [run for run in store.list_runs() if run.parent is None]
+                assert roots and all(run.status == "canceled" for run in roots)
+                for run in roots:
+                    assert all(
+                        step.status not in {"pending", "running"}
+                        for step in store.list_steps(run_id=run.id)
+                    )
+                    assert any(
+                        control.kind == "cancel"
+                        for control in store.list_run_controls(run_id=run.id)
+                    )
+            assert not list((root / ".runtime" / "active").glob("*/info.json"))
+    finally:
+        if worker is not None:
+            _clean_script(worker, home)
+        subprocess.run(
+            ["docker", "image", "rm", image],
+            capture_output=True,
+            timeout=15,
+        )
 
 
 def test_owner_eof_stops_a_guest_whose_primary_process_cannot_handle_signals(

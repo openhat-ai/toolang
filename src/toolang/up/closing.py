@@ -28,23 +28,33 @@ class ClosingDeadline:
         self._timer: threading.Timer | None = None
         self._on_begin = on_begin
 
-    def begin(self, reason: str, *, started_at: float | None = None) -> None:
-        if self.started is not None:
-            return
+    def arm(self, *, started_at: float | None = None) -> None:
+        """Bound cleanup before status IO; an inherited deadline can only shorten it."""
         now = time.time()
-        self.started = (
+        started = (
             min(now, started_at)
             if started_at is not None and math.isfinite(started_at)
             else now
         )
-        self.reason = reason
+        if self.started is not None and self.started <= started:
+            return
+        self.started = started
         if self.enabled:
+            if self._timer is not None:
+                self._timer.cancel()
             self._timer = threading.Timer(
                 max(0, self.started + FINALIZATION_GRACE_SEC - now), self._expire
             )
             self._timer.daemon = True
             self._timer.start()
+
+    def begin(self, reason: str, *, started_at: float | None = None) -> None:
+        if self.reason is not None:
+            return
+        self.reason = reason
+        self.arm(started_at=started_at)
         if self._on_begin is not None:
+            assert self.started is not None
             self._on_begin(self.started, reason)
 
     def close(self) -> None:

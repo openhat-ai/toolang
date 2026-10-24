@@ -241,17 +241,17 @@ if [ -n "${TOOLANG_FOREGROUND_OWNER_FILE:-}" ]; then
         (
             OWNER_GRACE=10
             if [ -r "$TOOLANG_FOREGROUND_OWNER_FILE.closing" ]; then
-                OWNER_DEADLINE=$(cat "$TOOLANG_FOREGROUND_OWNER_FILE.closing")
+                OWNER_DEADLINE=$(cat "$TOOLANG_FOREGROUND_OWNER_FILE.closing" 2>/dev/null || :)
                 case "$OWNER_DEADLINE" in
                     ''|*[!0-9]*) ;;
                     *) OWNER_GRACE=$((OWNER_DEADLINE - $(date +%s))) ;;
                 esac
             fi
             if [ "$OWNER_GRACE" -gt 0 ]; then sleep "$OWNER_GRACE"; fi
-            printf '%s\n' 'Foreground finalization deadline exceeded; records may be incomplete.' >&2
+            printf '%s\n' 'Foreground finalization deadline exceeded; records may be incomplete.' >&2 || :
             kill -KILL "$OWNER_PID" 2>/dev/null || :
         ) </dev/null &
-        printf '%s\n' 'foreground owner channel closed' >"$TOOLANG_FOREGROUND_OWNER_FILE"
+        printf '%s\n' 'foreground owner channel closed' >"$TOOLANG_FOREGROUND_OWNER_FILE" || :
         kill -TERM "$OWNER_PID" 2>/dev/null || :
     ) 4<&4 </dev/null &
     exec 4<&-

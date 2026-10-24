@@ -453,17 +453,30 @@ def _serve_workload(
     from .closing import OWNER_CHANNEL_REASON
 
     shutdown_reason: str | None = None
+    closing_error: OSError | ValueError | None = None
+
+    def status_failed(exc: OSError | ValueError) -> None:
+        nonlocal closing_error, failure
+        closing_error = closing_error or exc
+        message = f"shutdown status: {exc}"
+        failure = message if failure is None else f"{failure}; {message}"
+        logger.error("Could not access foreground shutdown status: %s", exc)
 
     def begin_closing() -> None:
         nonlocal shutdown_reason
         if shutdown_reason is not None:
             return
+        deadline.arm()
         marker = environ.get("TOOLANG_FOREGROUND_OWNER_FILE")
         from .instance import read_instance
 
-        previous = (
-            read_instance(spec.layout.runtime_status, location=location) or {}
-        ).get("workload", {})
+        try:
+            previous = (
+                read_instance(spec.layout.runtime_status, location=location) or {}
+            ).get("workload", {})
+        except (OSError, ValueError) as exc:
+            status_failed(exc)
+            previous = {}
         shutdown_reason = (
             OWNER_CHANNEL_REASON
             if marker and Path(marker).is_file()
@@ -476,16 +489,19 @@ def _serve_workload(
         )
         if initialized_core is not None and initialized_core.lifecycle is not None:
             initialized_core.lifecycle.closing = True
-        patch_workload(
-            spec.layout.runtime_status,
-            launch_id,
-            {
-                "shutdown_reason": shutdown_reason,
-                "shutdown_started_at": deadline.started,
-            },
-            instance=spec.layout.instance,
-            location=location,
-        )
+        try:
+            patch_workload(
+                spec.layout.runtime_status,
+                launch_id,
+                {
+                    "shutdown_reason": shutdown_reason,
+                    "shutdown_started_at": deadline.started,
+                },
+                instance=spec.layout.instance,
+                location=location,
+            )
+        except (OSError, ValueError) as exc:
+            status_failed(exc)
 
     async def close_core() -> None:
         nonlocal core_closed, failure
@@ -724,7 +740,6 @@ def _serve_workload(
             on_stopped=lambda: logger.info("Agent stopped"),
             foreground=spec.lifetime == "foreground",
         )
-        return 0
     except BaseException as exc:
         if not isinstance(exc, KeyboardInterrupt) and not (
             isinstance(exc, SystemExit) and exc.code in {None, 0}
@@ -733,9 +748,11 @@ def _serve_workload(
         raise
     finally:
         try:
-            if spec.lifetime == "foreground":
-                begin_closing()
-            asyncio.run(close_core())
+            try:
+                if spec.lifetime == "foreground":
+                    begin_closing()
+            finally:
+                asyncio.run(close_core())
         finally:
             from .registry import finalize_runtime
 
@@ -756,6 +773,9 @@ def _serve_workload(
                     spec.layout, expected=SandboxState(sandbox, host_ref, launch_id)
                 )
             deadline.close()
+    if closing_error is not None:
+        raise closing_error
+    return 0
 
 
 def _format_allow(values: tuple[str, ...] | None) -> str:

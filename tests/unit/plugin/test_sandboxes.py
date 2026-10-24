@@ -2,6 +2,7 @@ from __future__ import annotations
 
 
 import asyncio
+from contextlib import suppress
 from dataclasses import replace
 from hashlib import sha256
 from io import BytesIO
@@ -14,10 +15,12 @@ import stat
 import subprocess
 import sys
 import threading
+import time
 from types import SimpleNamespace
 from typing import Any, cast
 
 from dotenv import dotenv_values
+import psutil
 import pytest
 
 from toolang.base.errors import SandboxLaunchError, ToolangError
@@ -1987,11 +1990,13 @@ def test_docker_release_removes_the_container_when_diagnostics_fail(
     assert not stage_dir.exists()
 
 
+@pytest.mark.parametrize("foreground", [False, True])
 @pytest.mark.parametrize("remove_on_exit", [False, True])
 def test_docker_run_adds_the_canonical_host_gateway(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     remove_on_exit: bool,
+    foreground: bool,
 ) -> None:
     captured: list[str] = []
 
@@ -2011,6 +2016,12 @@ def test_docker_run_adds_the_canonical_host_gateway(
         create_subprocess_exec,
     )
 
+    async def run_foreground(args, *_args):
+        captured.extend(args)
+        return "container-id"
+
+    monkeypatch.setattr(docker_cli, "_run_foreground", run_foreground)
+
     container_id = asyncio.run(
         docker_cli.docker_run_detached(
             image="python:3.13-slim",
@@ -2029,10 +2040,14 @@ def test_docker_run_adds_the_canonical_host_gateway(
             },
             log_path=None,
             remove_on_exit=remove_on_exit,
+            foreground=foreground,
         )
     )
 
     assert ("--rm" in captured) == remove_on_exit
+    assert ("--stop-signal" in captured) == foreground
+    if foreground:
+        assert captured[captured.index("--stop-signal") + 1] == "SIGTERM"
     assert container_id == "container-id"
     assert captured[captured.index("--add-host") + 1] == (
         "host.docker.internal:host-gateway"
@@ -2043,6 +2058,55 @@ def test_docker_run_adds_the_canonical_host_gateway(
         "io.toolang.address=alice",
         "io.toolang.launch-id=" + "a" * 32,
     ]
+
+
+@pytest.mark.parametrize("fault", ["closed-stderr", "unwritable-marker"])
+def test_guest_owner_monitor_enforces_shutdown_despite_output_failure(tmp_path, fault):
+    source = (Path(docker_guest.__file__).parent / "guest.sh").read_text()
+    monitor = source[
+        source.index(
+            'if [ -n "${TOOLANG_FOREGROUND_OWNER_FILE:-}" ]; then'
+        ) : source.index('\nbootstrap "$@" </dev/null')
+    ]
+    marker = tmp_path / "owner"
+    ready = tmp_path / "ready"
+    Path(f"{marker}.closing").write_text(
+        "0\n" if fault == "closed-stderr" else f"{int(time.time()) + 60}\n"
+    )
+    if fault == "unwritable-marker":
+        marker.mkdir()
+    script = "set -eu\n"
+    if fault == "closed-stderr":
+        script += "exec 2>&-\n"
+    script += monitor + f'\nprintf ready >"{ready}"\n'
+    script += (
+        "kill -STOP $$\n" if fault == "closed-stderr" else "while :; do sleep 1; done\n"
+    )
+    worker = subprocess.Popen(
+        ["/bin/sh", "-c", script],
+        env={**os.environ, "TOOLANG_FOREGROUND_OWNER_FILE": str(marker)},
+        stdin=subprocess.PIPE,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    try:
+        end = time.monotonic() + 3
+        while not ready.exists() or (
+            fault == "closed-stderr"
+            and psutil.Process(worker.pid).status() != psutil.STATUS_STOPPED
+        ):
+            assert worker.poll() is None
+            assert time.monotonic() < end, "monitor fixture did not stop its owner"
+            time.sleep(0.01)
+        assert worker.stdin is not None
+        worker.stdin.close()
+        expected = -signal.SIGKILL if fault == "closed-stderr" else 143
+        assert worker.wait(timeout=3) == expected
+    finally:
+        with suppress(ProcessLookupError):
+            os.killpg(worker.pid, signal.SIGKILL)
+        worker.wait(timeout=3)
 
 
 def test_docker_diagnostics_are_bounded_and_streamed_to_a_private_log(

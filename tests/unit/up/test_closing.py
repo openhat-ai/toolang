@@ -6,9 +6,29 @@ import sys
 import time
 
 import psutil
+import pytest
+
+from toolang.up.closing import ClosingDeadline
 
 
-def test_deadline_kills_stuck_owner_and_its_tool_process(tmp_path):
+def test_arming_before_status_io_can_only_shorten_the_closing_budget():
+    notifications = []
+    deadline = ClosingDeadline(
+        enabled=False, on_begin=lambda *args: notifications.append(args)
+    )
+    deadline.arm(started_at=100)
+    deadline.arm(started_at=200)
+    assert deadline.started == 100
+    assert notifications == []
+    deadline.begin("script interrupted", started_at=90)
+    deadline.begin("second interruption", started_at=80)
+    assert deadline.started == 90
+    assert deadline.reason == "script interrupted"
+    assert notifications == [(90, "script interrupted")]
+
+
+@pytest.mark.parametrize("entry", ["begin", "arm"])
+def test_deadline_kills_stuck_owner_and_its_tool_process(tmp_path, entry):
     script = """
 import subprocess, sys, time
 from toolang.up import closing
@@ -17,14 +37,17 @@ child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'], 
 print(child.pid, flush=True)
 sys.stdin.readline()
 deadline = closing.ClosingDeadline()
-deadline.begin('script interrupted')
+if sys.argv[1] == 'arm':
+    deadline.arm()
+else:
+    deadline.begin('script interrupted')
 time.sleep(0.2)
 deadline.begin('second interruption must not reset the deadline')
 while True:
     time.sleep(10)
 """
     worker = subprocess.Popen(
-        [sys.executable, "-c", script],
+        [sys.executable, "-c", script, entry],
         cwd=tmp_path,
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
