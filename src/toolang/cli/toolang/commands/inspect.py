@@ -503,9 +503,11 @@ def _render_execution_table(
     ) + 2 * max(0, len(headers) - 1)
 
     table = Table(
-        box=box.HORIZONTALS,
+        box=box.SIMPLE,
         show_edge=False,
         header_style="",
+        footer_style="",
+        show_footer=True,
         show_lines=False,
         pad_edge=False,
         collapse_padding=True,
@@ -1798,9 +1800,11 @@ def _print_human_table(
         + cell_len("VALUE")
     )
     table = Table(
-        box=box.HORIZONTALS,
+        box=box.SIMPLE,
         show_edge=False,
         header_style="",
+        footer_style="",
+        show_footer=True,
         show_lines=False,
         collapse_padding=True,
         show_header=True,

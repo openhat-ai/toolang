@@ -9,13 +9,12 @@ from typing import cast
 
 from rich.cells import cell_len, chop_cells
 from rich.console import Console
-from rich.text import Text
 from wcwidth import iter_graphemes_reverse, wcswidth
 
 import typer
 from typer._click.exceptions import UsageError
 
-from .output import MIN_TABLE_WIDTH, _table_cell_text, echo_table
+from .output import MIN_TABLE_WIDTH, _make_table, echo_table
 from .terminal_title import clip_title, safe_text
 
 
@@ -77,26 +76,23 @@ def echo_compact_records(
             widths[index] -= 1
             remaining -= 1
 
-    def print_row(values: Sequence[str], *, header: bool = False) -> None:
-        line = Text()
-        for index, (value, column_width) in enumerate(zip(values, widths)):
-            cell = (
+    table = _make_table(
+        headers,
+        [
+            tuple(
                 _clip_location(value, column_width)
-                if not header and columns[index] == "location"
+                if columns[index] == "location"
                 else clip_title(value, width=column_width)
+                for index, (value, column_width) in enumerate(zip(row, widths))
             )
-            line.append(Text(cell) if header else _table_cell_text(cell))
-            if index < len(columns) - 1:
-                line.append(" " * (column_width - wcswidth(cell) + gap))
-        console.print(line, soft_wrap=True)
-
-    print_row(headers, header=True)
-    console.print(
-        Text("─" * (sum(widths) + gap * (len(columns) - 1)), style="dim"),
-        soft_wrap=True,
+            for row in rows
+        ],
+        justify=None,
     )
-    for row in rows:
-        print_row(row)
+    for column, column_width in zip(table.columns, widths):
+        column.width = column_width
+    console.width = max(width, sum(widths) + gap * (len(columns) - 1))
+    console.print(table)
 
 
 def _compact_cell(value: object, *, column: str, root: Path | None) -> str:

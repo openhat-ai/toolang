@@ -133,9 +133,11 @@ def _print_directory(
         - joined_width
     )
     table = Table(
-        box=box.HORIZONTALS,
+        box=box.SIMPLE,
         show_edge=False,
         header_style="",
+        footer_style="",
+        show_footer=True,
         show_lines=False,
         pad_edge=False,
         collapse_padding=True,
@@ -163,7 +165,6 @@ def _print_directory(
             row[2].plain = names.plain.rstrip(", ") + suffix
         table.add_row(*row)
     console.print(table)
-    console.print()
     count = len(conversations)
     console.print(
         f"{count} {'conversation' if count == 1 else 'conversations'}", highlight=False

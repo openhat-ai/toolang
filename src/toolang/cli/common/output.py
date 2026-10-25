@@ -143,8 +143,8 @@ def echo_table(
     max_widths: Sequence[int | None] | None = None,
     width: int | None = None,
     console: Console | None = None,
-    table_box: box.Box | None = box.HORIZONTALS,
-    show_footer: bool = False,
+    table_box: box.Box | None = box.SIMPLE,
+    show_footer: bool = True,
 ) -> None:
     console = console or _TABLE_CONSOLE
     if width is not None:
@@ -182,8 +182,6 @@ def echo_collection_summary(
     if count > 1 and group is not None:
         groups, group_noun = group
         summary += f", {groups} {group_noun if groups == 1 else group_noun + 's'}"
-    if count:
-        typer.echo()
     typer.echo(summary)
 
 
@@ -312,8 +310,8 @@ def _make_table(
     *,
     justify: Sequence[TableJustify | None] | None,
     max_widths: Sequence[int | None] | None = None,
-    table_box: box.Box | None = box.HORIZONTALS,
-    show_footer: bool = False,
+    table_box: box.Box | None = box.SIMPLE,
+    show_footer: bool = True,
 ) -> Table:
     table = Table(
         box=table_box,

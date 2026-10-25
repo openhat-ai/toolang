@@ -44,7 +44,7 @@ def test_api_shortens_then_disappears_before_environment_is_shortened(
     _echo_providers([provider], width=width)
 
     lines = strip_ansi(stream.getvalue()).splitlines()
-    assert len(lines) == 3
+    assert len(lines) == 5
     assert lines[0].split() == [
         "PROVIDER",
         "MODELS",
@@ -56,6 +56,8 @@ def test_api_shortens_then_disappears_before_environment_is_shortened(
     assert ("…" in lines[2]) is (api_visible or not env_complete)
     assert all(wcswidth(line) <= width for line in lines)
     assert set(lines[1]) == {"─"}
+    assert lines[3] == lines[1]
+    assert not lines[4].strip()
 
 
 def test_provider_environment_uses_setup_conventions_even_without_credentials(capsys):
@@ -86,7 +88,7 @@ def test_provider_table_sanitizes_controls_and_preserves_unicode_and_literal_mar
 
     rendered = capsys.readouterr().out
     lines = rendered.splitlines()
-    assert len(lines) == 3 and all(wcswidth(line) <= 80 for line in lines)
+    assert len(lines) == 5 and all(wcswidth(line) <= 80 for line in lines)
     assert lines[2].startswith(identity)
     assert "[bold]" in rendered and "title" not in rendered and "\x1b" not in rendered
     assert provider.to_data() == before
@@ -103,5 +105,5 @@ def test_provider_identity_and_counts_do_not_shrink(capsys):
     _echo_providers([provider], width=80)
 
     lines = capsys.readouterr().out.splitlines()
-    assert len(lines) == 3
+    assert len(lines) == 5
     assert identity in lines[2] and "100000/100000" in lines[2]

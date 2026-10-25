@@ -580,18 +580,19 @@ def directory_summaries():
 
 @pytest.mark.parametrize("width", [80, 120, 240])
 @pytest.mark.parametrize("human", [None, "human:bryan"])
-def test_directory_has_one_header_rule_without_outer_borders(
+def test_directory_has_matching_header_and_footer_rules_without_outer_edges(
     directory_summaries, width, human
 ):
     rendered = render_directory(
         conversations=directory_summaries, width=width, human=human
     )
-    header, rule, first, second, blank, summary = rendered.splitlines()
+    header, rule, first, second, footer, blank, summary = rendered.splitlines()
     assert header.startswith("CONVO")
     assert set(rule) == {"─"}
+    assert footer == rule
     assert len(rule) <= width
     assert first.startswith("gc_00000000") and second.startswith("gc_00000001")
-    assert blank == "" and summary == "2 conversations"
+    assert not blank.strip() and summary == "2 conversations"
     assert not any(character in rendered for character in "│┌┐└┘")
 
 
@@ -623,7 +624,7 @@ def test_directory_summary_is_unstyled_in_colored_and_plain_output(
     assert strip_ansi(rendered).splitlines()[-1] == summary
     assert rendered.splitlines()[-1] == summary
     if count:
-        assert rendered.splitlines()[-2] == ""
+        assert not rendered.splitlines()[-2].strip()
     else:
         assert rendered == summary + "\n"
 
@@ -652,11 +653,12 @@ def test_directory_summarizes_three_or_more_members(participants, expected):
             }
         ]
     )
-    header, rule, row, blank, summary = rendered.splitlines()
+    header, rule, row, footer, blank, summary = rendered.splitlines()
     assert header.split() == ["CONVO", "NAME", "MEMBERS", "UPDATED", "MESSAGE"]
     assert set(rule) == {"─"}
+    assert footer == rule
     assert row[header.index("MEMBERS") : header.index("UPDATED")].strip() == expected
-    assert blank == "" and summary == "1 conversation"
+    assert not blank.strip() and summary == "1 conversation"
     assert max(map(cell_len, rendered.splitlines())) < 120
     assert not any(character in rendered for character in "│┌┐└┘·")
 
@@ -692,13 +694,14 @@ def test_directory_keeps_timestamps_and_messages_aligned(width):
     rendered = render_directory(
         conversations=list(reversed(conversations)), width=width
     )
-    table, summary = rendered.strip().split("\n\n")
-    lines = table.splitlines()
+    lines = rendered.splitlines()
+    summary = lines.pop()
+    assert not lines.pop().strip()
     assert summary == "4 conversations"
     assert lines[0].split() == ["CONVO", "NAME", "MEMBERS", "UPDATED", "MESSAGE"]
-    assert len(lines) == 6
+    assert len(lines) == 7
     assert set(lines[1]) == {"─"}
-    assert [line.split()[0] for line in lines[2:]] == [
+    assert [line.split()[0] for line in lines[2:-1]] == [
         "gc_00000000",
         "gc_00000001",
         "gc_00000002",
@@ -715,7 +718,7 @@ def test_directory_keeps_timestamps_and_messages_aligned(width):
         assert "alice,bob,… (5)" in line
         name = line.split("alice", 1)[0].split(maxsplit=1)[1].strip()
         assert cell_len(name) <= 24 and name.endswith("…")
-    assert lines[-1].rstrip().endswith("-")
+    assert lines[-2].rstrip().endswith("-")
 
 
 @pytest.mark.parametrize("width", [80, 120, 240])
