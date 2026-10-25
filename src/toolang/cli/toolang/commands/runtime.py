@@ -762,7 +762,6 @@ def serve(
                 for name, binding in bindings.items()
                 if binding.temporary
             },
-            workspace_bindings=bindings,
             workdir=initial_workdir,
         )
         spec = replace(

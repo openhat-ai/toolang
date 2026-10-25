@@ -338,8 +338,10 @@ targets. Authored-input overlays cannot make a workspace grant read-only.
 Host and guest read the same PLACE/HOME source bytes and share prepared State.
 Runtime corrections travel through `guest.env` to the selected root dotenv file
 as `TOOLANG_CONFIG_PATCH`. Source origins keep relative paths and symlink targets
-in the host's canonical path view; patches affect only execution/Setup. Human
-fallbacks fill missing values, so explicit `[teaming]` edits remain effective.
+in the host's canonical path view. Source parsers receive only `ConfigOrigins`;
+`RuntimeConfig` holds deeply immutable execution defaults, patches, and bindings,
+and derives fresh Setup views. Human fallbacks fill missing values, so explicit
+`[teaming]` edits remain effective.
 Hub loopback addresses use the existing host gateway. `[hub]` remains unchanged
 and clients need no Hub-directory mount.
 

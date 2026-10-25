@@ -13,7 +13,8 @@ from typing import TYPE_CHECKING, Literal, cast
 
 import tomlkit
 
-from .config_runtime import RuntimeConfig
+from .config_runtime import ConfigOrigins, RuntimeConfig
+from .immutable import mutable_data
 
 if TYPE_CHECKING:
     from .layout import AgentLayout
@@ -36,7 +37,7 @@ def read_config(
     *,
     include_workspaces: bool = True,
     origin: Path | None = None,
-    runtime: RuntimeConfig | None = None,
+    context: ConfigOrigins | None = None,
 ) -> dict[str, object]:
     """Read one optional TOML file, preserving its discovered path as origin."""
     if not path.exists() and not path.is_symlink():
@@ -46,7 +47,7 @@ def read_config(
             tomllib.loads(path.read_text(encoding="utf-8")),
             (origin or path).parent,
             include_workspaces=include_workspaces,
-            runtime=runtime,
+            context=context,
         )
     except (OSError, ValueError) as exc:
         raise ValueError(f"could not read configuration {path}: {exc}") from exc
@@ -57,7 +58,7 @@ def rebase_config(
     directory: Path,
     *,
     include_workspaces: bool = True,
-    runtime: RuntimeConfig | None = None,
+    context: ConfigOrigins | None = None,
 ) -> dict[str, object]:
     """Resolve known host paths; plugin commands and guest paths remain opaque."""
     result = deepcopy(dict(config))
@@ -68,11 +69,11 @@ def rebase_config(
         workspaces = cast(dict[str, object], workspaces)
         for name, path in workspaces.items():
             if isinstance(path, str) and path:
-                workspaces[name] = str(resolve_path(path, directory, runtime=runtime))
+                workspaces[name] = str(resolve_path(path, directory, context=context))
     catalog = catalog_config(result)
     if catalog is not None and isinstance(catalog.get("path"), str) and catalog["path"]:
         catalog["path"] = str(
-            resolve_path(str(catalog["path"]), directory, runtime=runtime)
+            resolve_path(str(catalog["path"]), directory, context=context)
         )
     return result
 
@@ -82,21 +83,21 @@ def rebase_config_content(
     directory: Path,
     *,
     include_workspaces: bool = True,
-    runtime: RuntimeConfig | None = None,
+    context: ConfigOrigins | None = None,
 ) -> bytes:
     """Bind relative paths into captured bytes without changing unrelated files."""
     parsed = tomllib.loads(content.decode("utf-8"))
     resolved = rebase_config(
-        parsed, directory, include_workspaces=include_workspaces, runtime=runtime
+        parsed, directory, include_workspaces=include_workspaces, context=context
     )
     return content if parsed == resolved else tomlkit.dumps(resolved).encode("utf-8")
 
 
 def resolve_path(
-    value: str, directory: Path, *, runtime: RuntimeConfig | None = None
+    value: str, directory: Path, *, context: ConfigOrigins | None = None
 ) -> Path:
-    if runtime is not None:
-        return runtime.resolve_path(value, directory)
+    if context is not None:
+        return context.resolve_path(value, directory)
     path = Path(value).expanduser()
     return (path if path.is_absolute() else directory / path).resolve()
 
@@ -158,12 +159,13 @@ def config_sources(
 ) -> tuple[ConfigSource, ...]:
     """Load normal root/home layers or captured roaming project layers."""
     runtime = layout.runtime_config or RuntimeConfig()
+    context = runtime.source_context
     if layout.project_inputs:
         config = read_config(
             layout.place_config,
             include_workspaces=False,
-            origin=runtime.origin("root", layout.place_config),
-            runtime=layout.runtime_config,
+            origin=context.origin("root", layout.place_config),
+            context=context,
         )
         _reject_local_environment(config, layout.place_config)
         raw = config.get(PROJECTION_KEY)
@@ -181,21 +183,25 @@ def config_sources(
         else:
             sources = (
                 ConfigSource(
-                    runtime.origin("root", layout.place_config), config, "root"
+                    context.origin("root", layout.place_config), config, "root"
                 ),
             )
         defaults = runtime.defaults.get("root", {})
         overlay = runtime.overlays.get("root", {})
-        root = runtime.origin("root", layout.place_config)
+        root = context.origin("root", layout.place_config)
         sources = (
-            *((ConfigSource(root, deepcopy(defaults), "root"),) if defaults else ()),
+            *(
+                (ConfigSource(root, mutable_data(defaults), "root"),)
+                if defaults
+                else ()
+            ),
             *sources,
             *(
                 (
                     ConfigSource(
                         root,
                         {
-                            key: deepcopy(value)
+                            key: mutable_data(value)
                             for key, value in overlay.items()
                             if key != "workspaces"
                         },
@@ -211,8 +217,8 @@ def config_sources(
                 "home",
                 read_config(
                     layout.config,
-                    origin=runtime.origin("home", layout.config),
-                    runtime=layout.runtime_config,
+                    origin=context.origin("home", layout.config),
+                    context=context,
                 ),
             )
             _reject_local_environment(home, layout.config)
@@ -224,7 +230,7 @@ def config_sources(
                 or (layout.home / "catalog.json").is_symlink()
             ):
                 sources += (
-                    ConfigSource(runtime.origin("home", layout.config), home, "home"),
+                    ConfigSource(context.origin("home", layout.config), home, "home"),
                 )
         return sources
     paths = (
@@ -233,14 +239,14 @@ def config_sources(
     )
     sources = tuple(
         ConfigSource(
-            runtime.origin(scope, path),
+            context.origin(scope, path),
             runtime.apply(
                 scope,
                 read_config(
                     path,
                     include_workspaces=scope == "home",
-                    origin=runtime.origin(scope, path),
-                    runtime=layout.runtime_config,
+                    origin=context.origin(scope, path),
+                    context=context,
                 ),
             ),
             scope,

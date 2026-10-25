@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from copy import deepcopy
 from dataclasses import dataclass, field
 import json
 import math
@@ -12,6 +11,8 @@ from pathlib import Path
 import re
 from types import MappingProxyType
 from typing import cast
+
+from .immutable import freeze_mapping, mutable_data
 
 CONFIG_PATCH_ENV = "TOOLANG_CONFIG_PATCH"
 LAUNCH_SCHEMA = 2
@@ -110,13 +111,13 @@ def _validate_values(value: object) -> None:
 def _merge(
     first: Mapping[str, object], second: Mapping[str, object]
 ) -> dict[str, object]:
-    result = deepcopy(dict(first))
+    result = mutable_data(first)
     for key, value in second.items():
         previous = result.get(key)
         result[key] = (
-            _merge(cast(dict[str, object], previous), cast(dict[str, object], value))
-            if isinstance(previous, dict) and isinstance(value, dict)
-            else deepcopy(value)
+            _merge(previous, cast(Mapping[str, object], value))
+            if isinstance(previous, Mapping) and isinstance(value, Mapping)
+            else mutable_data(value)
         )
     return result
 
@@ -134,17 +135,57 @@ def _validate_workspace_targets(
 
 
 @dataclass(frozen=True, slots=True)
-class RuntimeConfig:
-    """Captured source provenance plus execution-only configuration corrections."""
+class ConfigOrigins:
+    """Source identities and path resolution, without execution configuration."""
 
     origins: Mapping[str, Path] = field(default_factory=dict)
-    defaults: Mapping[str, dict[str, object]] = field(default_factory=dict, repr=False)
-    overlays: Mapping[str, dict[str, object]] = field(default_factory=dict, repr=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "origins", MappingProxyType(dict(self.origins)))
+
+    def origin(self, scope: str, path: Path) -> Path:
+        return self.origins.get(scope, path)
+
+    def resolve_path(self, value: str, directory: Path) -> Path:
+        candidate = Path(value)
+        reference = os.path.normpath(
+            str(candidate if candidate.is_absolute() else directory / candidate)
+        )
+        captured = self.origins.get(reference)
+        if captured is not None:
+            return captured
+        if self.origins:
+            if value.startswith("~"):
+                raise ValueError("uncaptured source path requires a new launch")
+            return Path(reference)
+        candidate = candidate.expanduser()
+        return (
+            candidate if candidate.is_absolute() else directory / candidate
+        ).resolve()
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeConfig:
+    """Immutable execution corrections with a separate source parsing context."""
+
+    origins: Mapping[str, Path] = field(default_factory=dict)
+    defaults: Mapping[str, Mapping[str, object]] = field(
+        default_factory=dict, repr=False
+    )
+    overlays: Mapping[str, Mapping[str, object]] = field(
+        default_factory=dict, repr=False
+    )
     workspaces: Mapping[str, WorkspaceBinding] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        for name in ("origins", "defaults", "overlays", "workspaces"):
+        for name in ("origins", "workspaces"):
             object.__setattr__(self, name, MappingProxyType(dict(getattr(self, name))))
+        for name in ("defaults", "overlays"):
+            object.__setattr__(self, name, freeze_mapping(getattr(self, name)))
+
+    @property
+    def source_context(self) -> ConfigOrigins:
+        return ConfigOrigins(self.origins)
 
     @classmethod
     def parse(
@@ -195,30 +236,10 @@ class RuntimeConfig:
         except (ValueError, TypeError):
             raise ValueError("invalid runtime configuration patch") from None
 
-    def origin(self, scope: str, path: Path) -> Path:
-        return self.origins.get(scope, path)
-
-    def resolve_path(self, value: str, directory: Path) -> Path:
-        candidate = Path(value)
-        reference = os.path.normpath(
-            str(candidate if candidate.is_absolute() else directory / candidate)
-        )
-        captured = self.origins.get(reference)
-        if captured is not None:
-            return captured
-        if self.origins:
-            if value.startswith("~"):
-                raise ValueError("uncaptured source path requires a new launch")
-            return Path(reference)
-        candidate = candidate.expanduser()
-        return (
-            candidate if candidate.is_absolute() else directory / candidate
-        ).resolve()
-
     def apply(self, scope: str, config: Mapping[str, object]) -> dict[str, object]:
         """Derive a fresh view; never restore a revoked workspace from a patch."""
         result = _merge(self.defaults.get(scope, {}), config)
-        overlay = deepcopy(self.overlays.get(scope, {}))
+        overlay = mutable_data(self.overlays.get(scope, {}))
         if "workspaces" in overlay:
             overlay["workspaces"] = self._workspace_overlay(
                 result.get("workspaces", {}), overlay["workspaces"]

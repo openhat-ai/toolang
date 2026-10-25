@@ -1602,8 +1602,10 @@ def test_guest_workspace_config_retains_its_host_origin(tmp_path, monkeypatch, l
     )
     guest_config = rebase_config(
         tomllib.loads(content),
-        runtime.origin("home", request.hosted_home / "config.toml").parent,
-        runtime=runtime,
+        runtime.source_context.origin(
+            "home", request.hosted_home / "config.toml"
+        ).parent,
+        context=runtime.source_context,
     )
     assert len({mount.hosted_path for mount in request.mounts}) == len(request.mounts)
     assert (

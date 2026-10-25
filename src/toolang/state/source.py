@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from toolang.common.config_runtime import RuntimeConfig
-
 from collections.abc import Collection, Mapping, Sequence
 from collections import OrderedDict
 from dataclasses import dataclass, replace
@@ -15,6 +13,7 @@ from threading import RLock
 from typing import Literal
 
 from toolang.catalog.types import CAP_DIRECTORY_NAMES
+from toolang.common.config_runtime import ConfigOrigins
 
 from ..lang.ast import AgicDecl, FlowDecl, Program
 from ..common.progress import ProgressSink, emit_progress
@@ -206,7 +205,7 @@ def scan_home_source(
     *,
     root_config: Path | None = None,
     workspace_key: str | None = None,
-    runtime: RuntimeConfig | None = None,
+    context: ConfigOrigins | None = None,
 ) -> SourceManifest:
     """Capture one agent program, config, and authored cap paths."""
 
@@ -214,7 +213,7 @@ def scan_home_source(
         observe_home_source(
             place, agent_name, root_config=root_config, workspace_key=workspace_key
         ),
-        runtime=runtime,
+        context=context,
     )
 
 
@@ -278,7 +277,7 @@ def build_source_manifest(
     previous_observation: SourceObservation | None = None,
     previous_manifest: SourceManifest | None = None,
     invalidated: Collection[str] = (),
-    runtime: RuntimeConfig | None = None,
+    context: ConfigOrigins | None = None,
 ) -> SourceManifest:
     """Hash changed files and reuse unchanged facts from one prior observation."""
 
@@ -326,10 +325,10 @@ def build_source_manifest(
             content = root_workspace_content(
                 content,
                 item.workspace_key,
-                runtime.origin("root", item.source).parent
-                if runtime
+                context.origin("root", item.source).parent
+                if context
                 else item.source.parent,
-                runtime=runtime,
+                context=context,
             )
             if not content:
                 continue
@@ -385,14 +384,14 @@ def root_source_manifest(
     previous_observation: SourceObservation | None = None,
     previous_manifest: SourceManifest | None = None,
     invalidated: Collection[str] = (),
-    runtime: RuntimeConfig | None = None,
+    context: ConfigOrigins | None = None,
 ) -> SourceManifest:
     return build_source_manifest(
         observation,
         previous_observation=previous_observation,
         previous_manifest=previous_manifest,
         invalidated=invalidated,
-        runtime=runtime,
+        context=context,
     )
 
 
@@ -402,14 +401,14 @@ def home_source_manifest(
     previous_observation: SourceObservation | None = None,
     previous_manifest: SourceManifest | None = None,
     invalidated: Collection[str] = (),
-    runtime: RuntimeConfig | None = None,
+    context: ConfigOrigins | None = None,
 ) -> SourceManifest:
     return build_source_manifest(
         observation,
         previous_observation=previous_observation,
         previous_manifest=previous_manifest,
         invalidated=invalidated,
-        runtime=runtime,
+        context=context,
     )
 
 
@@ -646,7 +645,7 @@ def _read_scope_sources(
     include_home: bool,
     root_config: Path | None = None,
     workspace_key: str | None = None,
-    runtime: RuntimeConfig | None = None,
+    context: ConfigOrigins | None = None,
 ) -> SourceSnapshot:
     files: list[SourceFile] = []
     issues: list[SourceIssue] = []
@@ -689,10 +688,10 @@ def _read_scope_sources(
                 content = root_workspace_content(
                     item.content,
                     workspace_key,
-                    runtime.origin("root", entry.source).parent
-                    if runtime
+                    context.origin("root", entry.source).parent
+                    if context
                     else entry.source.parent,
-                    runtime=runtime,
+                    context=context,
                 )
                 if not content:
                     continue
@@ -724,7 +723,7 @@ def _read_scope_sources(
                         entry.source,
                         category=category,
                         layer=layer,
-                        runtime=runtime,
+                        context=context,
                     )
                 )
             except SourceChangedError:
@@ -749,7 +748,7 @@ def read_authored_source(
     *,
     root_config: Path | None = None,
     workspace_key: str | None = None,
-    runtime: RuntimeConfig | None = None,
+    context: ConfigOrigins | None = None,
 ) -> SourceSnapshot:
     """Capture current files, isolating resource-local read failures."""
     return _read_scope_sources(
@@ -758,14 +757,14 @@ def read_authored_source(
         include_home=True,
         root_config=root_config,
         workspace_key=workspace_key,
-        runtime=runtime,
+        context=context,
     )
 
 
 def read_root_source(
-    place: Path, *, runtime: RuntimeConfig | None = None
+    place: Path, *, context: ConfigOrigins | None = None
 ) -> SourceSnapshot:
-    return _read_scope_sources(place, "", include_home=False, runtime=runtime)
+    return _read_scope_sources(place, "", include_home=False, context=context)
 
 
 def is_source_path(place: Path, agent_name: str, path: Path) -> bool:
@@ -820,7 +819,7 @@ def _collect_file(
     category: str,
     layer: str,
     relative_path: str | None = None,
-    runtime: RuntimeConfig | None = None,
+    context: ConfigOrigins | None = None,
 ) -> list[SourceFile]:
     if not path.exists() and not path.is_symlink():
         return []
@@ -837,11 +836,11 @@ def _collect_file(
 
         content = rebase_config_content(
             content,
-            runtime.origin("home" if layer == "agent" else "root", path).parent
-            if runtime
+            context.origin("home" if layer == "agent" else "root", path).parent
+            if context
             else path.parent,
             include_workspaces=layer == "agent",
-            runtime=runtime,
+            context=context,
         )
     after = _observe_file(path, relative_path=before.path)
     if before != after:

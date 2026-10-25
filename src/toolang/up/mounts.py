@@ -7,8 +7,7 @@ from collections.abc import Mapping, Sequence
 import getpass
 import json
 import os
-import tomllib
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
     from toolang.plugin.catalogs.models_dev.path import ModelCatalogSelection
@@ -21,6 +20,7 @@ from toolang.common.layout import (
     ensure_scratch_workspace,
 )
 from toolang.state.source import observe_home_source, observe_root_source
+from toolang.state.config import parse_config, root_workspace_declarations
 from toolang.common.config_sources import PROJECTION_KEY, catalog_config, resolve_path
 from toolang.common.config_runtime import CONFIG_PATCH_ENV
 
@@ -160,12 +160,16 @@ def prepare_guest_environment(
     for scope, path in (("root", layout.place_config), ("home", layout.config)):
         if not path.is_file():
             continue
-        config = tomllib.loads(path.read_text())
-        workspaces = config.get("workspaces", {})
-        if scope == "root" and PROJECTION_KEY not in config:
-            workspaces = workspaces.get(layout.config_key, {})
+        config = parse_config(path.read_bytes())
+        workspaces = (
+            root_workspace_declarations(config, layout.config_key)
+            if scope == "root"
+            else config.get("workspaces", {})
+        )
+        if not isinstance(workspaces, Mapping):
+            raise ValueError("workspaces config must be a table")
         corrected = {}
-        for name, value in workspaces.items():
+        for name, value in cast(Mapping[str, object], workspaces).items():
             if not isinstance(value, str) or not value:
                 continue
             canonical = resolve_path(value, path.parent)

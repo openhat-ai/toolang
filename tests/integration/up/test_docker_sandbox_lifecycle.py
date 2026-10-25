@@ -1407,44 +1407,50 @@ def test_docker_agent_run_interrupt_stops_and_removes_container(
         str(root),
         "bob",
     )
-    process = subprocess.Popen(
-        (
-            *base,
-            "serve",
-            "--sandbox",
-            "docker",
-            "--dev",
-            str(docker_wheel_dir),
-            "--port",
-            str(agent_port),
-        ),
-        cwd=_repository(),
-        env=environ,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
+    output = tmp_path / "serve.log"
+    with output.open("w") as log:
+        process = subprocess.Popen(
+            (
+                *base,
+                "serve",
+                "--sandbox",
+                "docker",
+                "--dev",
+                str(docker_wheel_dir),
+                "--port",
+                str(agent_port),
+            ),
+            cwd=_repository(),
+            env=environ,
+            stdin=subprocess.DEVNULL,
+            stdout=log,
+            stderr=log,
+            text=True,
+        )
     container_id: str | None = None
     try:
         deadline = time.monotonic() + 180
         while time.monotonic() < deadline:
             state = SandboxState.load(layout.runtime_status)
-            if state is not None and _endpoint_ready(endpoint):
+            # HTTP can answer before the host has finished startup admission.
+            if (
+                state is not None
+                and _endpoint_ready(endpoint)
+                and "Connected to the agent API" in output.read_text()
+            ):
                 container_id = state.ref.runtime_id
                 break
             if process.poll() is not None:
-                stdout, stderr = process.communicate()
                 pytest.fail(
-                    f"foreground agent exited before readiness\n{stdout}\n{stderr}"
+                    f"foreground agent exited before readiness\n{output.read_text()}"
                 )
             time.sleep(0.1)
         assert container_id is not None, "foreground agent did not become ready"
 
         process.send_signal(signal.SIGINT)
-        stdout, stderr = process.communicate(timeout=30)
+        process.wait(timeout=30)
 
-        assert process.returncode == 130, (stdout, stderr)
+        assert process.returncode == 130, output.read_text()
         assert SandboxState.load(layout.runtime_status) is None
         inspected = subprocess.run(
             ("docker", "inspect", container_id),
@@ -1458,10 +1464,10 @@ def test_docker_agent_run_interrupt_stops_and_removes_container(
         if process.poll() is None:
             process.send_signal(signal.SIGINT)
             try:
-                process.communicate(timeout=30)
+                process.wait(timeout=30)
             except subprocess.TimeoutExpired:
                 process.kill()
-                process.communicate(timeout=10)
+                process.wait(timeout=10)
         if SandboxState.load(layout.runtime_status) is not None:
             subprocess.run(
                 (*base, "stop", "--force"),

@@ -95,15 +95,11 @@ class ServeSpec:
     log_spec: str | None = None
     workspace_additions: Mapping[str, str] = field(default_factory=dict)
     workdir: str | None = None
-    workspace_bindings: Mapping[str, WorkspaceBinding] = field(default_factory=dict)
     automatic_port: bool = False
     registry_directory: Path | None = None
     registry_status: Path | None = None
 
     def __post_init__(self) -> None:
-        object.__setattr__(
-            self, "workspace_bindings", MappingProxyType(dict(self.workspace_bindings))
-        )
         object.__setattr__(
             self,
             "workspace_additions",
@@ -146,7 +142,6 @@ def resolve_serve(
     log_spec: str | None = None,
     temporary_port: bool = False,
     workspace_additions: Mapping[str, str] | None = None,
-    workspace_bindings: Mapping[str, WorkspaceBinding] | None = None,
     workdir: str | None = None,
     toolang_root: Path | None = None,
     launch_id: str | None = None,
@@ -165,7 +160,6 @@ def resolve_serve(
         automatic_port=port is None,
         drivers=default_drivers(layout.placement) if drivers is None else drivers,
         workspace_additions=dict(workspace_additions or {}),
-        workspace_bindings=dict(workspace_bindings or {}),
         workdir=workdir,
         host=host,
         endpoint_host=endpoint_host or _default_endpoint_host(host),
@@ -263,8 +257,7 @@ def build_serve_argv(
     bindings = (
         workspace_bindings
         if workspace_bindings is not None
-        else spec.workspace_bindings
-        or {
+        else {
             name: WorkspaceBinding(Path(source), Path(source), True)
             for name, source in spec.workspace_additions.items()
         }

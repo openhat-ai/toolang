@@ -16,7 +16,7 @@ import tomlkit
 from toolang.catalog.types import CAP_DIR_BY_KIND, CAP_KINDS
 from toolang.common.errors import ToolangError
 from toolang.common.config_sources import PROJECTION_KEY, read_config, rebase_config
-from toolang.common.config_runtime import RuntimeConfig
+from toolang.common.config_runtime import ConfigOrigins
 from toolang.common.files import EditLock, atomic_write_text
 from toolang.common.policy import resolve_query_sentinels
 
@@ -168,14 +168,11 @@ def configured_workspaces(config: Mapping[str, object]) -> dict[str, str]:
     return workspaces
 
 
-def root_workspace_overrides(
+def root_workspace_declarations(
     config: Mapping[str, object],
     key: str | None,
-    directory: Path,
-    *,
-    runtime: RuntimeConfig | None = None,
-) -> dict[str, str]:
-    """Select one stable identity without inheriting same-name foreign sources."""
+) -> Mapping[str, object]:
+    """Select authored ROOT grants before path normalization."""
     raw = config.get("workspaces", {})
     if not isinstance(raw, Mapping):
         raise ValueError("root workspaces config must be a table")
@@ -188,8 +185,20 @@ def root_workspace_overrides(
     )
     if not isinstance(selected, Mapping):
         raise ValueError(f"root workspace config must be a table: {key}")
+    return cast(Mapping[str, object], selected)
+
+
+def root_workspace_overrides(
+    config: Mapping[str, object],
+    key: str | None,
+    directory: Path,
+    *,
+    context: ConfigOrigins | None = None,
+) -> dict[str, str]:
+    """Select one stable identity without inheriting same-name foreign sources."""
+    selected = root_workspace_declarations(config, key)
     return configured_workspaces(
-        rebase_config({"workspaces": selected}, directory, runtime=runtime)
+        rebase_config({"workspaces": selected}, directory, context=context)
     )
 
 
@@ -198,11 +207,11 @@ def root_workspace_content(
     key: str | None,
     directory: Path,
     *,
-    runtime: RuntimeConfig | None = None,
+    context: ConfigOrigins | None = None,
 ) -> bytes:
     """Capture only this agent's resolved workspace policy, excluding Setup fields."""
     grants = root_workspace_overrides(
-        parse_config(content), key, directory, runtime=runtime
+        parse_config(content), key, directory, context=context
     )
     return tomlkit.dumps({"workspaces": grants}).encode() if grants else b""
 

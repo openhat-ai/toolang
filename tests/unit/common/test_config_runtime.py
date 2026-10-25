@@ -3,6 +3,7 @@
 from dataclasses import replace
 import json
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 
@@ -79,6 +80,34 @@ def test_workspace_patch_rejects_unmounted_targets_before_startup():
             '{"home":{"workspaces":{"repo":"/guest/different"}}}',
             workspaces={"repo": binding},
         )
+
+
+@pytest.mark.parametrize("section", ["defaults", "overlays"])
+def test_captured_patch_cannot_be_changed_through_nested_values(section):
+    runtime = RuntimeConfig.parse(
+        '{"defaults":{"root":{"teaming":{"human":"owner"}}},'
+        '"home":{"plugin":{"toolset":{"example":{"args":["captured"]}}}}}'
+    )
+    values = getattr(runtime, section)
+    if section == "defaults":
+        with pytest.raises(TypeError):
+            values["root"]["teaming"]["human"] = "changed"
+    else:
+        with pytest.raises(TypeError):
+            values["home"]["plugin"]["toolset"]["example"]["args"][0] = "changed"
+    execution = runtime.apply("home", {})
+    plugin = cast(dict[str, Any], execution["plugin"])
+    plugin["toolset"]["example"]["args"].append("execution-only")
+    assert runtime.apply("home", {}) == {
+        "plugin": {"toolset": {"example": {"args": ["captured"]}}}
+    }
+
+
+def test_captured_patch_does_not_retain_mutable_caller_configuration():
+    config = {"teaming": {"human": "owner"}}
+    runtime = RuntimeConfig(defaults={"root": config})
+    config["teaming"]["human"] = "changed"
+    assert runtime.apply("root", {}) == {"teaming": {"human": "owner"}}
 
 
 @pytest.mark.parametrize(
