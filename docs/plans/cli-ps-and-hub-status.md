@@ -15,9 +15,9 @@ approval.
 - Both show only `NAME`, `STATUS`, `DRIVERS`, and right-aligned `PORT`, using
   `top`'s complete `name`/`name@id` addresses. Show observed launch drivers
   (comma-separated) and service ports; missing/stopped values use `-`.
-- Count displayed instances and confirmed running instances. Only `ps` adds
-  `[teaming].hub` availability using existing bounded readiness checks, without
-  reading hub process files. No type column/breakdown or tree.
+- Count displayed instances and confirmed running instances. `ps` also counts
+  each placement and adds `[teaming].hub` availability using existing bounded
+  readiness checks, without reading hub process files. No type column or tree.
 - Bare `too hub` shows help. `status` inspects this ROOT's managed process via
   `[hub]`/`hub/pid.json`: actual bind address/PID and its `/info` version
   (`unknown` on lookup failure), independently of client settings and agents.
@@ -25,15 +25,21 @@ approval.
   terminal conventions. Configuration, protocol, persistence, authentication,
   compatibility, and migration changes are outside scope.
 
-Footer (`ls` prints only the first line; counts follow the selected inventory):
+`too ps` footer (always two lines, including zero placement counts):
 
 ```text
-4 agents: 3 running
+4 agents: 2 resident, 1 visiting, 1 roaming, 3 running
 hub running: http://127.0.0.1:7001
 ```
 
 Unavailable target: `hub not running: <url>`; this reports client readiness,
 not whether the server process exists.
+
+`too ls` footer (resident counts only; no placement breakdown or hub line):
+
+```text
+2 agents: 1 running
+```
 
 `too hub status` prints one status line:
 
@@ -63,7 +69,8 @@ Commands:
 - [ ] Cover both listings: resident-only/mixed/empty inventories, duplicate names,
   stopped/unknown states, drivers/ports, and partial/narrow/plain output.
 - [ ] Verify both client hub outcomes leave agent rows intact; server status is
-  independent of the client URL; `ls` never probes the hub; metadata/inspection
+  independent of the client URL; `ps` has the two-line footer above, while `ls`
+  has only its resident summary and never probes the hub. Metadata/inspection
   failures remain distinguishable from shutdown.
 - [ ] Assert command placement, exact help/status wording, bare help without
   probing, root `list` removal, and unchanged lifecycle routing using offline tests.
