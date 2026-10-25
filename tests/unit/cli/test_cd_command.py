@@ -240,7 +240,7 @@ def test_cd_help_describes_optional_agent(
     assert cli.main(["cd", help_flag]) == 0
 
     output = strip_ansi(capsys.readouterr().out)
-    assert "Usage: too [AGENT] cd [OPTIONS]" in output
+    assert "Usage: too cd [AGENT] [OPTIONS]" in output
     assert output.startswith("Enter an agent home.\n")
     assert "Omit AGENT to open a shell in the Toolang root." in " ".join(output.split())
     assert "Agent name, path, ref or URL" in output

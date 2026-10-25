@@ -143,15 +143,14 @@ class CliCommand(TyperCommand):
         return params
 
     def format_usage(self, ctx: Context, formatter: NativeHelpFormatter) -> None:
+        agent = agent_parameter(self)
         write_usage(
-            formatter, _usage_path(ctx), " ".join(self.collect_usage_pieces(ctx))
+            formatter,
+            _usage_path(
+                ctx, agent_after=agent is not None and agent.contract.both_orders
+            ),
+            " ".join(self.collect_usage_pieces(ctx)),
         )
-        if (agent := agent_parameter(self)) is not None and agent.contract.both_orders:
-            write_usage(
-                formatter,
-                _usage_path(ctx, agent_after=True),
-                " ".join(self._collect_usage_pieces(ctx, agent_after=True)),
-            )
 
     def write_help_sections(self, ctx: Context, formatter: HelpFormatter) -> None:
         """Let subclasses append caller-owned sections."""
@@ -160,17 +159,13 @@ class CliCommand(TyperCommand):
         _format_help(ctx, formatter)
 
     def collect_usage_pieces(self, ctx: Context) -> list[str]:
-        return self._collect_usage_pieces(ctx)
-
-    def _collect_usage_pieces(
-        self, ctx: Context, *, agent_after: bool = False
-    ) -> list[str]:
-        pieces = [self.options_metavar] if self.options_metavar else []
+        pieces = []
+        if (agent := agent_parameter(self)) is not None and agent.contract.both_orders:
+            pieces.append(argument_usage(agent))
+        if self.options_metavar:
+            pieces.append(self.options_metavar)
         for param in self.get_params(ctx):
-            if agent_after and isinstance(param, AgentParameter):
-                pieces.append(argument_usage(param))
-            else:
-                pieces.extend(parameter_usage(param, ctx))
+            pieces.extend(parameter_usage(param, ctx))
         return pieces
 
 
@@ -187,10 +182,7 @@ class CliGroup(TyperGroup):
     context_class = HelpContext
 
     def write_help_sections(self, ctx: Context, formatter: HelpFormatter) -> None:
-        """Explain agent propagation; subclasses can append caller-owned sections."""
-        if ctx.parent is not None and agent_parameters(self):
-            formatter.write_paragraph()
-            formatter.write_text("See subcommand help for accepted agent forms.")
+        """Let subclasses append caller-owned sections."""
 
     def __init__(self, *, subcommand_metavar: str | None = None, **kwargs: Any) -> None:
         super().__init__(

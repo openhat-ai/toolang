@@ -97,13 +97,16 @@ shared helpers never infer them from native parameter names.
 
 Lazy command metadata references the same contract used to construct the native
 command. Root help and recognition do not load unrelated implementations or parse
-local scripts. Prefix usage renders `AGENT` before the top-level command/group;
-dual-order leaves show a second Usage line with AGENT after the command.
-The selected leaf determines whether it is required, for example:
+local scripts. Resource groups and other prefix-only leaves render `AGENT`
+before the top-level command/group to express agent scope. Dual-order leaves
+show only command-first usage, with AGENT before options; the accepted
+agent-first form supports continuing a sequence of scoped operations, such as
+`too AGENT chore list` followed by `too AGENT stop`.
+The selected leaf determines whether AGENT is required, for example:
 
 ```text
-too AGENT info [OPTIONS]
-too info [OPTIONS] AGENT
+too info AGENT [OPTIONS]
+too cd [AGENT] [OPTIONS]
 too AGENT workspace add [OPTIONS] PATH
 too AGENT chore run [OPTIONS] CHORE
 ```

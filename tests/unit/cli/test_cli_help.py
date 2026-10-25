@@ -460,7 +460,7 @@ def test_unknown_option_during_command_resolution_keeps_usage(capsys, monkeypatc
         (
             ["chat"],
             "AGENT",
-            "too <AGENT> chat [OPTIONS]\nUsage: too chat [OPTIONS] <AGENT>",
+            "too chat <AGENT> [OPTIONS]",
         ),
         (["alice", "cancel"], "RUN", "too <AGENT> cancel [OPTIONS] <RUN>"),
         (
@@ -501,8 +501,13 @@ def test_unknown_option_is_not_hidden_by_a_missing_agent(
     assert too_main(["--root", str(tmp_path), command, "--unknown"]) == 2
     output = capsys.readouterr()
     assert not output.out
+    usage = (
+        "too chat <AGENT> [OPTIONS]"
+        if command == "chat"
+        else f"too <AGENT> {command} [OPTIONS]"
+    )
     assert strip_ansi(output.err).startswith(
-        f"Error: No such option: --unknown\n\nUsage: too <AGENT> {command} [OPTIONS]"
+        f"Error: No such option: --unknown\n\nUsage: {usage}"
     )
 
 
@@ -727,10 +732,10 @@ def test_chore_clone_command_is_removed(target, tmp_path, capsys):
 @pytest.mark.parametrize(
     ("arguments", "usage"),
     [
-        (["a", "chat"], "too <AGENT> chat [OPTIONS]"),
+        (["a", "chat"], "too chat <AGENT> [OPTIONS]"),
         (["a", "prompt", "new"], "too [AGENT] prompt new [OPTIONS] <NAME>"),
         (["a", "workspace"], "too <AGENT> workspace [OPTIONS] <COMMAND> [ARGUMENTS]"),
-        (["serve"], "too <AGENT> serve [OPTIONS]"),
+        (["serve"], "too serve <AGENT> [OPTIONS]"),
     ],
 )
 def test_agent_usage_keeps_recommended_position_and_normal_weight(
@@ -760,19 +765,27 @@ def test_agent_usage_keeps_recommended_position_and_normal_weight(
 
 
 @pytest.mark.parametrize("command", ["info", "chat", "cd", "start", "stop", "serve"])
-@pytest.mark.parametrize("agent_first", [False, True])
-def test_dual_order_help_advertises_both_forms_once_per_argument(
-    command, agent_first, tmp_path, monkeypatch, capsys
+@pytest.mark.parametrize("agent_position", ["omitted", "before", "after"])
+@pytest.mark.parametrize("flag,status", [("-h", 0), ("--help", 0), ("--unknown", 2)])
+def test_dual_order_commands_show_one_command_first_usage(
+    command, agent_position, flag, status, tmp_path, monkeypatch, capsys
 ):
     monkeypatch.setattr("sys.argv", ["too"])
-    args = ["alice", command] if agent_first else [command, "alice"]
-    assert too_main(["--root", str(tmp_path), *args, "--help"]) == 0
-    output = strip_ansi(capsys.readouterr().out)
+    args = {
+        "omitted": [command],
+        "before": ["alice", command],
+        "after": [command, "alice"],
+    }[agent_position]
+    assert too_main(["--root", str(tmp_path), *args, flag]) == status
+    captured = capsys.readouterr()
+    output = strip_ansi(captured.err if status else captured.out)
     agent = "[AGENT]" if command == "cd" else "<AGENT>"
-    assert f"Usage: too {agent} {command} [OPTIONS]" in output.splitlines()
-    assert f"Usage: too {command} [OPTIONS] {agent}" in output.splitlines()
-    arguments = output.split("Arguments:\n", 1)[1].split("Options:", 1)[0]
-    assert arguments.count("AGENT") == 1
+    assert [line for line in output.splitlines() if line.startswith("Usage:")] == [
+        f"Usage: too {command} {agent} [OPTIONS]"
+    ]
+    if not status:
+        arguments = output.split("Arguments:\n", 1)[1].split("Options:", 1)[0]
+        assert arguments.count("AGENT") == 1
 
 
 @pytest.mark.parametrize(
@@ -783,7 +796,7 @@ def test_dual_order_help_advertises_both_forms_once_per_argument(
             "Run an agent in the foreground",
             "AGENT",
             "Agent name, ref, URL or instance",
-            "too <AGENT> serve [OPTIONS]",
+            "too serve <AGENT> [OPTIONS]",
         ),
         (
             "_serve",
@@ -866,7 +879,7 @@ def test_cap_children_own_their_agent_contract(kind, command, tmp_path, capsys):
     assert f"Omit AGENT to {scope} the Toolang root." in output
     assert too_main(["--root", str(tmp_path), kind, "--help"]) == 0
     group_help = " ".join(strip_ansi(capsys.readouterr().out).split())
-    assert "See subcommand help for accepted agent forms." in group_help
+    assert "See subcommand help for accepted agent forms." not in group_help
     assert "Arguments:" not in group_help
 
 
@@ -896,7 +909,7 @@ def test_chat_help_uses_the_canonical_optional_thread_option(
     assert too_main(["--root", str(tmp_path), "a", "chat", *args]) == 0
     output = strip_ansi(capsys.readouterr().out)
     usage = output.partition("Usage:")[2].splitlines()[0].strip()
-    assert usage == "too <AGENT> chat [OPTIONS]"
+    assert usage == "too chat <AGENT> [OPTIONS]"
     row = next(line for line in output.splitlines() if "[THREAD]" in line)
     assert "--thread" in row and "-t" in row
     assert "-t, --thread [THREAD]" in row
@@ -986,14 +999,17 @@ def test_error_usage_preserves_the_recommended_agent_position(
     assert "TEXT" not in output
 
 
-@pytest.mark.parametrize("group", ["workspace", "chore"])
-def test_required_group_prefix_is_documented_without_a_duplicate_parameter(
-    group, tmp_path, capsys
-):
-    assert too_main(["--root", str(tmp_path), "a", group, "--help"]) == 0
+@pytest.mark.parametrize(
+    "group", ["workspace", "chore", "psyche", "skill", "service", "prompt"]
+)
+@pytest.mark.parametrize("agent_first", [False, True])
+def test_agent_group_help_omits_redundant_footer(group, agent_first, tmp_path, capsys):
+    args = ["a", group] if agent_first else [group]
+    assert too_main(["--root", str(tmp_path), *args, "--help"]) == 0
     output = strip_ansi(capsys.readouterr().out)
-    assert f"<AGENT> {group} [OPTIONS]" in output
-    assert "See subcommand help for accepted agent forms." in output
+    agent = "<AGENT>" if group in {"workspace", "chore"} else "[AGENT]"
+    assert f"{agent} {group} [OPTIONS]" in output
+    assert "See subcommand help for accepted agent forms." not in output
     assert "Arguments:" not in output
     assert "[required]" not in output
 
