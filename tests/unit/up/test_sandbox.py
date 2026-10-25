@@ -295,6 +295,46 @@ def test_guest_launch_binds_an_explicit_wheel(tmp_path, monkeypatch, toolang_whe
     assert "development_digest" in entry["control"]["startup_contract"]
 
 
+@pytest.mark.parametrize("replacement", ["v0.4.0b1-2-g22222222", "unknown"])
+@pytest.mark.parametrize("confirmed", [False, True])
+def test_guest_launch_rechecks_a_wheel_replaced_after_resolution(
+    tmp_path, monkeypatch, toolang_wheel, replacement, confirmed
+):
+    monkeypatch.setattr(
+        sandbox, "displayed_toolang_version", lambda: "v0.4.0b1-1-g11111111"
+    )
+    implementation = FakeSandbox()
+    monkeypatch.setattr(sandbox, "create_sandbox", lambda *a, **k: implementation)
+
+    async def ready(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(sandbox, "_wait_ready", ready)
+    wheel = toolang_wheel(tmp_path / "toolang-test.whl", "v0.4.0b1-1-g11111111")
+    spec = asyncio.run(
+        sandbox.resolve_launch(
+            layout=_launch_spec(tmp_path).serve.layout,
+            environ={},
+            sandbox="fake",
+            dev=Path(f"{wheel}!") if confirmed else wheel,
+        )
+    )
+    toolang_wheel(wheel, replacement)
+
+    if confirmed:
+        asyncio.run(sandbox.launch(spec))
+        prepared = implementation.calls[0]
+        assert isinstance(prepared, tuple)
+        request = cast(SandboxRequest, prepared[2])
+        assert request.expected_toolang_version == (
+            None if replacement == "unknown" else replacement
+        )
+    else:
+        with pytest.raises(ValueError, match="Toolang version mismatch.*Append !"):
+            asyncio.run(sandbox.launch(spec))
+        assert implementation.calls == []
+
+
 def test_resolve_selection_uses_explicit_home_root_host_precedence(
     tmp_path: Path,
 ) -> None:

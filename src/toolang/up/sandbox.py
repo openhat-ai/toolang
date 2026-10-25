@@ -104,6 +104,7 @@ class LaunchSpec:
     output: SandboxOutput = "inherit"
     log_path: Path | None = None
     dev_artifact: Path | None = None
+    dev_version_confirmed: bool = False
     dotenv_envs: dict[str, str] = field(default_factory=dict, repr=False)
     guest_environ: dict[str, str] | None = field(default=None, repr=False)
 
@@ -188,6 +189,7 @@ async def resolve_launch(
         output=output,
         log_path=log_path,
         dev_artifact=artifact,
+        dev_version_confirmed=dev is not None and str(dev).endswith("!"),
     )
 
 
@@ -372,7 +374,9 @@ async def _launch_locked(
                 )
         elif not on_host:
             assert spec.dev_artifact is not None
-            version = wheel_source_version(spec.dev_artifact)
+            version = _validate_wheel_version(
+                spec.dev_artifact, confirmed=spec.dev_version_confirmed
+            )
             expected_version = version if version != "unknown" else None
         hosted_root = implementation.runtime_place(local_root)
         hosted_place = layout.place if on_host else hosted_root
@@ -1040,16 +1044,17 @@ def resolve_dev_artifact(raw: Path | None, *, sandbox: str) -> Path | None:
     return selected
 
 
-def _validate_wheel_version(path: Path, *, confirmed: bool) -> None:
+def _validate_wheel_version(path: Path, *, confirmed: bool) -> str:
     actual = wheel_source_version(path)
     if confirmed:
-        return
+        return actual
     expected = displayed_toolang_version()
     if "unknown" in {actual, expected} or actual != expected:
         raise ValueError(
             f"Toolang version mismatch: current {expected}, wheel {actual}. "
             "Append ! to the --dev path to confirm this wheel."
         )
+    return actual
 
 
 def _is_toolang_wheel(path: Path) -> bool:
