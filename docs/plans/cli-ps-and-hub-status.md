@@ -15,9 +15,9 @@ approval.
 - Both show only `NAME`, `STATUS`, `DRIVERS`, and right-aligned `PORT`, using
   `top`'s complete `name`/`name@id` addresses. Show observed launch drivers
   and service ports, using the state and metadata rules below.
-- Count displayed instances and confirmed running instances. `ps` also counts
-  each placement and adds `[teaming].hub` availability using existing bounded
-  readiness checks, without reading hub process files. No type column or tree.
+- Count displayed instances, placements, and confirmed running instances (`ls`
+  includes only the resident count). `ps` uses existing bounded readiness checks
+  for `[teaming].hub`, without reading hub process files. No type column or tree.
 - Bare `too hub` shows help. `status` inspects this ROOT's managed process via
   `[hub]`/`hub/pid.json`: actual bind address/PID and its `/info` version
   (`unknown` on lookup failure), independently of client settings and agents.
@@ -65,10 +65,10 @@ Keep runtime/API values unchanged. `ls`, `ps`, and agent `info` share this mappi
 hub running: http://127.0.0.1:7001
 ```
 
-`too ls` footer (resident counts only; no placement breakdown or hub line):
+`too ls` footer (resident count only; no visiting/roaming counts or hub line):
 
 ```text
-2 agents: 1 running
+2 agents: 2 resident, 1 running
 ```
 
 `too hub status` prints one status line:
