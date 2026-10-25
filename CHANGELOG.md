@@ -75,6 +75,22 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   keeping its agent optional.
   ([#964](https://github.com/openhat-ai/toolang/pull/964))
 
+- **Breaking:** Nonresident agents no longer inherit agent teaming or workspace
+  policy from the global Toolang root; configure them in `PLACE/config.toml` or
+  roaming `toolang.toml`. Prefer `--workspace`/`--workdir` for visiting workspace
+  grants.
+
+- **Breaking:** Restart Docker guests with a Toolang package that matches the
+  new startup contract; stop each guest with `too AGENT stop`, then relaunch
+  after upgrading.
+
+- Roaming launches capture the project `toolang.toml` as `PLACE/config.toml` and
+  keep authored `HOME` files, relocating only Toolang-owned legacy projections.
+
+- Guests read packaged catalogs locally, automatic `PLACE` and `HOME` catalogs
+  in their own scopes, and explicitly selected catalogs from
+  `.inputs/catalog.json`.
+
 ### Fixed
 
 - `too hub` records local process state in `hub/pid.json` and removes it after
@@ -105,6 +121,9 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 - Collection and inspection tables now share the same bottom separator as
   `too ls` and `too ps`, with a blank line before collection counts.
   ([#967](https://github.com/openhat-ai/toolang/pull/967))
+
+- Docker guests sharing prepared State no longer repeat `Prepared` messages or
+  alternate revisions during host `caps` or stopped-agent inspection.
 
 ## [0.4.0b1] - 2026-10-24
 
