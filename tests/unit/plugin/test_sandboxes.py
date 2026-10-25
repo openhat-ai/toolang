@@ -363,6 +363,21 @@ def test_docker_does_not_choose_an_unversioned_package(tmp_path):
         docker_sandbox.DockerSandbox({}).prepare(None, request)
 
 
+def test_docker_passes_the_selected_cli_identity_to_the_guest(tmp_path):
+    request = _request(tmp_path)
+    request = replace(
+        request,
+        expected_toolang_version="v0.4.0b1-1-g12345678*",
+        envs={**request.envs, "TOOLANG_GUEST_EXPECTED_VERSION": "wrong-image-value"},
+    )
+    plan = docker_sandbox.DockerSandbox({}).prepare(None, request)
+    assert (
+        plan.envs["TOOLANG_GUEST_EXPECTED_VERSION"] == request.expected_toolang_version
+    )
+    generated = Path(plan.meta["stage_dir"]) / "active/guest.env"
+    assert "TOOLANG_GUEST_EXPECTED_VERSION" not in dotenv_values(generated)
+
+
 def test_host_sandbox_parses_own_spec_and_prepares_local_process(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -1061,6 +1076,74 @@ def test_docker_guest_preserves_image_environment_and_scopes_uv_overrides(
     assert not diagnostic.exists()
 
 
+@pytest.mark.parametrize(
+    "expected,actual,accepted",
+    [
+        ("v0.4.0a1", "v0.4.0a1", True),
+        ("v0.4.0b1", "v0.4.0b1", True),
+        ("v0.4.0rc1", "v0.4.0rc1", True),
+        ("v0.4.0.dev1", "v0.4.0.dev1", True),
+        ("v0.4.0b1-1-g11111111*", "v0.4.0b1-1-g11111111*", True),
+        ("v0.4.0b1-1-g11111111*", "v0.4.0b1-1-g22222222*", False),
+        ("v0.4.0b1-1-g11111111*", "v0.4.0b1-1-g11111111", False),
+    ],
+)
+def test_guest_checks_the_complete_version_before_starting_workload(
+    tmp_path, expected, actual, accepted
+):
+    tools = tmp_path / "tools"
+    tools.mkdir()
+    _link_guest_utilities(tools)
+    _write_fake_guest_tools(tools, python=sys.executable)
+    _write_executable(
+        tools / "too-template",
+        "#!/bin/sh\n"
+        'if [ "$1" = "_serve" ] && [ "$2" = "--help" ]; then exit 0; fi\n'
+        f"if [ \"$1\" = \"--version\" ]; then printf '%s\\n' '{actual}'; exit 0; fi\n"
+        "exit 1\n",
+    )
+    diagnostic = tmp_path / "diagnostic.log"
+    events = tmp_path / "startup.events"
+    workload = tmp_path / "workload.log"
+    result = subprocess.run(
+        [
+            "/bin/sh",
+            str(Path(docker_guest.__file__).with_name("guest.sh")),
+            str(diagnostic),
+            str(diagnostic),
+            str(events),
+            "toolang==0.4.0b1",
+            str(workload),
+            "--",
+            sys.executable,
+            "-c",
+            "import os; assert 'TOOLANG_GUEST_EXPECTED_VERSION' not in os.environ; print('started')",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=15,
+        env={
+            "HOSTNAME": _CONTAINER_ID[:12],
+            "PATH": str(tools),
+            "TOOLANG_GUEST_RUNTIME": str(tmp_path / "runtime"),
+            "TOOLANG_TEST_PYTHON": sys.executable,
+            "TOOLANG_TEST_TOO": str(tools / "too-template"),
+            "TOOLANG_GUEST_EXPECTED_VERSION": expected,
+        },
+    )
+    if accepted:
+        assert result.returncode == 0, result.stderr
+        assert workload.read_text() == "started\n"
+        assert events.read_text().splitlines()[-1] == "server.running"
+    else:
+        assert result.returncode == 69
+        assert not workload.exists()
+        assert events.read_text().splitlines()[-1] == "toolang.version.failed"
+        message = result.stderr
+        assert f"expected {expected}, installed {actual}" in message
+        assert "--dev PATH!" in message
+
+
 @pytest.mark.parametrize("command", ["too", "toolang", "custom"])
 def test_docker_guest_executes_the_real_command_with_original_pid_and_arguments(
     tmp_path: Path, command: str
@@ -1648,8 +1731,26 @@ def test_docker_guest_requires_the_default_short_container_hostname(
     ]
 
 
+@pytest.mark.parametrize(
+    "failure,detail,label",
+    [
+        (
+            "toolang.check.failed",
+            "The installed Toolang package cannot start the required AgentServer.",
+            "Failed to check Toolang",
+        ),
+        (
+            "toolang.version.failed",
+            "The installed Toolang version does not match the selected version.",
+            "Toolang version mismatch",
+        ),
+    ],
+)
 def test_docker_startup_observer_preserves_order_and_curated_failure(
     tmp_path: Path,
+    failure,
+    detail,
+    label,
 ) -> None:
     path = tmp_path / "startup.events"
     path.write_text(
@@ -1661,7 +1762,7 @@ def test_docker_startup_observer_preserves_order_and_curated_failure(
         "toolang.install.running\n"
         "toolang.install.ok\n"
         "toolang.check.running\n"
-        "toolang.check.failed\n",
+        f"{failure}\n",
         encoding="utf-8",
     )
     events: list[ProgressEvent] = []
@@ -1687,7 +1788,7 @@ def test_docker_startup_observer_preserves_order_and_curated_failure(
             "runtime",
             "create",
             "failed",
-            "The installed Toolang package cannot start the required AgentServer.",
+            detail,
         ),
     ]
     assert [event.label for event in events] == [
@@ -1696,7 +1797,7 @@ def test_docker_startup_observer_preserves_order_and_curated_failure(
         "Installing Toolang from toolang.whl...",
         "Installed Toolang from toolang.whl",
         "Checking Toolang...",
-        "Failed to check Toolang",
+        label,
     ]
 
 

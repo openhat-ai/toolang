@@ -65,7 +65,7 @@ DEFAULT_IMAGE = "python:3.13-slim"
 # Requests already contain the resolved agent environment. Only an explicit
 # legacy pattern adds another restriction.
 DEFAULT_ENVIRONMENT_ALLOW_PATTERN = r".*"
-_CONTROL_ENV_NAMES = RUNTIME_ENV_NAMES
+_CONTROL_ENV_NAMES = RUNTIME_ENV_NAMES | {"TOOLANG_GUEST_EXPECTED_VERSION"}
 _STARTUP_EVENT_INTERVAL_SEC = 0.05
 _STARTUP_EVENT_MAX_BYTES = 1024
 _STARTUP_EVENT_MAP: dict[str, tuple[ProgressStage, str, ProgressStatus]] = {
@@ -83,6 +83,7 @@ _STARTUP_EVENT_MAP: dict[str, tuple[ProgressStage, str, ProgressStatus]] = {
     "toolang.check.running": ("create", "Checking Toolang...", "running"),
     "toolang.check.ok": ("create", "Checked Toolang", "running"),
     "toolang.check.failed": ("create", "Failed to check Toolang", "failed"),
+    "toolang.version.failed": ("create", "Toolang version mismatch", "failed"),
     "server.running": ("start", "Starting agent...", "running"),
 }
 _STARTUP_EVENT_TRANSITIONS = {
@@ -97,7 +98,9 @@ _STARTUP_EVENT_TRANSITIONS = {
         {"toolang.install.ok", "toolang.install.failed"}
     ),
     "toolang.install.ok": frozenset({"toolang.check.running"}),
-    "toolang.check.running": frozenset({"toolang.check.ok", "toolang.check.failed"}),
+    "toolang.check.running": frozenset(
+        {"toolang.check.ok", "toolang.check.failed", "toolang.version.failed"}
+    ),
     "toolang.check.ok": frozenset({"server.running"}),
 }
 
@@ -404,6 +407,11 @@ class DockerSandbox:
             log_path=request.log_path,
             endpoint=request.endpoint,
             envs={
+                **(
+                    {"TOOLANG_GUEST_EXPECTED_VERSION": request.expected_toolang_version}
+                    if request.expected_toolang_version is not None
+                    else {}
+                ),
                 "TOOLANG_HOST_GATEWAY": DEFAULT_HOST_GATEWAY,
                 "TOOLANG_ROOT": str(hosted_env_path.parent),
                 "TOOLANG_SANDBOX": f"{self.name}:{image}",
@@ -711,6 +719,7 @@ async def _observe_startup_events(
                 "python.install.failed",
                 "toolang.install.failed",
                 "toolang.check.failed",
+                "toolang.version.failed",
                 "server.running",
             }:
                 return
@@ -792,6 +801,8 @@ def _startup_event_detail(token: str, *, package_source: str) -> str | None:
         return "Toolang installation failed."
     if token == "toolang.check.failed":
         return "The installed Toolang package cannot start the required AgentServer."
+    if token == "toolang.version.failed":
+        return "The installed Toolang version does not match the selected version."
     return None
 
 

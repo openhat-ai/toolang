@@ -135,21 +135,29 @@ On attachment, explicit values must match saved settings; omitted values retain
 the running settings. Stop the existing agent before changing them.
 
 Commands that start a new guest accept `--dev [PATH]`. This includes `serve`,
-`start`, `chat`, Script `run`, and `rerun`. Without `--dev`, an installed Toolang
-distribution selects its exact package version, including alpha, beta, rc, and
-dev releases. An editable installation or directly imported source project
-automatically builds a wheel from that source. Bare `--dev` uses `.` (the process
-working directory, not the script directory or agent home). An explicit `PATH`
-selects that path.
-`PATH` is either one Toolang `.whl` file or a directory to search recursively
-for Toolang wheels. Directory selection uses the most recent file modification
-time and breaks equal-time ties by absolute path. The selected concrete wheel
-is staged into Docker and supplies its `too _serve` command. Build a current
-wheel and select it with:
+`start`, `chat`, Script `run`, and `rerun`. Without `--dev`, the guest installs the
+controller's exact distribution version, including alpha, beta, rc, and dev
+releases, then verifies its complete `too --version` identity before starting.
+The identity includes Git revision and dirty state when present; a matching
+package version alone does not establish a matching build.
+
+`--dev` selects a local Toolang wheel. Bare `--dev` uses `.` (the invocation
+working directory, not script directory or agent home). `PATH` is either a wheel
+file or a directory searched recursively for Toolang wheels. Directory selection
+uses the newest modification time and breaks ties by absolute path. The selected
+wheel's distribution metadata and embedded source identity are checked before
+sandbox preparation. A mismatch or unknown identity fails instead of selecting
+another wheel. Toolang never builds a wheel automatically.
+
+Append `!` to a wheel or directory path to confirm a different or unknown source
+identity. This bypasses only the version comparison; the wheel must still be a
+valid Toolang artifact. Quote paths containing `!` to avoid shell interpretation:
 
 ```sh
 uv build --wheel
-too alice start --sandbox docker --dev
+too alice start --sandbox docker --dev dist
+too alice start --sandbox docker --dev 'dist!'
+too alice start --sandbox docker --dev 'dist/toolang-0.4.0b1-py3-none-any.whl!'
 ```
 
 A following non-option token is consumed as PATH. Before a runnable selector or
@@ -158,26 +166,22 @@ input, use `--dev=.` or terminate options with `--dev --`. For example,
 `too demo.too summarize --dev -- hello` both select from the working directory.
 Use `--dev=PATH` or a `./` prefix for paths beginning with `-`. Repeated `--dev`
 options use the last value; a runnable-level occurrence overrides the script
-root value. Explicit empty paths (`--dev=` or `--dev ""`) also resolve to `.`.
+root value. Explicit empty paths (`--dev=` or `--dev ""`) resolve to `.`;
+`--dev '!'` selects that directory with version confirmation.
 
 Help displays environment, default, and bare-option metadata as separate tags:
 `[env: NAME=] [default: VALUE] [bare: VALUE]`. Only applicable tags are shown.
 For `--dev`, `[bare: .]` describes the value used when PATH is omitted; it does
 not change the default when the entire option is absent.
 
-Explicit `--dev` paths select existing wheels; directories are not built as
-source projects. Automatic source builds use uv, or the current interpreter's
-pip when uv is unavailable, and cache completed wheels under the controller
-root's `.cache/packages`. Source contents, build configuration, and source
-provenance determine reuse. Source changes apply to the next new guest, not an
-already running server. Build failures do not fall back to a published package.
-
 Package selection applies only while starting a new guest: host execution uses
 the current Toolang installation, and an attached AgentServer retains its
-selected package. A non-editable local wheel or VCS installation is an installed
-artifact, not live source. Its exact distribution version must be available from
-the configured index; use `--dev PATH` for a custom artifact that is unavailable
-there. Automatic selection never substitutes a different distribution version.
+selected package. Explicit wheels must still match a running server's bound path
+and content, even with `!`. Source users can build and select a wheel manually;
+non-editable custom artifacts also need an explicit wheel when their exact
+version is unavailable from the configured index. Installation failures never
+substitute another version. A confirmed wheel can still be incompatible with
+the controller's runtime arguments or protocol.
 
 Sandbox selection and implementation configuration are separate:
 

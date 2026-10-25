@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from functools import cache
+from email.parser import Parser
 from importlib.metadata import distribution as package_distribution
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as package_version
@@ -12,6 +13,7 @@ from pathlib import Path
 import tomllib
 from urllib.parse import urlsplit
 from urllib.request import url2pathname
+from zipfile import BadZipFile, ZipFile
 
 _BUILD_INFO_NAME = "_build_info.json"
 _UNKNOWN_SOURCE_VERSION = "unknown"
@@ -104,8 +106,47 @@ def embedded_source_version() -> str:
 
     path = Path(__file__).resolve().parents[1] / _BUILD_INFO_NAME
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+        raw = path.read_text(encoding="utf-8")
+    except OSError:
+        return _UNKNOWN_SOURCE_VERSION
+    return _build_source_version(raw)
+
+
+def wheel_source_version(path: Path) -> str:
+    """Read a Toolang wheel's CLI version without importing its code."""
+
+    try:
+        with ZipFile(path) as wheel:
+            metadata_paths = [
+                name
+                for name in wheel.namelist()
+                if name.endswith(".dist-info/METADATA")
+            ]
+            if len(metadata_paths) != 1:
+                raise ValueError("expected one distribution metadata file")
+            metadata = Parser().parsestr(wheel.read(metadata_paths[0]).decode("utf-8"))
+            if metadata.get("Name", "").casefold() != "toolang" or not metadata.get(
+                "Version"
+            ):
+                raise ValueError("distribution is not Toolang")
+            try:
+                raw = wheel.read(f"toolang/{_BUILD_INFO_NAME}").decode("utf-8")
+            except KeyError:
+                return _UNKNOWN_SOURCE_VERSION
+    except (BadZipFile, OSError, UnicodeError, ValueError) as exc:
+        raise ValueError(f"Invalid Toolang wheel: {path}") from exc
+    version = _build_source_version(raw)
+    return (
+        version
+        if version == _UNKNOWN_SOURCE_VERSION
+        else f"v{version.removeprefix('v')}"
+    )
+
+
+def _build_source_version(raw: str) -> str:
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
         return _UNKNOWN_SOURCE_VERSION
     if not isinstance(payload, Mapping):
         return _UNKNOWN_SOURCE_VERSION

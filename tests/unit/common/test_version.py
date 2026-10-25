@@ -268,6 +268,28 @@ def test_unknown_package_version_requires_an_explicit_wheel(monkeypatch):
         version.toolang_requirement()
 
 
+@pytest.mark.parametrize(
+    "value", ["0.4.0", "0.4.0a1", "0.4.0b1", "0.4.0rc1", "0.4.0.dev1"]
+)
+def test_package_requirement_preserves_the_complete_distribution_version(
+    monkeypatch, value
+):
+    monkeypatch.setattr(version, "package_version", lambda _: value)
+    assert version.toolang_requirement() == f"toolang=={value}"
+
+
+def test_wheel_version_reads_embedded_identity_instead_of_distribution_version(
+    tmp_path, toolang_wheel
+):
+    wheel = toolang_wheel(tmp_path / "toolang-0.4.0b1.whl", "v0.4.0b1-2-g12345678*")
+    assert version.wheel_source_version(wheel) == "v0.4.0b1-2-g12345678*"
+
+
+def test_wheel_without_provenance_reports_unknown(tmp_path, toolang_wheel):
+    wheel = toolang_wheel(tmp_path / "toolang-test.whl", build_info=False)
+    assert version.wheel_source_version(wheel) == "unknown"
+
+
 def test_development_source_keeps_editable_signal_without_safe_local_path(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

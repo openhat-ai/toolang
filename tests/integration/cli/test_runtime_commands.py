@@ -1007,10 +1007,13 @@ def test_remove_deletes_stopped_agent_home_without_authored_source(
         ["--dev", "."],
         ["--dev", "nested"],
         ["--dev=nested/toolang-2.whl"],
+        ["--dev", "nested!"],
+        ["--dev=nested/toolang-2.whl!"],
+        ["--dev", "!"],
     ],
 )
 def test_dev_selects_a_wheel_from_the_invocation_directory(
-    command, options, tmp_path, monkeypatch
+    command, options, tmp_path, monkeypatch, toolang_wheel
 ):
     layout = _create_agent(tmp_path / "root")
     cwd = tmp_path / "current"
@@ -1018,8 +1021,8 @@ def test_dev_selects_a_wheel_from_the_invocation_directory(
     nested.mkdir(parents=True)
     old = cwd / "toolang-1.whl"
     latest = nested / "toolang-2.whl"
-    old.touch()
-    latest.touch()
+    toolang_wheel(old)
+    toolang_wheel(latest)
     os.utime(old, ns=(1_000_000_000, 1_000_000_000))
     os.utime(latest, ns=(2_000_000_000, 2_000_000_000))
     monkeypatch.chdir(cwd)
