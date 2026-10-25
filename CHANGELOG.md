@@ -11,6 +11,11 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 - `too ls` and `too ps` show the sandbox selector before the driver, with
   `-` for inactive instances or missing metadata.
+  ([#970](https://github.com/openhat-ai/toolang/pull/970))
+
+- Top footer function keys use the terminal's default colors, so light
+  terminals no longer show black blocks.
+  ([#972](https://github.com/openhat-ai/toolang/pull/972))
 
 - Talk message dividers use a solid line instead of a dotted one while
   keeping their dim styling, spacing, and alignment.
