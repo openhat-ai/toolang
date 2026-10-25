@@ -73,7 +73,7 @@ The root hub stores its process record, lock, and log at:
 
 The private `pid.json` contains only `pid`, `created`, `host`, `port`, and
 `status` (`starting` or `running`). It describes the local process and is removed
-after stop; clients use `[teaming]` in `ROOT/config.toml`. Human and backend
+after stop; agent clients use `[teaming]` in their PLACE root layer. Human and backend
 identity are absent from this record.
 
 
@@ -164,8 +164,7 @@ The host owns one directory per complete address under ROOT, regardless of PLACE
 ROOT/.runtime/active/<address>/
   info.json                         # Host path view
   register.lock                     # Present while owned
-  docker/                           # Docker launches only
-    config.toml                     # Generated guest ROOT configuration
+  docker/<launch-hash>/             # Docker launches only
     active/
       info.json                     # Guest path view
       guest.env
@@ -264,9 +263,9 @@ directories: they acquire an existing guard, or read optimistically and retry
 under the guard if the first writer creates it during the read. An unchanged
 roaming configuration projection also leaves an absent edit lock absent.
 Shared roaming `toolang.toml` edits use `<srcdir>/.toolang/.state/root/edit.lock`; projected
-home configuration uses its home edit lock. Release edit locks before refreshing
+PLACE configuration uses `PLACE/.state/root/edit.lock`. Release edit locks before refreshing
 State. The watcher uses source-change detection independently of edit locks.
-Roaming projection verifies its root inputs again after releasing the home guard
+Roaming projection verifies its root inputs again after releasing the projection guard
 and retries changed inputs, up to three attempts. Chore inspection reads inline
 and file definitions together. API patches hold edit across winner checks and
 read/modify/write; CLI saves/deletes recheck the winner under edit through commit.

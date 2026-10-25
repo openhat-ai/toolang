@@ -7,6 +7,8 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ## [Unreleased]
 
+## [0.4.0b2] - 2026-10-25
+
 ### Changed
 
 - **Breaking:** Root `too list` is replaced by resident-only `too ls`; use
@@ -75,6 +77,26 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   keeping its agent optional.
   ([#964](https://github.com/openhat-ai/toolang/pull/964))
 
+- **Breaking:** Nonresident agents no longer inherit agent teaming or workspace
+  policy from the global Toolang root; configure them in `PLACE/config.toml` or
+  roaming `toolang.toml`. Prefer `--workspace`/`--workdir` for visiting workspace
+  grants.
+  ([#969](https://github.com/openhat-ai/toolang/pull/969))
+
+- **Breaking:** Stop resident and visiting Docker guests with `too AGENT stop`,
+  or roaming scripts with Ctrl+C, then relaunch with a Toolang package matching
+  the new startup contract.
+  ([#969](https://github.com/openhat-ai/toolang/pull/969))
+
+- Roaming launches capture the project `toolang.toml` as `PLACE/config.toml` and
+  keep authored `HOME` files, relocating only Toolang-owned legacy projections.
+  ([#969](https://github.com/openhat-ai/toolang/pull/969))
+
+- Guests read packaged catalogs locally, automatic `PLACE` and `HOME` catalogs
+  in their own scopes, and explicitly selected catalogs from
+  `.inputs/catalog.json`.
+  ([#969](https://github.com/openhat-ai/toolang/pull/969))
+
 ### Fixed
 
 - `too hub` records local process state in `hub/pid.json` and removes it after
@@ -105,6 +127,25 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 - Collection and inspection tables now share the same bottom separator as
   `too ls` and `too ps`, with a blank line before collection counts.
   ([#967](https://github.com/openhat-ai/toolang/pull/967))
+
+- Docker guests sharing prepared State no longer repeat `Prepared` messages or
+  alternate revisions during host `caps` or stopped-agent inspection.
+  ([#969](https://github.com/openhat-ai/toolang/pull/969))
+
+- Guests keep the published workspace identity when a workspace symlink
+  is retargeted, and a rebound execution source cannot gain mounted access or
+  alternate revisions.
+  ([#969](https://github.com/openhat-ai/toolang/pull/969))
+
+- Guests keep automatic root and home catalog choices when higher-priority
+  files appear, reject missing selected catalogs, and treat dangling roaming
+  `HOME` catalogs as invalid.
+  ([#969](https://github.com/openhat-ai/toolang/pull/969))
+
+- Docker sandbox fallback catalog bindings use read-only
+  `PLACE/.inputs/catalog.json`, resolve guest paths from the most specific
+  mount, and reject conflicting targets.
+  ([#969](https://github.com/openhat-ai/toolang/pull/969))
 
 ## [0.4.0b1] - 2026-10-24
 
@@ -3285,7 +3326,8 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 - The formatter normalizes `exec` statements consistently with other flow
   statements. (#676)
 
-[Unreleased]: https://github.com/openhat-ai/toolang/compare/v0.4.0b1...HEAD
+[Unreleased]: https://github.com/openhat-ai/toolang/compare/v0.4.0b2...HEAD
+[0.4.0b2]: https://github.com/openhat-ai/toolang/compare/v0.4.0b1...v0.4.0b2
 [0.4.0b1]: https://github.com/openhat-ai/toolang/compare/v0.4.0a11...v0.4.0b1
 [0.4.0a11]: https://github.com/openhat-ai/toolang/compare/v0.4.0a10...v0.4.0a11
 [0.4.0a10]: https://github.com/openhat-ai/toolang/compare/v0.4.0a9...v0.4.0a10

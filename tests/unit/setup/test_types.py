@@ -223,19 +223,21 @@ def test_failed_lazy_load_publishes_no_partial_value_and_can_retry():
 def test_guest_workspace_roots_require_matching_captured_mounts(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import json
 
     layout = AgentLayout.resident(tmp_path / "host", "alice")
     guest = Path("/srv/toolang/workspaces/alice/repo")
     repo = tmp_path / "repo"
     lab_source = layout.lab
     guest_lab = Path("/srv/toolang/workspaces/alice/lab")
-    monkeypatch.setenv(
-        "TOOLANG_WORKSPACE_MOUNTS",
-        json.dumps(
-            {
-                "repo": [str(repo), str(guest)],
-                "lab": [str(lab_source), str(guest_lab)],
+    from dataclasses import replace
+    from toolang.common.config_runtime import RuntimeConfig, WorkspaceBinding
+
+    layout = replace(
+        layout,
+        runtime_config=RuntimeConfig(
+            workspaces={
+                "repo": WorkspaceBinding(repo, guest),
+                "lab": WorkspaceBinding(lab_source, guest_lab),
             }
         ),
     )
@@ -269,18 +271,20 @@ def test_guest_workspace_roots_require_matching_captured_mounts(
 def test_guest_workspace_roots_include_configured_tmp_mount(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import json
 
     layout = AgentLayout.resident(tmp_path / "host", "alice")
     configured = tmp_path / "configured-tmp"
     lab_guest = Path("/srv/toolang/workspaces/alice/lab")
     tmp_guest = Path("/srv/toolang/workspaces/alice/tmp")
-    monkeypatch.setenv(
-        "TOOLANG_WORKSPACE_MOUNTS",
-        json.dumps(
-            {
-                "lab": [str(layout.lab), str(lab_guest)],
-                "tmp": [str(configured), str(tmp_guest)],
+    from dataclasses import replace
+    from toolang.common.config_runtime import RuntimeConfig, WorkspaceBinding
+
+    layout = replace(
+        layout,
+        runtime_config=RuntimeConfig(
+            workspaces={
+                "lab": WorkspaceBinding(layout.lab, lab_guest),
+                "tmp": WorkspaceBinding(configured, tmp_guest),
             }
         ),
     )

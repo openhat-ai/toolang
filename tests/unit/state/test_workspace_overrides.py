@@ -33,7 +33,7 @@ def test_root_workspace_overrides_are_scoped_captured_and_reloadable(
     layout.program.write_text("flow:\n  pass\n")
     layout.config.write_text('[workspaces]\nrepo = "./old"\nnotes = "./notes"\n')
     key = {"resident": "check", "visiting": ref, "roaming": str(source)}[placement]
-    config = root / "config.toml"
+    config = layout.place_config
     config.write_text(tomlkit.dumps({"workspaces": {key: {"repo": "../external"}}}))
 
     before = prepare_agent_state(layout)

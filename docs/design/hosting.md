@@ -327,24 +327,39 @@ Let `R` be host ROOT, `P` host PLACE, `H` host HOME, `G` guest ROOT = PLACE, and
 | `P/.state/` and cap directories | Same relative paths below `G/` | Read-write |
 | Each granted workspace directory | `G/workspaces/NAME/WORKSPACE/` | Read-write |
 | `R/.runtime/active/A/docker/L/active/` | `G/.runtime/active/NAME/` | Read-only |
-| `R/.runtime/active/A/docker/L/config.toml` | `G/config.toml` | Read-only |
+| `P/config.toml` | `G/config.toml` | Read-only; original bytes |
+| `P/catalog.json`, when automatically selected | `G/catalog.json` | Read-only |
+| Generated `active/guest.env` | Selected guest root dotenv policy path | Read-only; mode `0600` |
 
 Lab is an ordinary separate mount from `P/workspaces/NAME/lab`. All workspace
 names are unique before mounting; nested and alias sources retain distinct named
 targets. Authored-input overlays cannot make a workspace grant read-only.
 
-The generated configuration projects effective workspace paths into the guest
-ROOT table, overriding paths in the whole-mounted HOME configuration. Host files
-remain unchanged. [Workspaces](workspaces.md) owns selection and precedence.
-The generated root also carries resolved client `[teaming]` settings and omits
-server `[hub]` settings. Clients connect by URL without a Hub-directory mount.
-Config and active inputs have disjoint mount sources; mounting one cannot expose
-the other. The guest reads its own info view and writes HOME status.
+Host and guest read the same PLACE/HOME source bytes and share prepared State.
+Runtime corrections travel through `guest.env` to the selected root dotenv file
+as `TOOLANG_CONFIG_PATCH`. Source origins keep relative paths and symlink targets
+in the host's canonical path view. Source parsers receive only `ConfigOrigins`;
+`RuntimeConfig` holds deeply immutable execution defaults, patches, and bindings,
+and derives fresh Setup views. Human fallbacks fill missing values, so explicit
+`[teaming]` edits remain effective.
+Hub loopback addresses use the existing host gateway. `[hub]` remains unchanged
+and clients need no Hub-directory mount.
 
-A selected catalog keeps its existing mapped scope and filename. Root/place
-`catalog.json` maps to `G/catalog.json`; a HOME catalog remains below guest HOME.
-Reuse a covering mount when available. An uncovered external catalog receives a
-read-only mount at `G/.inputs/models/<path-hash>/<filename>`.
+The host constructs common `_serve --workspace-bindings` records containing
+canonical `source`, execution `path`, and `temporary` for captured workspaces.
+Only temporary source paths enter State additions; execution paths never do.
+A common `--launch-schema` check rejects incompatible startup contracts before
+State writes. `guest.sh` bootstraps and executes arguments without rewriting options.
+[Workspaces](workspaces.md) owns grant selection and captured-mount checks.
+
+The guest uses its own packaged catalog without a mount or override. Automatic
+PLACE and HOME catalogs retain their owning scope. Independently selected
+catalogs, including an explicit selection of the default file, mount read-only
+at `G/.inputs/catalog.json`; only these need `TOOLANG_MODEL_CATALOG`.
+Automatic catalog choices are captured in `root/catalog.json` or
+`home/catalog.json` origin entries. Later files cannot replace that selection;
+a missing selected file rejects refresh. Changing the selected file or mounted
+workspace grants requires restart.
 
 Assembly is split between [mount preparation](../../src/toolang/up/mounts.py),
 the [launch boundary](../../src/toolang/up/sandbox.py), and the
@@ -368,7 +383,7 @@ workload with its original arguments, container identity, and private bin path.
 Workload output is opened once before diagnostics are retired. Its opened file
 is marked `0600` and remains valid across log rotation.
 For a source-local roaming agent, Docker overlays linked `agent.too` and
-`config.toml` targets as explicit read-only guest files so host symlinks do not
+authored configuration targets as explicit read-only guest files so host symlinks do not
 become broken paths in the container.
 Successful installation suppresses ensurepip chatter, pip's container root-user
 warning, package lists, and uv progress bars; installer failure stderr remains

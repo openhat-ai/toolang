@@ -38,8 +38,9 @@ from toolang.common.progress import emit_progress
 from toolang.common.layout import AgentLayout, agent_workspaces_path
 from .closing import ClosingDeadline
 from toolang.common.config_sources import config_sources
+from toolang.common.config_runtime import WorkspaceBinding
 from toolang.plugin.catalogs.models_dev.path import (
-    resolve_model_catalog_path,
+    resolve_model_catalog_selection,
     MODEL_CATALOG_ENV,
 )
 from toolang.base.types.sandbox import SandboxMount
@@ -54,7 +55,7 @@ from toolang.state.config import CAP_ALLOW_FIELDS
 from toolang.up.mounts import (
     mapped_path,
     prepare_catalog_mount,
-    prepare_guest_config,
+    prepare_guest_environment,
     prepare_source_mounts,
     prepare_workspace_mounts,
 )
@@ -364,47 +365,65 @@ async def _launch_locked(
         source_mounts: tuple[SandboxMount, ...] = ()
         workspace_mounts: tuple[SandboxMount, ...] = ()
         workspace_mapping: dict[str, tuple[str, str]] = {}
-        state = await asyncio.to_thread(prepare_launch_state, spec, progress=progress)
         if not on_host:
             source_mounts = prepare_source_mounts(
                 layout.place, layout.name, hosted_place
             )
-            source_mounts = tuple(
-                mount
-                for mount in source_mounts
-                if mount.hosted_path != hosted_root / "config.toml"
-            )
+        state = await asyncio.to_thread(prepare_launch_state, spec, progress=progress)
+        if not on_host:
             workspace_mounts, workspace_mapping = prepare_workspace_mounts(
                 layout.home,
                 agent_workspaces_path(hosted_place, layout.name),
                 workspaces=state.workspaces,
             )
+        if not on_host and any(
+            name not in workspace_mapping for name in spec.serve.workspace_additions
+        ):
+            raise ValueError(
+                "temporary workspaces must remain available at guest launch"
+            )
         catalog_mounts: tuple[SandboxMount, ...] = ()
         catalog_env: dict[str, str] = {}
+        catalog = None
         covered_mounts = (
             *source_mounts,
             SandboxMount(layout.home, hosted_home),
             *workspace_mounts,
         )
         if not on_host:
-            catalog_path = resolve_model_catalog_path(layout, environ=spec.environ)
-            if catalog_path.resolve() == (local_root / "catalog.json").resolve():
-                guest_catalog = hosted_root / "catalog.json"
-                source_mounts = tuple(
-                    mount
-                    for mount in source_mounts
-                    if mount.hosted_path != guest_catalog
-                )
-                catalog_mounts = (
-                    SandboxMount(catalog_path, guest_catalog, read_only=True),
-                )
-            else:
+            catalog = resolve_model_catalog_selection(layout, environ=spec.environ)
+            if catalog.scope == "custom":
                 catalog_mounts, guest_catalog = prepare_catalog_mount(
-                    catalog_path,
-                    hosted_place,
-                    mounts=covered_mounts,
+                    catalog.path, hosted_place
                 )
-            catalog_env[MODEL_CATALOG_ENV] = str(guest_catalog)
+                catalog_env[MODEL_CATALOG_ENV] = str(guest_catalog)
+            elif catalog.scope == "home":
+                catalog_mounts = (
+                    SandboxMount(
+                        catalog.path, hosted_home / "catalog.json", read_only=True
+                    ),
+                )
+        guest_environment = (
+            prepare_guest_environment(
+                layout, mapping=workspace_mapping, catalog=catalog
+            )
+            if not on_host
+            else {}
+        )
+        if on_host:
+            workspace_mapping = {
+                name: (source, source) for name, source in state.workspaces.items()
+            }
+            workspace_mapping["lab"] = (str(layout.lab), str(layout.lab))
+        bindings = {
+            name: WorkspaceBinding(
+                Path(workspace_mapping[name][0]),
+                Path(workspace_mapping[name][1]),
+                name in spec.serve.workspace_additions,
+            )
+            for name in ("lab", *(name for name in state.workspaces if name != "lab"))
+            if name in workspace_mapping
+        }
         edit_lock_mounts: tuple[SandboxMount, ...] = ()
         guest_edit_lock = None
         if not on_host and spec.serve.layout.source_path is not None:
@@ -431,16 +450,6 @@ async def _launch_locked(
             hosted_root=hosted_root,
             local_runtime=local_root / ".runtime" / "active" / layout.address,
             hosted_runtime=hosted_root / ".runtime" / "active" / layout.name,
-            guest_config=prepare_guest_config(
-                layout.place,
-                local_root / "config.toml",
-                layout.config_key,
-                workspaces=state.workspaces,
-                mapping=workspace_mapping,
-                temporary_names=tuple(spec.serve.workspace_additions),
-            )
-            if not on_host
-            else None,
             hosted_source=mapped_path(
                 layout.source_path,
                 tuple(mount for mount in covered_mounts if mount.local_path.is_dir()),
@@ -462,6 +471,7 @@ async def _launch_locked(
                     location=implementation.location,
                     host=spec.serve.host if on_host else "0.0.0.0",
                     source_edit_lock=guest_edit_lock,
+                    workspace_bindings=bindings,
                 ),
             ),
             working_directory=spec.serve.layout.home if on_host else hosted_home,
@@ -474,6 +484,7 @@ async def _launch_locked(
                     else spec.guest_environ
                 ),
                 **catalog_env,
+                **guest_environment,
                 "TOOLANG_HOST_LAUNCH": launch_id,
                 "TOOLANG_ROOT": str(
                     spec.serve.toolang_root
@@ -481,10 +492,9 @@ async def _launch_locked(
                     or spec.serve.layout.place
                 ),
                 "TOOLANG_SANDBOX": spec.sandbox,
-                "TOOLANG_WORKSPACE_MOUNTS": json.dumps(workspace_mapping),
                 "TOOLANG_WORKSPACE_LOCATION": "host" if on_host else "guest",
             },
-            dotenv_envs=spec.dotenv_envs,
+            dotenv_envs={**spec.dotenv_envs, **guest_environment},
             environment_path=environment_paths[0]
             if not on_host and environment_paths
             else None,

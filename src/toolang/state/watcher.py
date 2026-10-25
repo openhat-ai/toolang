@@ -29,6 +29,7 @@ from .cache import (
     load_layer_source,
 )
 from .prepare import load_agent_state, prepare_agent_state
+from .source_context import source_config_context
 from .source import (
     SourceManifest,
     SourceObservation,
@@ -299,6 +300,13 @@ class StateWatcher:
             invalidated_root = frozenset(item.path for item in root_observation.files)
             invalidated_home = frozenset(item.path for item in home_observation.files)
         try:
+            context = source_config_context(self.layout)
+            if (
+                context is not None
+                and self.layout.runtime_config is not None
+                and context.origins != self.layout.runtime_config.origins
+            ):
+                invalidated_home = invalidated_home | {ROOT_WORKSPACE_SOURCE}
             root_source = root_source_manifest(
                 root_observation,
                 previous_observation=self._checked_root_observation,
@@ -309,6 +317,7 @@ class StateWatcher:
                 home_observation,
                 previous_observation=self._checked_home_observation,
                 previous_manifest=self._checked_home_source,
+                context=context,
                 invalidated=invalidated_home,
             )
         except Exception as exc:

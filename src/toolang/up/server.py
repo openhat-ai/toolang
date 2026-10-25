@@ -32,6 +32,7 @@ from toolang.base.types.policy import AgentCeiling
 from toolang.common.config import resolve_ui_base_url
 from toolang.common.env_logger import PY_LOG_ENV_VAR
 from toolang.common.layout import AgentLayout
+from toolang.common.config_runtime import LAUNCH_SCHEMA, WorkspaceBinding
 from toolang.execution.executor.resources import validate_agent_ceiling
 from toolang.plugin.sandboxes.host import HOST_SANDBOX_DESCRIPTION_ENV
 from toolang.setup import AgentSetup
@@ -190,6 +191,7 @@ def build_serve_argv(
     location: str = "host",
     source_edit_lock: Path | None = None,
     registry_directory: Path | None = None,
+    workspace_bindings: Mapping[str, WorkspaceBinding] | None = None,
 ) -> tuple[str, ...]:
     """Build explicit argv for the hidden AgentServer entrypoint."""
 
@@ -227,7 +229,16 @@ def build_serve_argv(
             ]
         )
     command.extend(["--lifetime", spec.lifetime])
-    command.extend(["--placement", spec.layout.placement, "--store-schema", "63"])
+    command.extend(
+        [
+            "--placement",
+            spec.layout.placement,
+            "--store-schema",
+            "63",
+            "--launch-schema",
+            str(LAUNCH_SCHEMA),
+        ]
+    )
     if spec.layout.place_code is not None:
         command.extend(["--place-code", spec.layout.place_code])
     if spec.layout.source_path is not None:
@@ -243,9 +254,20 @@ def build_serve_argv(
         command.extend(["--source-ref", spec.layout.source_ref])
     if spec.launch_id is not None:
         command.extend(["--launch-id", spec.launch_id])
-    if spec.workspace_additions:
+    bindings = (
+        workspace_bindings
+        if workspace_bindings is not None
+        else {
+            name: WorkspaceBinding(Path(source), Path(source), True)
+            for name, source in spec.workspace_additions.items()
+        }
+    )
+    if bindings:
         command.extend(
-            ["--workspace-bindings", json.dumps(dict(spec.workspace_additions))]
+            [
+                "--workspace-bindings",
+                json.dumps({name: value.to_data() for name, value in bindings.items()}),
+            ]
         )
     if spec.workdir is not None:
         command.extend(["--initial-workdir", spec.workdir])
@@ -303,7 +325,6 @@ def serve(
     )
     if location == "host":
         environ["TOOLANG_WORKSPACE_LOCATION"] = "host"
-        environ["TOOLANG_WORKSPACE_MOUNTS"] = "{}"
     environment = ResolvedEnvironment(
         spec.toolang_root or spec.layout.root or spec.layout.place,
         active.policy if active is not None else EnvironmentPolicy(),

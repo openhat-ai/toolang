@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-import tomllib
+import json
 
 from toolang.common.layout import AgentLayout
 from toolang.state.prepare import prepare_agent_state
@@ -11,7 +11,7 @@ import pytest
 from toolang.base.types.sandbox import SandboxMount
 from toolang.up.mounts import (
     prepare_catalog_mount,
-    prepare_guest_config,
+    prepare_guest_environment,
     prepare_linked_state_source_mounts,
     prepare_place_mounts,
     prepare_workspace_mounts,
@@ -20,45 +20,27 @@ from toolang.up.mounts import (
 
 
 @pytest.mark.parametrize("resident", [False, True])
-def test_guest_config_keeps_one_root_snapshot(tmp_path, monkeypatch, resident):
+def test_guest_environment_keeps_configuration_out_of_state(
+    tmp_path, monkeypatch, resident
+):
     from toolang.up import mounts
-    from toolang.setup import teaming
 
     root = tmp_path / "root"
     place = root if resident else tmp_path / "project"
-    root.mkdir()
-    place.mkdir(exist_ok=True)
-    path = root / "config.toml"
-    path.write_text(
-        '[env]\nkeep = ["FIRST"]\n[teaming]\nhuman = "first"\nhub = "http://first"\n'
-        '[hub.backend]\nurl = "redis://server-only"\n'
+    layout = AgentLayout(
+        place, "alice", "resident" if resident else "visiting", root=root
     )
-    read_config = mounts.read_config
-    reads = 0
-
-    def read(source, **kwargs):
-        nonlocal reads
-        captured = read_config(source, **kwargs)
-        if source == path:
-            reads += 1
-            path.write_text(
-                '[env]\nkeep = ["SECOND"]\n[teaming]\nhuman = "second"\nhub = "http://second"\n'
-            )
-        return captured
-
-    monkeypatch.setattr(mounts, "read_config", read)
-    monkeypatch.setattr(teaming, "read_config", read)
-    projected = tomllib.loads(
-        prepare_guest_config(place, path, None, workspaces={}, mapping={})
+    layout.home.mkdir(parents=True)
+    authored = '[teaming]\nhuman = "explicit"\nhub = "http://first"\n'
+    layout.place_config.write_text(authored)
+    monkeypatch.setattr(mounts.getpass, "getuser", lambda: "host-human")
+    patch = json.loads(
+        prepare_guest_environment(layout, mapping={})["TOOLANG_CONFIG_PATCH"]
     )
-    assert projected["env"] == {"keep": ["FIRST"]}
-    assert projected["teaming"] == {
-        "human": "first",
-        "enabled": True,
-        "hub": "http://first",
-    }
-    assert "hub" not in projected
-    assert reads == 1
+    assert patch["defaults"] == {"root": {"teaming": {"human": "host-human"}}}
+    assert patch["origins"]["root"] == str(layout.place_config)
+    assert "root" not in patch and "home" not in patch
+    assert layout.place_config.read_text() == authored
 
 
 def test_prepare_place_mounts_owns_place_inputs(tmp_path: Path) -> None:
@@ -282,26 +264,21 @@ def test_workspace_mounts_keep_captured_state_when_source_changes(tmp_path):
 
 
 @pytest.mark.parametrize("scope", ["root", "place", "home"])
-def test_catalog_reuses_its_original_scope_and_filename(tmp_path, scope):
+def test_custom_catalog_uses_fixed_read_only_target_even_when_covered(tmp_path, scope):
     directory = tmp_path / scope
     directory.mkdir()
     catalog = directory / "catalog.json"
     catalog.write_text("{}")
-    guest = Path("/guest") / scope
-    mounts = (SandboxMount(directory, guest),)
-    additional, target = prepare_catalog_mount(
-        catalog, Path("/guest/place"), mounts=mounts
-    )
-    assert additional == ()
-    assert target == guest / "catalog.json"
+    additional, target = prepare_catalog_mount(catalog, Path("/guest/place"))
+    assert target == Path("/guest/place/.inputs/catalog.json")
+    assert additional == (SandboxMount(catalog, target, read_only=True),)
 
 
 def test_external_catalog_preserves_its_filename_and_is_read_only(tmp_path):
     catalog = tmp_path / "custom-models.json"
     catalog.write_text("{}")
-    mounts, target = prepare_catalog_mount(catalog, Path("/guest/place"), mounts=())
-    assert target.name == catalog.name
-    assert target.is_relative_to(Path("/guest/place/.inputs/models"))
+    mounts, target = prepare_catalog_mount(catalog, Path("/guest/place"))
+    assert target == Path("/guest/place/.inputs/catalog.json")
     assert mounts == (SandboxMount(catalog, target, read_only=True),)
 
 
@@ -311,10 +288,7 @@ def test_workspace_keeps_writes_when_home_has_a_read_only_config_override(tmp_pa
     guest = Path("/guest/agents/alice")
     (home / "config.toml").write_text('[workspaces]\nhome = "."\n')
     inputs = prepare_source_mounts(tmp_path, "alice", Path("/guest"))
-    assert any(
-        mount.hosted_path == guest / "config.toml" and mount.read_only
-        for mount in inputs
-    )
+    assert not any(mount.hosted_path == guest / "config.toml" for mount in inputs)
     guest_workspaces = Path("/guest/workspaces/alice")
     mounts, mapping = prepare_workspace_mounts(
         home,
@@ -334,12 +308,10 @@ def test_root_inputs_do_not_expose_a_same_named_resident_home(tmp_path):
     secret = tmp_path / "private.too"
     secret.write_text("private\n")
     (peer / "agent.too").symlink_to(secret)
-    visitor_home = tmp_path / "visitor/agents/alice"
     mounts = prepare_source_mounts(
         root,
         "alice",
         Path("/guest/root"),
-        capture_home=visitor_home,
         include_home=False,
     )
     assert not any(mount.local_path == secret for mount in mounts)

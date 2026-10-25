@@ -72,7 +72,6 @@ class SandboxRequest:
     hosted_runtime: Path | None = None
     hosted_source: Path | None = None
     source_ref: str | None = None
-    guest_config: str | None = None
 
     def __post_init__(self) -> None:
         _validate_output(self.output, self.log_path)

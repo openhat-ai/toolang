@@ -54,7 +54,7 @@ def test_shared_workspaces_are_ignored_before_path_resolution(tmp_path, placemen
         if m.hosted_path.name == "config.toml"
         and m.hosted_path.parent == tmp_path / "guest"
     )
-    assert "ignored" not in root_mount.local_path.read_text()
+    assert root_mount.local_path.read_bytes() == layout.place_config.read_bytes()
 
 
 def git_init(path):
@@ -104,7 +104,7 @@ def test_nearest_companion_beats_outer_catalog_path(tmp_path):
     layout = materialize_roaming_program(source, toolang_root=tmp_path)
     assert resolve_model_catalog_path(layout) == nearest
     assert source_catalog(config_sources(layout), roaming=True) == nearest
-    assert (layout.home / "catalog.json").resolve() == nearest
+    assert (layout.place / "catalog.json").resolve() == nearest
     nearest.unlink()
     materialize_roaming_program(source, toolang_root=tmp_path)
     assert resolve_model_catalog_path(layout) == outer
@@ -139,10 +139,10 @@ def test_removed_source_config_clears_derived_settings(tmp_path):
     config.unlink()
     materialize_roaming_program(source, toolang_root=tmp_path)
     assert prepare_agent_state(layout).workspaces == {}
-    layout.config.write_text("# authored conflict\n")
+    layout.place_config.write_text("# authored conflict\n")
     with pytest.raises(ValueError, match="conflicts"):
         materialize_roaming_program(source, toolang_root=tmp_path)
-    assert layout.config.read_text() == "# authored conflict\n"
+    assert layout.place_config.read_text() == "# authored conflict\n"
 
 
 @pytest.mark.parametrize("kind", ["directory", "dangling", "invalid"])
@@ -286,11 +286,11 @@ def test_unowned_symlink_is_not_replaced(tmp_path):
     layout = materialize_roaming_program(source, toolang_root=tmp_path)
     unrelated = tmp_path / "unrelated.toml"
     unrelated.write_text("# keep me\n")
-    layout.config.unlink()
-    layout.config.symlink_to(unrelated)
+    layout.place_config.unlink()
+    layout.place_config.symlink_to(unrelated)
     with pytest.raises(ValueError, match="symlink conflicts"):
         materialize_roaming_program(source, toolang_root=tmp_path)
-    assert layout.config.is_symlink()
+    assert layout.place_config.is_symlink()
     assert unrelated.read_text() == "# keep me\n"
 
 
@@ -331,7 +331,7 @@ def test_relocated_project_can_clear_its_owned_catalog_link(tmp_path):
     shutil.copytree(original, copied, symlinks=True)
     (copied / "toolang.catalog.json").unlink()
     layout = materialize_roaming_program(copied / "aid.too", toolang_root=tmp_path)
-    assert not (layout.home / "catalog.json").is_symlink()
+    assert not (layout.place / "catalog.json").is_symlink()
     assert (original / "toolang.catalog.json").is_file()
 
 
@@ -351,3 +351,13 @@ def test_only_companion_directories_contribute_layers(tmp_path):
     assert [item.path.parent for item in config_sources(layout)] == [tmp_path, middle]
     assert resolve_model_catalog_path(layout) == catalog
     assert prepare_agent_state(layout).workspaces == {}
+
+
+def test_roaming_dangling_home_catalog_does_not_fall_back_to_project(tmp_path):
+    source = tmp_path / "aid.too"
+    source.write_text("flow run():\n  pass\n")
+    (tmp_path / "toolang.catalog.json").write_text("{}")
+    layout = materialize_roaming_program(source, toolang_root=tmp_path / "global")
+    (layout.home / "catalog.json").symlink_to(tmp_path / "missing.json")
+    with pytest.raises(ValueError, match="model catalog is not a file"):
+        resolve_model_catalog_path(layout)

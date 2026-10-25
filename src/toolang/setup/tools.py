@@ -37,7 +37,7 @@ async def load_tool_setup(
         toolsets = merge_plugin_configs(configs, family="toolset")
         teaming = resolve_teaming_setup(
             sources,
-            root=(layout.root or layout.place) / "config.toml",
+            root=layout.place_config,
             home=layout.config,
         )
         toolsets["convo"] = teaming.toolset_config(

@@ -304,7 +304,7 @@ def test_record_home_lookup_reports_incompatible_history_without_changing_it(
     message = capsys.readouterr().err
     assert "execution history is incompatible" in message
     assert str(layout.run_store) in "".join(message.split())
-    assert "Upgrade this CLI" in message
+    assert "Upgrade this CLI" in " ".join(message.split())
     assert layout.run_store.read_bytes() == before
 
 

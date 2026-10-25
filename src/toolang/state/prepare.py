@@ -8,6 +8,7 @@ from hashlib import sha256
 import logging
 from pathlib import Path
 
+from toolang.common.config_runtime import ConfigOrigins
 from toolang.common.layout import AgentLayout, ensure_scratch_workspace
 from toolang.common.source import AcquiredSource
 from toolang.catalog import source as cap_source
@@ -15,6 +16,7 @@ from toolang.catalog import source as cap_source
 from ..common.progress import ProgressSink, emit_progress
 from ..lang.ast import Program, parse_cap_declarations
 from .acceptance import accept_sources
+from .source_context import source_config_context
 from .state import (
     AgentState,
     StateCap,
@@ -312,6 +314,9 @@ def prepare_root(
             layout,
             scope="root",
             cap_scope="root",
+            context=layout.runtime_config.source_context
+            if layout.runtime_config
+            else None,
             reuse_remote=not force,
             progress=progress,
         )
@@ -351,6 +356,7 @@ def inspect_agent_caps(
         layout.name,
         root_config=layout.root_config,
         workspace_key=layout.config_key,
+        context=layout.runtime_config.source_context if layout.runtime_config else None,
     )
     accepted = accept_sources(authored, scope="home", include_programs=False)
     for record in accepted.records:
@@ -417,16 +423,19 @@ def prepare_home(
     """Build or reuse one agent-home State layer."""
 
     _require_agent_home(layout)
+    context = source_config_context(layout)
     source = scan_home_source(
         layout.place,
         layout.name,
         root_config=layout.root_config,
         workspace_key=layout.config_key,
+        context=context,
     )
     current = _matching_home(
         layout,
         source=source,
         force=force,
+        context=context,
     )
     if current is not None:
         return current
@@ -436,11 +445,13 @@ def prepare_home(
             layout.name,
             root_config=layout.root_config,
             workspace_key=layout.config_key,
+            context=context,
         )
         current = _matching_home(
             layout,
             source=source,
             force=force,
+            context=context,
         )
         if current is not None:
             return current
@@ -448,6 +459,7 @@ def prepare_home(
             layout,
             scope="home",
             cap_scope="home",
+            context=context,
             reuse_remote=not force,
             progress=progress,
         )
@@ -480,6 +492,7 @@ def _matching_home(
     *,
     source: SourceManifest,
     force: bool,
+    context: ConfigOrigins | None,
 ) -> HomeLayer | None:
     if force:
         return None
@@ -498,7 +511,15 @@ def _matching_home(
 
             config = layer.revision_dir / "source/config.toml"
             raw = parse_config(config.read_bytes()) if config.is_file() else {}
-            expected = configured_workspaces(rebase_config(raw, layout.home))
+            expected = configured_workspaces(
+                rebase_config(
+                    raw,
+                    context.origin("home", layout.config).parent
+                    if context
+                    else layout.home,
+                    context=context,
+                )
+            )
             policy = layer.revision_dir / "source" / ROOT_WORKSPACE_SOURCE
             if policy.is_file():
                 expected.update(
@@ -552,6 +573,7 @@ def _prepare_layer(
     cap_scope: CapScope,
     reuse_remote: bool,
     progress: ProgressSink | None,
+    context: ConfigOrigins | None = None,
 ) -> str:
     progress_id = f"agent:{layout.name}:{cap_scope}"
     subject = "root caps" if scope == "root" else f"home caps for {layout.name}"
@@ -570,6 +592,7 @@ def _prepare_layer(
             layout,
             scope=scope,
             cap_scope=cap_scope,
+            context=context,
             reuse_remote=reuse_remote,
             progress=progress,
         )
@@ -605,12 +628,14 @@ def _prepare_layer_revision(
     cap_scope: CapScope,
     reuse_remote: bool,
     progress: ProgressSink | None,
+    context: ConfigOrigins | None = None,
 ) -> tuple[str, int]:
     with cap_source.acquisition_session(refresh=not reuse_remote):
         return _build_layer_revision(
             layout,
             scope=scope,
             cap_scope=cap_scope,
+            context=context,
             progress=progress,
         )
 
@@ -621,18 +646,20 @@ def _build_layer_revision(
     scope: LayerScope,
     cap_scope: CapScope,
     progress: ProgressSink | None,
+    context: ConfigOrigins | None = None,
 ) -> tuple[str, int]:
     for _ in range(_MAX_SOURCE_SNAPSHOT_ATTEMPTS):
         observation = _observe_scope_source(layout, scope=scope)
         try:
             authored = (
-                read_root_source(layout.place)
+                read_root_source(layout.place, context=context)
                 if scope == "root"
                 else read_authored_source(
                     layout.place,
                     layout.name,
                     root_config=layout.root_config,
                     workspace_key=layout.config_key,
+                    context=context,
                 )
             )
         except SourceChangedError:

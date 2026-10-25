@@ -757,7 +757,6 @@ def test_docker_sandbox_prepares_and_launches(
         "TOOLANG_HOST_GATEWAY": "host.docker.internal",
         "TOOLANG_ROOT": "/root/.toolang",
         "TOOLANG_SANDBOX": "docker:python:3.13-slim",
-        "TOOLANG_WORKSPACE_MOUNTS": "{}",
         "TOOLANG_WORKSPACE_LOCATION": "guest",
     }
     assert run_call["log_path"] is None
@@ -786,11 +785,110 @@ def test_docker_sandbox_mounts_external_model_catalog_at_guest_path(
     guest_envs = dotenv_values(guest_env_mount.local_path, interpolate=False)
 
     assert source_mount.read_only is True
-    assert source_mount.hosted_path.is_relative_to(
-        request.hosted_place / ".inputs" / "models"
-    )
+    assert source_mount.hosted_path == request.hosted_place / ".inputs/catalog.json"
     assert guest_envs[MODEL_CATALOG_ENV] == str(source_mount.hosted_path)
     assert str(external) not in guest_env_mount.local_path.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("guest_path", [False, True])
+@pytest.mark.parametrize("explicit_mount", [False, True])
+def test_docker_catalog_in_home_uses_a_read_only_selected_path(
+    tmp_path, guest_path, explicit_mount
+):
+    request = _request(tmp_path)
+    catalog = request.local_home / "company.json"
+    catalog.write_text("{}")
+    hosted = request.hosted_home / catalog.name
+    request = replace(
+        request,
+        envs={MODEL_CATALOG_ENV: str(hosted if guest_path else catalog)},
+        mounts=(*request.mounts, SandboxMount(catalog, hosted))
+        if explicit_mount
+        else request.mounts,
+    )
+    plan = create_sandbox("docker", config={}).prepare(None, request)
+    env_mount = next(
+        mount
+        for mount in plan.mounts
+        if mount.hosted_path == request.hosted_place / ".alice.env"
+    )
+    configured = dotenv_values(env_mount.local_path, interpolate=False)[
+        MODEL_CATALOG_ENV
+    ]
+    assert isinstance(configured, str)
+    selected = Path(configured)
+    assert selected == request.hosted_place / ".inputs/catalog.json"
+    selected_mounts = [mount for mount in plan.mounts if mount.hosted_path == selected]
+    assert selected_mounts == [
+        SandboxMount(catalog.resolve(), selected, read_only=True)
+    ]
+
+
+@pytest.mark.parametrize("present", [False, True])
+def test_docker_catalog_uses_the_most_specific_guest_directory(tmp_path, present):
+    request = _request(tmp_path)
+    outer, inner = tmp_path / "outer", tmp_path / "inner"
+    (outer / "nested").mkdir(parents=True)
+    inner.mkdir()
+    (outer / "nested/company.json").write_text("parent")
+    selected = inner / "company.json"
+    if present:
+        selected.write_text("child")
+    guest = request.hosted_place / "shared"
+    request = replace(
+        request,
+        envs={MODEL_CATALOG_ENV: str(guest / "nested/company.json")},
+        mounts=(SandboxMount(outer, guest), SandboxMount(inner, guest / "nested")),
+    )
+    sandbox = create_sandbox("docker", config={})
+    if not present:
+        with pytest.raises(ValueError, match="model catalog is not a regular file"):
+            sandbox.prepare(None, request)
+        return
+    plan = sandbox.prepare(None, request)
+    assert (
+        SandboxMount(
+            selected, request.hosted_place / ".inputs/catalog.json", read_only=True
+        )
+        in plan.mounts
+    )
+
+
+@pytest.mark.parametrize("existing", ["same", "other", "writable"])
+def test_docker_catalog_fixed_target_has_one_read_only_binding(tmp_path, existing):
+    request = _request(tmp_path)
+    catalog = tmp_path / "company.json"
+    catalog.write_text("{}")
+    alias = tmp_path / "alias.json"
+    alias.symlink_to(catalog)
+    other = tmp_path / "other.json"
+    other.write_text("{}")
+    target = request.hosted_place / ".inputs/catalog.json"
+    binding = SandboxMount(
+        other if existing == "other" else alias,
+        target,
+        read_only=existing != "writable",
+    )
+    request = replace(
+        request,
+        envs={MODEL_CATALOG_ENV: str(catalog)},
+        mounts=(*request.mounts, binding),
+    )
+    sandbox = create_sandbox("docker", config={})
+    if existing != "same":
+        with pytest.raises(ValueError, match="model catalog target conflicts"):
+            sandbox.prepare(None, request)
+        return
+    plan = sandbox.prepare(None, request)
+    assert [item for item in plan.mounts if item.hosted_path == target] == [binding]
+    environment = next(
+        item
+        for item in plan.mounts
+        if item.hosted_path == request.hosted_place / ".alice.env"
+    )
+    assert dotenv_values(environment.local_path, interpolate=False)[
+        MODEL_CATALOG_ENV
+    ] == str(target)
 
 
 def test_explicit_catalog_does_not_require_a_valid_default_root_catalog(
@@ -810,7 +908,9 @@ def test_explicit_catalog_does_not_require_a_valid_default_root_catalog(
 
     assert (
         SandboxMount(
-            selected.resolve(), request.hosted_place / "selected.json", read_only=True
+            selected.resolve(),
+            request.hosted_place / ".inputs/catalog.json",
+            read_only=True,
         )
         in plan.mounts
     )
@@ -831,10 +931,8 @@ def test_docker_sandbox_rewrites_root_model_catalog_and_mounts_it_read_only(
     )
 
     plan = create_sandbox("docker", config={}).prepare(None, request)
-    expected = request.hosted_place / filename
-    source_mount = next(
-        mount for mount in plan.mounts if mount.local_path == source.resolve()
-    )
+    expected = request.hosted_place / ".inputs/catalog.json"
+    source_mount = next(mount for mount in plan.mounts if mount.hosted_path == expected)
     guest_env_mount = next(
         mount
         for mount in plan.mounts
@@ -2482,21 +2580,28 @@ def test_missing_old_stage_cannot_remove_a_replacement_preparation_slot(tmp_path
     assert stage.parent.is_dir()
 
 
-def test_guest_config_and_active_mounts_have_disjoint_sources(tmp_path):
+def test_original_config_and_active_mounts_have_disjoint_sources(tmp_path):
     sandbox = docker_sandbox.DockerSandbox({})
+    request = _request(tmp_path)
+    original = tmp_path / "config.toml"
+    original.write_text("# authored input\n")
     request = replace(
-        _request(tmp_path), guest_config='[workspaces.alice]\nrepo = "/guest/repo"\n'
+        request,
+        mounts=(
+            *request.mounts,
+            SandboxMount(original, Path("/root/.toolang/config.toml"), read_only=True),
+        ),
     )
     plan = sandbox.prepare(None, request)
     stage = Path(plan.meta["stage_dir"])
     active = next(m for m in plan.mounts if m.local_path == stage / "active")
-    config = next(m for m in plan.mounts if m.local_path == stage / "config.toml")
+    config = next(
+        m for m in plan.mounts if m.hosted_path == Path("/root/.toolang/config.toml")
+    )
     assert active.read_only and config.read_only
-    assert config.hosted_path == Path("/root/.toolang/config.toml")
-    assert active.hosted_path == Path("/root/.toolang/.runtime/active/alice")
-    assert not config.local_path.is_relative_to(active.local_path)
+    assert config.local_path == original
     assert not (active.local_path / "config.toml").exists()
-    assert config.local_path.read_text() == request.guest_config
+    assert not (stage / "config.toml").exists()
 
 
 def test_rejected_duplicate_preparation_preserves_current_diagnostics(tmp_path):

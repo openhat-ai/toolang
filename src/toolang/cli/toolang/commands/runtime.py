@@ -10,6 +10,7 @@ import sys
 import json
 from pathlib import Path
 from typing import Annotated, TYPE_CHECKING
+from toolang.common.config_runtime import LAUNCH_SCHEMA
 from toolang.api.version import AGENT_API_VERSION
 from toolang.cli.common.workspaces import (
     WorkspaceOptions,
@@ -593,6 +594,9 @@ def serve(
     ] = None,
     source_ref: Annotated[str | None, typer.Option("--source-ref", hidden=True)] = None,
     store_schema: Annotated[int, typer.Option("--store-schema", hidden=True)] = 63,
+    launch_schema: Annotated[
+        int, typer.Option("--launch-schema", hidden=True)
+    ] = LAUNCH_SCHEMA,
     source_edit_lock: Annotated[
         Path | None, typer.Option("--source-edit-lock", hidden=True)
     ] = None,
@@ -632,11 +636,16 @@ def serve(
     from typing import cast
     from toolang.common.layout import AgentPlacement
 
-    if store_schema != RUN_STORE_SCHEMA or placement not in {
-        "resident",
-        "visiting",
-        "roaming",
-    }:
+    if (
+        store_schema != RUN_STORE_SCHEMA
+        or launch_schema != LAUNCH_SCHEMA
+        or placement
+        not in {
+            "resident",
+            "visiting",
+            "roaming",
+        }
+    ):
         raise ClickException(
             "workload requires a compatible Toolang runtime/store schema"
         )
@@ -682,6 +691,17 @@ def serve(
     else:
         # Guests load their generated root file; standalone hosts apply policy.
         selected = user_call(load_runtime_environment, layout, base_environ=environ)
+    from toolang.common.config_runtime import (
+        CONFIG_PATCH_ENV,
+        RuntimeConfig,
+        parse_workspace_bindings,
+    )
+
+    bindings = user_call(parse_workspace_bindings, workspace_bindings)
+    if location == "host" and any(
+        binding.source != binding.path for binding in bindings.values()
+    ):
+        raise ClickException("host workspace bindings must preserve source paths")
     controls = {
         name: value for name, value in environ.items() if name in RUNTIME_ENV_NAMES
     }
@@ -700,6 +720,12 @@ def serve(
         )
     if model_catalog := resolve_model_catalog_option(model_catalog):
         environ[MODEL_CATALOG_ENV] = str(model_catalog)
+    layout = replace(
+        layout,
+        runtime_config=user_call(
+            RuntimeConfig.parse, environ.get(CONFIG_PATCH_ENV), workspaces=bindings
+        ),
+    )
     environment = replace(selected, values=environ)
     with environment_scope(environment):
         cors_origins = None
@@ -731,7 +757,11 @@ def serve(
             log_spec=log_spec,
             cors_allowed_origins=cors_origins,
             ui_base_url=ui_base_url,
-            workspace_additions=json.loads(workspace_bindings),
+            workspace_additions={
+                name: str(binding.source)
+                for name, binding in bindings.items()
+                if binding.temporary
+            },
             workdir=initial_workdir,
         )
         spec = replace(

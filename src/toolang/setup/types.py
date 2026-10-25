@@ -5,7 +5,6 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from concurrent.futures import Future
 from dataclasses import dataclass, field
-import json
 import os
 from pathlib import Path
 import platform
@@ -56,37 +55,28 @@ class AgentEnvironment:
         layout: AgentLayout,
         *,
         sandbox: str,
+        environ: Mapping[str, str] | None = None,
     ) -> AgentEnvironment:
         """Capture non-secret environment facts from explicit setup inputs."""
 
         if not sandbox or sandbox != sandbox.strip():
             raise ValueError("agent environment requires a canonical sandbox")
+        values = os.environ if environ is None else environ
         location = (
             "host"
             if sandbox == "host"
-            else os.environ.get("TOOLANG_WORKSPACE_LOCATION", "guest")
+            else values.get("TOOLANG_WORKSPACE_LOCATION", "guest")
         )
         if location not in {"host", "guest"}:
             raise ValueError("invalid sandbox workspace location")
-        raw_mounts = json.loads(
-            os.environ.get("TOOLANG_WORKSPACE_MOUNTS", "{}")
-            if location == "guest"
-            else "{}"
-        )
-        if not isinstance(raw_mounts, dict):
-            raise ValueError("sandbox workspace mounts must be an object")
-        mounts: dict[str, tuple[Path, Path]] = {}
-        if location == "guest":
-            for name, roots in raw_mounts.items():
-                if (
-                    not isinstance(name, str)
-                    or not isinstance(roots, list)
-                    or len(roots) != 2
-                    or not all(isinstance(root, str) for root in roots)
-                    or not all(Path(root).is_absolute() for root in roots)
-                ):
-                    raise ValueError("invalid sandbox workspace mount mapping")
-                mounts[name] = Path(roots[0]), Path(roots[1])
+        mounts = {
+            name: (binding.source, binding.path)
+            for name, binding in (
+                layout.runtime_config.workspaces.items()
+                if layout.runtime_config
+                else ()
+            )
+        }
         return cls(
             sandbox=sandbox,
             system=platform.system(),
@@ -289,13 +279,6 @@ class AgentSetup:
         for name, source in grants.items():
             if name == IMPLICIT_WORKSPACE_NAME:
                 continue
-            if (
-                self.environment is not None
-                and self.environment.workspace_location == "guest"
-            ):
-                mounted = self.environment.workspace_mounts.get(name)
-                if mounted is not None and Path(source) == mounted[1]:
-                    source = str(mounted[0])
             result[name] = source
         return result
 

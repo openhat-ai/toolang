@@ -513,7 +513,8 @@ def test_cd_prepares_nonresident_home_and_reuses_it(
         assert not layout.run_store.exists()
         assert layout.program.is_symlink()
         assert layout.program.resolve() == source
-        assert layout.config.is_file()
+        assert layout.place_config.is_file()
+        assert not layout.config.exists()
         assert fetches == []
     else:
         assert layout.runtime_status.exists()

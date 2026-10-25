@@ -13,6 +13,7 @@ from threading import RLock
 from typing import Literal
 
 from toolang.catalog.types import CAP_DIRECTORY_NAMES
+from toolang.common.config_runtime import ConfigOrigins
 
 from ..lang.ast import AgicDecl, FlowDecl, Program
 from ..common.progress import ProgressSink, emit_progress
@@ -204,13 +205,15 @@ def scan_home_source(
     *,
     root_config: Path | None = None,
     workspace_key: str | None = None,
+    context: ConfigOrigins | None = None,
 ) -> SourceManifest:
     """Capture one agent program, config, and authored cap paths."""
 
     return home_source_manifest(
         observe_home_source(
             place, agent_name, root_config=root_config, workspace_key=workspace_key
-        )
+        ),
+        context=context,
     )
 
 
@@ -274,6 +277,7 @@ def build_source_manifest(
     previous_observation: SourceObservation | None = None,
     previous_manifest: SourceManifest | None = None,
     invalidated: Collection[str] = (),
+    context: ConfigOrigins | None = None,
 ) -> SourceManifest:
     """Hash changed files and reuse unchanged facts from one prior observation."""
 
@@ -319,7 +323,12 @@ def build_source_manifest(
             from .config import root_workspace_content
 
             content = root_workspace_content(
-                content, item.workspace_key, item.source.parent
+                content,
+                item.workspace_key,
+                context.origin("root", item.source).parent
+                if context
+                else item.source.parent,
+                context=context,
             )
             if not content:
                 continue
@@ -375,12 +384,14 @@ def root_source_manifest(
     previous_observation: SourceObservation | None = None,
     previous_manifest: SourceManifest | None = None,
     invalidated: Collection[str] = (),
+    context: ConfigOrigins | None = None,
 ) -> SourceManifest:
     return build_source_manifest(
         observation,
         previous_observation=previous_observation,
         previous_manifest=previous_manifest,
         invalidated=invalidated,
+        context=context,
     )
 
 
@@ -390,12 +401,14 @@ def home_source_manifest(
     previous_observation: SourceObservation | None = None,
     previous_manifest: SourceManifest | None = None,
     invalidated: Collection[str] = (),
+    context: ConfigOrigins | None = None,
 ) -> SourceManifest:
     return build_source_manifest(
         observation,
         previous_observation=previous_observation,
         previous_manifest=previous_manifest,
         invalidated=invalidated,
+        context=context,
     )
 
 
@@ -632,6 +645,7 @@ def _read_scope_sources(
     include_home: bool,
     root_config: Path | None = None,
     workspace_key: str | None = None,
+    context: ConfigOrigins | None = None,
 ) -> SourceSnapshot:
     files: list[SourceFile] = []
     issues: list[SourceIssue] = []
@@ -672,7 +686,12 @@ def _read_scope_sources(
                     ).as_posix(),
                 )[0]
                 content = root_workspace_content(
-                    item.content, workspace_key, entry.source.parent
+                    item.content,
+                    workspace_key,
+                    context.origin("root", entry.source).parent
+                    if context
+                    else entry.source.parent,
+                    context=context,
                 )
                 if not content:
                     continue
@@ -699,7 +718,13 @@ def _read_scope_sources(
             )
             try:
                 files.extend(
-                    _collect_file(place, entry.source, category=category, layer=layer)
+                    _collect_file(
+                        place,
+                        entry.source,
+                        category=category,
+                        layer=layer,
+                        context=context,
+                    )
                 )
             except SourceChangedError:
                 raise
@@ -723,6 +748,7 @@ def read_authored_source(
     *,
     root_config: Path | None = None,
     workspace_key: str | None = None,
+    context: ConfigOrigins | None = None,
 ) -> SourceSnapshot:
     """Capture current files, isolating resource-local read failures."""
     return _read_scope_sources(
@@ -731,11 +757,14 @@ def read_authored_source(
         include_home=True,
         root_config=root_config,
         workspace_key=workspace_key,
+        context=context,
     )
 
 
-def read_root_source(place: Path) -> SourceSnapshot:
-    return _read_scope_sources(place, "", include_home=False)
+def read_root_source(
+    place: Path, *, context: ConfigOrigins | None = None
+) -> SourceSnapshot:
+    return _read_scope_sources(place, "", include_home=False, context=context)
 
 
 def is_source_path(place: Path, agent_name: str, path: Path) -> bool:
@@ -790,6 +819,7 @@ def _collect_file(
     category: str,
     layer: str,
     relative_path: str | None = None,
+    context: ConfigOrigins | None = None,
 ) -> list[SourceFile]:
     if not path.exists() and not path.is_symlink():
         return []
@@ -805,7 +835,12 @@ def _collect_file(
         from toolang.common.config_sources import rebase_config_content
 
         content = rebase_config_content(
-            content, path.parent, include_workspaces=layer == "agent"
+            content,
+            context.origin("home" if layer == "agent" else "root", path).parent
+            if context
+            else path.parent,
+            include_workspaces=layer == "agent",
+            context=context,
         )
     after = _observe_file(path, relative_path=before.path)
     if before != after:

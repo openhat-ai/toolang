@@ -5,17 +5,24 @@ from __future__ import annotations
 from pathlib import Path
 from collections.abc import Mapping, Sequence
 import getpass
-from hashlib import sha256
+import json
+import os
+from typing import TYPE_CHECKING, cast
+
+if TYPE_CHECKING:
+    from toolang.plugin.catalogs.models_dev.path import ModelCatalogSelection
 
 from toolang.base.types.sandbox import SandboxMount
 from toolang.catalog.types import CAP_DIRECTORY_NAMES
 from toolang.common.layout import (
+    AgentLayout,
     IMPLICIT_WORKSPACE_NAME,
     ensure_scratch_workspace,
 )
 from toolang.state.source import observe_home_source, observe_root_source
-from toolang.common.config_sources import read_config
-from toolang.teaming.config import root_config as parse_teaming_root
+from toolang.state.config import parse_config, root_workspace_declarations
+from toolang.common.config_sources import PROJECTION_KEY, catalog_config, resolve_path
+from toolang.common.config_runtime import CONFIG_PATCH_ENV
 
 
 def mapped_path(path: Path, mounts: Sequence[SandboxMount]) -> Path | None:
@@ -37,14 +44,10 @@ def mapped_path(path: Path, mounts: Sequence[SandboxMount]) -> Path | None:
 
 
 def prepare_catalog_mount(
-    path: Path, hosted_place: Path, *, mounts: Sequence[SandboxMount]
+    path: Path, hosted_place: Path
 ) -> tuple[tuple[SandboxMount, ...], Path]:
     """Keep selected catalogs in their owning scope, mapping external files once."""
-    covered = mapped_path(path, mounts)
-    if covered is not None:
-        return (), covered
-    identity = sha256(str(path.resolve()).encode()).hexdigest()[:16]
-    target = hosted_place / ".inputs" / "models" / identity / path.name
+    target = hosted_place / ".inputs" / "catalog.json"
     return (SandboxMount(path.resolve(), target, read_only=True),), target
 
 
@@ -56,12 +59,14 @@ def prepare_place_mounts(
 
     config_path = local_place / "config.toml"
     config_path.parent.mkdir(parents=True, exist_ok=True)
-    config_path.touch(exist_ok=True)
+    if not config_path.exists() and not config_path.is_symlink():
+        config_path.touch(exist_ok=True)
 
     mounts = [
         SandboxMount(
             local_path=config_path,
             hosted_path=hosted_place / "config.toml",
+            read_only=True,
         )
     ]
     catalog_path = local_place / "catalog.json"
@@ -141,45 +146,63 @@ def prepare_workspace_mounts(
     return tuple(mounts), mapping
 
 
-def prepare_guest_config(
-    local_place: Path,
-    root_config: Path,
-    key: str | None,
+def prepare_guest_environment(
+    layout: AgentLayout,
     *,
-    workspaces: Mapping[str, str],
     mapping: Mapping[str, tuple[str, str]],
-    temporary_names: Sequence[str] = (),
-) -> str:
-    """Project one guest root without modifying either authored configuration."""
-    import tomlkit
-
-    local_config = local_place / "config.toml"
-    config = read_config(local_config, include_workspaces=False)
-    root = (
-        config
-        if local_config == root_config
-        else read_config(root_config, include_workspaces=False)
-    )
-    if "env" in root:
-        config["env"] = root["env"]
-    client = parse_teaming_root(
-        root, source=root_config, default_human=getpass.getuser()
-    )
-    config["teaming"] = {
-        "human": client.human.removeprefix("human:"),
-        "enabled": client.enabled,
-        "hub": client.hub,
-    }
-    config.pop("hub", None)
-    if key is not None:
-        config["workspaces"] = {
-            key: {
-                name: mapping[name][1] if name in mapping else source
-                for name, source in workspaces.items()
-                if name not in temporary_names and name != IMPLICIT_WORKSPACE_NAME
+    catalog: ModelCatalogSelection | None = None,
+) -> dict[str, str]:
+    """Capture source origins and execution corrections without rewriting sources."""
+    origins = {"root": str(layout.place_config), "home": str(layout.config)}
+    if catalog is not None and catalog.scope in {"root", "home"}:
+        origins[f"{catalog.scope}/catalog.json"] = str(catalog.path)
+    overlays: dict[str, object] = {}
+    for scope, path in (("root", layout.place_config), ("home", layout.config)):
+        if not path.is_file():
+            continue
+        config = parse_config(path.read_bytes())
+        workspaces = (
+            root_workspace_declarations(config, layout.config_key)
+            if scope == "root"
+            else config.get("workspaces", {})
+        )
+        if not isinstance(workspaces, Mapping):
+            raise ValueError("workspaces config must be a table")
+        corrected = {}
+        for name, value in cast(Mapping[str, object], workspaces).items():
+            if not isinstance(value, str) or not value:
+                continue
+            canonical = resolve_path(value, path.parent)
+            reference = os.path.normpath(str(path.parent / value))
+            origins[reference] = str(canonical)
+            mounted = mapping.get(name)
+            if mounted is not None and mounted[0] == str(canonical):
+                corrected[name] = mounted[1]
+        configured_catalog = catalog_config(config)
+        if (
+            configured_catalog
+            and isinstance(configured_catalog.get("path"), str)
+            and configured_catalog["path"]
+        ):
+            value = str(configured_catalog["path"])
+            origins[os.path.normpath(str(path.parent / value))] = str(
+                resolve_path(value, path.parent)
+            )
+        if corrected:
+            overlays[scope] = {
+                "workspaces": {layout.config_key: corrected}
+                if scope == "root" and PROJECTION_KEY not in config
+                else corrected
             }
-        }
-    return tomlkit.dumps(config)
+    return {
+        CONFIG_PATCH_ENV: json.dumps(
+            {
+                "origins": origins,
+                "defaults": {"root": {"teaming": {"human": getpass.getuser()}}},
+                **overlays,
+            }
+        ),
+    }
 
 
 def prepare_source_mounts(
@@ -187,13 +210,9 @@ def prepare_source_mounts(
     agent_name: str,
     hosted_place: Path,
     *,
-    capture_home: Path | None = None,
     include_home: bool = True,
 ) -> tuple[SandboxMount, ...]:
-    """Mount authored inputs with host-relative configuration paths already bound."""
-    from toolang.common.config_sources import rebase_config_content
-    from toolang.common.files import atomic_write_text
-
+    """Mount original State inputs without environment-specific byte changes."""
     mounts = {
         mount.hosted_path: mount
         for mount in (
@@ -203,32 +222,4 @@ def prepare_source_mounts(
             ),
         )
     }
-    local_home = local_place / "agents" / agent_name
-    hosted_home = hosted_place / "agents" / agent_name
-    for scope, local, hosted in (
-        ("root", local_place, hosted_place),
-        ("home", local_home, hosted_home),
-    ):
-        if scope == "home" and not include_home:
-            continue
-        config = local / "config.toml"
-        if not config.is_file():
-            continue
-        original = config.read_bytes()
-        resolved = rebase_config_content(
-            original, local, include_workspaces=scope == "home"
-        )
-        if resolved == original:
-            continue
-        identity = sha256(str(config).encode()).hexdigest()[:16]
-        captured = (
-            (capture_home or local_home)
-            / ".runtime"
-            / "config-inputs"
-            / identity
-            / config.name
-        )
-        atomic_write_text(captured, resolved.decode("utf-8"))
-        target = hosted / "config.toml"
-        mounts[target] = SandboxMount(captured, target, read_only=True)
     return tuple(mounts.values())
