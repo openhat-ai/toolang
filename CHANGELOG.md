@@ -85,6 +85,11 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   fails, instead of leaving it running.
   ([#961](https://github.com/openhat-ai/toolang/pull/961))
 
+- `too ps` shows malformed Hub readiness as `unknown` instead of `up` or
+  `down`, and `too hub status` inspects the managed process despite an invalid
+  root configuration.
+  ([#966](https://github.com/openhat-ai/toolang/pull/966))
+
 ## [0.4.0b1] - 2026-10-24
 
 ### Added
