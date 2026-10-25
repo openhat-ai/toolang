@@ -254,14 +254,14 @@ def test_model_catalog_override_is_scoped_to_consuming_commands() -> None:
         assert "--catalog" in command_help
         assert "--models" not in command_help
 
-    for command in (["list", "--help"], ["adapters", "--help"]):
+    for command in (["ls", "--help"], ["ps", "--help"], ["adapters", "--help"]):
         command_result = runner.invoke(cli.app, command)
         assert command_result.exit_code == 0, command_result.stderr
         command_help = strip_ansi(command_result.stdout)
         assert "--catalog" not in command_help
         assert "--models" not in command_help
 
-    unsupported = runner.invoke(cli.app, ["--catalog", "catalog.json", "list"])
+    unsupported = runner.invoke(cli.app, ["--catalog", "catalog.json", "ls"])
     assert unsupported.exit_code == 2
     assert "No such option: --catalog" in strip_ansi(unsupported.stderr)
 

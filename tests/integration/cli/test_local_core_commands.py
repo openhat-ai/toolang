@@ -118,7 +118,7 @@ def _human_record_rows(output: str, columns: tuple[str, ...]) -> list[dict[str, 
 @pytest.mark.parametrize(
     "command,noun",
     [
-        (("list",), "agents"),
+        (("ls",), "agents"),
         (("alice", "workspace", "list"), "workspaces"),
         (("alice", "chore", "list"), "chores"),
         (("alice", "inspect", "threads"), "threads"),
@@ -128,7 +128,7 @@ def _human_record_rows(output: str, columns: tuple[str, ...]) -> list[dict[str, 
 )
 def test_empty_lists_print_only_their_summary(tmp_path, command, noun):
     root = tmp_path / "toolang"
-    if command != ("list",):
+    if command != ("ls",):
         _create_agent(root)
         if "inspect" in command:
             RunStore(AgentLayout.resident(root, "alice").run_store).close()
@@ -136,14 +136,16 @@ def test_empty_lists_print_only_their_summary(tmp_path, command, noun):
     result = _invoke(root, *command)
 
     assert result.exit_code == 0, result.stderr
-    assert result.stdout == f"0 {noun}\n"
+    assert result.stdout == (
+        "0 agents: 0 up, 0 resident\n" if command == ("ls",) else f"0 {noun}\n"
+    )
 
 
 @pytest.mark.parametrize("count", [1, 2])
 @pytest.mark.parametrize(
     "collection,noun,heading",
     [
-        ("agents", "agent", "AGENT"),
+        ("agents", "agent", "NAME"),
         ("workspaces", "workspace", "WORKSPACE"),
         ("chores", "chore", "CHORE"),
         ("threads", "thread", "THREAD"),
@@ -159,7 +161,7 @@ def test_lists_have_flush_left_tables_and_displayed_record_summaries(
     if collection == "agents":
         for index in range(count):
             _create_agent(root, name=f"agent{index}")
-        command = ("list",)
+        command = ("ls",)
     else:
         _create_agent(root)
         layout = AgentLayout.resident(root, "alice")
@@ -221,7 +223,10 @@ def test_lists_have_flush_left_tables_and_displayed_record_summaries(
     assert lines[1].startswith("─") and set(lines[1]) == {"─"}
     assert lines[2] and not lines[2].startswith(" ")
     assert lines[-2] == ""
-    assert lines[-1] == f"{count} {noun if count == 1 else noun + 's'}"
+    expected_summary = f"{count} {noun if count == 1 else noun + 's'}"
+    if collection == "agents":
+        expected_summary += f": 0 up, {count} resident"
+    assert lines[-1] == expected_summary
     assert sum(set(line) == {"─"} for line in lines) == 1
     numeric_headers = {
         "agents": ("PORT",),
@@ -237,7 +242,7 @@ def test_lists_have_flush_left_tables_and_displayed_record_summaries(
 @pytest.mark.parametrize(
     "status", ["stopped", "preparing", "starting", "running", "failed", "unknown"]
 )
-def test_agent_list_uses_not_running_for_stopped_display_only(
+def test_agent_listing_maps_states_without_changing_observations(
     tmp_path, monkeypatch, status
 ):
     snapshot = agents.AgentStatus(
@@ -248,19 +253,22 @@ def test_agent_list_uses_not_running_for_stopped_display_only(
         webui_url=None,
         sandbox=None,
     )
-    monkeypatch.setattr(agents.AgentProcess, "list", lambda *args, **kwargs: [snapshot])
+    from toolang.up.observation import RuntimeProbe
 
-    result = _invoke(tmp_path, "list")
+    _create_agent(tmp_path)
+    monkeypatch.setattr(RuntimeProbe, "status", lambda *args, **kwargs: snapshot)
+
+    result = _invoke(tmp_path, "ls")
 
     assert result.exit_code == 0, result.stderr
     lines = strip_ansi(result.stdout).splitlines()
     start = lines[0].index("STATUS")
-    end = lines[0].index("SANDBOX")
+    end = lines[0].index("DRIVERS")
     assert lines[2][start:end].strip() == (
-        "not running" if status == "stopped" else status
+        "up" if status == "running" else "unknown" if status == "unknown" else "down"
     )
     assert snapshot.status == status
-    assert lines[-2:] == ["", "1 agent"]
+    assert "1 agent:" in result.stdout
 
 
 def test_workspace_list_excludes_implicit_lab_and_does_not_prepare_state(
@@ -3985,7 +3993,7 @@ def test_agent_info_builds_state_and_setup_without_server(
     assert "Caps" in result.stdout
     assert "Models" in result.stdout
     assert "Tools" in result.stdout
-    assert "not running" in result.stdout
+    assert "Status: down" in result.stdout
 
 
 @pytest.mark.parametrize(
@@ -4095,15 +4103,11 @@ def test_agent_info_fields_follow_the_compact_layout(
     workspace_names = ["lab"]
     assert rows["Workspaces"] == ", ".join(workspace_names)
     status_value = rows["Status"]
-    if status == "stopped":
-        assert status_value == "not running"
-    elif status == "running":
-        assert status_value.startswith("running (up ")
+    if status == "running":
+        assert status_value.startswith("up (")
         assert rows["Drivers"] == "chat,chore,talk"
-    elif status == "failed":
-        assert status_value == "failed: runtime failed"
     else:
-        assert status_value == status
+        assert status_value == ("unknown" if status == "unknown" else "down")
 
 
 def test_agent_info_reports_only_state_published_caps(

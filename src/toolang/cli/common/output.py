@@ -142,8 +142,9 @@ def echo_table(
     justify: Sequence[TableJustify | None] | None = None,
     max_widths: Sequence[int | None] | None = None,
     width: int | None = None,
+    console: Console | None = None,
 ) -> None:
-    console = _TABLE_CONSOLE
+    console = console or _TABLE_CONSOLE
     if width is not None:
         console = Console(
             file=console.file,
@@ -265,6 +266,15 @@ def runtime_value(value: object) -> str:
     if not isinstance(value, str) or not value.strip():
         return "-"
     return value
+
+
+def runtime_status_label(state: str) -> str:
+    """Project runtime observations without changing their lifecycle meaning."""
+    if state == "running":
+        return "up"
+    if state in {"preparing", "starting", "stopped", "failed", "exited", "not running"}:
+        return "down"
+    return "unknown"
 
 
 def runnable_label(kind: str | None, name: str | None) -> str:

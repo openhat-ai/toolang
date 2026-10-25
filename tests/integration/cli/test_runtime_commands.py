@@ -1027,12 +1027,12 @@ def test_remove_deletes_stopped_agent_home_without_authored_source(
     layout.runtime.mkdir(parents=True)
     layout.home_state.mkdir(parents=True)
 
-    listed = runner.invoke(cli.app, ["--root", str(root), "list"])
+    listed = runner.invoke(cli.app, ["--root", str(root), "ls"])
     removed = runner.invoke(cli.app, ["--root", str(root), "remove", "alice"])
 
     assert listed.exit_code == 0, listed.stderr
     assert "alice" in listed.stdout
-    assert "not running" in listed.stdout
+    assert "down" in listed.stdout
     assert removed.exit_code == 0, removed.stderr
     assert removed.stdout.strip() == "Agent alice removed"
     assert not layout.home.exists()

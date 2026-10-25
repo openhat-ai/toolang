@@ -407,7 +407,7 @@ def test_eager_help_precedes_selector_validation(
 
 
 @pytest.mark.parametrize(
-    "name", ["list", "new", "clone", "remove", "talk", "run", "_serve"]
+    "name", ["ls", "ps", "new", "clone", "remove", "talk", "run", "_serve"]
 )
 def test_catalog_and_script_commands_reject_agent_prefix(
     name, tmp_path, monkeypatch, capsys
@@ -789,7 +789,7 @@ def test_builtin_precedence_does_not_parse_a_script_file(tmp_path, monkeypatch, 
         Program, "from_source", lambda _: pytest.fail("parsed builtin operand")
     )
     assert cli.main([str(source), "chat", "--help"]) == 0
-    assert cli.main([str(source), "list"]) == 2
+    assert cli.main([str(source), "ls"]) == 2
     assert "Usage:" in capsys.readouterr().err
 
 

@@ -560,7 +560,9 @@ The server reads `[hub]` in `ROOT/config.toml`; bind port precedence is `--port`
 `TOOLANG_HUB_PORT`, `hub.port`, then `7001`. The host defaults to `127.0.0.1`.
 Changing the listener requires separately configuring client `teaming.hub`.
 
-Bare `too hub` queries the client URL for availability/version and shows local
-process state separately, even when the local process record is absent or corrupt.
+Bare `too hub` shows help. `too hub status` inspects the managed process using
+`hub/pid.json`, reporting `up/down/unknown` independently of client configuration.
+`too ps` queries the client URL for readiness and version independently of that
+process record; `too ls` does not query the hub.
 Successful stop removes the owned record after confirmed exit. ASGI teardown also
 cleans it; the lifetime lock and PID/creation-time comparison protect replacements.

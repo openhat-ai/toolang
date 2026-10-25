@@ -359,7 +359,7 @@ def test_command_descriptions_match_root_and_command_help(
     ("group", "commands"),
     [
         ("chore", ("list", "new", "edit", "delete", "run", "cancel")),
-        ("hub", ("start", "serve", "stop")),
+        ("hub", ("status", "start", "stop", "serve")),
     ],
 )
 def test_chore_and_hub_help_lists_supported_commands(
@@ -369,8 +369,8 @@ def test_chore_and_hub_help_lists_supported_commands(
     assert too_main(["--root", str(tmp_path), group, "--help"]) == 0
     output = strip_ansi(capsys.readouterr().out)
     if group == "hub":
-        assert "Usage: too hub [OPTIONS] [COMMAND] [ARGUMENTS]" in output
-        assert "Run 'too hub' to show hub and agent status." in output
+        assert "Usage: too hub [COMMAND]" in output
+        assert "Run 'too hub' to show hub and agent status." not in output
     section = output.split("Commands:\n", 1)[1].split("\n\n", 1)[0]
     assert (
         tuple(
@@ -710,7 +710,7 @@ def test_hidden_is_no_longer_a_command():
     ("args", "error"),
     [
         ([], "No such command 'channel'."),
-        (["list"], "Usage:"),
+        (["ls"], "Usage:"),
         (["--help"], "No such command 'channel'."),
     ],
 )

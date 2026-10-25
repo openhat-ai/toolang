@@ -22,7 +22,7 @@ agent. Root help links to the topic directory beside `too more`.
 
 | Input | Interpretation |
 | --- | --- |
-| `too new NAME`, `too clone SOURCE [NAME]`, `too remove NAME`, `too list` | Agent catalog commands; ordinary command operands |
+| `too new NAME`, `too clone SOURCE [NAME]`, `too remove NAME`, `too ls` | Agent catalog commands; ordinary command operands |
 | `too AGENT serve` | Foreground lifecycle for resident or visiting agents |
 | `too AGENT start`, `too AGENT stop` | Background lifecycle for resident or visiting agents |
 | `too AGENT info` | Resident, visiting, or roaming agent information |
@@ -172,9 +172,12 @@ resource commands reject instance operands. There is no `--instance`/`-i` option
 
 ## Resource and plugin inspection
 
-`too list` includes all resident homes and their running status. `too hub`
-includes residents plus active registered visiting/roaming instances, with status
-and effective Talk selection. Both use the shared `RuntimeWatcher` inventory.
+`too ls` lists resident homes, including stopped ones. `too ps` also includes
+active or unresolved visiting/roaming instances under the same ROOT. Both use
+the shared `RuntimeWatcher` inventory and show `NAME`, `STATUS`, `DRIVERS`, and
+`PORT`, with complete `name`/`name@id` addresses matching `top`. Summaries put the
+up count before placement counts. Only `ps` adds the configured hub's availability,
+version, and URL; it does not inspect the managed hub process or its files.
 
 `too AGENT info` resolves one home without collecting an inventory. Its title
 shows only the uppercase agent name; `Home` gives its location, using a relative
@@ -215,7 +218,11 @@ Inspection record, value, and tree tables use the same border style; collection
 counts apply only to the thread, run, step, and control lists. Conversation
 directory tables use the same border and plain count style, label their identifier
 column `CONVO`, and right-align `JOINED`.
-`too list` displays the `stopped` process state as `not running`.
+Agent status in `ls`, `ps`, and `info` is `up` for confirmed running, `down` for
+known non-running phases, and `unknown` when observation cannot be verified.
+These are display labels; internal runtime and Run/Step states stay unchanged.
+Missing metadata does not downgrade a confirmed running instance. Listings use
+`- up` when state or coverage is uncertain and retain partial diagnostics.
 Agent ports and inspection run, step, and child counts are right-aligned; text
 fields retain their existing alignment.
 
@@ -313,7 +320,10 @@ its anchor and the visible suffix. All Thread kinds use the same branch state ch
 [Hosting](hosting.md#server-lifetime-and-client-leases) owns server retention,
 and [Chat](chat.md) owns session snapshots and queue behavior.
 
-The hub runs independently of an agent; bare `too hub` shows its instance status.
+The hub runs independently of an agent; bare `too hub` shows service help and
+`too hub status` shows the managed process in one line, using `up/down/unknown`.
+An up process reports version, bind endpoint, then PID; version lookup failure
+does not change its process state. Lifecycle commands retain their existing flags.
 [Messaging](messaging.md) owns Talk/Convo and shared rules. [Top](top.md) owns
 current and recent observation.
 ## Terminal titles and pane marks

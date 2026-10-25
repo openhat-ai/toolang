@@ -4,7 +4,7 @@
 root, whether running or stopped, plus visiting/roaming identities in the current
 validated `.runtime/active/` registry. `too alice top` selects only that
 resident home and its optional runtime binding. This is the same inventory used
-by `too hub`; `too list` restricts it to residents. Observation starts no runtime,
+by `too ps`; `too ls` restricts it to residents. Observation starts no runtime,
 creates no stores and acquires no lease.
 
 Discovery refreshes every five seconds. Resident departure removes its live

@@ -114,7 +114,7 @@ def test_offline_info_prepares_current_state_with_ref_progress(
     )
     assert main(["--root", str(tmp_path), "dev", "info"]) == 0
     output = capsys.readouterr()
-    assert "not running" in output.out
+    assert "Status: down" in output.out
     assert "Prepared" in output.err
     assert "1 prompt" in output.out
 
