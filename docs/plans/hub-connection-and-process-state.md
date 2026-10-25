@@ -31,7 +31,7 @@ The Hub artifact directory remains unchanged.
 
 ## Scope
 
-Define client configuration, server-only configuration, identity discovery,
+Define root Hub configuration, consumer-specific parsing, identity discovery,
 local record cleanup, CLI inspection, Docker client inputs, and remote roster
 registration. Preserve message semantics, lease fencing, event recovery, and
 independent local execution during Hub outages.
@@ -45,79 +45,106 @@ and existing human ownership semantics remain supported.
 
 ## Configuration and ownership
 
-### Client inputs
+### One root configuration
 
-`ROOT/config.toml` contains the connection configuration shared by that root's
-agents and human tools:
+All Hub settings live under top-level `[hub]` in each deployment's own
+`ROOT/config.toml`. The section and every field are optional. Do not introduce
+another configuration file or read settings from `ROOT/hub/`.
+
+| Field | Consumer | Default |
+| --- | --- | --- |
+| `hub.url` | Clients | `http://127.0.0.1:<hub.port>` |
+| `hub.host` | Local Hub listener | `127.0.0.1` |
+| `hub.port` | Local listener and default client URL | `7001` |
+| `hub.roster` | Hub roster service | `local` |
+| `hub.backend.url` | Hub backend service | `redis://localhost:6379/0` |
+
+With no `[hub]`, clients connect to `http://127.0.0.1:7001` and a locally started
+Hub binds there using the default backend. Configuring only `hub.port` keeps
+local clients and the listener aligned; an explicit URL selects the target
+independently of local listener settings.
+
+For a Hub running in Docker, its container root configuration can contain:
 
 ```toml
-[teaming.hub]
-url = "http://127.0.0.1:7001"
+[hub]
+host = "0.0.0.0"
+port = 7001
+roster = "registered"
+
+[hub.backend]
+url = "redis://redis:6379/0"
 ```
 
-Resolve URL as `TOOLANG_HUB_URL` > `[teaming.hub].url` >
-`http://127.0.0.1:7001`. A present but empty or invalid override is an error.
+If Docker publishes host port `17001` to container port `7001`, host agents and
+human tools select it through the host's own `ROOT/config.toml`:
+
+```toml
+[hub]
+url = "http://127.0.0.1:17001"
+```
+
+The host needs no backend settings. Only the Hub process consumes backend
+settings from the root where that process runs.
+
+### Client inputs
+
+Resolve URL as `TOOLANG_HUB_URL` > `[hub].url` > loopback with configured
+`[hub].port` or `7001`. A present but empty or invalid selected input is an error.
 Accept absolute HTTP/HTTPS URLs, including an optional proxy path prefix;
 normalize trailing slashes and reject userinfo, queries, fragments, wildcard
 destination addresses, and invalid ports. Preserve HTTPS certificate checking.
 
 All clients use the same resolver: presence, export, conversation tools and
 rules, Talk, and team observation. Home configuration retains only the existing
-`[teaming] enabled` opt-out; it cannot override the root's Hub target.
+`[teaming] enabled` opt-out. `[hub]` is root-only; home/project/other-place
+configuration cannot override the selected root's target.
 
 Keep `[teaming].human` as the human CLI's own identity override, defaulting to the
-OS username. It is separate from connection resolution. Agents neither resolve
+OS username; Hub also retains this root-local setting for its existing ownership
+contract. It is separate from connection resolution. Agents neither resolve
 that default nor use a Hub-provided human identity. Human tools obtain their
-actor locally, rather than from a process record or handshake.
+actor locally; neither the process record nor handshake supplies one.
 
 Client setup never reads `ROOT/hub/`, creates a `BackendConfig`, computes a
-backend identity, or opens a backend connection. An absent or invalid server
-configuration cannot prevent clients from using a valid remote Hub.
+backend identity, or opens a backend connection. A client parser projects only
+the URL inputs. It does not validate or propagate `hub.backend`, `hub.host`, or
+`hub.roster`; `hub.port` is validated only if needed for the default URL.
+Missing or semantically invalid backend/listener settings in the same valid TOML
+file cannot prevent clients from using an explicit remote URL.
 
 ### Server inputs
 
-Move server settings into `ROOT/hub/config.toml`, read only by `hub start/serve`:
-
-```toml
-human = "bryan"
-host = "127.0.0.1"
-port = 7001
-roster = "local"
-
-[backend]
-url = "redis://localhost:6379/0"
-```
-
-Defaults retain the current human OS-username fallback, backend URL, and port;
-host defaults to loopback and roster to `local`. The configured human remains
-the server-side owner under the existing messaging contract. Human requests
-must use that identity; supporting independent human owners is outside scope.
+`hub start/serve` project listener, roster, and backend settings from the same
+root configuration and apply their defaults. They do not require or validate
+`hub.url`, which may point at another Hub. The configured root human remains
+the server-side owner; human requests must use that identity under the existing
+messaging contract. Supporting independent human owners is outside scope.
 
 Add `--host` to `hub start/serve`. Resolve bind host as CLI >
-`TOOLANG_HUB_HOST` > server configuration > `127.0.0.1`; resolve bind port as
-CLI `--port` > `TOOLANG_HUB_PORT` > server configuration > `7001`.
+`TOOLANG_HUB_HOST` > `[hub].host` > `127.0.0.1`; resolve bind port as
+CLI `--port` > `TOOLANG_HUB_PORT` > `[hub].port` > `7001`.
 Support explicit IPv4/IPv6 binds and retain exclusive startup and busy-port
 failure. Wildcard binds are listener settings, never client URLs.
 
-Binding and dialing are independent. A custom `--port` does not change client
-defaults, write client configuration, or publish a discovery fallback. Start
-output identifies the local listener and explains the client URL setting for a
-nondefault port. Service commands operate on the local root even when its client
-URL points elsewhere.
+CLI and environment bind overrides do not rewrite `[hub]` or publish a client
+discovery fallback. Start output identifies the local listener and explains the
+URL setting if an override changes its configured port. Service commands operate
+on the local root even when its client URL points elsewhere.
 
 Only Hub constructs backend configuration and derives its namespace from its
-own canonical root. Clients receive no backend URL, credentials, root path,
-root code, storage keys, or driver configuration.
+own canonical root. Client connection objects, guest projections, and Hub
+responses contain no backend URL, credentials, root path, root code, storage
+keys, or driver configuration.
 
 ### Compatibility
 
 Keep `hub start`, `serve`, `stop`, `stop --force`, and the existing port flag.
-Replace root `[teaming.backend]` and `[teaming.hub].port` with the two configuration
-files above. Reject legacy server fields in client configuration with a specific
-move-to-`hub/config.toml` diagnostic; do not silently read them or rewrite files.
-`TOOLANG_HUB_PORT` becomes server-only; custom-port clients use a URL.
-Keep the human CLI override in root configuration and copy an existing explicit
-Hub owner into server configuration so upgrading does not change ownership.
+Move root `[teaming.backend]` to `[hub.backend]` and `[teaming.hub].port` to
+`[hub].port` in the existing `ROOT/config.toml`. Reject legacy locations with a
+specific diagnostic naming their new keys; do not silently read them or rewrite
+files. Keep `[teaming].human` unchanged. `TOOLANG_HUB_PORT` is a server-only bind
+override; it does not change the configured client URL.
 
 Stop old Hubs before upgrade and restart clients with the new version. New
 clients require the new metadata contract and report an incompatible Hub rather
@@ -213,7 +240,8 @@ this address is never substituted into client configuration.
 
 - Add read-only `too hub conf`: print the selected root, effective client URL,
   source (`environment|config|default`), and any guest-gateway transformation.
-  It performs no network request and reads no Hub server settings or records.
+  It reads only root configuration, projects only connection inputs, and performs
+  no network request or process-record read. Never emit backend fields.
 - `too hub` probes the configured target regardless of local process state.
   Show its endpoint, actual availability, and server version, plus a separately
   labeled local process state. Preserve the existing local agent tree and its
@@ -236,9 +264,12 @@ this address is never substituted into client configuration.
 
 ## Docker and deployment cases
 
-Project the selected root's Hub client settings into guest configuration even
-when PLACE differs from ROOT. Project the human CLI's local identity only where
+Project the selected root's effective client URL as `[hub].url` in guest root
+configuration even when PLACE differs from ROOT. Project the human CLI's local
+identity only where
 needed by human tools; do not pass server settings or backend configuration.
+Replace any copied PLACE `[hub]` table with this client-only projection so raw
+root/place backend fields cannot reach an agent guest.
 Remove the `R/hub/ -> G/hub/` mount and its directory-creation side effect.
 Propagate the effective URL override through existing explicit launcher inputs,
 without broadening general environment grants.
@@ -264,7 +295,8 @@ current namespace; pointing a new root at the same Redis URL does not migrate it
 ## Implementation touchpoints
 
 - `teaming/config.py`, `setup/teaming.py`, `setup/watcher.py`: separate client
-  settings and refresh from server/backend settings; preserve home opt-out.
+  projections and refresh from server/backend parsing within the one root
+  configuration; preserve home opt-out and root-only `[hub]` scope.
 - `up/config.py`, `up/records.py`, `up/hub.py`: server configuration and process
   record ownership, listener settings, startup readiness, and conditional cleanup.
 - `teaming/{discovery,schemas,client,agent_client,api,lifecycle}.py`: remove
@@ -286,8 +318,9 @@ current namespace; pointing a new root at the same Redis URL does not migrate it
 
 | Scenario | Pass condition |
 | --- | --- |
-| Default and overrides | Default, config URL, and environment precedence resolve consistently across agent/human callers; invalid selected values fail without fallback. |
-| Client/backend isolation | Remote clients work with no `hub/` directory and no backend settings; denied reads of server files do not affect them and no backend factory is invoked. |
+| Default and overrides | Missing `[hub]` and empty `[hub]` give the same local client/listener/backend defaults; configured port supplies the default local URL; explicit URL and environment precedence work consistently. Invalid selected inputs fail without fallback. |
+| Client/backend isolation | Clients work with no `hub/` directory. Missing or semantically invalid backend/listener fields in valid root TOML do not affect an explicit target, and no backend factory is invoked. Service commands ignore invalid client URLs. |
+| Docker Hub and host client | Container root config supplies `[hub.backend]` and its listener; host root config supplies only `[hub].url` pointing to the published port. Host agents can register and communicate without server configuration or shared files. |
 | Human separation | The process record and `/info` contain no human; agent operation requires no human configuration. Human tools use their local actor and existing message behavior remains valid. |
 | Metadata contract | Missing identity, invalid metadata, or incompatible API version blocks application mutations; proxy path prefixes work and `/info` does not register a human. |
 | Stale or corrupt local record | Configured remote operations still succeed; local inspection reports its own problem and never signals an unrelated process. |
@@ -299,7 +332,7 @@ current namespace; pointing a new root at the same Redis URL does not migrate it
 | Registered roster | Agents with no server-visible HOME can register, renew, message, and export; expiry marks them offline without deleting history. Local roster checks and cross-root rejection still pass. |
 | Roster mode change | Same-root registration follows the newly selected policy without losing history; local conversion requires HOME, and foreign root claims are rejected. |
 | Guest inputs | A guest with PLACE different from ROOT receives the selected Hub URL and no server/backend data or Hub mount; explicit remote hosts are not rewritten. |
-| Bind versus URL | Nondefault port and wildcard/IPv6 bind honor server precedence without altering client URL; occupied ports fail without fallback. |
+| Bind versus URL | Local port config supplies the fallback URL; an explicit URL stays independent of listener settings and CLI/environment bind overrides. Wildcard/IPv6 binds honor precedence; occupied ports fail without fallback. |
 | Reconnect and dataset change | Hub restart and URL refresh recover background communication without stopping runs; pinned batches reject identity changes and never advance a foreign dataset's cursor. |
 | Delivery semantics | Lost acknowledgments preserve uncertain-send results and message IDs; no automatic message replay or direct-backend fallback occurs. |
 
@@ -312,9 +345,11 @@ For this definition-only change, verify source references, examples, links, and
 
 ## Risks and open questions
 
-The split changes experimental configuration and requires an explicit upgrade;
-custom-port deployments must configure a client URL. Remote roster mode retains
-offline entries because the server cannot infer permanent removal from absent
+Moving the experimental keys into `[hub]` requires an explicit configuration
+upgrade. Backend settings may coexist with client settings in a root file;
+consumer-specific parsing and guest projection must retain their boundary.
+Remote roster mode retains offline entries because the server cannot infer
+permanent removal from absent
 client files. Moving the Hub's canonical root still selects a different backend
 namespace. These behaviors must be visible in migration and deployment docs.
 
