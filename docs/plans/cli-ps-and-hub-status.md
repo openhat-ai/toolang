@@ -24,8 +24,9 @@ approval.
 - Preserve lifecycle, unknown/intermediate states, partial diagnostics, and
   terminal conventions. Configuration, protocol, persistence, authentication,
   compatibility, and migration changes are outside scope.
+- Run/Step status values and presentation remain unchanged and outside scope.
 
-## State presentation
+## Agent and hub state presentation
 
 Keep runtime/API values unchanged. `ls`, `ps`, and agent `info` share this mapping:
 
@@ -35,7 +36,7 @@ Keep runtime/API values unchanged. `ls`, `ps`, and agent `info` share this mappi
 | `starting` | `starting` | Launch underway, not ready. |
 | `running` | `running` | Running, including idle instances. |
 | `stopped` / never started | `not running` | No active runtime. |
-| `failed` | `failed` | Confirmed launch/workload failure. |
+| `failed` | `failed` | Confirmed agent launch/runtime failure. |
 | Inspection/ownership error | `unknown` | Runtime state cannot be verified. |
 
 - `ls`/`ps` show labels in STATUS and reasons below the footer; `info` retains
@@ -47,14 +48,12 @@ Keep runtime/API values unchanged. `ls`, `ps`, and agent `info` share this mappi
   version and configured URL; connection/readiness failure is `hub not running`.
   Invalid configuration/response is `hub unknown: <reason>`. These report
   availability, not server lifecycle.
-- `top` retains Run/Step `pending`/`running`/`succeeded`/`failed`/`canceled` and
-  operation labels. `unavailable`/`stale` qualify observation quality, not agents.
 - DRIVERS reuses `format_drivers`: `chat,chore,talk`, `none` for known empty,
   `-` for missing/inapplicable. PORT uses `-` when missing; version uses `unknown`.
   Metadata failure never downgrades a confirmed `running` instance.
 - Count displayed rows; running count is `-` when runtime state or coverage is
   unknown. Incomplete agent inspection adds `, partial` to the first footer line.
-  Hub probes do not affect agent states/counts. Preserve `top`'s nullable totals.
+  Hub probes do not affect agent states/counts.
 
 ## Output
 
@@ -104,7 +103,7 @@ Commands:
 - [ ] Reuse `up/watcher.py`/`up/observation.py` for snapshot data and
   `up/hub.py` for process identity checks; simplify `commands/hub.py` accordingly.
 - [ ] Share CLI state/driver formatting with `commands/agent.py` info output;
-  leave runtime records, API schemas, and `top` Run/Step semantics unchanged.
+  leave runtime records and API schemas unchanged.
 - [ ] Cover both listings: resident-only/mixed/empty inventories, duplicate names,
   every state mapping above, empty/unknown drivers, missing ports/version,
   uncertain counts, and partial/narrow/plain output. Assert agreement with `info`.
