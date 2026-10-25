@@ -236,10 +236,7 @@ def info_agent(
             rows.append(("WebUI", status.webui_url))
     if preparation_error:
         rows.append(("Preparation", preparation_error))
-    title = layout.name.upper()
-    if layout.place_code:
-        title += f"@{layout.place_code}"
-    echo_pairs_table(rows, avatar=agent_avatar(), title=title)
+    echo_pairs_table(rows, avatar=agent_avatar(), title=layout.name.upper())
     if preparation_error:
         raise typer.Exit(1)
 

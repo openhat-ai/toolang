@@ -4202,7 +4202,7 @@ def test_roaming_agent_info_uses_the_source_layout(
     capsys.readouterr()
 
     assert result == 0
-    assert captured["title"] == f"DEMO@{selected.place_code}"
+    assert captured["title"] == "DEMO"
     rows = cast(dict[str, str], captured["rows"])
     assert shortened == [selected.home]
     assert rows["Home"] == "compact home"
@@ -4248,7 +4248,7 @@ def test_visiting_agent_info_uses_the_materialized_layout(
     capsys.readouterr()
 
     assert result == 0
-    assert captured["title"] == f"RESEARCHER@{layout.place_code}"
+    assert captured["title"] == "RESEARCHER"
     rows = cast(dict[str, str], captured["rows"])
     assert rows["Home"] == shorten_home_path(layout.home)
 

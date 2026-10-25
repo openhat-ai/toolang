@@ -172,6 +172,7 @@ def test_info_prepares_current_resources_for_all_placements(
     ):
         assert main([selector, "info"]) == 0
         text = capsys.readouterr().out
+        assert text.splitlines()[1].strip() == layout.name.upper()
         if running:
             assert "Resources: unavailable" in text
             assert "Status: running" in text
@@ -183,10 +184,6 @@ def test_info_prepares_current_resources_for_all_placements(
         labels = ("Home", "Caps", "Tools", "Models", "Chores", "Workspaces", "Status")
         positions = [text.index(f"{label}:") for label in labels]
         assert positions == sorted(positions)
-        title = layout.name.upper()
-        if layout.place_code:
-            title += f"@{layout.place_code}"
-        assert text.splitlines()[1].strip() == title
         assert ("Status: running" in text) is running
         assert layout.agent_state.exists()
         assert not layout.run_store.exists()
