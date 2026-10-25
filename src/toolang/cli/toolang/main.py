@@ -389,6 +389,7 @@ _registered_command(
 _registered_command(
     "ls",
     "toolang.cli.toolang.commands.ps:ls",
+    cls=MetadataCommand,
     help="List resident agents and their status",
     rich_help_panel=AGENT_COMMAND_PANEL,
 )
@@ -540,6 +541,7 @@ _registered_command(
 _registered_command(
     "ps",
     "toolang.cli.toolang.commands.ps:ps",
+    cls=MetadataCommand,
     help="Show agent instances and hub status",
     rich_help_panel=INSPECTION_COMMAND_PANEL,
 )

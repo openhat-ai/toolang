@@ -299,10 +299,15 @@ def _local_resources(
         try:
             return [
                 ("Caps", _cap_counts_summary(counts["caps"])),
-                ("Tools", f"{counts['tools']} tools, {counts['toolsets']} toolsets"),
+                (
+                    "Tools",
+                    f"{_count(counts['tools'], 'tool')}, "
+                    f"{_count(counts['toolsets'], 'toolset')}",
+                ),
                 (
                     "Models",
-                    f"{counts['models']} models, {counts['providers']} providers",
+                    f"{_count(counts['models'], 'model')}, "
+                    f"{_count(counts['providers'], 'provider')}",
                 ),
                 ("Chores", _count(counts["chores"], "chore")),
                 ("Workspaces", ", ".join(counts["workspaces"]) or "-"),

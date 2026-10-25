@@ -238,10 +238,11 @@ def test_ls_filters_nonresidents_before_probing(tmp_path, monkeypatch, capsys):
         ("offline", "hub down"),
         ("unready", "hub down"),
         ("health_false", "hub down"),
-        ("health_number", "hub unknown:"),
-        ("health_extra", "hub unknown:"),
-        ("metadata", "hub unknown:"),
-        ("invalid_json", "hub unknown:"),
+        ("health_number", "hub unknown: invalid hub readiness response"),
+        ("health_extra", "hub unknown: invalid hub readiness response"),
+        ("health_json", "hub unknown: invalid hub response"),
+        ("metadata", "hub unknown: invalid hub response"),
+        ("invalid_json", "hub unknown: invalid hub response"),
     ],
 )
 def test_ps_probes_only_configured_hub(tmp_path, monkeypatch, capsys, mode, expected):
@@ -270,6 +271,8 @@ def test_ps_probes_only_configured_hub(tmp_path, monkeypatch, capsys, mode, expe
                 },
             )
         assert request.headers["X-Toolang-Backend"] == "dataset"
+        if mode == "health_json":
+            return httpx.Response(200, text="bad json")
         body = {
             "health_false": {"ok": False},
             "health_number": {"ok": 1},
@@ -289,7 +292,7 @@ def test_ps_probes_only_configured_hub(tmp_path, monkeypatch, capsys, mode, expe
     (tmp_path / "hub" / "pid.json").write_text("bad record")
     assert cli.main(["--root", str(tmp_path), "ps"]) == 0
     lines = capsys.readouterr().out.splitlines()
-    assert lines[-1].startswith(expected)
+    assert lines[-1] == expected
     assert lines[-2] == "1 agent: 0 up, 1 resident, 0 visiting, 0 roaming"
     assert "alice" in "\n".join(lines)
     assert requests
@@ -310,6 +313,22 @@ def test_invalid_client_settings_keep_agent_listing(tmp_path, capsys):
         "alice" in text and "1 agent: 0 up, 1 resident, 0 visiting, 0 roaming" in text
     )
     assert text.splitlines()[-1].startswith("hub unknown:")
+
+
+@pytest.mark.parametrize("command", ["ls", "ps"])
+def test_malformed_root_configuration_keeps_agent_listing(tmp_path, capsys, command):
+    (tmp_path / "config.toml").write_text("[teaming\n")
+    layout = AgentLayout.resident(tmp_path, "alice")
+    layout.home.mkdir(parents=True)
+    with ForegroundWorkload(layout, toolang_root=tmp_path, drivers=frozenset()):
+        assert cli.main(["--root", str(tmp_path), command]) == 0
+    text = capsys.readouterr().out
+    assert "alice" in text and "1 agent: 1 up, 1 resident" in text
+    if command == "ps":
+        assert text.splitlines()[-1].startswith("hub unknown:")
+    else:
+        assert text.splitlines()[-1] == "1 agent: 1 up, 1 resident"
+        assert "hub" not in text
 
 
 def test_listing_failure_keeps_unknown_count_and_diagnostic(

@@ -1,8 +1,10 @@
 """One-shot runtime listings for the selected Toolang root."""
 
+from json import JSONDecodeError
 from pathlib import Path
 
 import httpx
+from pydantic import ValidationError
 from rich.console import Console
 from rich.text import Text
 import typer
@@ -66,6 +68,8 @@ def _hub_line(root: Path) -> str:
         return f"hub up: version {info.version.strip() or 'unknown'}, url {endpoint}"
     except httpx.HTTPError:
         return "hub down"
+    except (JSONDecodeError, ValidationError):
+        return "hub unknown: invalid hub response"
     except (OSError, RuntimeError, ValueError, ToolangError) as exc:
         return f"hub unknown: {' '.join(str(exc).split())}"
 

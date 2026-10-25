@@ -4471,8 +4471,16 @@ def test_non_execution_commands_reject_workspace_options(
     assert f"No such option: {option}" in strip_ansi(result.stderr)
 
 
+@pytest.mark.parametrize(
+    "count,models,tools",
+    [
+        (0, "0 models, 0 providers", "0 tools, 0 toolsets"),
+        (1, "1 model, 1 provider", "1 tool, 1 toolset"),
+        (2, "2 models, 2 providers", "2 tools, 2 toolsets"),
+    ],
+)
 def test_running_roaming_info_uses_runtime_resource_summary(
-    tmp_path, monkeypatch, capsys
+    tmp_path, monkeypatch, capsys, count, models, tools
 ):
     from toolang.cli.common.client import RuntimeClient
     from toolang.up.workload import ForegroundWorkload
@@ -4504,10 +4512,10 @@ def test_running_roaming_info_uses_runtime_resource_summary(
                     "caps": {
                         kind: 0 for kind in ("psyches", "skills", "services", "prompts")
                     },
-                    "models": 0,
-                    "providers": 0,
-                    "tools": 0,
-                    "toolsets": 0,
+                    "models": count,
+                    "providers": count,
+                    "tools": count,
+                    "toolsets": count,
                     "chores": 0,
                     "workspaces": ["lab", "bound"],
                 }
@@ -4517,6 +4525,8 @@ def test_running_roaming_info_uses_runtime_resource_summary(
         output = capsys.readouterr()
     assert result == 0, output.err
     assert "Workspaces: lab, bound" in output.out
+    assert f"Models: {models}" in output.out
+    assert f"Tools: {tools}" in output.out
     assert "Resources:" not in output.out
 
 
