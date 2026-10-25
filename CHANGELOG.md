@@ -125,6 +125,14 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 - Docker guests sharing prepared State no longer repeat `Prepared` messages or
   alternate revisions during host `caps` or stopped-agent inspection.
 
+- Guests keep the published workspace identity when a workspace symlink
+  is retargeted, and a rebound execution source cannot gain mounted access or
+  alternate revisions.
+
+- Guests keep automatic root and home catalog choices when higher-priority
+  files appear, reject missing selected catalogs, and treat dangling roaming
+  `HOME` catalogs as invalid.
+
 ## [0.4.0b1] - 2026-10-24
 
 ### Added
