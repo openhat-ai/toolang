@@ -237,6 +237,9 @@ def test_ls_filters_nonresidents_before_probing(tmp_path, monkeypatch, capsys):
         ("healthy", "hub up: version server, url http://hub.example:7123"),
         ("offline", "hub down"),
         ("unready", "hub down"),
+        ("health_false", "hub down"),
+        ("health_number", "hub unknown:"),
+        ("health_extra", "hub unknown:"),
         ("metadata", "hub unknown:"),
         ("invalid_json", "hub unknown:"),
     ],
@@ -267,7 +270,12 @@ def test_ps_probes_only_configured_hub(tmp_path, monkeypatch, capsys, mode, expe
                 },
             )
         assert request.headers["X-Toolang-Backend"] == "dataset"
-        return httpx.Response(503 if mode == "unready" else 200, json={"ok": True})
+        body = {
+            "health_false": {"ok": False},
+            "health_number": {"ok": 1},
+            "health_extra": {"ok": True, "other": True},
+        }.get(mode, {"ok": True})
+        return httpx.Response(503 if mode == "unready" else 200, json=body)
 
     monkeypatch.setattr(
         ps.httpx,

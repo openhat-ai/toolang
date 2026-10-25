@@ -52,7 +52,16 @@ def _hub_line(root: Path) -> str:
             health = client.get(
                 endpoint + "/healthz", headers={"X-Toolang-Backend": info.identity}
             )
-            if health.status_code != 200 or health.json() != {"ok": True}:
+            if health.status_code != 200:
+                return "hub down"
+            ready = health.json()
+            if (
+                not isinstance(ready, dict)
+                or ready.keys() != {"ok"}
+                or not isinstance(ready["ok"], bool)
+            ):
+                raise ValueError("invalid hub readiness response")
+            if not ready["ok"]:
                 return "hub down"
         return f"hub up: version {info.version.strip() or 'unknown'}, url {endpoint}"
     except httpx.HTTPError:

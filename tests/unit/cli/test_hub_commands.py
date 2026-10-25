@@ -87,6 +87,38 @@ def test_hub_status_uses_record_and_keeps_up_when_version_unavailable(
     assert len(requests) == 1
 
 
+def test_hub_status_ignores_malformed_root_configuration(tmp_path, monkeypatch, capsys):
+    process = hub.HubProcess(tmp_path)
+    process.path.parent.mkdir()
+    record = HubRecord(
+        pid=os.getpid(), created=psutil.Process().create_time(), port=9999
+    )
+    record.save(process.path)
+    (tmp_path / "config.toml").write_text("bad {{{")
+    client_type = httpx.Client
+    monkeypatch.setattr(
+        hub.httpx,
+        "Client",
+        lambda **kw: client_type(
+            **kw,
+            transport=httpx.MockTransport(
+                lambda _: httpx.Response(
+                    200,
+                    json={
+                        "version": "server",
+                        "api_version": 0,
+                        "identity": "dataset",
+                    },
+                )
+            ),
+        ),
+    )
+    assert cli.main(["--root", str(tmp_path), "hub", "status"]) == 0
+    assert capsys.readouterr().out == (
+        f"hub up: version server, endpoint 127.0.0.1:9999, pid {record.pid}\n"
+    )
+
+
 @pytest.mark.parametrize(
     "local,expected",
     [

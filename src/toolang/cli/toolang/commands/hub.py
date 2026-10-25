@@ -14,7 +14,7 @@ from typer._click.exceptions import ClickException
 from toolang.cli.common.context import context_root, user_call
 from toolang.cli.common.output import runtime_status_label
 from toolang.cli.common.terminal_session import prepare_terminal
-from toolang.cli.common.help import CliCommand, CliGroup, show_help
+from toolang.cli.common.help import CliCommand, CliGroup, MetadataCommand, show_help
 from toolang.common.config_sources import read_config
 from toolang.teaming.schemas import HubInfo
 from toolang.up.config import resolve_port_override, hub_config
@@ -45,8 +45,8 @@ def hub_app() -> typer.Typer:
         pretty_exceptions_show_locals=False,
     )
     app.callback()(_help)
+    app.command("status", cls=MetadataCommand)(status)
     for name, command in (
-        ("status", status),
         ("start", start),
         ("stop", stop),
         ("serve", serve),
