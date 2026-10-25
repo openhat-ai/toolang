@@ -174,9 +174,11 @@ resource commands reject instance operands. There is no `--instance`/`-i` option
 
 `too ls` lists resident homes, including stopped ones. `too ps` also includes
 active or unresolved visiting/roaming instances under the same ROOT. Both use
-the shared `RuntimeWatcher` inventory and show `AGENT`, `STATUS`, `DRIVERS`, and
-`PORT`, with complete `name`/`name@id` addresses matching `top`. Rows use unstyled
-`SIMPLE` tables, ordered by `up`, `down`, then `unknown`, retaining inventory order
+the shared `RuntimeWatcher` inventory and show `AGENT`, `STATUS`, `SANDBOX`,
+`DRIVERS`, and `PORT`, with complete `name`/`name@id` addresses matching `top`.
+`SANDBOX` shows the observed selector for running instances and `-` otherwise
+or when metadata is unavailable. Rows use unstyled `SIMPLE` tables, ordered by
+`up`, `down`, then `unknown`, retaining inventory order
 within each state. Summaries show the total, running count, then nonzero placement
 counts: `3 agents, 1 running, 3 resident`; empty lists show `0 agents` without a
 table. Only `ps` adds the configured hub's availability, version, and URL; it does

@@ -264,7 +264,7 @@ def test_agent_listing_maps_states_without_changing_observations(
     assert result.exit_code == 0, result.stderr
     lines = strip_ansi(result.stdout).splitlines()
     start = lines[0].index("STATUS")
-    end = lines[0].index("DRIVERS")
+    end = lines[0].index("SANDBOX")
     assert lines[2][start:end].strip() == (
         "up" if status == "running" else "unknown" if status == "unknown" else "down"
     )

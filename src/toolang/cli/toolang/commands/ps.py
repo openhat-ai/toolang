@@ -89,8 +89,8 @@ def render_snapshot(
     snapshot = inventory.snapshot
     instances = snapshot.instances
     states = [runtime_status_label(item.state) for item in instances]
-    ports = {
-        source.instance.identity: source.observation.port
+    observations = {
+        source.instance.identity: source.observation
         for source in inventory.sources
         if source.observation is not None
     }
@@ -102,11 +102,14 @@ def render_snapshot(
             if state == "up" and item.drivers is not None
             else "-"
         )
-        port = ports.get(item.identity)
+        observation = observations.get(item.identity)
+        sandbox = observation.sandbox if state == "up" and observation else None
+        port = observation.port if observation else None
         rows.append(
             (
                 _safe_text(console, address),
                 state,
+                _safe_text(console, sandbox or "-"),
                 drivers,
                 str(port) if port is not None else "-",
             )
@@ -114,10 +117,10 @@ def render_snapshot(
     rows.sort(key=lambda row: ("up", "down", "unknown").index(row[1]))
     if rows:
         echo_table(
-            ("AGENT", "STATUS", "DRIVERS", "PORT"),
+            ("AGENT", "STATUS", "SANDBOX", "DRIVERS", "PORT"),
             rows,
-            justify=("left", "left", "left", "right"),
-            max_widths=(max(20, console.width),) * 4,
+            justify=("left", "left", "left", "left", "right"),
+            max_widths=(max(20, console.width),) * 5,
             console=console,
             table_box=box.SIMPLE,
             show_footer=True,
