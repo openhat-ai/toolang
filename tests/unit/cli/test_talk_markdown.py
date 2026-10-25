@@ -39,7 +39,7 @@ def test_agent_headings_lists_and_rules_follow_chat_layout():
         line.rstrip() for line in "".join(s.text for s in render(source)).splitlines()
     ]
     assert lines[0] == "• alice"
-    assert lines[-2] == "  " + "┈" * 58
+    assert lines[-2] == "  " + "─" * 58
     assert "  Heading" in lines
     assert "  • outer" in lines
     assert "    • inner" in lines
@@ -80,7 +80,7 @@ def test_divider_trimming_preserves_interior_code_spacing_and_background(surface
             and segment.style.bgcolor == Color.parse(surfaces.code_background)
             for segment in rows[index]
         )
-    assert text[-3:] == ["After.", "┈" * 58, ""]
+    assert text[-3:] == ["After.", "─" * 58, ""]
 
 
 def test_agent_links_do_not_emit_terminal_hyperlinks():
