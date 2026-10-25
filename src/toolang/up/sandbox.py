@@ -1026,8 +1026,8 @@ def _validate_dev_version(path: Path, *, confirmed: bool) -> None:
     current = toolang_version()
     if actual == "unknown" or actual != current:
         raise ValueError(
-            f"Toolang version mismatch: current {current}, wheel {actual}. "
-            "Append ! to the --dev path to confirm this wheel."
+            f"Wheel {actual} differs from Toolang {current}.\n\n"
+            "To use this wheel, append `!` to the `--dev` path."
         )
 
 

@@ -14,6 +14,8 @@ import sys
 import time
 
 import httpx
+from rich.console import Console
+from rich.text import Text
 
 from toolang.api.version import AGENT_API_VERSION
 from toolang.base.errors import ToolangError
@@ -497,26 +499,15 @@ def warn_development_package_source(
 
     if launch.dev_artifact is not None or launch.sandbox.partition(":")[0] == "host":
         return
-    detected, source = development_source()
-    if not detected:
+    if not development_source()[0]:
         return
-    sandbox_name = launch.sandbox.partition(":")[0]
-    if source is None:
-        warning = (
-            "Warning: the current Toolang process is a development build, but the "
-            f"new {sandbox_name} guest will install Toolang from the package index."
-        )
-    else:
-        warning = (
-            f"Warning: the new {sandbox_name} guest will install Toolang from the "
-            f"package index, not from {source}."
-        )
-    print(warning, file=sys.stderr)
-    print(
-        "Build the current source with `uv build --wheel`, then run this command "
-        "again with `--dev dist`.",
-        file=sys.stderr,
+    sandbox_name = launch.sandbox.partition(":")[0].capitalize()
+    warning = Text.assemble(
+        ("Warning:", "yellow"),
+        f" {sandbox_name} will install Toolang from the package index instead of the local build.\n\n"
+        "To use the local build, run `uv build --wheel` and rerun with `--dev PATH`.",
     )
+    Console(stderr=True, highlight=False).print(warning, soft_wrap=True)
 
 
 def _attached_server(

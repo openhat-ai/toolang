@@ -1337,8 +1337,12 @@ def test_dev_wheel_requires_a_matching_identity_or_confirmation(
     if confirmed or actual == "v0.4.0b1":
         assert sandbox.resolve_dev_artifact(raw, sandbox="docker") == wheel
     else:
-        with pytest.raises(ValueError, match="version mismatch.*Append !"):
+        with pytest.raises(ValueError, match="differs from Toolang") as error:
             sandbox.resolve_dev_artifact(raw, sandbox="docker")
+        assert str(error.value) == (
+            f"Wheel {actual.removeprefix('v')} differs from Toolang 0.4.0b1.\n\n"
+            "To use this wheel, append `!` to the `--dev` path."
+        )
 
 
 def test_resolve_dev_artifact_rejects_host_before_path_validation(
