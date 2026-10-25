@@ -233,13 +233,7 @@ def runtime_identity_row(
                     )
                     else ref.runtime_id
                 )
-                runtime_name = ref.runtime_name
-                value = (
-                    f"{runtime_name} ({short_id})"
-                    if runtime_name is not None and runtime_name != short_id
-                    else short_id
-                )
-                return "Container", value
+                return "Container", short_id
             return "Runtime", f"{ref.runtime_kind}:{ref.runtime_id}"
         return None
     pid = (runtime_state or {}).get("pid")

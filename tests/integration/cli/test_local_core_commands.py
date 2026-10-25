@@ -3991,10 +3991,12 @@ def test_agent_info_builds_state_and_setup_without_server(
 @pytest.mark.parametrize(
     "status", ["stopped", "preparing", "starting", "running", "failed", "unknown"]
 )
+@pytest.mark.parametrize("sandbox", ["host", "docker:rust:1.75"])
 def test_agent_info_fields_follow_the_compact_layout(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, status: str
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, status: str, sandbox: str
 ) -> None:
     from toolang.base.types.model import Model, ModelToolang, Provider
+    from toolang.base.types.sandbox import SandboxRef
     from toolang.plugin.models import query
 
     root = tmp_path / "toolang"
@@ -4038,16 +4040,23 @@ def test_agent_info_fields_follow_the_compact_layout(
             endpoint="http://localhost:8123",
             api_url="http://localhost:8123/api",
             webui_url="http://localhost:8123/ui",
-            sandbox="host",
+            sandbox=sandbox,
             message="runtime failed" if status == "failed" else None,
             entry={
                 "launch_id": "internal-launch-id",
-                "control": {"drivers": ["chat", "chore", "talk"]},
+                "control": {
+                    "drivers": ["chat", "chore", "talk"],
+                    "ref": SandboxRef(
+                        "123" if sandbox == "host" else "48e080dcb99d" + "0" * 52,
+                        "http://localhost:8123",
+                        runtime_kind="process" if sandbox == "host" else "container",
+                        runtime_name=None if sandbox == "host" else "toolang-alice",
+                    ).to_data(),
+                },
                 "workload": {"started_at": "2026-01-01T00:00:00Z"},
             },
         ),
     )
-    monkeypatch.setattr(agents, "runtime_identity_row", lambda *a, **kw: ("PID", "123"))
     captured: list[tuple[str, str]] = []
     monkeypatch.setattr(
         agent_commands, "echo_pairs_table", lambda rows, **kwargs: captured.extend(rows)
@@ -4068,10 +4077,14 @@ def test_agent_info_fields_follow_the_compact_layout(
     if status == "running":
         expected.append("Drivers")
     if status != "stopped":
-        expected += ["Sandbox", "PID", "API", "WebUI"]
+        expected += ["Sandbox", *(["PID"] if sandbox == "host" else []), "API", "WebUI"]
     assert [key for key, _value in captured] == expected
     assert result.stdout == ""
     rows = dict(captured)
+    if status != "stopped":
+        assert rows["Sandbox"] == (
+            "host" if sandbox == "host" else "docker:rust:1.75 (48e080dcb99d)"
+        )
     assert "Root" not in rows and "Agent" not in rows and "Placement" not in rows
     assert rows["Models"] == "2 models, 1 provider"
     workspace_names = ["lab"]
@@ -4482,7 +4495,7 @@ def test_running_roaming_info_uses_runtime_resource_summary(
         output = capsys.readouterr()
     assert result == 0, output.err
     assert "Workspaces: lab, bound" in output.out
-    assert "runtime startup snapshot" in output.out
+    assert "Resources:" not in output.out
 
 
 @pytest.mark.parametrize("command", ["models", "providers", "tools"])
