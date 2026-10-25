@@ -95,8 +95,31 @@ def test_mixed_inventory_labels_drivers_ports_and_footer(tmp_path, alice):
             drivers=("chore",),
         ),
     )
+    data = replace(
+        data,
+        sources=tuple(
+            replace(
+                source,
+                observation=replace(
+                    source.observation,
+                    sandbox={
+                        "resident": "host",
+                        "visiting": "docker:dev",
+                        "roaming": "docker",
+                    }[source.instance.placement],
+                ),
+            )
+            for source in data.sources
+        ),
+    )
     text = render(data, hub="hub running, test, http://hub.example:7001")
-    assert text.splitlines()[0].split() == ["AGENT", "STATUS", "DRIVERS", "PORT"]
+    assert text.splitlines()[0].split() == [
+        "AGENT",
+        "STATUS",
+        "SANDBOX",
+        "DRIVERS",
+        "PORT",
+    ]
     assert "TYPE" not in text and "TALK" not in text and "├" not in text
     assert "alice@t0123456789" in text and "alice@s9876543210" in text
     assert "#runtime" not in text
@@ -109,12 +132,60 @@ def test_mixed_inventory_labels_drivers_ports_and_footer(tmp_path, alice):
         "bob",
         "eve",
     ]
+    assert [line.split()[2] for line in text.splitlines()[2:7]] == [
+        "host",
+        "docker:dev",
+        "docker",
+        "-",
+        "-",
+    ]
     assert text.splitlines()[-2:] == [
         "5 agents, - running, 3 resident, 1 visiting, 1 roaming, partial",
         "hub running, test, http://hub.example:7001",
     ]
     assert data.snapshot.instances[0].state == "unknown"
     assert data.snapshot.instances[2].state == "stopped"
+
+
+@pytest.mark.parametrize("command", ["ls", "ps"])
+@pytest.mark.parametrize(
+    "state,sandbox,expected",
+    [
+        ("running", "host", "host"),
+        ("running", "docker", "docker"),
+        ("running", "docker:dev", "docker:dev"),
+        ("running", None, "-"),
+        ("stopped", "docker:dev", "-"),
+        ("starting", "docker:dev", "-"),
+        ("unknown", "docker:dev", "-"),
+    ],
+)
+def test_listings_show_observed_sandbox(
+    tmp_path, monkeypatch, capsys, alice, command, state, sandbox, expected
+):
+    data = inventory(tmp_path, replace(alice, state=state))
+    source = data.sources[0]
+    assert source.observation is not None
+    data = replace(
+        data,
+        sources=(
+            replace(source, observation=replace(source.observation, sandbox=sandbox)),
+        ),
+    )
+    monkeypatch.setattr(ps.RuntimeWatcher, "refresh", lambda _: data)
+    monkeypatch.setattr(ps, "_hub_line", lambda _: "hub not running")
+
+    assert cli.main(["--root", str(tmp_path), command]) == 0
+
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[0].split() == ["AGENT", "STATUS", "SANDBOX", "DRIVERS", "PORT"]
+    assert lines[2].split() == [
+        "alice",
+        runtime_status_label(state),
+        expected,
+        "chat,talk" if state == "running" else "-",
+        "8123",
+    ]
 
 
 @pytest.mark.parametrize(
