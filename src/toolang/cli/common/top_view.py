@@ -27,7 +27,7 @@ NORMAL = Style(bold=False, dim=False)
 TABLE_HEADER = Style(color="black", bgcolor="green", bold=False, dim=False)
 SELECTED = Style(bgcolor="#005f5f")
 STATUS_BAR = Style(color="black", bgcolor="cyan", bold=False, dim=False)
-FUNCTION_KEY = Style(color="white", bgcolor="black", bold=False, dim=False)
+FUNCTION_KEY = Style(color="default", bgcolor="default", bold=False, dim=False)
 
 
 def window(value: int) -> str:

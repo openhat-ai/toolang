@@ -69,8 +69,9 @@ IDs must be complete.
 
 Interactive Top fills the terminal: a green table heading, deep cyan selected
 row, and one cyan function-key bar anchored at the bottom. Fn numbers use
-white on black; action labels use black on cyan. Labels compact at narrow widths,
-keeping F10 visible; all bindings remain available. There is no separate status
+the terminal's default foreground and background; action labels use black on cyan.
+Labels compact at narrow widths, keeping F10 visible; all bindings remain available.
+There is no separate status
 line or error text in the footer. The title and clock keep normal intensity and
 weight. The summaries have two cells of left and right padding, with dim captions
 on the right. Only nonzero numeric values use cyan; zeros, unknown values, field
