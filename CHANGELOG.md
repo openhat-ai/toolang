@@ -14,9 +14,9 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   managed Hub process.
   ([#966](https://github.com/openhat-ai/toolang/pull/966))
 
-- **Breaking:** Clients read `[teaming].hub`, `human`, and `enabled`, while
-  servers read `[hub]` host and port; migrate `[teaming.hub].port` to
-  `[hub].port` and `[teaming.backend].url` to `[hub.backend].url`, then
+- **Breaking:** Clients read the Hub URL from `[teaming].hub` plus `human` and
+  `enabled`, while servers read `[hub]` host and port. Move `[teaming.hub].port`
+  to `[hub].port` and `[teaming.backend].url` to `[hub.backend].url`, then
   restart the Hub and agents.
   ([#961](https://github.com/openhat-ai/toolang/pull/961))
 
@@ -25,8 +25,8 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   messages.
   ([#961](https://github.com/openhat-ai/toolang/pull/961))
 
-- Bare `too hub` shows service help, while `too hub status` reports the managed
-  process's version, bind endpoint, and PID.
+- Bare `too hub` shows service help, while `too hub status` prints
+  `hub running: VERSION, HOST:PORT, PID` or `hub not running`.
   ([#966](https://github.com/openhat-ai/toolang/pull/966))
 
 - `too ls` lists residents without contacting the Hub, while `too ps` lists
@@ -34,17 +34,21 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   service ports, and `up`, `down`, or `unknown` status.
   ([#966](https://github.com/openhat-ai/toolang/pull/966))
 
-- The `too ps` footer reports the configured client Hub's version, URL, and
-  readiness, while the managed process state appears only in `too hub status`.
-  ([#961](https://github.com/openhat-ai/toolang/pull/961)) ([#966](https://github.com/openhat-ai/toolang/pull/966))
-
-- Status labels in `too ls`, `too ps`, `too AGENT info`, and `too hub status`
-  use `up`, `down`, and `unknown`, leaving runtime records and Run and Step
-  states unchanged.
+- `too ls` and `too ps` render unstyled tables with `AGENT` headings and header
+  and bottom separators, ordering rows by `up`, `down`, then `unknown`.
   ([#966](https://github.com/openhat-ai/toolang/pull/966))
 
-- List summaries show only the `up` count before placement counts, omitting
-  `down` and `unknown`.
+- The `too ps` footer shows `hub running` with the configured client Hub's
+  version and URL, or `hub not running`; managed process details appear only in
+  `too hub status`.
+  ([#961](https://github.com/openhat-ai/toolang/pull/961)) ([#966](https://github.com/openhat-ai/toolang/pull/966))
+
+- Status labels in `too ls`, `too ps`, and `too AGENT info` use `up`, `down`,
+  and `unknown`, leaving runtime records and Run and Step states unchanged.
+  ([#966](https://github.com/openhat-ai/toolang/pull/966))
+
+- `too ls` and `too ps` summaries show total agents and running count before
+  nonzero placement counts, and empty inventories print only `0 agents`.
   ([#966](https://github.com/openhat-ai/toolang/pull/966))
 
 - `too AGENT info` shows the short container ID beside the sandbox selector,
@@ -62,9 +66,13 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   exit 1.
   ([#963](https://github.com/openhat-ai/toolang/pull/963))
 
-- Help and diagnostics for `info`, `cd`, `chat`, `serve`, `start`, and `stop`
-  show one command-first usage, and resource help drops the accepted-forms
-  footer.
+- `too ls` and `too ps` help describes the new listings, with `info` before
+  `ls` and `top` before `ps` in their groups.
+  ([#966](https://github.com/openhat-ai/toolang/pull/966))
+
+- Help for `info`, `cd`, `chat`, `serve`, `start`, and `stop` shows one
+  command-first usage and drops the accepted-agent-forms footer, with `too cd`
+  keeping its agent optional.
   ([#964](https://github.com/openhat-ai/toolang/pull/964))
 
 ### Fixed
@@ -89,8 +97,9 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   Toolang root configuration is malformed.
   ([#966](https://github.com/openhat-ai/toolang/pull/966))
 
-- `too ps` shows malformed Hub readiness as `unknown` instead of `up` or
-  `down`, and invalid Hub responses omit internal validation details.
+- `too ps` shows malformed Hub readiness as `unknown` instead of `hub running`
+  or `hub not running`, and invalid Hub responses omit internal validation
+  details.
   ([#966](https://github.com/openhat-ai/toolang/pull/966))
 
 ## [0.4.0b1] - 2026-10-24
