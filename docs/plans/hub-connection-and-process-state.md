@@ -1,356 +1,274 @@
-# Hub Connection Configuration and Local Process State
+# Hub Clients, Registration, and Local Process State
 
-Status: Proposed; awaiting human approval. Definition only; no implementation.
+Status: Proposed definition based on the agreed discussion; awaiting plan approval.
+No implementation is included.
 
 ## Goal and success criteria
 
-Root agents and human tools can use a local, containerized, or remote Hub through
-its configured HTTP URL, without reading Hub process files or backend settings.
-A successful local stop leaves no running record for the stopped process.
-
-This replaces file-based client discovery in [agent Hub transport](agent-hub-transport.md)
-and the corresponding discovery decision in [Hub files](hub-files-directory.md).
-The Hub artifact directory remains unchanged.
-
-## Verified baseline
-
-- `teaming/discovery.py` reads `ROOT/hub/hub.json` to construct agent connections;
-  human tools instead call `up/hub.py::HubProcess.connection()`. Both obtain the
-  endpoint, human, and backend identity from that record.
-- Root `[teaming]` currently combines human identity, backend configuration, and
-  the Hub port. Client setup constructs `BackendConfig` even though only Hub
-  accesses Redis/Valkey. Docker guests mount the host Hub directory read-only.
-- `HubProcess.stop()` signals a verified PID/creation-time pair and waits, but
-  does not remove the record. `serve()` removes it outside `server.run()`.
-  Installed Uvicorn 0.52.1 replays SIGTERM after ASGI shutdown, bypassing that
-  outer cleanup. An isolated subprocess using the actual Hub hosting code and
-  an offline ASGI app reproduced: stop succeeds, the process is gone, and the
-  record still says `running`.
-- Managed agent registration requires the Hub's roster scanner to find the
-  agent HOME. A remote Hub with no client filesystem cannot satisfy that check.
+Agents and human tools connect to a local, containerized, or remote Hub using
+client configuration. Hub owns its backend and learns agents through registration,
+without client process records or HOME access. A successful local Hub stop leaves
+no running record for the stopped process.
 
 ## Scope
 
-Define root Hub configuration, consumer-specific parsing, identity discovery,
-local record cleanup, CLI inspection, Docker client inputs, and remote roster
-registration. Preserve message semantics, lease fencing, event recovery, and
-independent local execution during Hub outages.
+- In: separate client/server configuration, network identity discovery,
+  client-declared human identity, registration-driven membership, Docker client
+  inputs, local process cleanup, and accurate Hub inspection.
+- Out: authentication, authorization, TLS termination, deployment automation,
+  backend data migration, and new permanent-member-removal APIs or commands.
 
-Authentication, authorization, TLS termination, deployment automation,
-multi-Hub routing, and backend data migration are outside this definition.
-Remote examples assume a reachable, externally managed endpoint.
+This supersedes file-based discovery and filesystem-driven membership in
+[agent Hub transport](agent-hub-transport.md), [teaming](teaming.md), and the
+client-discovery decision in [Hub files](hub-files-directory.md). Keep the existing
+Hub artifact directory. Human participants and agent ownership remain supported.
 
-The requested human removal applies to `hub.json`. Human message participants
-and existing human ownership semantics remain supported.
+## Verified baseline
 
-## Configuration and ownership
+- Agent clients read `hub/hub.json`; human clients use
+  `HubProcess.connection()`. Both obtain endpoint, human, and backend identity
+  from the local record. Setup also constructs backend configuration for clients.
+- Managed registration requires the Hub scanner to find HOME. Two missing scans
+  can remove offline members and their GC memberships. Docker agents mount the
+  host Hub directory to obtain discovery data.
+- `HubProcess.stop()` waits for process exit but leaves record cleanup to an
+  outer `serve()` finally block. An isolated subprocess using actual Hub hosting
+  code reproduced successful stop with a dead process and a `running` record:
+  installed Uvicorn 0.52.1 replays SIGTERM after ASGI shutdown, bypassing that block.
 
-### One root configuration
+## Configuration contract
 
-All Hub settings live under top-level `[hub]` in each deployment's own
-`ROOT/config.toml`. The section and every field are optional. Do not introduce
-another configuration file or read settings from `ROOT/hub/`.
-
-| Field | Consumer | Default |
-| --- | --- | --- |
-| `hub.url` | Clients | `http://127.0.0.1:<hub.port>` |
-| `hub.host` | Local Hub listener | `127.0.0.1` |
-| `hub.port` | Local listener and default client URL | `7001` |
-| `hub.roster` | Hub roster service | `local` |
-| `hub.backend.url` | Hub backend service | `redis://localhost:6379/0` |
-
-With no `[hub]`, clients connect to `http://127.0.0.1:7001` and a locally started
-Hub binds there using the default backend. Configuring only `hub.port` keeps
-local clients and the listener aligned; an explicit URL selects the target
-independently of local listener settings.
-
-For a Hub running in Docker, its container root configuration can contain:
+Use only each deployment's existing `ROOT/config.toml`, with two optional sections:
 
 ```toml
+[teaming]
+human = "bryan"
+enabled = true
+hub = "http://127.0.0.1:7001"
+
 [hub]
-host = "0.0.0.0"
+host = "127.0.0.1"
 port = 7001
-roster = "registered"
 
 [hub.backend]
-url = "redis://redis:6379/0"
+url = "redis://localhost:6379/0"
 ```
 
-If Docker publishes host port `17001` to container port `7001`, host agents and
-human tools select it through the host's own `ROOT/config.toml`:
+| Setting | Consumer | Default |
+| --- | --- | --- |
+| `teaming.human` | Client identity and agent owner declaration | OS username |
+| `teaming.enabled` | Client participation | `true` |
+| `teaming.hub` | Client target URL | `http://127.0.0.1:7001` |
+| `hub.host` | Hub listener | `127.0.0.1` |
+| `hub.port` | Hub listener | `7001` |
+| `hub.backend.url` | Hub backend | `redis://localhost:6379/0` |
+
+The client loader consumes only `[teaming]`; the server loader consumes only
+`[hub]`. Missing sections use defaults. Semantically invalid unrelated settings
+in otherwise valid TOML do not block the other consumer. Clients never construct
+backend configuration, derive its identity, access Redis, or read `ROOT/hub/`
+for connection information. Hub startup does not resolve a local human identity
+or depend on client enablement or target URL.
+
+Root `teaming.enabled=false` disables agent registration, heartbeat, message
+consumption, conversation tools, and event export. Human messaging commands
+report disabled without connecting. Existing HOME `[teaming] enabled=false`
+remains an additional agent opt-out; a home cannot re-enable a disabled root.
+Inspection remains available and local execution is independent of teaming.
+Human and Hub URL belong to the selected root; home/project/other-place settings
+cannot override them. No roster mode, directory, or scan configuration is added.
+
+Resolve the client URL as `TOOLANG_HUB_URL` > `teaming.hub` > its default. Reject
+an empty/invalid selected value without fallback. Accept absolute HTTP/HTTPS
+URLs with optional proxy path prefixes; normalize trailing slashes and reject
+userinfo, queries, fragments, wildcard destinations, and invalid ports.
+
+Keep `--port` and add `--host` to `hub start/serve`. Listener precedence is CLI >
+`TOOLANG_HUB_HOST` or `TOOLANG_HUB_PORT` > the corresponding `[hub]` field >
+default. Support explicit IPv4/IPv6 binds and retain busy-port failure without
+fallback. Neither bind settings nor process records change the client URL;
+a custom server port also requires the corresponding `teaming.hub` URL.
+
+For a Docker Hub, the container's root file contains its own `[hub]` listener
+and `[hub.backend]` settings. For example, bind `0.0.0.0:7001` in the container
+and publish host port `17001`. The host's root file needs only:
 
 ```toml
-[hub]
-url = "http://127.0.0.1:17001"
+[teaming]
+hub = "http://127.0.0.1:17001"
 ```
 
-The host needs no backend settings. Only the Hub process consumes backend
-settings from the root where that process runs.
+Host clients need no server or backend configuration and share no Hub files
+with the container.
 
-### Client inputs
+## Identity and connection lifecycle
 
-Resolve URL as `TOOLANG_HUB_URL` > `[hub].url` > loopback with configured
-`[hub].port` or `7001`. A present but empty or invalid selected input is an error.
-Accept absolute HTTP/HTTPS URLs, including an optional proxy path prefix;
-normalize trailing slashes and reject userinfo, queries, fragments, wildcard
-destination addresses, and invalid ports. Preserve HTTPS certificate checking.
+- Extend `/info` to `{version, api_version, identity}`. Identity is an opaque
+  Hub dataset identifier; preserve its existing server-derived value for an
+  unchanged backend/root. Return no human, backend URL, credentials, root path,
+  root code, or storage keys. The initial handshake requires no expected identity,
+  performs no participant registration, and remains available if backend access
+  fails after startup. `/healthz` continues to report backend readiness.
+- Establish connections asynchronously before application mutations. Transport
+  receives concrete target settings from CLI/setup/launcher boundaries, without
+  implicit file or environment discovery. Reuse a connection per operation or
+  stream. Client connection state contains endpoint and dataset identity;
+  actor/owner is supplied separately from client settings.
+- Human requests select their actor through the existing percent-encoded
+  `X-Toolang-Human` header. Require a valid human actor on human messaging/team
+  routes; missing/invalid values fail before storage access. Agent actors remain
+  route-derived and agent requests do not need that header. Remove Hub's single
+  configured-human binding and startup registration of a local default human.
+- Every application request and SSE connection pins the dataset through the
+  existing `X-Toolang-Backend` header. The value is opaque to clients; the header
+  remains a consistency check. Pin each admitted Talk batch and all its tools.
+  Identity mismatch rejects the operation before mutation, without replay.
+- Root configuration refresh applies to new connection/admission boundaries.
+  Reconnect may establish a new identity for future work; old batches, cursors,
+  and pending progress cannot cross datasets. Human Talk views require reopening
+  after target/identity/actor changes. Preserve draft isolation, lease fencing,
+  event recovery, bounded backoff, and uncertain-send handling.
+- Diagnostics identify the attempted URL and distinguish configuration errors,
+  unreachability, incompatible metadata, backend failure, and identity changes.
+  Never auto-start a local Hub, connect directly to Redis, or replay a message
+  to repair a communication failure. Hub outages do not stop local runs.
 
-All clients use the same resolver: presence, export, conversation tools and
-rules, Talk, and team observation. Home configuration retains only the existing
-`[teaming] enabled` opt-out. `[hub]` is root-only; home/project/other-place
-configuration cannot override the selected root's target.
+## Registration and membership
 
-Keep `[teaming].human` as the human CLI's own identity override, defaulting to the
-OS username; Hub also retains this root-local setting for its existing ownership
-contract. It is separate from connection resolution. Agents neither resolve
-that default nor use a Hub-provided human identity. Human tools obtain their
-actor locally; neither the process record nor handshake supplies one.
+Hub uses the same registration protocol in every deployment. Remove startup and
+periodic HOME scans, managed-HOME registration checks, missing-scan counters,
+filesystem-based membership removal, and the proposed `roster` mode switch.
 
-Client setup never reads `ROOT/hub/`, creates a `BackendConfig`, computes a
-backend identity, or opens a backend connection. A client parser projects only
-the URL inputs. It does not validate or propagate `hub.backend`, `hub.host`, or
-`hub.roster`; `hub.port` is validated only if needed for the default URL.
-Missing or semantically invalid backend/listener settings in the same valid TOML
-file cannot prevent clients from using an explicit remote URL.
+`PUT /agents/{agent}/lease` accepts `{owner, endpoint}`. `owner` is the canonical
+`human:<name>` derived from the registering client's `teaming.human`; remove the
+`managed` field. Hub validates the typed owner, preserves existing owner/name
+conflict checks, and atomically creates/updates directory membership and the
+matching lease. It never substitutes a human from its own root configuration.
+Human requests register their own participant as needed; metadata/health requests
+and server startup register no human. The existing same-owner system-conversation
+membership behavior and conversation rules remain intact.
 
-### Server inputs
+A never-registered agent is unknown to Hub. First registration makes it a known
+member; lease release or expiry makes it offline while retaining its directory
+entry, memberships, messages, cursors, and history. Offline registered agents can
+still be message targets. Re-registration restores presence with existing fencing;
+a different owner or competing live lease cannot silently take over the name.
+Agent names remain unique within the Hub dataset, including across client roots.
 
-`hub start/serve` project listener, roster, and backend settings from the same
-root configuration and apply their defaults. They do not require or validate
-`hub.url`, which may point at another Hub. The configured root human remains
-the server-side owner; human requests must use that identity under the existing
-messaging contract. Supporting independent human owners is outside scope.
+No scan, process shutdown, local HOME deletion, or `too remove` operation implies
+permanent Hub membership deletion. Permanent deletion requires a separately
+defined explicit management operation; this plan adds no such API or command.
+Local CLI listings may continue to discover unstarted agents from local files,
+without publishing those discoveries to Hub.
 
-Add `--host` to `hub start/serve`. Resolve bind host as CLI >
-`TOOLANG_HUB_HOST` > `[hub].host` > `127.0.0.1`; resolve bind port as
-CLI `--port` > `TOOLANG_HUB_PORT` > `[hub].port` > `7001`.
-Support explicit IPv4/IPv6 binds and retain exclusive startup and busy-port
-failure. Wildcard binds are listener settings, never client URLs.
+Preserve existing backend schema, namespace guards, directory records, and data.
+Legacy discovery/roster rows cease to drive registration or cleanup and remain
+inert; do not reset storage or infer deletion from those rows. The namespace is
+owned by the Hub's canonical root, not by a client's root path.
 
-CLI and environment bind overrides do not rewrite `[hub]` or publish a client
-discovery fallback. Start output identifies the local listener and explains the
-URL setting if an override changes its configured port. Service commands operate
-on the local root even when its client URL points elsewhere.
+## Local process control and inspection
 
-Only Hub constructs backend configuration and derives its namespace from its
-own canonical root. Client connection objects, guest projections, and Hub
-responses contain no backend URL, credentials, root path, root code, storage
-keys, or driver configuration.
+`ROOT/hub/hub.json` is an `up`-owned local process record containing only
+`pid`, `created`, bind `host`/`port`, and `starting|running`. Remove human and
+backend identity. Keep atomic mode-0600 writes, `hub.lock`, and `hub.log`.
+PID and creation-time verification remains mandatory; published status can be stale.
 
-### Compatibility
+The stopped representation is an absent record. Remove an owned record during
+ASGI lifespan teardown before Uvicorn replays a signal, retaining outer cleanup
+for startup failures. After confirmed exit, stop and failed/timed-out startup
+also remove any surviving record for that child, including after forced kill.
 
-Keep `hub start`, `serve`, `stop`, `stop --force`, and the existing port flag.
-Move root `[teaming.backend]` to `[hub.backend]` and `[teaming.hub].port` to
-`[hub].port` in the existing `ROOT/config.toml`. Reject legacy locations with a
-specific diagnostic naming their new keys; do not silently read them or rewrite
-files. Keep `[teaming].human` unchanged. `TOOLANG_HUB_PORT` is a server-only bind
-override; it does not change the configured client URL.
+The child compares identity while holding its lifetime lock. Controller cleanup
+takes the released lock and compares the current record before removal; it never
+removes a replacement's state. Success requires the old record absent or replaced.
+Allow up to five seconds to reconcile contention with a competing startup, then
+report cleanup failure. A nonforced stop timeout retains state and fails.
+Reconcile parseable dead records under the same lock; corrupt/unverifiable records
+produce diagnostics without signaling a guessed PID. Locally probe wildcard binds
+through the matching loopback address without changing client configuration.
 
-Stop old Hubs before upgrade and restart clients with the new version. New
-clients require the new metadata contract and report an incompatible Hub rather
-than falling back to old process records. No backend data or namespace migration
-is implied by moving configuration.
-Local process control may decode the known legacy record shape to stop or
-reconcile an old process; discard its human/identity fields. Never rewrite those
-fields or use that record for client connections.
+`too hub` probes the configured client target and shows its endpoint, actual
+availability, and server version separately from local process state. Preserve
+the existing local agent tree and diagnostics, including unstarted local agents.
+Do not collapse starting/unavailable/unknown into a misleading stopped label.
+Local record corruption cannot prevent remote target inspection. `hub start/stop`
+manage only the verified local process, regardless of the client target URL.
 
-## Connection identity and failure handling
+## Docker agent inputs
 
-Extend `GET /info` to return `{version, api_version, identity}`. `identity` is an
-opaque dataset identifier generated by Hub; preserve the existing server-derived
-value so unchanged deployments keep cursor and draft identity. Do not expose
-`human` or backend configuration in this response.
-
-The initial `/info` request needs no expected identity and performs no storage
-mutation or implicit human registration. Keep metadata available if the backend
-becomes unavailable after startup. `/healthz` remains the readiness/backend probe.
-Validate metadata and `api_version` before any client mutation.
-
-A connected client holds `{endpoint, identity}` and a separately supplied actor.
-Every application request and SSE connection sends the pinned identity through
-the existing `X-Toolang-Backend` consistency header. Its name remains for wire
-compatibility; clients treat its value as opaque. Agent requests omit
-`X-Toolang-Human`; human requests may supply their locally selected actor through
-the existing consistency header. Neither header is authentication.
-
-Connection establishment is asynchronous and explicit. Resolve configuration
-and environment at CLI, setup, and launcher boundaries; pass concrete target
-values into transport code. Remove AgentClient's implicit environment/file
-discovery. Reuse the resulting connection within an operation or stream rather
-than adding an `/info` request to every HTTP request.
-
-Background lifecycles pick up root URL changes on their next connection cycle;
-setup refresh invalidates the old connection for new admissions. A server
-`hub_changed` response can trigger a fresh handshake for future batches, but
-never replay the rejected operation. Pin the old connection for an admitted
-Talk batch and all of its tools. Preserve dataset-separated cursors, exporter
-recovery, and task/root isolation. A different dataset cannot receive old pending
-cursor writes or a pinned batch's side effects. Human Talk views require reopening
-after a target or dataset change, retaining existing draft isolation.
-
-Errors name the attempted Hub URL and distinguish invalid configuration,
-unreachable service, incompatible metadata, identity change, and backend
-unavailability. Remote failures suggest checking the target, without assuming
-that starting a local Hub will repair it. Preserve bounded background backoff,
-local execution, and uncertain-send behavior; never auto-start Hub, fall back to
-Redis, or automatically resend a message.
-
-## Local process record and stop contract
-
-`ROOT/hub/hub.json` becomes a private local control record owned by `up`:
-
-```json
-{"pid": 10402, "created": 1792890576.804421, "host": "127.0.0.1", "port": 7001, "status": "running"}
-```
-
-Store only PID, creation time, bind host/port, and `starting|running`. Remove
-human and backend identity. Keep atomic writes, mode `0600`, the existing
-`hub.lock` lifetime lock, and `hub.log`. A record describes a process's last
-publication; live PID/creation-time validation remains necessary.
-
-The terminal representation is an absent record, rather than a persisted
-`stopped` status. Implement both cleanup paths:
-
-1. Remove the owned record during ASGI lifespan teardown, before Uvicorn replays
-   a termination signal. Retain outer cleanup for startup failures.
-2. After confirmed process exit, `stop()` removes any surviving record belonging
-   to that PID/creation-time pair, including after forced kill. Startup failure
-   and timeout cleanup apply the same rule.
-
-Child cleanup compares its process identity while already holding the lifetime
-lock. Controller cleanup takes that lock after process exit and compares the
-current record before removal. If a replacement owns the lock or record,
-preserve its state. Compare process identity rather than readiness status.
-A stop timeout without force keeps the record and fails; cleanup failure after
-exit reports the failure instead of printing unconditional success.
-Success requires observing the old record absent or replaced. If a competing
-startup holds the lock while the old record remains, allow up to five seconds
-for reconciliation, then report a cleanup diagnostic instead of claiming success.
-
-An uncatchable crash can leave stale state. `hub start/stop` reconcile a parseable
-record whose process is confirmed dead, under the same lock. Preserve
-the existing not-running result when stop finds no live process. Corrupt or
-unverifiable records produce diagnostics without signaling a guessed PID.
-
-Local startup readiness uses its concrete listener/probe address and child
-identity. A wildcard listener is probed through the matching loopback address;
-this address is never substituted into client configuration.
-
-## Inspection and remote registration
-
-- Add read-only `too hub conf`: print the selected root, effective client URL,
-  source (`environment|config|default`), and any guest-gateway transformation.
-  It reads only root configuration, projects only connection inputs, and performs
-  no network request or process-record read. Never emit backend fields.
-- `too hub` probes the configured target regardless of local process state.
-  Show its endpoint, actual availability, and server version, plus a separately
-  labeled local process state. Preserve the existing local agent tree and its
-  discovery diagnostics. Display `starting`, `unavailable`, `incompatible`, and
-  `unknown` accurately instead of collapsing them into `not running`. Local
-  record errors cannot prevent probing a remote target.
-- `hub start/stop` control only the verified local process. They never send a
-  shutdown request to the configured remote target or signal its reported PID.
-- Server `roster = "local"` preserves current HOME discovery, registration
-  checks, and two-missing-scan removal. `roster = "registered"` disables HOME
-  scanning and admits agents through lease registration even when the client
-  calls itself managed. Store those entries as registration-managed
-  (`managed=false` in the existing roster format), without changing agent
-  placement. Lease expiry makes them offline and retains membership/history;
-  filesystem absence cannot remove them. Root ownership and lease fencing stay
-  enforced. Existing same-root entries are preserved when changing modes and
-  converted to the selected registration policy when registering; another root's
-  entry is never adopted. Switching back to local policy requires a discoverable
-  HOME before an entry can become filesystem-managed.
-
-## Docker and deployment cases
-
-Project the selected root's effective client URL as `[hub].url` in guest root
-configuration even when PLACE differs from ROOT. Project the human CLI's local
-identity only where
-needed by human tools; do not pass server settings or backend configuration.
-Replace any copied PLACE `[hub]` table with this client-only projection so raw
-root/place backend fields cannot reach an agent guest.
+Project only the selected root's effective `[teaming]` client settings into the
+guest root, including its resolved human so a guest OS username does not change
+ownership. Preserve HOME enablement opt-out. Replace copied PLACE client settings
+with the selected ROOT values and strip copied `[hub]` server/backend settings.
 Remove the `R/hub/ -> G/hub/` mount and its directory-creation side effect.
-Propagate the effective URL override through existing explicit launcher inputs,
-without broadening general environment grants.
 
-Apply existing `TOOLANG_HOST_GATEWAY` translation only to a selected loopback
-URL at the guest boundary. Preserve its scheme, port, and path; leave explicit
-service names and remote hosts unchanged. Translation does not make a loopback
-listener reachable by itself; the deployment must expose a reachable listener.
+Apply existing host-gateway translation to a selected loopback URL at the guest
+boundary. Preserve scheme, port, and path; leave explicit service/remote hosts
+unchanged. Pass concrete launcher inputs without broadening environment grants.
+A reachable listener still must be exposed by the deployment. Hub communication
+uses outbound HTTP/SSE and requires no access to client homes or Agent APIs.
 
-| Deployment | Client target | Hub service settings |
-| --- | --- | --- |
-| Local clients and Hub | Default URL | Default bind, `roster="local"` |
-| Docker agent, host Hub | Guest-translated loopback URL or explicit host address | Reachable host bind, local roster if HOME is visible |
-| Host agents, Docker Hub | Published host URL | Container bind such as `0.0.0.0`, `roster="registered"` |
-| Remote Hub | Explicit URL such as `https://hub.example.com` | Reachable service, `roster="registered"` |
+## Implementation steps and touchpoints
 
-Hub communication uses outbound HTTP/SSE; it does not require Hub to read client
-homes or call their Agent APIs. Exposing an agent's execution API remotely is a
-separate concern. One endpoint still represents one logical root's dataset.
-Keep the Hub's canonical root stable across container restarts to retain the
-current namespace; pointing a new root at the same Redis URL does not migrate it.
-
-## Implementation touchpoints
-
-- `teaming/config.py`, `setup/teaming.py`, `setup/watcher.py`: separate client
-  projections and refresh from server/backend parsing within the one root
-  configuration; preserve home opt-out and root-only `[hub]` scope.
-- `up/config.py`, `up/records.py`, `up/hub.py`: server configuration and process
-  record ownership, listener settings, startup readiness, and conditional cleanup.
-- `teaming/{discovery,schemas,client,agent_client,api,lifecycle}.py`: remove
-  record-based discovery, add metadata connection establishment, and separate
-  actor identity. Retain shared process-token behavior in an appropriate helper.
-- `teaming/{roster,agent_api,runtime,types}.py`, `driver/talk.py`, `up/server.py`,
-  `plugin/toolsets/convo.py`: registration policy and concrete connection inputs;
-  remove unused human-owner plumbing from agent-side transport and Talk loops.
-- `cli/common/messaging.py`, `cli/toolang/commands/{hub,hub_status}.py`, Talk
-  and team-observation callers: shared target resolution and separate status.
-- `up/{mounts,sandbox}.py`, Docker sandbox adapter: client-only guest projection
-  and removal of the Hub directory mount.
-- Corresponding setup, messaging, Hub process/CLI, mount, and sandbox tests;
-  focused messaging/hosting/layout documentation. Generate a behavior-change
-  changelog entry through `too aid.too update_changelog` during implementation,
-  with maintainer verification before merge.
+- [ ] Split client/server formats and loaders in `teaming/config.py`,
+  `setup/teaming.py`, and `up/config.py`; update setup refresh and root/home policy.
+- [ ] Add metadata connection establishment and independent actors in
+  `teaming/{schemas,client,agent_client,api,lifecycle}.py` and
+  `cli/common/messaging.py`; remove file-based connection discovery.
+- [ ] Replace scanner-driven registration in `teaming/{roster,agent_api,runtime,types}.py`
+  and backend protocol/Valkey operations with client-owned registration; update
+  Talk/export hosting, keep stored ownership checks, and remove dead scan paths.
+- [ ] Fix owned-record publication/cleanup in `up/{hub,records}.py`; update
+  `cli/toolang/commands/{hub,hub_status}.py` for independent control and inspection.
+- [ ] Update `up/{mounts,sandbox,server}.py`, `plugin/toolsets/convo.py`, and the
+  Docker adapter to pass concrete client settings and remove Hub directory access.
+- [ ] Add the acceptance coverage below to setup, messaging, CLI, process,
+  mount/sandbox, and opt-in container/wire tests. Keep default tests offline.
+- [ ] Update focused messaging/hosting/layout docs and generate the behavior-change
+  changelog through `too aid.too update_changelog`; require maintainer verification.
+- [ ] Run default Ruff, formatting, type, and pytest checks before implementation
+  commits; fetch/rebase on current `origin/main`, reverify, and push before handoff.
 
 ## Acceptance tests
 
 | Scenario | Pass condition |
 | --- | --- |
-| Default and overrides | Missing `[hub]` and empty `[hub]` give the same local client/listener/backend defaults; configured port supplies the default local URL; explicit URL and environment precedence work consistently. Invalid selected inputs fail without fallback. |
-| Client/backend isolation | Clients work with no `hub/` directory. Missing or semantically invalid backend/listener fields in valid root TOML do not affect an explicit target, and no backend factory is invoked. Service commands ignore invalid client URLs. |
-| Docker Hub and host client | Container root config supplies `[hub.backend]` and its listener; host root config supplies only `[hub].url` pointing to the published port. Host agents can register and communicate without server configuration or shared files. |
-| Human separation | The process record and `/info` contain no human; agent operation requires no human configuration. Human tools use their local actor and existing message behavior remains valid. |
-| Metadata contract | Missing identity, invalid metadata, or incompatible API version blocks application mutations; proxy path prefixes work and `/info` does not register a human. |
-| Stale or corrupt local record | Configured remote operations still succeed; local inspection reports its own problem and never signals an unrelated process. |
-| Legacy record | Local control can safely stop/reconcile the old record shape, and the next publication omits human/identity; clients never read it. |
-| Graceful SIGTERM | A real isolated subprocess exits through Uvicorn; stop succeeds and its record is absent. The test must fail on the reproduced implementation. |
-| Force and failed startup | Forced kill, failed startup, and startup timeout leave no owned record or child; nonforced timeout retains ownership and reports failure. |
-| Replacement race | Late old-process cleanup cannot delete a replacement record or signal its process; synchronize events rather than sleep. |
-| Independent status/control | Remote target can be healthy with no local process, or unavailable with a local process running. Local stop affects only that process. |
-| Registered roster | Agents with no server-visible HOME can register, renew, message, and export; expiry marks them offline without deleting history. Local roster checks and cross-root rejection still pass. |
-| Roster mode change | Same-root registration follows the newly selected policy without losing history; local conversion requires HOME, and foreign root claims are rejected. |
-| Guest inputs | A guest with PLACE different from ROOT receives the selected Hub URL and no server/backend data or Hub mount; explicit remote hosts are not rewritten. |
-| Bind versus URL | Local port config supplies the fallback URL; an explicit URL stays independent of listener settings and CLI/environment bind overrides. Wildcard/IPv6 binds honor precedence; occupied ports fail without fallback. |
-| Reconnect and dataset change | Hub restart and URL refresh recover background communication without stopping runs; pinned batches reject identity changes and never advance a foreign dataset's cursor. |
-| Delivery semantics | Lost acknowledgments preserve uncertain-send results and message IDs; no automatic message replay or direct-backend fallback occurs. |
+| Configuration boundary | Absent/empty sections use defaults. Each loader validates only its section; invalid unrelated fields in valid TOML do not block it. Changing bind port never changes client URL. |
+| Enablement and identity | Root disablement gates clients without affecting Hub startup; HOME opt-out remains. Client human/URL cannot be overridden by other scopes. |
+| Remote and Docker Hub | Host clients using only `teaming.hub` can register, message, observe, and export through a published/remote URL without Hub files or backend factories. |
+| Guest projection | ROOT differs from PLACE, guest username differs, and host uses a URL override: selected client identity/URL reach the guest, server fields and Hub mounts do not. Gateway translation preserves explicit remote hosts. |
+| No filesystem authority | Starting Hub with arbitrary agent directories creates no members. Registration works with no server-visible HOME. Deleting HOME or stopping a process never deletes Hub membership. |
+| Registration and conflicts | First registration creates the declared human/agent membership; same-owner reconnect preserves history, different-owner or competing-live-lease registration fails before mutation. |
+| Offline delivery | Lease release/expiry marks registered agents offline while retaining membership and accepting messages for later consumption. Never-registered targets remain unknown. |
+| Human routing | Different configured client humans operate as their own actors; server startup and `/info` create none. Missing/invalid human actors fail on human routes; agents use route/lease identity. |
+| Dataset isolation | Invalid/incompatible metadata prevents application mutations. Restart/URL refresh recovers future work, while pinned batches and pending cursor writes reject another dataset. No uncertain message is automatically replayed. |
+| Stop regression | Real isolated SIGTERM shutdown fails the old behavior and passes after the fix: stop succeeds, process is gone, and its record is absent. |
+| Control failures and races | Forced kill/startup failure/timeout clean owned state; nonforced stop timeout fails. Old cleanup cannot delete a replacement record or signal an unrelated PID; use synchronization rather than sleeps. |
+| Independent inspection | Remote service may run with no local process, or fail while a local process runs. Corrupt local records do not block remote status; local stop affects only its process. |
+| Upgrade safety | Existing schema/history, owners, cursors, and namespaces survive configuration moves; old scan rows cannot remove members. Legacy process records support verified local cleanup only. |
 
-Keep the default suite offline and deterministic using temporary roots, local
-subprocesses, and HTTP test transports. Add opt-in container/wire coverage for a
-containerized Hub with no shared client HOME and for a Docker agent without a
-Hub directory mount. Implementation must pass the repository's default checks.
-For this definition-only change, verify source references, examples, links, and
-`git diff --check`.
+Use temporary roots, isolated local subprocesses, and HTTP test transports in the
+default suite. Opt-in container/wire tests cover both a Docker Hub with no client
+HOME mounts and a Docker agent with no Hub directory mount.
 
-## Risks and open questions
+## Compatibility, risks, and open questions
 
-Moving the experimental keys into `[hub]` requires an explicit configuration
-upgrade. Backend settings may coexist with client settings in a root file;
-consumer-specific parsing and guest projection must retain their boundary.
-Remote roster mode retains offline entries because the server cannot infer
-permanent removal from absent
-client files. Moving the Hub's canonical root still selects a different backend
-namespace. These behaviors must be visible in migration and deployment docs.
+- Move `[teaming.backend]` to `[hub.backend]` and old `[teaming.hub].port` to
+  `[hub].port`; `teaming.hub` becomes a URL string. Keep `teaming.human` and HOME
+  `teaming.enabled`; add the root enablement gate. Reject legacy keys/shapes with
+  source-specific migration diagnostics, without automatic rewrites or fallback.
+- Upgrade Hub and clients together after stopping old processes. New clients
+  require metadata identity; old registration bodies are rejected with a clear
+  protocol diagnostic. Local control may decode legacy process records only to
+  verify/stop/reconcile them, discarding human/identity fields.
+- Keep current backend data and its server-derived identity. Moving the Hub's
+  canonical root still changes namespace; containers must keep that root stable.
+- Removing scans intentionally retains offline/previously discovered directory
+  entries and stops HOME-based GC removal. New unstarted agents become reachable
+  only after first registration. Permanent cleanup is a separate explicit feature.
+- All clients of an endpoint join its dataset and share its agent-name namespace;
+  a client root is not a separate tenant. Authentication remains outside scope.
 
-No unresolved design questions. Human approval is required before implementation.
+No unresolved design questions. Implementation requires approval of this plan.
+Definition-only validation checks source references, TOML examples, links, and
+`git diff --check`; the product code and full test suite remain unchanged here.
