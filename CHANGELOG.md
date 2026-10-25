@@ -12,6 +12,10 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 - `too ls` and `too ps` show the sandbox selector before the driver, with
   `-` for inactive instances or missing metadata.
 
+- Talk message dividers use a solid line instead of a dotted one while
+  keeping their dim styling, spacing, and alignment.
+  ([#971](https://github.com/openhat-ai/toolang/pull/971))
+
 ## [0.4.0b2] - 2026-10-25
 
 ### Changed
