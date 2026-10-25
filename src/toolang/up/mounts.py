@@ -155,6 +155,15 @@ def prepare_guest_config(
     root = read_config(root_config, include_workspaces=False)
     if "env" in root:
         config["env"] = root["env"]
+    from toolang.setup.teaming import load_teaming_root
+
+    client = load_teaming_root(root_config.parent)
+    config["teaming"] = {
+        "human": client.human.removeprefix("human:"),
+        "enabled": client.enabled,
+        "hub": client.hub,
+    }
+    config.pop("hub", None)
     if key is not None:
         config["workspaces"] = {
             key: {

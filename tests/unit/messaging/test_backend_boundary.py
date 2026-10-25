@@ -1,7 +1,7 @@
 """Hub services consume storage contracts without depending on a concrete driver."""
 
 import asyncio
-from unittest.mock import call, create_autospec
+from unittest.mock import create_autospec
 from uuid import uuid4
 
 import httpx
@@ -39,7 +39,7 @@ def test_hub_uses_injected_contracts_for_lifespan_messages_and_events():
             actor="human:owner",
             backend=backend,
         )
-        app = create_app(client, version="0.4.0-test")
+        app = create_app(client.config, backend=client.backend, version="0.4.0-test")
         async with (
             app.router.lifespan_context(app),
             httpx.AsyncClient(
@@ -62,11 +62,8 @@ def test_hub_uses_injected_contracts_for_lifespan_messages_and_events():
             assert response.status_code == 200
             assert response.json() == {"meta": {"epoch": "a" * 32}, "origin": None}
             backend.close.assert_not_awaited()
-        backend.initialize.assert_awaited_once()
-        assert backend.register.await_args_list
-        assert all(
-            args == call("human:owner") for args in backend.register.await_args_list
-        )
+        assert backend.initialize.await_count == 2
+        backend.register.assert_not_awaited()
         backend.events.capture.assert_awaited_once_with("agent:alice")
         backend.close.assert_awaited_once()
 

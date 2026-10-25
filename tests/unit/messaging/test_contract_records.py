@@ -94,39 +94,6 @@ def test_team_read_revalidates_a_concurrently_added_member(monkeypatch):
     asyncio.run(scenario())
 
 
-def test_roster_is_a_team_subset_and_cas_preserves_json_semantics():
-    from tests.unit.messaging.keys import ROSTER, TEAM_MEMBERS
-    from toolang.teaming.roster import Roster
-
-    async def scenario():
-        async with client(FakeServer(server_type="valkey"), "human:owner") as human:
-            found = {"agent:alice"}
-            roster = Roster(
-                human.backend,
-                root="root-中文",
-                owner=human.actor,
-                discover=lambda: found,
-            )
-            await roster.scan()
-            raw = human.backend._client
-            # Whitespace, key ordering and Unicode escaping do not change a record.
-            await raw.hset(
-                ROSTER,
-                "agent:alice",
-                json.dumps({"missing": 0, "managed": True, "root": "root-中文"}),
-            )
-            found.clear()
-            await roster.scan()
-            assert (await roster.agents())["agent:alice"]["missing"] == 1
-            await raw.hdel(TEAM_MEMBERS, "agent:alice")
-            before = await snapshot(raw)
-            with pytest.raises(StorageIntegrityError):
-                await roster.scan()
-            assert await snapshot(raw) == before
-
-    asyncio.run(scenario())
-
-
 @pytest.mark.parametrize(
     "changes",
     [{"id": "group:old"}, {"revision": 0}, {"revision": True}, {"created_at": None}],

@@ -461,9 +461,13 @@ async def execute(state: _AgicState) -> ModelCallResult:
     run = state.prepared.run
     state.check_model_call_limit()
     if run.conversation is not None:
-        from ..conversations import load_source
+        from ..conversations import load_source, connection_for
 
-        state.conversation_rules = (await load_source(state.layout, run.conversation),)
+        state.conversation_rules = (
+            await load_source(
+                state.layout, run.conversation, connection=connection_for(run.setup)
+            ),
+        )
     step_index = state.next_step
     stream = _ModelStream(step=step_index)
     prepared = state.prepared

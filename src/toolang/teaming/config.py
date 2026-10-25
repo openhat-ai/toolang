@@ -46,7 +46,7 @@ class BackendConfig:
                 if not database.isascii() or not database.isdigit():
                     raise ValueError
         except (ValueError, TypeError, AttributeError) as exc:
-            raise TeamingError("Invalid teaming.backend.url") from exc
+            raise TeamingError("Invalid hub.backend.url") from exc
 
     @property
     def root_code(self) -> str:
@@ -65,8 +65,14 @@ class BackendConfig:
 @dataclass(frozen=True)
 class TeamingRootConfig:
     human: str
-    backend: BackendConfig
-    hub_port: int
+    hub: str = "http://127.0.0.1:7001"
+    enabled: bool = True
+
+    def connection(self, *, gateway: str | None = None):
+        from toolang.common.urls import replace_guest_loopback
+        from .schemas import HubConnection
+
+        return HubConnection(replace_guest_loopback(self.hub, gateway))
 
 
 @dataclass(frozen=True)
@@ -94,10 +100,10 @@ def _fields(
 
 
 def root_config(
-    config: Mapping[str, object], *, source: Path, default_human: str, root: str
+    config: Mapping[str, object], *, source: Path, default_human: str
 ) -> TeamingRootConfig:
     raw = _table(config.get("teaming", {}), "teaming", source)
-    _fields(raw, {"human", "backend", "hub"}, "teaming", source, "root")
+    _fields(raw, {"human", "enabled", "hub"}, "teaming", source, "root")
     human = raw.get("human", default_human)
     if not isinstance(human, str):
         raise TeamingError(f"{source}: teaming.human must be text")
@@ -105,21 +111,29 @@ def root_config(
         identifier(human)
     except TeamingError as exc:
         raise TeamingError(f"{source}: teaming.human: {exc}") from exc
-    backend = _table(raw.get("backend", {}), "teaming.backend", source)
-    _fields(backend, {"url"}, "teaming.backend", source, "root")
-    url = backend.get("url", DEFAULT_BACKEND_URL)
-    if not isinstance(url, str):
-        raise TeamingError(f"{source}: teaming.backend.url must be text")
-    hub = _table(raw.get("hub", {}), "teaming.hub", source)
-    _fields(hub, {"port"}, "teaming.hub", source, "root")
-    port = hub.get("port", 7001)
-    if type(port) is not int or not 1 <= port <= 65535:
-        raise TeamingError(f"{source}: teaming.hub.port must be an integer in 1..65535")
+    enabled = raw.get("enabled", True)
+    if not isinstance(enabled, bool):
+        raise TeamingError(f"{source}: teaming.enabled must be a boolean")
+    url = raw.get("hub", "http://127.0.0.1:7001")
     try:
-        concrete = BackendConfig(url, root=root)
-    except TeamingError as exc:
-        raise TeamingError(f"{source}: {exc}") from exc
-    return TeamingRootConfig(f"human:{human}", concrete, port)
+        if not isinstance(url, str) or url != url.strip():
+            raise ValueError
+        parsed = urlsplit(url)
+        if (
+            parsed.scheme not in {"http", "https"}
+            or not parsed.hostname
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.query
+            or parsed.fragment
+            or parsed.hostname in {"0.0.0.0", "::"}
+            or parsed.port is not None
+            and not 1 <= parsed.port <= 65535
+        ):
+            raise ValueError
+    except ValueError as exc:
+        raise TeamingError(f"{source}: invalid teaming.hub URL") from exc
+    return TeamingRootConfig(f"human:{human}", url.rstrip("/"), enabled)
 
 
 def home_config(config: Mapping[str, object], *, source: Path) -> TeamingHomeConfig:

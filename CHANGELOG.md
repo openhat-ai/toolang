@@ -7,6 +7,33 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking:** Clients read `[teaming].hub`, `human`, and `enabled`, while
+  servers read `[hub]` host and port; migrate `[teaming.hub].port` to
+  `[hub].port` and `[teaming.backend].url` to `[hub.backend].url`, then
+  restart the Hub and agents.
+  ([#961](https://github.com/openhat-ai/toolang/pull/961))
+
+- Hub membership follows agent registration instead of home-directory
+  scanning, and offline members keep their history, cursors, and queued
+  messages.
+  ([#961](https://github.com/openhat-ai/toolang/pull/961))
+
+- `too hub` shows configured-target availability and version separately from
+  the local Hub process state.
+  ([#961](https://github.com/openhat-ai/toolang/pull/961))
+
+### Fixed
+
+- `too hub` removes its own process record after shutdown, confirmed stop,
+  forced stop, and failed startup, so stopped Hubs no longer appear running.
+  ([#961](https://github.com/openhat-ai/toolang/pull/961))
+
+- Docker guests install sandbox packages from the controller release and
+  validate development wheel versions during preparation and before launch.
+  ([#958](https://github.com/openhat-ai/toolang/pull/958))
+
 ## [0.4.0b1] - 2026-10-24
 
 ### Added

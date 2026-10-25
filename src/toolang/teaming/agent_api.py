@@ -10,7 +10,8 @@ from .messaging import MessagingClient
 from .messaging_api import messaging_router
 from .team_api import team_router
 from .publication import validate_publication
-from .roster import Roster
+from .backend import Backend
+from .config import BackendConfig
 from .records import MAX_BYTES
 from .schemas import (
     AgentRegistration,
@@ -47,9 +48,9 @@ async def _body(request: Request, adapter: TypeAdapter[T]) -> T:
         ) from exc
 
 
-def agent_router(human: MessagingClient, *, roster: Roster | None = None) -> APIRouter:
+def agent_router(config: BackendConfig, backend: Backend) -> APIRouter:
     router = APIRouter(prefix="/agents/{agent}", tags=["agents"])
-    events = human.backend.events
+    events = backend.events
 
     def agent_client(
         agent: str,
@@ -58,9 +59,7 @@ def agent_router(human: MessagingClient, *, roster: Roster | None = None) -> API
         ],
     ) -> MessagingClient:
         target(agent, kind="agent")
-        return MessagingClient(
-            human.config, actor=agent, token=lease, backend=human.backend
-        )
+        return MessagingClient(config, actor=agent, token=lease, backend=backend)
 
     Client = Annotated[MessagingClient, Depends(agent_client)]
 
@@ -73,15 +72,7 @@ def agent_router(human: MessagingClient, *, roster: Roster | None = None) -> API
 
     @router.put("/lease")
     async def register(body: AgentRegistration, client: Client) -> dict[str, bool]:
-        if roster:
-            await roster.register(
-                client.actor,
-                client.token,
-                body.endpoint,
-                body.managed,
-            )
-        else:
-            await client.register(human.actor, endpoint=body.endpoint)
+        await client.register(body.owner, endpoint=body.endpoint)
         return {"ok": True}
 
     @router.patch("/lease")

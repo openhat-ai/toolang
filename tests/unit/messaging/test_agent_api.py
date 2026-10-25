@@ -28,7 +28,6 @@ from toolang.teaming.api import create_app
 from tests.unit.messaging.keys import EVENT_AGENTS, generation_key
 from toolang.teaming.backend.valkey.schema import HUB_STORE_SCHEMA
 from toolang.teaming.config import BackendConfig
-from toolang.teaming.discovery import hub_connection
 from toolang.teaming.errors import (
     BackendUnavailable,
     EventRecoveryRequired,
@@ -37,14 +36,13 @@ from toolang.teaming.errors import (
 )
 from toolang.teaming.events import HubScope, encode
 from toolang.teaming.exporter import EventExporter
-from toolang.teaming.discovery import HubDiscovery
 from toolang.teaming.records import MANIFEST, MAX_BYTES
 from toolang.teaming.schemas import HUB_API_VERSION, HubConnection, Message
 from toolang.teaming.stream_client import HubStreamState
 from toolang.teaming.subscriptions import HubSubscription
 from toolang.driver.talk import MessagingLoop
 
-CONNECTION = HubConnection("http://hub", "human:owner", CONFIG.identity)
+CONNECTION = HubConnection("http://hub", CONFIG.identity)
 
 
 def agent(app, root, actor="agent:alice", token="lease", transport=None):
@@ -59,18 +57,18 @@ def agent(app, root, actor="agent:alice", token="lease", transport=None):
 
 def test_agent_messaging_uses_hub_authority_and_context(tmp_path):
     async def scenario():
-        human = client(FakeServer(server_type="valkey"), CONNECTION.human)
-        app = create_app(human, version="0.4.0-test")
+        human = client(FakeServer(server_type="valkey"), "human:owner")
+        app = create_app(human.config, backend=human.backend, version="0.4.0-test")
         async with (
             app.router.lifespan_context(app),
             agent(app, tmp_path) as alice,
             agent(app, tmp_path, "agent:bob", "bob-lease") as bob,
         ):
-            await alice.register("human:forged", endpoint="http://agent:7001")
-            await bob.register(CONNECTION.human)
+            await alice.register("human:owner", endpoint="http://agent:7001")
+            await bob.register("human:owner")
             assert await human.agents() == {
-                "agent:alice": CONNECTION.human,
-                "agent:bob": CONNECTION.human,
+                "agent:alice": "human:owner",
+                "agent:bob": "human:owner",
             }
             await alice.create_conversation("dev")
             await bob.join_conversation("gc_00000001")
@@ -89,49 +87,82 @@ def test_agent_messaging_uses_hub_authority_and_context(tmp_path):
             await alice.unregister()
             with pytest.raises(EventRecoveryRequired, match="lease lost"):
                 await alice.targets()
-            await alice.register(CONNECTION.human)
+            await alice.register("human:owner")
             assert await alice.targets()
 
     asyncio.run(scenario())
 
 
-def test_agent_tools_without_hub_never_construct_backend(tmp_path):
+def test_agent_tools_without_hub_never_construct_backend(tmp_path, monkeypatch):
     async def scenario():
         msg = ConvoToolset({"root": str(tmp_path)})
+
+        def unavailable(request):
+            raise httpx.ConnectError("offline", request=request)
+
+        monkeypatch.setattr(
+            msg,
+            "connection",
+            lambda context: AgentClient(
+                tmp_path,
+                actor="agent:alice",
+                connection=HubConnection("http://hub"),
+                transport=httpx.MockTransport(unavailable),
+            ),
+        )
         context = ToolContext(tmp_path / "alice", tmp_path / "room")
         with patch(
             "toolang.teaming.backend.valkey.ValkeyBackend.__init__",
             side_effect=AssertionError("agent opened backend"),
         ):
-            with pytest.raises(BackendUnavailable, match="hub start"):
+            with pytest.raises(BackendUnavailable, match="Hub is unavailable"):
                 await msg.tools()["team"].invoke({}, context)
 
     asyncio.run(scenario())
 
 
-def test_agent_discovery_ignores_legacy_hub_record(tmp_path):
-    legacy_path = tmp_path / ".runtime" / "hub.json"
-    legacy_path.parent.mkdir()
-    HubDiscovery(
-        pid=1,
-        created=1.0,
-        port=7000,
-        human="human:owner",
-        identity=CONFIG.identity,
-    ).save(legacy_path)
-    with pytest.raises(BackendUnavailable, match="Hub is unavailable"):
-        hub_connection(tmp_path)
+def test_agent_connects_by_url_ignoring_process_records(tmp_path):
+    async def scenario():
+        (tmp_path / "hub").mkdir()
+        (tmp_path / "hub" / "hub.json").write_text("invalid record")
+        human = client(FakeServer(server_type="valkey"), "human:owner")
+        app = create_app(human.config, backend=human.backend, version="test")
+        requests = []
+
+        async def handle(request):
+            requests.append(request)
+            return await httpx.ASGITransport(app).handle_async_request(request)
+
+        async with (
+            app.router.lifespan_context(app),
+            AgentClient(
+                tmp_path,
+                actor="agent:alice",
+                connection=HubConnection("http://configured:7123"),
+                transport=httpx.MockTransport(handle),
+            ) as alice,
+        ):
+            assert await human.backend.participants() == {}
+            await alice.register("human:owner")
+            assert all(
+                r.url.host == "configured" and r.url.port == 7123 for r in requests
+            )
+            assert requests[0].url.path == "/info"
+            assert "X-Toolang-Human" not in requests[-1].headers
+            assert requests[-1].read() == b'{"endpoint":"","owner":"human:owner"}'
+
+    asyncio.run(scenario())
 
 
 def test_convo_peek_exposes_current_revision_for_renaming(tmp_path, monkeypatch):
     async def scenario():
-        human = client(FakeServer(server_type="valkey"), CONNECTION.human)
-        app = create_app(human, version="0.4.0-test")
+        human = client(FakeServer(server_type="valkey"), "human:owner")
+        app = create_app(human.config, backend=human.backend, version="0.4.0-test")
         async with (
             app.router.lifespan_context(app),
             agent(app, tmp_path) as alice,
         ):
-            await alice.register(CONNECTION.human)
+            await alice.register("human:owner")
             conversation = await human.create_conversation("Original")
             await alice.join_conversation(conversation.id)
             await human.rename_conversation(conversation.id, "Current", revision=1)
@@ -158,80 +189,44 @@ def test_convo_peek_exposes_current_revision_for_renaming(tmp_path, monkeypatch)
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("gateway", [None, "host.docker.internal", "fd00::1"])
-def test_agent_discovery_pins_batch_identity_and_refreshes_connections(
-    tmp_path, monkeypatch, gateway
-):
-    if gateway is None:
-        monkeypatch.delenv("TOOLANG_HOST_GATEWAY", raising=False)
-    else:
-        monkeypatch.setenv("TOOLANG_HOST_GATEWAY", gateway)
-
+def test_agent_connection_pins_batch_identity_and_refreshes_after_change(tmp_path):
     async def scenario():
-        current = CONNECTION
-        port = 7000
-        human = client(FakeServer(server_type="valkey"), CONNECTION.human)
-        app = create_app(human, version="0.4.0-test")
-        requests = []
+        human = client(FakeServer(server_type="valkey"), "human:owner")
+        app = create_app(human.config, backend=human.backend, version="test")
 
         async def handle(request):
-            requests.append(request)
             return await httpx.ASGITransport(app).handle_async_request(request)
 
-        def save():
-            HubDiscovery(
-                pid=1,
-                created=1.0,
-                port=port,
-                human=current.human,
-                identity=current.identity,
-            ).save(tmp_path / "hub" / "hub.json")
-
-        save()
         async with (
             human,
             AgentClient(
-                tmp_path, actor="agent:alice", transport=httpx.MockTransport(handle)
+                tmp_path,
+                actor="agent:alice",
+                connection=HubConnection("http://configured"),
+                transport=httpx.MockTransport(handle),
             ) as alice,
         ):
-            await alice.register(CONNECTION.human)
-            assert requests[-1].url.host == (gateway or "127.0.0.1")
-            assert requests[-1].url.port == port
-            assert requests[-1].headers["X-Toolang-Backend"] == current.identity
-            assert requests[-1].headers["X-Toolang-Human"] == "human%3Aowner"
+            await alice.register("human:owner")
             with alice.session() as identity:
                 human.config = BackendConfig("redis://second", root="/test/toolang")
-                current = replace(current, identity=human.config.identity)
-                port = 7123
-                app = create_app(human, version="0.4.0-test")
-                save()
-                assert identity == CONNECTION.identity
+                app = create_app(human.config, backend=human.backend, version="test")
                 with pytest.raises(BackendUnavailable, match="identity changed"):
                     await alice.targets()
                 async with AgentClient(
                     tmp_path,
                     actor=alice.actor,
+                    connection=HubConnection("http://configured"),
                     transport=httpx.MockTransport(handle),
-                ) as tool_client:
+                ) as pinned:
+                    assert pinned.config.identity == identity
                     with pytest.raises(BackendUnavailable, match="identity changed"):
-                        await tool_client.targets()
-                async with AgentClient(
-                    tmp_path / "other-root",
-                    actor=alice.actor,
-                    connection=lambda: current,
-                    transport=httpx.MockTransport(handle),
-                ) as other:
-                    assert await other.targets()
-            await alice.register(CONNECTION.human)
-            assert requests[-1].url.host == (gateway or "127.0.0.1")
-            assert requests[-1].url.port == port
-            assert requests[-1].headers["X-Toolang-Backend"] == current.identity
+                        await pinned.targets()
+            with pytest.raises(BackendUnavailable, match="not ready"):
+                with alice.session():
+                    pytest.fail("A batch requires discovered Hub identity")
+            await alice.register("human:owner")
+            assert alice.config.identity == human.config.identity != identity
             assert await alice.targets()
-            with alice.session() as identity:
-                assert identity == current.identity
-            (tmp_path / "hub" / "hub.json").unlink()
-            with pytest.raises(BackendUnavailable):
-                await alice.targets()
 
     asyncio.run(scenario())
 
@@ -239,13 +234,16 @@ def test_agent_discovery_pins_batch_identity_and_refreshes_connections(
 def test_talk_cursors_are_separate_after_backend_switch(tmp_path, monkeypatch):
     async def scenario():
         humans = [
-            client(FakeServer(server_type="valkey"), CONNECTION.human) for _ in range(2)
+            client(FakeServer(server_type="valkey"), "human:owner") for _ in range(2)
         ]
         for index, human in enumerate(humans):
             human.config = BackendConfig(
                 f"redis://dataset-{index}", root="/test/toolang"
             )
-        apps = [create_app(human, version="0.4.0-test") for human in humans]
+        apps = [
+            create_app(human.config, backend=human.backend, version="0.4.0-test")
+            for human in humans
+        ]
         current = 0
 
         async def handle(request):
@@ -268,7 +266,7 @@ def test_talk_cursors_are_separate_after_backend_switch(tmp_path, monkeypatch):
         ):
             loop = MessagingLoop(
                 layout=AgentLayout.resident(tmp_path, "alice"),
-                owner=CONNECTION.human,
+                owner="human:owner",
                 client=alice,
                 executor=MagicMock(),
                 threads=MagicMock(),
@@ -277,7 +275,7 @@ def test_talk_cursors_are_separate_after_backend_switch(tmp_path, monkeypatch):
             )
             handler = admitted_handler(loop)
             for current in range(2):
-                await alice.register(CONNECTION.human)
+                await alice.register("human:owner")
                 receipt = await humans[current].send(
                     "gc_00000000", body=f"dataset {current}"
                 )
@@ -298,8 +296,8 @@ def test_talk_cursors_are_separate_after_backend_switch(tmp_path, monkeypatch):
 
 def test_agent_send_lost_http_ack_is_not_retried(tmp_path):
     async def scenario():
-        human = client(FakeServer(server_type="valkey"), CONNECTION.human)
-        app = create_app(human, version="0.4.0-test")
+        human = client(FakeServer(server_type="valkey"), "human:owner")
+        app = create_app(human.config, backend=human.backend, version="0.4.0-test")
         writes = 0
 
         async def handle(request):
@@ -315,7 +313,7 @@ def test_agent_send_lost_http_ack_is_not_retried(tmp_path):
             app.router.lifespan_context(app),
             agent(app, tmp_path, transport=httpx.MockTransport(handle)) as alice,
         ):
-            await alice.register(CONNECTION.human)
+            await alice.register("human:owner")
             with pytest.raises(SendUnconfirmed):
                 await alice.send("gc_00000000", body="only once")
             assert writes == 1 and len(await human.history("gc_00000000")) == 1
@@ -329,8 +327,8 @@ def test_event_publication_retries_exact_http_operation_and_recovers(tmp_path):
     )
 
     async def scenario():
-        human = client(FakeServer(server_type="valkey"), CONNECTION.human)
-        app = create_app(human, version="0.4.0-test")
+        human = client(FakeServer(server_type="valkey"), "human:owner")
+        app = create_app(human.config, backend=human.backend, version="0.4.0-test")
         lost = False
         commits = []
 
@@ -351,7 +349,7 @@ def test_event_publication_retries_exact_http_operation_and_recovers(tmp_path):
             app.router.lifespan_context(app),
             agent(app, tmp_path, transport=httpx.MockTransport(handle)) as alice,
         ):
-            await alice.register(CONNECTION.human)
+            await alice.register("human:owner")
             exporter = EventExporter(
                 harness.executor.stream,
                 harness.store.db_path,
@@ -417,10 +415,10 @@ def test_event_publication_retries_exact_http_operation_and_recovers(tmp_path):
 
 def test_agent_api_rejects_bad_identity_lease_and_publications(tmp_path):
     async def scenario():
-        human = client(FakeServer(server_type="valkey"), CONNECTION.human)
-        app = create_app(human, version="0.4.0-test")
+        human = client(FakeServer(server_type="valkey"), "human:owner")
+        app = create_app(human.config, backend=human.backend, version="0.4.0-test")
         async with app.router.lifespan_context(app), agent(app, tmp_path) as alice:
-            await alice.register(CONNECTION.human)
+            await alice.register("human:owner")
             publisher = AgentEventClient(alice)
             meta = await publisher.initialize()
             base = dict(
@@ -480,10 +478,10 @@ def test_publication_rejects_incompatible_stored_versions_without_mutation(
     tmp_path, operation, retry, version
 ):
     async def scenario():
-        human = client(FakeServer(server_type="valkey"), CONNECTION.human)
-        app = create_app(human, version="0.4.0-test")
+        human = client(FakeServer(server_type="valkey"), "human:owner")
+        app = create_app(human.config, backend=human.backend, version="0.4.0-test")
         async with app.router.lifespan_context(app), agent(app, tmp_path) as alice:
-            await alice.register(CONNECTION.human)
+            await alice.register("human:owner")
             publisher = AgentEventClient(alice)
             meta = await publisher.initialize()
             recovery = uuid4().hex
@@ -577,8 +575,8 @@ pytestmark = pytest.mark.usefixtures("fixed_conversation_ids")
 
 def test_handler_errors_do_not_trigger_other_agents(tmp_path, monkeypatch):
     async def scenario():
-        human = client(FakeServer(server_type="valkey"), CONNECTION.human)
-        app = create_app(human, version="0.4.0-test")
+        human = client(FakeServer(server_type="valkey"), "human:owner")
+        app = create_app(human.config, backend=human.backend, version="0.4.0-test")
         async with (
             app.router.lifespan_context(app),
             agent(app, tmp_path, "agent:alice", "alice-lease") as alice,
@@ -587,10 +585,10 @@ def test_handler_errors_do_not_trigger_other_agents(tmp_path, monkeypatch):
             loops = []
             handlers = []
             for name, receiver in (("alice", alice), ("bob", bob)):
-                await receiver.register(CONNECTION.human)
+                await receiver.register("human:owner")
                 loop = MessagingLoop(
                     layout=AgentLayout.resident(tmp_path, name),
-                    owner=CONNECTION.human,
+                    owner="human:owner",
                     client=receiver,
                     executor=MagicMock(),
                     threads=MagicMock(),
@@ -633,8 +631,8 @@ def test_handler_error_send_failure_is_checkpointed_without_retry(
     caplog.set_level(logging.ERROR)
 
     async def scenario():
-        human = client(FakeServer(server_type="valkey"), CONNECTION.human)
-        app = create_app(human, version="0.4.0-test")
+        human = client(FakeServer(server_type="valkey"), "human:owner")
+        app = create_app(human.config, backend=human.backend, version="0.4.0-test")
         writes = []
 
         async def handle(request):
@@ -657,10 +655,10 @@ def test_handler_error_send_failure_is_checkpointed_without_retry(
             app.router.lifespan_context(app),
             agent(app, tmp_path, transport=httpx.MockTransport(handle)) as alice,
         ):
-            await alice.register(CONNECTION.human)
+            await alice.register("human:owner")
             loop = MessagingLoop(
                 layout=AgentLayout.resident(tmp_path, "alice"),
-                owner=CONNECTION.human,
+                owner="human:owner",
                 client=alice,
                 executor=MagicMock(),
                 threads=MagicMock(),
@@ -676,7 +674,7 @@ def test_handler_error_send_failure_is_checkpointed_without_retry(
             executor = MagicMock()
             loop = MessagingLoop(
                 layout=AgentLayout.resident(tmp_path, "alice"),
-                owner=CONNECTION.human,
+                owner="human:owner",
                 client=alice,
                 executor=executor,
                 threads=MagicMock(),

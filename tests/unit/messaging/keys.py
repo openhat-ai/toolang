@@ -14,7 +14,6 @@ SCHEMA = KEYS.schema
 GC_ALLOCATOR = KEYS.gc_allocator
 STATS = KEYS.stats
 SYSTEM = KEYS.system
-ROSTER = KEYS.roster
 EVENT_META = KEYS.event_meta
 EVENT_STREAM = KEYS.event_stream
 EVENT_AGENTS = KEYS.event_agents

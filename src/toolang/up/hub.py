@@ -9,20 +9,15 @@ from pathlib import Path
 import socket
 import subprocess
 import time
-from urllib.parse import quote
 
 import httpx
 import psutil
 import uvicorn
 
 from toolang.common.version import toolang_version
-from toolang.teaming.config import TeamingRootConfig
+from .config import HubServerConfig
 from toolang.teaming.errors import TeamingError
-from toolang.teaming.messaging import MessagingClient
-from toolang.teaming.schemas import HubConnection, HubInfo
-from toolang.teaming.discovery import HubDiscovery
-from .discovery import agent_roster
-from toolang.teaming.roster import Roster
+from .records import HubRecord
 
 
 class HubProcess:
@@ -32,7 +27,7 @@ class HubProcess:
         self.log = root / "hub" / "hub.log"
 
     @staticmethod
-    def process(record: HubDiscovery) -> psutil.Process | None:
+    def process(record: HubRecord) -> psutil.Process | None:
         try:
             process = psutil.Process(record.pid)
             if (
@@ -45,56 +40,59 @@ class HubProcess:
             pass
         return None
 
-    def current(self) -> HubDiscovery | None:
-        record = HubDiscovery.load(self.path)
+    def current(self) -> HubRecord | None:
+        record = HubRecord.load(self.path)
         return (
             record if record is not None and self.process(record) is not None else None
         )
 
-    def connection(self) -> HubConnection:
-        record = self.current()
-        if record is None:
-            raise TeamingError("Hub is not running; run 'too hub start'")
-        if record.status == "starting":
-            raise TeamingError("Hub is starting; wait for readiness")
-        return record.connection
-
     @staticmethod
-    def ready(record: HubDiscovery) -> bool:
+    def ready(record: HubRecord) -> bool:
         if record.status == "starting":
             return False
         try:
             with httpx.Client(trust_env=False, timeout=1) as client:
                 response = client.get(
                     record.connection.endpoint + "/healthz",
-                    headers={"X-Toolang-Backend": record.identity},
                 )
             return response.status_code == 200 and response.json() == {"ok": True}
         except (httpx.HTTPError, ValueError):
             return False
 
-    @staticmethod
-    def version(record: HubDiscovery) -> str:
-        """Read the recorded Hub's source version without requiring readiness."""
-        if record.status == "starting":
-            return "unknown"
-        try:
-            with httpx.Client(trust_env=False, timeout=1) as client:
-                response = client.get(
-                    record.connection.endpoint + "/info",
-                    headers={
-                        "X-Toolang-Backend": record.identity,
-                        "X-Toolang-Human": quote(record.human, safe=""),
-                    },
-                )
-            response.raise_for_status()
-            return HubInfo.model_validate(response.json()).version
-        except (httpx.HTTPError, ValueError):
-            return "unknown"
+    def _clear(self, expected: HubRecord, *, locked: bool = False) -> None:
+        def remove_owned() -> None:
+            current = HubRecord.load(self.path)
+            if current is not None and (current.pid, current.created) == (
+                expected.pid,
+                expected.created,
+            ):
+                self.path.unlink(missing_ok=True)
 
-    def start(self, command: Sequence[str], *, timeout: float = 20) -> HubDiscovery:
+        if locked:
+            remove_owned()
+            return
+        current = HubRecord.load(self.path)
+        if current is None or (current.pid, current.created) != (
+            expected.pid,
+            expected.created,
+        ):
+            return
+        self.lock.parent.mkdir(parents=True, exist_ok=True)
+        with self.lock.open("a+b") as lock:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError as exc:
+                raise TeamingError(
+                    "Hub process exited but its record could not be cleaned"
+                ) from exc
+            remove_owned()
+
+    def start(self, command: Sequence[str], *, timeout: float = 20) -> HubRecord:
         if self.current() is not None:
             raise TeamingError("Hub is already running; stop it before restarting")
+        stale = HubRecord.load(self.path)
+        if stale is not None:
+            self._clear(stale)
         self.log.parent.mkdir(parents=True, exist_ok=True)
         with self.log.open("ab") as log:
             child = subprocess.Popen(
@@ -105,6 +103,10 @@ class HubProcess:
                 start_new_session=True,
             )
         try:
+            created = psutil.Process(child.pid).create_time()
+        except psutil.NoSuchProcess:
+            created = None
+        try:
             deadline = time.monotonic() + timeout
             while time.monotonic() < deadline:
                 if child.poll() is not None:
@@ -112,7 +114,7 @@ class HubProcess:
                 record = self.current()
                 if (
                     record is not None
-                    and record.pid == child.pid
+                    and (record.pid, record.created) == (child.pid, created)
                     and self.ready(record)
                 ):
                     return record
@@ -126,12 +128,20 @@ class HubProcess:
                 except subprocess.TimeoutExpired:
                     child.kill()
                     child.wait()
+            failed = HubRecord.load(self.path)
+            if failed is not None and (failed.pid, failed.created) == (
+                child.pid,
+                created,
+            ):
+                self._clear(failed)
             raise
 
     def stop(self, *, force: bool = False) -> bool:
-        record = self.current()
+        record = HubRecord.load(self.path)
         process = self.process(record) if record is not None else None
         if process is None:
+            if record is not None:
+                self._clear(record)
             return False
         try:
             process.terminate()
@@ -145,10 +155,12 @@ class HubProcess:
                 ) from exc
             process.kill()
             process.wait(timeout=5)
+        assert record is not None
+        self._clear(record)
         return True
 
 
-def serve(root: Path, config: TeamingRootConfig, *, port: int) -> int:
+def serve(root: Path, config: HubServerConfig, *, port: int) -> int:
     """Serve one root with a lifetime lock and an explicitly bound socket."""
     from toolang.teaming.api import create_app
 
@@ -164,20 +176,22 @@ def serve(root: Path, config: TeamingRootConfig, *, port: int) -> int:
             raise TeamingError("Hub is already running or starting") from exc
         if hub.current() is not None:
             raise TeamingError("Hub is already running")
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+        with socket.socket(
+            socket.AF_INET6 if ":" in config.host else socket.AF_INET,
+            socket.SOCK_STREAM,
+        ) as listener:
             listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             try:
-                listener.bind(("127.0.0.1", port))
+                listener.bind((config.host, port))
                 # Bind alone allows a competing listener during startup on Linux.
                 listener.listen()
             except OSError as exc:
                 raise TeamingError(f"Cannot bind Hub port {port}: {exc}") from exc
-            record = HubDiscovery(
+            record = HubRecord(
                 pid=os.getpid(),
                 created=psutil.Process().create_time(),
                 port=port,
-                human=config.human,
-                identity=config.backend.identity,
+                host=config.host,
                 status="starting",
             )
 
@@ -189,22 +203,16 @@ def serve(root: Path, config: TeamingRootConfig, *, port: int) -> int:
 
             try:
                 record.save(hub.path)
-                client = MessagingClient(config.backend, actor=config.human)
                 app = create_app(
-                    client,
+                    config.backend,
                     version=toolang_version(),
                     on_ready=publish_ready,
-                    roster=Roster(
-                        client.backend,
-                        root=str(root.resolve()),
-                        owner=config.human,
-                        discover=lambda: agent_roster(root),
-                    ),
+                    on_stop=lambda: hub._clear(record, locked=True),
                 )
                 server = uvicorn.Server(
                     uvicorn.Config(
                         app,
-                        host="127.0.0.1",
+                        host=config.host,
                         port=port,
                         access_log=False,
                         timeout_graceful_shutdown=5,
@@ -216,5 +224,4 @@ def serve(root: Path, config: TeamingRootConfig, *, port: int) -> int:
                     return int(exc.code) if isinstance(exc.code, int) else 1
                 return 0 if server.started else 3
             finally:
-                if HubDiscovery.load(hub.path) == record:
-                    hub.path.unlink(missing_ok=True)
+                hub._clear(record, locked=True)

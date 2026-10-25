@@ -326,7 +326,6 @@ Let `R` be host ROOT, `P` host PLACE, `H` host HOME, `G` guest ROOT = PLACE, and
 | `H/` | `G/agents/NAME/` | Read-write; linked authored inputs receive read-only overlays |
 | `P/.state/` and cap directories | Same relative paths below `G/` | Read-write |
 | Each granted workspace directory | `G/workspaces/NAME/WORKSPACE/` | Read-write |
-| `R/hub/` | `G/hub/` | Read-only |
 | `R/.runtime/active/A/docker/L/active/` | `G/.runtime/active/NAME/` | Read-only |
 | `R/.runtime/active/A/docker/L/config.toml` | `G/config.toml` | Read-only |
 
@@ -337,6 +336,8 @@ targets. Authored-input overlays cannot make a workspace grant read-only.
 The generated configuration projects effective workspace paths into the guest
 ROOT table, overriding paths in the whole-mounted HOME configuration. Host files
 remain unchanged. [Workspaces](workspaces.md) owns selection and precedence.
+The generated root also carries resolved client `[teaming]` settings and omits
+server `[hub]` settings. Clients connect by URL without a Hub-directory mount.
 Config and active inputs have disjoint mount sources; mounting one cannot expose
 the other. The guest reads its own info view and writes HOME status.
 
@@ -551,3 +552,15 @@ execution. Lease-loss errors include the last accepted Chat run ID when known.
 Rerun observation failures report accepted run IDs without
 canceling; explicit interruption requests cancellation. Standalone scripts remain
 separate: inactive host execution is embedded and script-created guests stop on exit.
+
+## Hub process
+
+`too hub start`, `serve`, and `stop` control the selected root's local process.
+The server reads `[hub]` in `ROOT/config.toml`; bind port precedence is `--port`,
+`TOOLANG_HUB_PORT`, `hub.port`, then `7001`. The host defaults to `127.0.0.1`.
+Changing the listener requires separately configuring client `teaming.hub`.
+
+Bare `too hub` queries the client URL for availability/version and shows local
+process state separately, even when the local process record is absent or corrupt.
+Successful stop removes the owned record after confirmed exit. ASGI teardown also
+cleans it; the lifetime lock and PID/creation-time comparison protect replacements.

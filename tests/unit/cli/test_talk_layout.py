@@ -388,7 +388,8 @@ def test_member_notification_wakes_talk_without_polling_or_reloading_history(
             monkeypatch.setattr(ui, "update_membership", membership)
             ui.prompt.replace_input("keep my draft")
             async with HubClient(
-                HubConnection("http://hub", ui.human, "backend"),
+                HubConnection("http://hub", "backend"),
+                actor=ui.human,
                 transport=httpx.MockTransport(request),
             ) as client:
                 ui.client = client

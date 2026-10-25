@@ -128,9 +128,9 @@ def test_long_names_and_versions_expand_columns_when_space_permits():
         ("running", None, "hub running unknown"),
         ("running", "unknown", "hub running unknown"),
         ("not running", None, "hub not running"),
-        ("unavailable", "v0.3.4", "hub not running"),
-        ("starting", None, "hub not running"),
-        ("-", None, "hub not running"),
+        ("unavailable", "v0.3.4", "hub unavailable v0.3.4"),
+        ("starting", None, "hub starting"),
+        ("-", None, "hub -"),
     ],
 )
 def test_hub_row_shows_aligned_status_and_version_or_empty_field(
@@ -139,9 +139,7 @@ def test_hub_row_shows_aligned_status_and_version_or_empty_field(
     output = render(HubSnapshot(state, version, RuntimeInstanceSnapshot(())))
 
     assert output.splitlines()[0].split() == expected.split()
-    assert (
-        output.splitlines()[0].index("running" if state == "running" else "not") == 34
-    )
+    assert output.splitlines()[0].index(state) == 34
     row = Text.from_ansi(
         render(
             HubSnapshot(state, version, RuntimeInstanceSnapshot(())), terminal=True

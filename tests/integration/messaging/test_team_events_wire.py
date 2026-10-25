@@ -1,5 +1,7 @@
 """Team subscriptions and atomic-write failures on isolated Redis/Valkey servers."""
 
+from toolang.setup.teaming import load_teaming_root
+
 import asyncio
 import json
 
@@ -11,6 +13,7 @@ from valkey.asyncio import Valkey
 from tests.integration.messaging.test_valkey import (
     valkey as valkey,
     running_hub as running_hub,
+    hub_connection,
 )
 from toolang.teaming.agent_client import AgentClient
 from toolang.teaming.errors import StorageIntegrityError
@@ -43,20 +46,26 @@ def test_team_sse_closes_on_expired_or_replaced_agent_lease(
     valkey, running_hub, tmp_path, replaced
 ):
     async def scenario():
-        connection = running_hub.connection()
+        connection = hub_connection(tmp_path)
         async with (
             AgentClient(
-                tmp_path, actor="agent:alice", token="old", managed=False
+                tmp_path,
+                connection=load_teaming_root(tmp_path).connection(),
+                actor="agent:alice",
+                token="old",
             ) as alice,
             AgentClient(
-                tmp_path, actor="agent:alice", token="new", managed=False
+                tmp_path,
+                connection=load_teaming_root(tmp_path).connection(),
+                actor="agent:alice",
+                token="new",
             ) as replacement,
             Valkey.from_url(valkey.url, decode_responses=True) as raw,
             httpx.AsyncClient(
                 base_url=connection.endpoint, timeout=5, trust_env=False
             ) as http,
         ):
-            await alice.register(connection.human)
+            await alice.register("human:owner")
             response = await http.get("/team/events", params={"after": "invalid"})
             assert response.status_code == 400
             async with aconnect_sse(
@@ -70,7 +79,7 @@ def test_team_sse_closes_on_expired_or_replaced_agent_lease(
                 assert (await anext(events)).event == "checkpoint"
                 await raw.zadd(Keys(valkey.root_code).presence, {alice.actor: 0})
                 if replaced:
-                    await replacement.register(connection.human)
+                    await replacement.register("human:owner")
                 error = await anext(events)
                 assert error.event == "stream_error"
                 assert json.loads(error.data) == {"code": "recovery_required"}

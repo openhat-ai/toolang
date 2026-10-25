@@ -20,8 +20,18 @@ class TeamingSetup:
     root: TeamingRootConfig
     home: TeamingHomeConfig
 
-    def toolset_config(self, *, root: Path) -> dict[str, object]:
-        return {"root": str(root)} if self.home.enabled else {}
+    def toolset_config(
+        self, *, root: Path, gateway: str | None = None
+    ) -> dict[str, object]:
+        return (
+            {
+                "root": str(root),
+                "hub": self.root.connection(gateway=gateway).endpoint,
+                "human": self.root.human,
+            }
+            if self.home.enabled
+            else {}
+        )
 
 
 def resolve_teaming_setup(
@@ -31,7 +41,11 @@ def resolve_teaming_setup(
     home: Path,
     default_human: str | None = None,
 ) -> TeamingSetup:
-    root_raw: Mapping[str, object] = {}
+    root_raw: Mapping[str, object] = (
+        {}
+        if any(source.path == root for source in sources)
+        else read_config(root, include_workspaces=False)
+    )
     home_raw: Mapping[str, object] = {}
     for source in sources:
         if source.path == root:
@@ -42,21 +56,13 @@ def resolve_teaming_setup(
             raise TeamingError(
                 f"{source.path}: teaming requires explicit root/home scope"
             )
-        if "messaging" in source.config or "human" in source.config:
-            raise TeamingError(
-                f"{source.path}: experimental messaging/human configuration is replaced by teaming"
-            )
-    return TeamingSetup(
-        root_config(
-            root_raw,
-            source=root,
-            root=str(root.parent.expanduser().resolve(strict=False)),
-            default_human=default_human
-            if default_human is not None
-            else getpass.getuser(),
-        ),
-        home_config(home_raw, source=home),
+    client = root_config(
+        root_raw,
+        source=root,
+        default_human=default_human if default_human is not None else getpass.getuser(),
     )
+    local = home_config(home_raw, source=home)
+    return TeamingSetup(client, TeamingHomeConfig(client.enabled and local.enabled))
 
 
 def load_teaming_root(root: Path) -> TeamingRootConfig:

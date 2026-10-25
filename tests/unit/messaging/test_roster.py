@@ -1,123 +1,76 @@
-"""Local discovery, presence and membership cleanup preserve history."""
+"""Registration, rather than HOME discovery, owns Hub membership."""
 
 import asyncio
-import json
 
 from fakeredis import FakeServer
+import httpx
 import pytest
 
-from tests.unit.messaging.keys import PRESENCE, convo_key
-from toolang.teaming.ids import dm_id
-from toolang.teaming.roster import Roster
 from tests.unit.messaging.test_protocol import client
+from toolang.teaming.agent_client import AgentClient
+from toolang.teaming.api import create_app
+from toolang.teaming.errors import MessagingError
+from toolang.teaming.schemas import HubConnection
 
 
-def test_roster_tracks_discovery_without_inventing_online():
+def test_registration_keeps_offline_members_and_history_without_home(tmp_path):
     async def scenario():
-        server = FakeServer(server_type="valkey")
-        found = {"agent:alice"}
-        async with client(server, "human:owner") as human:
-            roster = Roster(
-                human.backend,
-                root="root-one",
-                owner=human.actor,
-                discover=lambda: set(found),
-            )
-            await roster.scan()
-            assert "agent:alice" in await roster.agents()
+        (tmp_path / "agents" / "unstarted").mkdir(parents=True)
+        human = client(FakeServer(server_type="valkey"), "human:owner")
+        app = create_app(human.config, backend=human.backend, version="test")
+        async with (
+            app.router.lifespan_context(app),
+            AgentClient(
+                tmp_path,
+                actor="agent:alice",
+                connection=HubConnection("http://hub"),
+                transport=httpx.ASGITransport(app),
+            ) as alice,
+        ):
+            assert await human.backend.participants() == {}
+            await alice.register("human:owner")
+            assert not (tmp_path / "agents" / "alice").exists()
+            await alice.unregister()
             assert not await human.backend.online("agent:alice")
-            await roster.register("agent:alice", "lease", "", True)
+            assert "agent:alice" in await human.agents()
+            receipt = await human.send("alice", body="Waiting while offline")
+            await alice.register("human:owner")
+            rows = await alice.history(receipt["conversation"])
+            assert len(rows) == 1
+            assert "agent:unstarted" not in await human.agents()
+
+    asyncio.run(scenario())
+
+
+def test_registration_preserves_owner_and_live_lease_fencing(tmp_path):
+    async def scenario():
+        human = client(FakeServer(server_type="valkey"), "human:owner")
+        app = create_app(human.config, backend=human.backend, version="test")
+        async with (
+            app.router.lifespan_context(app),
+            AgentClient(
+                tmp_path,
+                actor="agent:alice",
+                token="first",
+                connection=HubConnection("http://hub"),
+                transport=httpx.ASGITransport(app),
+            ) as first,
+            AgentClient(
+                tmp_path,
+                actor="agent:alice",
+                token="second",
+                connection=HubConnection("http://hub"),
+                transport=httpx.ASGITransport(app),
+            ) as second,
+        ):
+            await first.register("human:owner")
+            with pytest.raises(MessagingError, match="owner mismatch"):
+                await second.register("human:other")
+            with pytest.raises(MessagingError, match="already online"):
+                await second.register("human:owner")
+            assert "human:other" not in await human.backend.participants()
+            await first.unregister()
+            await second.register("human:owner")
             assert await human.backend.online("agent:alice")
-            assert await human.backend._call("ZSCORE", PRESENCE, "agent:alice") > 0
-            assert await human.backend._call("TTL", PRESENCE) == -1
-            found.clear()
-            await roster.scan()
-            await roster.scan()
-            assert (await roster.agents())["agent:alice"]["missing"] == 2
 
     asyncio.run(scenario())
-
-
-def test_removal_clears_ordinary_membership_and_preserves_history_and_dms():
-    async def scenario():
-        server = FakeServer(server_type="valkey")
-        found = {"agent:alice"}
-        async with client(server, "human:owner") as human:
-            backend = human.backend
-            roster = Roster(
-                backend,
-                root="root-one",
-                owner=human.actor,
-                discover=lambda: set(found),
-            )
-            await roster.register("agent:alice", "lease-one", "", True)
-            await human.send("gc_00000000", body="Shared history survives deletion")
-            await human.send("agent:alice", body="Old direct history")
-            old_direct = dm_id(human.actor, "agent:alice")
-            assert old_direct is not None
-            await backend.release_lease("agent:alice", "lease-one")
-            found.clear()
-            await roster.scan()
-            assert "agent:alice" in await roster.agents()
-            await roster.scan()
-            assert "agent:alice" not in await roster.agents()
-            assert "agent:alice" not in await backend.participants()
-            assert (
-                "agent:alice"
-                not in (await human.conversation("gc_00000000")).participants
-            )
-            assert (
-                await backend._call("XLEN", convo_key("gc_00000000", "messages")) == 1
-            )
-            assert dm_id(human.actor, "agent:alice") == old_direct
-            assert "agent:alice" in (await human.conversation(old_direct)).participants
-            found.add("agent:alice")
-            await roster.scan()
-            await roster.register("agent:alice", "lease-two", "", True)
-            await human.send("agent:alice", body="Continue the direct conversation")
-            assert dm_id(human.actor, "agent:alice") == old_direct
-            assert await backend._call("XLEN", convo_key(old_direct, "messages")) == 2
-            assert not await backend.renew_lease("agent:alice", "lease-one")
-
-    asyncio.run(scenario())
-
-
-def test_failed_scans_restart_and_foreign_roots_do_not_delete_agents():
-    async def scenario():
-        server = FakeServer(server_type="valkey")
-        found = {"agent:alice"}
-        async with client(server, "human:owner") as human:
-            roster = Roster(
-                human.backend,
-                root="root-one",
-                owner=human.actor,
-                discover=lambda: set(found),
-            )
-            await roster.scan()
-            before = json.dumps(await roster.agents())
-
-            def fail():
-                raise PermissionError("directory unavailable")
-
-            roster.discover = fail
-            with pytest.raises(PermissionError):
-                await roster.scan()
-            assert json.dumps(await roster.agents()) == before
-            other = Roster(
-                human.backend, root="root-two", owner=human.actor, discover=set
-            )
-            await other.scan()
-            await other.scan()
-            assert json.dumps(await roster.agents()) == before
-            restarted = Roster(
-                human.backend, root="root-one", owner=human.actor, discover=set
-            )
-            await restarted.scan()
-            assert "agent:alice" in await restarted.agents()
-            await restarted.scan()
-            assert not await restarted.agents()
-
-    asyncio.run(scenario())
-
-
-pytestmark = pytest.mark.usefixtures("fixed_conversation_ids")

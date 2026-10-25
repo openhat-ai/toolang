@@ -33,7 +33,6 @@ from ...schemas import (
     ConversationRules,
     TeamMember,
     ConversationRecord,
-    RosterRecord,
     TeamEvent,
     TeamRecord,
     conversation_id,
@@ -84,7 +83,7 @@ class ValkeyBackend:
             # URL retry options must never replay an uncertain append.
             self._client.set_retry(Retry(NoBackoff(), 0))
         except (ValueError, ValkeyError) as exc:
-            raise TeamingError("Invalid teaming.backend.url") from exc
+            raise TeamingError("Invalid hub.backend.url") from exc
 
     async def close(self) -> None:
         try:
@@ -214,7 +213,7 @@ class ValkeyBackend:
             prefix=self.keys.prefix,
             rules=op.get("inspect_rules", False),
             action=op.get("action")
-            if op.get("action") in {"team", "roster", "contacts", "register"}
+            if op.get("action") in {"team", "contacts", "register"}
             else "inspect",
         )
         snapshot = json.loads(
@@ -236,7 +235,6 @@ class ValkeyBackend:
                     if kind == "team"
                     else {
                         "conversation": ConversationRecord,
-                        "roster": RosterRecord,
                         "event": TeamEvent,
                         "rules": ConversationRules,
                     }[kind].model_validate_json(raw)
@@ -251,8 +249,6 @@ class ValkeyBackend:
                         raise ValueError("Conversation ID differs from its hash field")
                     if model.created_by is None and field != snapshot["system"]:
                         raise ValueError("Only the system conversation has no creator")
-                elif isinstance(model, RosterRecord):
-                    target(field, kind="agent")
             for key, members in snapshot["members"].items():
                 for member in members:
                     participant(member)
@@ -266,9 +262,6 @@ class ValkeyBackend:
                     and len(members) != 2
                 ):
                     raise StorageIntegrityError("Invalid DM membership")
-            for (kind, member), _record in records.items():
-                if kind == "roster" and ("team", member) not in records:
-                    raise ValueError("Roster entry has no team member")
         except StorageIntegrityError:
             raise
         except (ValueError, TypeError, KeyError, MessagingError) as exc:
@@ -301,49 +294,6 @@ class ValkeyBackend:
 
     async def team(self) -> list[TeamMember]:
         return list(json.loads(await self._operation(scripts.READ, {"action": "team"})))
-
-    async def roster(self) -> dict[str, dict]:
-        rows = await self._operation(scripts.READ, {"action": "roster"})
-        return {
-            member: json.loads(raw)
-            for member, raw in zip(rows[::2], rows[1::2], strict=True)
-        }
-
-    async def reconcile_roster(
-        self, agent: str, owner: str, previous: dict | None, updated: dict | None
-    ) -> bool:
-        target(agent, kind="agent")
-        target(owner, kind="human")
-        if previous is not None:
-            RosterRecord.model_validate(previous)
-        if updated is not None:
-            RosterRecord.model_validate(updated)
-        # Retain the stored bytes for CAS; JSON object ordering has no semantics.
-        raw = await self._read("HGET", self.keys.roster, agent)
-        try:
-            current = (
-                RosterRecord.model_validate_json(raw).model_dump()
-                if raw is not None
-                else None
-            )
-        except (ValueError, TypeError) as exc:
-            raise StorageIntegrityError("Invalid roster record") from exc
-        if current != previous:
-            return False
-        conversations = await self.conversation_ids() if updated is None else []
-        return bool(
-            await self._operation(
-                scripts.ROSTER,
-                dict(
-                    agent=agent,
-                    owner=owner,
-                    previous=raw or "",
-                    updated=_json(updated) if updated is not None else "",
-                    conversations=conversations,
-                ),
-                [self.keys.convo_key(ref, "members") for ref in conversations],
-            )
-        )
 
     async def known_participant(self, member: str) -> bool:
         participant(member)
@@ -418,7 +368,6 @@ class ValkeyBackend:
         agent: str | None = None,
         token: str = "",
         endpoint: str = "",
-        root: str = "",
     ) -> None:
         target(human, kind="human")
         if agent is not None:
@@ -434,7 +383,6 @@ class ValkeyBackend:
                 agent=agent or human,
                 token=token,
                 endpoint=endpoint,
-                root=root,
                 system=system,
             ),
             [self.keys.convo_key(system, "members")],

@@ -1,5 +1,7 @@
 """Real Hub transport with deterministic model turns and fault injection."""
 
+from toolang.setup.teaming import load_teaming_root
+
 import asyncio
 import json
 import sys
@@ -12,6 +14,7 @@ from valkey.asyncio import Valkey
 from tests.integration.messaging.test_valkey import (
     valkey as valkey,
     running_hub as running_hub,
+    hub_connection,
 )
 from tests.support.execution_harness import (
     AsyncGate,
@@ -41,7 +44,9 @@ def test_inflight_message_survives_hub_restart_and_scoped_fanout(
     valkey, running_hub, tmp_path, fault
 ):
     async def scenario():
-        async with HubClient(running_hub.connection()) as directory:
+        async with HubClient(
+            hub_connection(tmp_path), actor="human:owner"
+        ) as directory:
             system = next(
                 c["conversation"]
                 for c in await directory.contacts()
@@ -73,7 +78,11 @@ def test_inflight_message_survives_hub_restart_and_scoped_fanout(
                 ModelCallResult(message=ModelMessage.assistant("Handled.")),
             ],
         )
-        client = AgentClient(tmp_path, actor="agent:alice")
+        client = AgentClient(
+            tmp_path,
+            connection=load_teaming_root(tmp_path).connection(),
+            actor="agent:alice",
+        )
         loop = MessagingLoop(
             layout=harness.setup.layout,
             owner="human:owner",
@@ -91,7 +100,7 @@ def test_inflight_message_survives_hub_restart_and_scoped_fanout(
             executor=loop.executor,
             messaging=loop,
         )
-        connection = running_hub.connection()
+        connection = hub_connection(tmp_path)
         record = running_hub.current()
         assert record is not None
 
@@ -102,7 +111,7 @@ def test_inflight_message_survives_hub_restart_and_scoped_fanout(
 
         async with (
             harness,
-            HubClient(connection) as human,
+            HubClient(connection, actor="human:owner") as human,
             Valkey.from_url(valkey.url, decode_responses=True) as raw,
             Valkey.from_url(valkey.url + "?db=1", decode_responses=True) as second,
             httpx.AsyncClient(
@@ -165,7 +174,7 @@ def test_inflight_message_survives_hub_restart_and_scoped_fanout(
                     await raw.zadd(Keys(valkey.root_code).presence, {client.actor: 1})
                 if fault == "backend_switch":
                     (tmp_path / "config.toml").write_text(
-                        f'[teaming]\nhuman = "owner"\n[teaming.backend]\nurl = "{valkey.url}?db=1"\n'
+                        f'[teaming]\nhuman = "owner"\nhub = "{connection.endpoint}"\n[hub.backend]\nurl = "{valkey.url}?db=1"\n'
                     )
                 local = await harness.executor.run(
                     harness.run_spec(
@@ -225,7 +234,7 @@ def test_inflight_message_survives_hub_restart_and_scoped_fanout(
                     )
                     async with asyncio.timeout(15):
                         while (
-                            loop.identity != running_hub.connection().identity
+                            loop.identity != hub_connection(tmp_path).identity
                             or loop.pending is not None
                         ):
                             await asyncio.sleep(0.05)
@@ -241,7 +250,9 @@ def test_inflight_message_survives_hub_restart_and_scoped_fanout(
                         )
                         is None
                     )
-                    async with HubClient(running_hub.connection()) as replacement:
+                    async with HubClient(
+                        hub_connection(tmp_path), actor="human:owner"
+                    ) as replacement:
                         new_system = next(
                             c["conversation"]
                             for c in await replacement.contacts()

@@ -187,6 +187,7 @@ class HubInfo(BaseModel):
     model_config = ConfigDict(extra="ignore", strict=True, frozen=True)
     version: str
     api_version: HubAPIVersion
+    identity: str
 
     @field_validator("version")
     @classmethod
@@ -262,20 +263,6 @@ class TeamRecord(ProtocolModel):
         if value is not None:
             target(value, kind="human")
         return value
-
-
-class RosterRecord(ProtocolModel):
-    """Root ownership and discovery state for an agent in the team directory."""
-
-    root: str = Field(min_length=1)
-    managed: bool
-    missing: int = Field(ge=0, le=MAX_SAFE_INTEGER)
-
-    @model_validator(mode="after")
-    def discovery(self):
-        if not self.managed and self.missing:
-            raise ValueError("Transient registrations have no discovery misses")
-        return self
 
 
 class TeamEvent(ProtocolModel):
@@ -618,8 +605,14 @@ class AgentSendRequest(SendRequest):
 
 
 class AgentRegistration(HubRequest):
+    owner: str
     endpoint: str = Field(default="", max_length=2048)
-    managed: bool = True
+
+    @field_validator("owner")
+    @classmethod
+    def valid_owner(cls, value: str) -> str:
+        target(value, kind="human")
+        return value
 
 
 Generation = Annotated[str, Field(pattern=r"^[0-9a-f]{32}$")]
@@ -685,5 +678,4 @@ class HistoryEntry(BaseModel):
 @dataclass(frozen=True)
 class HubConnection:
     endpoint: str
-    human: str
-    identity: str
+    identity: str = ""

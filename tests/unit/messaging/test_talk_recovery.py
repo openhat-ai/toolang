@@ -25,7 +25,7 @@ from toolang.lang.input import CallInput
 from toolang.lang.types import Array
 from toolang.teaming.errors import BackendUnavailable
 from toolang.teaming.ids import talk_thread_id
-from toolang.teaming.schemas import Message
+from toolang.teaming.schemas import Message, HubConnection
 
 pytestmark = pytest.mark.usefixtures("fixed_conversation_ids")
 
@@ -34,7 +34,12 @@ pytestmark = pytest.mark.usefixtures("fixed_conversation_ids")
 def server(monkeypatch):
     server = FakeServer(server_type="valkey")
     monkeypatch.setattr(
-        conversations, "AgentClient", lambda root, actor: make_client(server, actor)
+        conversations, "connection_for", lambda _: HubConnection("http://hub", "test")
+    )
+    monkeypatch.setattr(
+        conversations,
+        "AgentClient",
+        lambda root, actor, **_: make_client(server, actor),
     )
     return server
 

@@ -7,7 +7,7 @@ from unittest.mock import patch
 from fakeredis import FakeServer
 import pytest
 
-from tests.unit.messaging.test_agent_api import CONNECTION, agent
+from tests.unit.messaging.test_agent_api import agent
 from tests.unit.messaging.test_protocol import client
 from tests.support.execution_fixtures import project_run_start
 from toolang.base.errors import ToolangError
@@ -25,8 +25,8 @@ from toolang.teaming.schemas import Message
 
 @asynccontextmanager
 async def environment(tmp_path, peer="bob"):
-    human = client(FakeServer(server_type="valkey"), CONNECTION.human)
-    app = create_app(human, version="test")
+    human = client(FakeServer(server_type="valkey"), "human:owner")
+    app = create_app(human.config, backend=human.backend, version="test")
     context = ConvoToolContext(
         tmp_path / "alice", tmp_path, run_id="run_1", thread_id="chat_1"
     )
@@ -35,8 +35,8 @@ async def environment(tmp_path, peer="bob"):
         agent(app, tmp_path) as alice,
         agent(app, tmp_path, f"agent:{peer}", "peer-lease") as bob,
     ):
-        await alice.register(CONNECTION.human)
-        await bob.register(CONNECTION.human)
+        await alice.register("human:owner")
+        await bob.register("human:owner")
         toolset = ConvoToolset({"root": str(tmp_path)})
         with patch.object(toolset, "connection", lambda _: agent(app, tmp_path)):
             yield toolset.tools(), context, alice, bob
@@ -49,7 +49,7 @@ def test_team_tool_projects_member_colors_out_of_its_existing_shape(tmp_path):
             result = await tools["team"].invoke({}, context)
             assert result.error is None
             assert {row["id"] for row in result.output["value"]} == {
-                CONNECTION.human,
+                "human:owner",
                 "agent:alice",
                 "agent:bob",
             }

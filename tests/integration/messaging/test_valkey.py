@@ -13,6 +13,8 @@ import tempfile
 import time
 
 import libtmux
+import httpx
+from toolang.setup.teaming import load_teaming_root
 from libtmux.constants import OptionScope
 import pytest
 from rich.color import Color
@@ -25,7 +27,7 @@ from toolang.teaming.client import HubClient
 from toolang.teaming.config import BackendConfig
 from toolang.teaming.errors import MessagingError, StorageIntegrityError
 from valkey.asyncio import Valkey
-from toolang.teaming.schemas import Message
+from toolang.teaming.schemas import Message, HubConnection, HubInfo
 from toolang.up.hub import HubProcess
 
 pytestmark = pytest.mark.live_valkey
@@ -156,14 +158,23 @@ def test_standard_backend_registration_streams_and_expiry(valkey):
     asyncio.run(scenario())
 
 
+def hub_connection(root):
+    endpoint = load_teaming_root(root).hub
+    with httpx.Client(trust_env=False, timeout=5) as http:
+        response = http.get(endpoint + "/info")
+        response.raise_for_status()
+    info = HubInfo.model_validate(response.json())
+    return HubConnection(endpoint, info.identity)
+
+
 @pytest.fixture
 def running_hub(valkey, tmp_path):
-    (tmp_path / "config.toml").write_text(
-        f'[teaming]\nhuman = "owner"\n[teaming.backend]\nurl = "{valkey.url}"\n'
-    )
     with socket.socket() as listener:
         listener.bind(("127.0.0.1", 0))
         port = listener.getsockname()[1]
+    (tmp_path / "config.toml").write_text(
+        f'[teaming]\nhuman = "owner"\nhub = "http://127.0.0.1:{port}"\n[hub.backend]\nurl = "{valkey.url}"\n'
+    )
     hub = HubProcess(tmp_path)
     command = [
         sys.executable,
@@ -184,13 +195,13 @@ def running_hub(valkey, tmp_path):
         hub.stop(force=True)
 
 
-def test_hub_fails_closed_after_backend_data_loss(valkey, running_hub):
+def test_hub_fails_closed_after_backend_data_loss(valkey, running_hub, tmp_path):
     original = running_hub.current()
 
     async def scenario():
         async with (
             Valkey.from_url(valkey.url, decode_responses=True) as raw,
-            HubClient(running_hub.connection()) as client,
+            HubClient(hub_connection(tmp_path), actor="human:owner") as client,
         ):
             system = next(
                 c["conversation"] for c in await client.contacts() if c["name"] == "all"
@@ -207,9 +218,6 @@ def test_hub_fails_closed_after_backend_data_loss(valkey, running_hub):
 
 
 def test_hub_cli_lifecycle_and_backend_independence(valkey, tmp_path):
-    (tmp_path / "config.toml").write_text(
-        f'[teaming]\nhuman = "owner"\n[teaming.backend]\nurl = "{valkey.url}"\n'
-    )
     with socket.socket() as listener:
         listener.bind(("127.0.0.1", 0))
         port = listener.getsockname()[1]
@@ -231,6 +239,9 @@ def test_hub_cli_lifecycle_and_backend_independence(valkey, tmp_path):
             await agent.register("human:owner")
 
     asyncio.run(register())
+    (tmp_path / "config.toml").write_text(
+        f'[teaming]\nhuman = "owner"\nhub = "http://127.0.0.1:{port}"\n[hub.backend]\nurl = "{valkey.url}"\n'
+    )
     hub = HubProcess(tmp_path)
     try:
         result = run("hub", "start", "--port", str(port))
@@ -242,7 +253,9 @@ def test_hub_cli_lifecycle_and_backend_independence(valkey, tmp_path):
         assert run("hub", "start", "--port", str(port)).returncode != 0
 
         async def system_id():
-            async with HubClient(hub.connection()) as client:
+            async with HubClient(
+                hub_connection(tmp_path), actor="human:owner"
+            ) as client:
                 return next(
                     c["conversation"]
                     for c in await client.contacts()
@@ -252,7 +265,7 @@ def test_hub_cli_lifecycle_and_backend_independence(valkey, tmp_path):
         system = asyncio.run(system_id())
         assert run("talk", system, "via Hub").returncode == 0
         assert run("hub", "stop").returncode == 0
-        assert run("hub").stdout.splitlines()[0].split() == ["hub", "not", "running"]
+        assert run("hub").stdout.splitlines()[0].split() == ["hub", "unavailable"]
         assert run("talk", system, "requires Hub").returncode != 0
 
         async def verify():
@@ -286,9 +299,6 @@ def test_real_talk_terminal_sends_and_reads_in_the_invoking_pane(
             return dev, (await human.resolve("all", kind="name")).conversation
 
     dev, system = asyncio.run(register())
-    (tmp_path / "config.toml").write_text(
-        f'[teaming]\nhuman = "owner"\n[teaming.backend]\nurl = "{valkey.url}"\n'
-    )
     with tempfile.TemporaryDirectory(prefix="too-talk-tmux-", dir="/tmp") as directory:
         tmux = libtmux.Server(
             socket_path=f"{directory}/socket", config_file="/dev/null"

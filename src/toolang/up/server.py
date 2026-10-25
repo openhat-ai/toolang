@@ -623,10 +623,19 @@ def _serve_workload(
                     )
                 messaging_setup = current_setup().teaming
                 if messaging_setup is not None and messaging_setup.home.enabled:
+
+                    def current_hub_connection():
+                        teaming = current_setup().teaming
+                        if teaming is None:
+                            raise RuntimeError("Teaming configuration is unavailable")
+                        return teaming.root.connection(
+                            gateway=environ.get("TOOLANG_HOST_GATEWAY")
+                        )
+
                     hub_client = AgentClient(
                         spec.toolang_root or spec.layout.root or spec.layout.place,
                         actor=f"agent:{spec.layout.name}",
-                        managed=bool(spec.layout.managed_membership),
+                        connection=current_hub_connection,
                     )
                     messaging = (
                         MessagingLoop(

@@ -2,6 +2,7 @@
 
 from collections.abc import Callable, Mapping
 from copy import deepcopy
+import os
 from types import MappingProxyType
 
 from toolang.common.cache import digest
@@ -35,9 +36,14 @@ async def load_tool_setup(
         configs = tuple(source.config for source in sources)
         toolsets = merge_plugin_configs(configs, family="toolset")
         teaming = resolve_teaming_setup(
-            sources, root=layout.place_config, home=layout.config
+            sources,
+            root=(layout.root or layout.place) / "config.toml",
+            home=layout.config,
         )
-        toolsets["convo"] = teaming.toolset_config(root=layout.root or layout.place)
+        toolsets["convo"] = teaming.toolset_config(
+            root=layout.root or layout.place,
+            gateway=os.environ.get("TOOLANG_HOST_GATEWAY"),
+        )
         allowed = resolve_tool_allow(configs)
         revision = digest(
             {

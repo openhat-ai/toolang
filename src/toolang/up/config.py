@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from toolang.teaming.config import BackendConfig, DEFAULT_BACKEND_URL
+
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import cast
@@ -123,3 +126,31 @@ def resolve_cors_allowed_origins(
     return tuple(
         item.strip() for item in configured if isinstance(item, str) and item.strip()
     )
+
+
+@dataclass(frozen=True)
+class HubServerConfig:
+    backend: BackendConfig
+    port: int = 7001
+    host: str = "127.0.0.1"
+
+
+def hub_config(
+    config: Mapping[str, object], *, source: Path, root: str
+) -> HubServerConfig:
+    raw = config.get("hub", {})
+    if not isinstance(raw, Mapping) or set(raw) - {"host", "port", "backend"}:
+        raise ValueError(f"{source}: hub accepts host, port, and backend only")
+    raw = cast(Mapping[str, object], raw)
+    host = raw.get("host", "127.0.0.1")
+    if not isinstance(host, str) or not host or host != host.strip() or "/" in host:
+        raise ValueError(f"{source}: hub.host must be a bind host")
+    port = _port(raw.get("port", 7001), f"{source}: hub.port")
+    backend = raw.get("backend", {})
+    if not isinstance(backend, Mapping) or set(backend) - {"url"}:
+        raise ValueError(f"{source}: hub.backend accepts url only")
+    backend = cast(Mapping[str, object], backend)
+    url = backend.get("url", DEFAULT_BACKEND_URL)
+    if not isinstance(url, str):
+        raise ValueError(f"{source}: hub.backend.url must be text")
+    return HubServerConfig(BackendConfig(url, root=root), port, host)

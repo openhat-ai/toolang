@@ -108,8 +108,13 @@ def test_banner_removes_terminal_controls_and_keeps_literal_text_and_styles():
 @pytest.mark.parametrize(
     "payload",
     [
-        {"version": "0.4.0-hub", "api_version": 0, "future": True},
-        {"version": "unknown", "api_version": 0},
+        {
+            "version": "0.4.0-hub",
+            "api_version": 0,
+            "identity": "dataset",
+            "future": True,
+        },
+        {"version": "unknown", "api_version": 0, "identity": "dataset"},
         {},
         {"version": ""},
         {"version": None},
@@ -129,7 +134,8 @@ def test_hub_version_accepts_additive_fields_and_handles_invalid_metadata(payloa
             return httpx.Response(200, json=payload)
 
         async with HubClient(
-            HubConnection("http://hub", "human:bryan", "dataset"),
+            HubConnection("http://hub", "dataset"),
+            actor="human:bryan",
             transport=httpx.MockTransport(respond),
         ) as client:
             version = await _hub_version(client)
@@ -156,7 +162,8 @@ def test_unavailable_hub_metadata_is_presentation_only(failure):
             return httpx.Response(failure, json={"detail": "unavailable"})
 
         async with HubClient(
-            HubConnection("http://hub", "human:bryan", "dataset"),
+            HubConnection("http://hub", "dataset"),
+            actor="human:bryan",
             transport=httpx.MockTransport(respond),
         ) as client:
             assert await _hub_version(client) == "unknown"

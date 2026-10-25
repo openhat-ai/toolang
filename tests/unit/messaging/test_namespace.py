@@ -9,7 +9,8 @@ from fakeredis import FakeAsyncValkey, FakeServer
 import httpx
 import pytest
 
-from toolang.setup.teaming import load_teaming_root
+from toolang.up.config import hub_config
+from toolang.common.config_sources import read_config
 from toolang.common.layout import AgentLayout
 from toolang.common.place_codes import (
     PLACE_CODE_EPOCH_MS,
@@ -49,8 +50,15 @@ def test_setup_canonicalizes_host_root_before_deriving_namespace(tmp_path):
     root.mkdir()
     alias = tmp_path / "alias"
     alias.symlink_to(root, target_is_directory=True)
-    direct = load_teaming_root(root).backend
-    assert load_teaming_root(alias).backend == direct
+    direct = hub_config(
+        read_config(root / "config.toml"),
+        source=root / "config.toml",
+        root=str(root.resolve()),
+    ).backend
+    assert (
+        hub_config({}, source=alias / "config.toml", root=str(alias.resolve())).backend
+        == direct
+    )
     assert direct.root == str(root.resolve())
     assert replace(direct, root=str(tmp_path / "other")).identity != direct.identity
 
@@ -58,7 +66,9 @@ def test_setup_canonicalizes_host_root_before_deriving_namespace(tmp_path):
 def test_backend_namespace_matches_the_root_code_in_nonresident_paths(tmp_path):
     source = tmp_path / "source" / "agent.too"
     source.parent.mkdir()
-    config = load_teaming_root(tmp_path).backend
+    config = hub_config(
+        {}, source=tmp_path / "config.toml", root=str(tmp_path.resolve())
+    ).backend
     visiting = AgentLayout.visiting("owner/repo@main/agent.too", "alice", root=tmp_path)
     roaming = AgentLayout.roaming(
         source,
@@ -77,7 +87,13 @@ def test_hub_rejects_configuration_bound_to_another_host_root(tmp_path):
     from toolang.up.hub import serve
 
     with pytest.raises(TeamingError, match="another Toolang root"):
-        serve(tmp_path / "other", load_teaming_root(tmp_path), port=7001)
+        serve(
+            tmp_path / "other",
+            hub_config(
+                {}, source=tmp_path / "config.toml", root=str(tmp_path.resolve())
+            ),
+            port=7001,
+        )
     assert not (tmp_path / "other").exists()
 
 
@@ -275,14 +291,14 @@ def test_hub_api_rejects_other_root_identity_on_the_same_backend_before_mutation
         server = FakeServer(server_type="valkey")
         config = BackendConfig("redis://shared", root="/one")
         human = client(server, config)
-        app = create_app(human, version="test")
+        app = create_app(human.config, backend=human.backend, version="test")
         async with app.router.lifespan_context(app):
             before = await snapshot(human.backend._client)
             connection = HubConnection(
-                "http://hub", human.actor, replace(config, root="/two").identity
+                "http://hub", replace(config, root="/two").identity
             )
             async with HubClient(
-                connection, transport=httpx.ASGITransport(app)
+                connection, actor="human:owner", transport=httpx.ASGITransport(app)
             ) as other:
                 with pytest.raises(MessagingError, match="identity changed"):
                     await other.create_conversation("wrong root")
@@ -294,16 +310,13 @@ def test_hub_api_rejects_other_root_identity_on_the_same_backend_before_mutation
 def test_talk_command_uses_the_selected_roots_namespace(tmp_path, monkeypatch):
     from toolang.cli.toolang import main as cli
     from toolang.cli.toolang.commands import talk
-    from toolang.up.hub import HubProcess
 
     server = FakeServer(server_type="valkey")
     configs = [
         BackendConfig("redis://shared", root=str(tmp_path / name))
         for name in ("one", "two")
     ]
-    connections = {
-        c.root: HubConnection("http://hub", "human:owner", c.identity) for c in configs
-    }
+    connections = {c.root: HubConnection("http://hub", c.identity) for c in configs}
     by_identity = {c.identity: c for c in configs}
 
     async def register():
@@ -313,16 +326,16 @@ def test_talk_command_uses_the_selected_roots_namespace(tmp_path, monkeypatch):
 
     asyncio.run(register())
     monkeypatch.setattr(
-        HubProcess, "connection", lambda self: connections[str(self.path.parent.parent)]
+        talk, "settings", lambda root: (connections[str(root)], "human:owner")
     )
 
     @asynccontextmanager
-    async def hub(connection):
+    async def hub(connection, *, actor=None):
         human = client(server, by_identity[connection.identity])
-        app = create_app(human, version="test")
+        app = create_app(human.config, backend=human.backend, version="test")
         async with app.router.lifespan_context(app):
             async with HubClient(
-                connection, transport=httpx.ASGITransport(app)
+                connection, actor="human:owner", transport=httpx.ASGITransport(app)
             ) as remote:
                 yield remote
 

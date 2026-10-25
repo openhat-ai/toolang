@@ -1,13 +1,13 @@
-"""Root and home teaming configuration must remain separate."""
+"""Client/server settings resolve independently at their own boundaries."""
 
 from pathlib import Path
 
 import pytest
 
 from toolang.common.config_sources import ConfigSource
-from toolang.teaming.config import BackendConfig
-from toolang.teaming.errors import TeamingError
 from toolang.setup.teaming import resolve_teaming_setup
+from toolang.teaming.errors import TeamingError
+from toolang.up.config import hub_config
 
 ROOT = Path("/root/config.toml")
 HOME = Path("/root/agents/alice/config.toml")
@@ -25,29 +25,30 @@ def resolve(root=None, home=None, extra=()):
 @pytest.mark.parametrize("home", [{}, {"teaming": {}}, {"teaming": {"enabled": True}}])
 def test_defaults_enable_agent_teaming(home):
     setup = resolve(home=home)
-    assert setup.root.backend == BackendConfig(
-        "redis://localhost:6379/0", root=str(ROOT.parent.resolve())
-    )
     assert setup.root.human == "human:owner"
-    assert setup.root.hub_port == 7001
+    assert setup.root.hub == "http://127.0.0.1:7001"
     assert setup.home.enabled
-    assert setup.toolset_config(root=ROOT.parent) == {"root": str(ROOT.parent)}
-
-
-def test_scopes_resolve_without_merging():
-    root = {
-        "teaming": {
-            "human": "brice",
-            "backend": {"url": "redis://shared"},
-            "hub": {"port": 8000},
-        }
+    assert setup.toolset_config(root=ROOT.parent) == {
+        "root": "/root",
+        "hub": "http://127.0.0.1:7001",
+        "human": "human:owner",
     }
-    enabled = resolve(root, {"teaming": {"enabled": True}})
-    assert enabled.root.human == "human:brice" and enabled.root.hub_port == 8000
-    assert enabled.toolset_config(root=ROOT.parent) == {"root": str(ROOT.parent)}
+
+
+def test_clients_ignore_server_settings_and_preserve_root_identity():
+    raw = {
+        "teaming": {"human": "brice", "hub": "https://hub.example/team/"},
+        "hub": {"backend": "invalid", "port": False},
+    }
+    setup = resolve(raw)
+    assert setup.root.human == "human:brice"
+    assert setup.root.hub == "https://hub.example/team"
+    assert not resolve(raw, {"teaming": {"enabled": False}}).home.enabled
+    assert not resolve(
+        {"teaming": {"enabled": False}}, {"teaming": {"enabled": True}}
+    ).home.enabled
     assert (
-        resolve(root, {"teaming": {"enabled": False}}).toolset_config(root=ROOT.parent)
-        == {}
+        resolve({"teaming": {"enabled": False}}).toolset_config(root=ROOT.parent) == {}
     )
 
 
@@ -56,18 +57,18 @@ def test_scopes_resolve_without_merging():
     [
         None,
         "bad",
-        {"enabled": True},
+        {"enabled": "true"},
         {"groups": []},
-        {"backend": {"url": "bad"}},
-        {"backend": {"url": None}},
-        {"backend": {"groups": []}},
         {"human": "a:b"},
-        {"hub": {"port": True}},
-        {"hub": {"port": 0}},
-        {"hub": {"unknown": 1}},
+        {"hub": ""},
+        {"hub": "redis://host"},
+        {"hub": "http://host:0"},
+        {"hub": "http://user:secret@host"},
+        {"hub": "http://host?query"},
+        {"hub": "http://0.0.0.0:7001"},
     ],
 )
-def test_invalid_root_reports_source(raw):
+def test_invalid_client_settings_report_source(raw):
     with pytest.raises(TeamingError, match=str(ROOT)):
         resolve({"teaming": raw})
 
@@ -79,35 +80,43 @@ def test_invalid_root_reports_source(raw):
         "bad",
         {"enabled": "false"},
         {"human": "other"},
-        {"backend": {"url": "redis://other"}},
-        {"hub": {}},
-        {"groups": []},
+        {"backend": {}},
+        {"hub": "http://other"},
     ],
 )
-def test_invalid_home_reports_source(raw):
+def test_home_accepts_only_enablement(raw):
     with pytest.raises(TeamingError, match=str(HOME)):
         resolve(home={"teaming": raw})
 
 
-def test_project_projection_and_legacy_configuration_are_rejected():
+def test_unknown_scopes_and_fields_are_invalid():
+    for raw in ({"backend": {}}, {"hub": {"port": 8000}}):
+        with pytest.raises(TeamingError):
+            resolve({"teaming": raw})
     with pytest.raises(TeamingError, match="root/home scope"):
         resolve(extra=(ConfigSource(Path("/project/config.toml"), {"teaming": {}}),))
-    for section in ("messaging", "human"):
-        with pytest.raises(TeamingError, match="replaced by teaming"):
-            resolve({section: {}})
+
+
+def test_server_defaults_ignore_client_configuration():
+    server = hub_config({"teaming": "invalid"}, source=ROOT, root="/root")
+    assert (server.host, server.port) == ("127.0.0.1", 7001)
+    assert server.backend.url == "redis://localhost:6379/0"
+    assert server.backend.root == "/root"
+    assert resolve({"hub": {"port": 8123}}).root.hub.endswith(":7001")
 
 
 @pytest.mark.parametrize(
-    "url",
+    "raw",
     [
-        "redis://host/not-a-database",
-        "redis://host/-1",
-        "redis://host?db=-1",
-        "redis://host?db=bad",
-        "redis://host#fragment",
-        "redis://host:0",
+        {"port": True},
+        {"port": 0},
+        {"host": ""},
+        {"host": "http://host"},
+        {"backend": {"url": None}},
+        {"backend": {"url": "redis://host?db=-1"}},
+        {"url": "http://host"},
     ],
 )
-def test_invalid_backend_url_does_not_silently_select_database_zero(url):
-    with pytest.raises(TeamingError, match=str(ROOT)):
-        resolve({"teaming": {"backend": {"url": url}}})
+def test_invalid_server_settings_fail_without_client_resolution(raw):
+    with pytest.raises((ValueError, TeamingError)):
+        hub_config({"hub": raw}, source=ROOT, root="/root")

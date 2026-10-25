@@ -1,5 +1,7 @@
 """Status and lifecycle commands for the root-scoped teaming Hub."""
 
+import httpx
+
 import os
 import sys
 from typing import Annotated
@@ -12,8 +14,10 @@ from toolang.cli.common.context import context_root, user_call
 from toolang.cli.common.banner import version_label
 from toolang.cli.common.terminal_session import prepare_terminal
 from toolang.cli.common.help import CliCommand, CliGroup
+from toolang.common.config_sources import read_config
 from toolang.setup.teaming import load_teaming_root
-from toolang.up.config import resolve_port_override
+from toolang.teaming.schemas import HubInfo
+from toolang.up.config import resolve_port_override, hub_config
 from toolang.up.hub import HubProcess, serve as serve_hub
 from toolang.up.types import RuntimeInstanceSnapshot
 from toolang.up.watcher import runtime_snapshot
@@ -50,13 +54,20 @@ def hub_app() -> typer.Typer:
 
 
 def _settings(ctx: typer.Context, port: int | None):
-    config = user_call(load_teaming_root, context_root(ctx))
+    root = context_root(ctx)
+    path = root / "config.toml"
+    config = user_call(
+        hub_config,
+        user_call(read_config, path, include_workspaces=False),
+        source=path,
+        root=str(root.resolve()),
+    )
     selected = user_call(
         resolve_port_override,
         port,
         environ=os.environ,
         env_name="TOOLANG_HUB_PORT",
-        configured=config.hub_port,
+        configured=config.port,
     )
     assert selected is not None
     return config, selected
@@ -119,36 +130,39 @@ def status(ctx: typer.Context) -> None:
             (), (f"agent discovery: {str(exc).strip() or type(exc).__name__}",)
         )
 
-    hub = HubProcess(root)
-    hub_diagnostic = None
+    diagnostic = None
     try:
-        record = hub.current()
+        record = HubProcess(root).current()
+        local_state = record.status if record is not None else "not running"
+    except (ValueError, OSError) as exc:
+        local_state = "unknown"
+        diagnostic = f"record inspection failed: {exc}"
+    endpoint = None
+    version = None
+    try:
+        endpoint = load_teaming_root(root).hub
+        with httpx.Client(trust_env=False, timeout=1) as client:
+            response = client.get(endpoint + "/info")
+            response.raise_for_status()
+            info = HubInfo.model_validate(response.json())
+            if not info.identity:
+                raise ValueError("Hub metadata has no identity")
+            version = version_label(info.version)
+            health = client.get(
+                endpoint + "/healthz", headers={"X-Toolang-Backend": info.identity}
+            )
+            state = (
+                "running"
+                if health.status_code == 200 and health.json() == {"ok": True}
+                else "unavailable"
+            )
+    except httpx.HTTPError:
+        state = "unavailable"
     except Exception as exc:
-        record = None
-        state = "-"
-        version = None
-        hub_diagnostic = (
-            f"record inspection failed: {str(exc).strip() or type(exc).__name__}"
-        )
-    else:
-        if record is None:
-            state = "not running"
-            version = None
-        else:
-            try:
-                state = (
-                    "starting"
-                    if record.status == "starting"
-                    else "running"
-                    if hub.ready(record)
-                    else "unavailable"
-                )
-                version = version_label(hub.version(record))
-            except Exception as exc:
-                state = "-"
-                version = None
-                hub_diagnostic = (
-                    f"state inspection failed: {str(exc).strip() or type(exc).__name__}"
-                )
-
-    render_hub_snapshot(HubSnapshot(state, version, agents, hub_diagnostic), Console())
+        state = "unknown"
+        detail = str(exc).strip() or type(exc).__name__
+        diagnostic = f"{diagnostic}; {detail}" if diagnostic else detail
+    render_hub_snapshot(
+        HubSnapshot(state, version, agents, diagnostic, endpoint, local_state),
+        Console(),
+    )

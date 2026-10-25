@@ -28,9 +28,9 @@ def test_host_sandbox_runs_without_backend_with_default_teaming(tmp_path: Path) 
     layout.program.write_text(
         "flow example(_: Text):\n  let result = Done\n", encoding="utf-8"
     )
-    # An absent, isolated socket keeps this test independent of local services.
+    # An unused Hub URL keeps this test independent of local services.
     layout.place_config.write_text(
-        f'[teaming.backend]\nurl = "unix://{root / "missing.sock"}"\n'
+        f'[teaming]\nhub = "http://127.0.0.1:{_available_port()}"\n'
     )
     port = _available_port()
     env = {**os.environ, "TOOLANG_ROOT": str(root)}
@@ -141,7 +141,7 @@ def test_host_start_preserves_web_settings_without_forwarding_them(
     layout.home.mkdir(parents=True)
     layout.program.write_text("flow main:\n  pass\n")
     layout.place_config.write_text(
-        f'[teaming.backend]\nurl = "unix://{root / "missing.sock"}"\n'
+        f'[teaming]\nhub = "http://127.0.0.1:{_available_port()}"\n'
         '[web]\ncors_allowed_origins = ["https://config.example"]\n'
         'ui_base_url = "https://config.example"\n'
     )

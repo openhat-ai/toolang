@@ -51,13 +51,16 @@ from toolang.teaming.client import HubClient
 
 
 def install_hub(monkeypatch, client, *, human="human:bryan", identity="test"):
-    connection = HubConnection("http://hub", human, identity)
+    connection = HubConnection("http://hub", identity)
 
     @asynccontextmanager
-    async def hub(config):
-        app = create_app(client(actor=human), version="0.4.0-test")
+    async def hub(config, *, actor=None):
+        service = client(actor=human)
+        app = create_app(service.config, backend=service.backend, version="0.4.0-test")
         async with app.router.lifespan_context(app):
-            async with HubClient(config, transport=httpx.ASGITransport(app)) as remote:
+            async with HubClient(
+                config, actor=human, transport=httpx.ASGITransport(app)
+            ) as remote:
                 yield remote
 
     for module in (talk, directory):
@@ -67,6 +70,51 @@ def install_hub(monkeypatch, client, *, human="human:bryan", identity="test"):
 
 def typed(name):
     return f"{'agent' if name in {'alice', 'bob'} else 'human'}:{name}"
+
+
+def test_interactive_talk_keeps_the_dataset_selected_during_resolution(
+    tmp_path, monkeypatch, capsys
+):
+    target = HubConnection("http://hub")
+    monkeypatch.setattr(talk, "settings", lambda root: (target, "human:bryan"))
+    monkeypatch.setattr(talk.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(talk.sys.stdout, "isatty", lambda: True)
+    requests = []
+
+    def respond(request):
+        requests.append(request)
+        if request.url.path == "/info":
+            return httpx.Response(
+                200, json={"version": "test", "api_version": 0, "identity": "first"}
+            )
+        assert request.headers["X-Toolang-Backend"] == "first"
+        if request.url.path.endswith("/resolve"):
+            return httpx.Response(
+                200,
+                json={
+                    "conversation": "gc_00000001",
+                    "participants": [],
+                    "exists": True,
+                },
+            )
+        return httpx.Response(
+            409, json={"code": "hub_changed", "detail": "Hub identity changed"}
+        )
+
+    monkeypatch.setattr(
+        talk,
+        "HubClient",
+        lambda config, **kwargs: HubClient(
+            config, transport=httpx.MockTransport(respond), **kwargs
+        ),
+    )
+    assert cli.main(["--root", str(tmp_path), "talk", "gc_00000001"]) != 0
+    assert "reopen Talk" in capsys.readouterr().err
+    assert [r.url.path for r in requests] == [
+        "/info",
+        "/msg/resolve",
+        "/msg/conversations/gc_00000001",
+    ]
 
 
 @pytest.fixture
@@ -91,7 +139,7 @@ def messaging_cli(tmp_path, monkeypatch):
 
     asyncio.run(register())
     (tmp_path / "config.toml").write_text(
-        '[teaming]\nhuman = "bryan"\n[teaming.backend]\nurl = "redis://test"\n'
+        '[teaming]\nhuman = "bryan"\n[hub.backend]\nurl = "redis://test"\n'
     )
     install_hub(monkeypatch, client, identity=config.identity)
     return client

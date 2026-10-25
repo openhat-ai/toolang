@@ -355,7 +355,7 @@ def test_hub_configuration_error_keeps_unsent_input_and_uses_the_error_row(
     tmp_path, monkeypatch, operation
 ):
     async def scenario():
-        config = HubConnection("http://hub", "human:bryan", "test")
+        config = HubConnection("http://hub", "test")
         transport = httpx.MockTransport(
             lambda request: httpx.Response(
                 409, json={"code": "hub_changed", "detail": "Hub identity changed"}
@@ -363,7 +363,7 @@ def test_hub_configuration_error_keeps_unsent_input_and_uses_the_error_row(
         )
         async with (
             talk_app(tmp_path) as (ui, _),
-            HubClient(config, transport=transport) as client,
+            HubClient(config, actor="human:bryan", transport=transport) as client,
         ):
             ui.client = client
             ui.prompt.replace_input("keep this draft")

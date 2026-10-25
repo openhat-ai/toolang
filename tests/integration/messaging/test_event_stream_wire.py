@@ -1,5 +1,7 @@
 """Opt-in event subscriptions over real Hub sockets on both supported engines."""
 
+from toolang.setup.teaming import load_teaming_root
+
 import asyncio
 import json
 import os
@@ -16,6 +18,7 @@ import pytest
 from tests.integration.messaging.test_valkey import (
     valkey as valkey,
     running_hub as running_hub,
+    hub_connection,
 )
 from tests.support.execution_harness import ExecutionHarness
 from toolang.base.types.message import TextPart
@@ -70,11 +73,14 @@ def test_recovery_keeps_active_snapshot_and_live_suffix_after_slow_history(
     monkeypatch.setattr(RunStore, "stream_recent_roots", slow_history)
 
     async def scenario():
-        connection = running_hub.connection()
+        connection = hub_connection(tmp_path)
         async with (
             harness,
             AgentClient(
-                tmp_path, actor="agent:alice", token="recovery", managed=False
+                tmp_path,
+                connection=load_teaming_root(tmp_path).connection(),
+                actor="agent:alice",
+                token="recovery",
             ) as publisher,
             httpx.AsyncClient(
                 base_url=connection.endpoint,
@@ -153,9 +159,6 @@ def test_recovery_keeps_active_snapshot_and_live_suffix_after_slow_history(
 
 
 def test_agents_reconnect_through_hub_without_direct_backend_access(valkey, tmp_path):
-    (tmp_path / "config.toml").write_text(
-        f'[teaming]\nhuman = "owner"\n[teaming.backend]\nurl = "{valkey.url}"\n'
-    )
     command = [
         sys.executable,
         "-m",
@@ -182,6 +185,9 @@ def test_agents_reconnect_through_hub_without_direct_backend_access(valkey, tmp_
 
     agents = {name: port() for name in ("alice", "bob")}
     hub_port = port()
+    (tmp_path / "config.toml").write_text(
+        f'[teaming]\nhuman = "owner"\nhub = "http://127.0.0.1:{hub_port}"\n[hub.backend]\nurl = "{valkey.url}"\n'
+    )
     hub = HubProcess(tmp_path)
     for name in agents:
         home = tmp_path / "agents" / name
@@ -244,19 +250,26 @@ def test_agents_reconnect_through_hub_without_direct_backend_access(valkey, tmp_
                 # or publishes directly; both still execute and stream over HTTP.
                 runs = {name: await local_run(name) for name in agents}
                 assert await driver._client.dbsize() == 0
-                async with AgentClient(tmp_path, actor="agent:alice") as remote:
+                async with AgentClient(
+                    tmp_path,
+                    connection=load_teaming_root(tmp_path).connection(),
+                    actor="agent:alice",
+                ) as remote:
                     with pytest.raises(BackendUnavailable):
                         await remote.targets()
                 await asyncio.to_thread(cli, "hub", "start", "--port", str(hub_port))
-                original = hub.connection()
-                async with HubClient(original) as human:
+                original = hub_connection(tmp_path)
+                async with HubClient(original, actor="human:owner") as human:
                     for name, run in runs.items():
                         await wait_exported(name, run)
                         # Exercise the resident's active lease through the same API
                         # used by its msg tools, without invoking a model provider.
                         lease = await service.online_token(f"agent:{name}")
                         async with AgentClient(
-                            tmp_path, actor=f"agent:{name}", token=lease
+                            tmp_path,
+                            connection=load_teaming_root(tmp_path).connection(),
+                            actor=f"agent:{name}",
+                            token=lease,
                         ) as remote:
                             receipt = await remote.send(
                                 "human:owner", body=name, run=run
@@ -271,7 +284,7 @@ def test_agents_reconnect_through_hub_without_direct_backend_access(valkey, tmp_
                     await asyncio.to_thread(
                         cli, "hub", "start", "--port", str(hub_port)
                     )
-                    assert hub.connection() == original
+                    assert hub_connection(tmp_path) == original
                     for name, run in runs.items():
                         await wait_exported(name, run)
                     assert await human.targets()
@@ -292,7 +305,7 @@ def test_agents_reconnect_through_hub_without_direct_backend_access(valkey, tmp_
 
 def test_hub_event_fanout_and_recovery(valkey, running_hub, tmp_path, monkeypatch):
     async def scenario():
-        connection = running_hub.connection()
+        connection = hub_connection(tmp_path)
         harness = ExecutionHarness.create(
             tmp_path / "execution",
             source="flow example:\n  let result = Done\n",
@@ -464,7 +477,7 @@ def test_resident_shutdown_drains_or_bounds_backend_outage(
     async def scenario():
         driver = ValkeyBackend(valkey)
         service = driver.events
-        connection = running_hub.connection()
+        connection = hub_connection(tmp_path)
         endpoint = f"http://127.0.0.1:{port}"
         try:
             async with httpx.AsyncClient(timeout=20, trust_env=False) as http:

@@ -374,12 +374,6 @@ async def _launch_locked(
                 for mount in source_mounts
                 if mount.hosted_path != hosted_root / "config.toml"
             )
-            hub = local_root / "hub"
-            hub.mkdir(parents=True, exist_ok=True)
-            source_mounts = (
-                *source_mounts,
-                SandboxMount(hub, hosted_root / "hub", read_only=True),
-            )
             workspace_mounts, workspace_mapping = prepare_workspace_mounts(
                 layout.home,
                 agent_workspaces_path(hosted_place, layout.name),

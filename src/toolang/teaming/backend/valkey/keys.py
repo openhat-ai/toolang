@@ -51,10 +51,6 @@ class Keys:
         return f"{self.prefix}:convo:system"
 
     @property
-    def roster(self) -> str:
-        return f"{self.prefix}:roster"
-
-    @property
     def event_meta(self) -> str:
         return f"{self.prefix}:events:meta"
 
@@ -77,7 +73,6 @@ class Keys:
             self.gc_allocator,
             self.team_events,
             self.system,
-            self.roster,
         ]
 
     def convo_key(self, conversation: str, suffix: str) -> str:

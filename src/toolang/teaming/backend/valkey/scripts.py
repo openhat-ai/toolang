@@ -1,6 +1,6 @@
 """Atomic conversation, team, and presence operations owned by Backend.
 
-The first nine keys always follow keys.BASE_KEYS. Extra keys are explicitly
+The first eight keys always follow Keys.base. Extra keys are explicitly
 provided by the caller; all validation precedes mutations because Lua cannot
 roll back an error after a write.
 """
@@ -81,18 +81,10 @@ if op.rules and op.id then
 end
 member(op.actor); member(op.agent); member(op.owner)
 for _,value in ipairs(op.participants or {}) do member(value) end
-if op.agent then capture('roster',KEYS[9],op.agent) end
 if op.action=='team' then
   expect(KEYS[2],'hash')
   table.insert(hashes,{KEYS[2],redis.call('HLEN',KEYS[2])})
   for _,value in ipairs(redis.call('HKEYS',KEYS[2])) do member(value) end
-end
-if op.action=='roster' then
-  expect(KEYS[9],'hash')
-  table.insert(hashes,{KEYS[9],redis.call('HLEN',KEYS[9])})
-  for _,value in ipairs(redis.call('HKEYS',KEYS[9])) do
-    capture('roster',KEYS[9],value); member(value)
-  end
 end
 for _,id in ipairs(op.conversations or {}) do conversation(id,true) end
 expect(KEYS[7],'stream')
@@ -202,7 +194,7 @@ end
 local function valid()
   expect(KEYS[1],'string'); expect(KEYS[2],'hash'); expect(KEYS[3],'zset')
   expect(KEYS[4],'hash'); expect(KEYS[5],'hash'); expect(KEYS[6],'hash')
-  expect(KEYS[8],'hash'); expect(KEYS[9],'hash')
+  expect(KEYS[8],'hash')
   if redis.call('GET',KEYS[1])~=tostring(hub_store_schema) then fail('unsupported conversation schema; use a fresh dataset') end
   for _,field in ipairs({'dm_count','gc_count','messages_total'}) do integer(redis.call('HGET',KEYS[5],field),0,max_safe_integer) end
   local dm=tonumber(redis.call('HGET',KEYS[5],'dm_count'))
@@ -276,7 +268,7 @@ INITIALIZE = (
     + """
 local fresh=redis.call('EXISTS',KEYS[1])==0
 expect(KEYS[1],'string')
-expect(KEYS[10],'string')
+expect(KEYS[9],'string')
 if fresh then
   if ARGV[3]=='1' then fail('missing initialized conversation schema') end
   local cursor='0'
@@ -287,15 +279,13 @@ if fresh then
       fail('partial conversation dataset')
     end
   until cursor=='0'
-elseif redis.call('GET',KEYS[10])~=ARGV[4] then
+elseif redis.call('GET',KEYS[9])~=ARGV[4] then
   fail('Toolang root ownership mismatch')
 end
 if not redis.call('GET',KEYS[1]) then
   if ARGV[3]=='1' then fail('missing initialized conversation schema') end
   for i=2,8 do if redis.call('EXISTS',KEYS[i])~=0 then fail('partial conversation dataset') end end
-  expect(KEYS[9],'hash')
-  if redis.call('HLEN',KEYS[9])>0 then fail('partial roster dataset') end
-  redis.call('SET',KEYS[10],ARGV[4])
+  redis.call('SET',KEYS[9],ARGV[4])
   redis.call('SET',KEYS[1],tostring(hub_store_schema))
   redis.call('HSET',KEYS[5],'dm_count',0,'gc_count',0,'messages_total',0)
   redis.call('HSET',KEYS[6],'last_tick',-1,'last_seq',-1)
@@ -329,23 +319,23 @@ CONVERSATION = (
     + """
 valid()
 local op=cjson.decode(ARGV[1])
-expect(KEYS[10],'set'); expect(KEYS[11],'stream'); expect(KEYS[12],'set')
+expect(KEYS[9],'set'); expect(KEYS[10],'stream'); expect(KEYS[11],'set')
 local value=record(op.id)
 local pair=op.participants or {}
 if value and #pair>0 then
   if value.kind~='dm' then error('DM collision or corrupt kind') end
-  same_pair(KEYS[10],pair)
+  same_pair(KEYS[9],pair)
 end
 if op.action=='lookup' then
   if not value then return false end
-  readable(op.id,op.actor,KEYS[10])
-  return {cjson.encode(value),redis.call('SMEMBERS',KEYS[10])}
+  readable(op.id,op.actor,KEYS[9])
+  return {cjson.encode(value),redis.call('SMEMBERS',KEYS[9])}
 end
 if op.system and redis.call('HGET',KEYS[8],'all') then return redis.call('HGET',KEYS[8],'all') end
 if not op.system then authorize(op.actor,op.token) end
 if not value then
   if op.action=='send' and (op.kind~='dm' or #pair~=2) then error('Unknown conversation: '..op.id) end
-  if redis.call('EXISTS',KEYS[10],KEYS[11])~=0 then
+  if redis.call('EXISTS',KEYS[9],KEYS[10])~=0 then
     if op.kind=='gc' then return false end
     error('DM collision or orphaned conversation')
   end
@@ -359,15 +349,15 @@ elseif op.action=='create' then
   return op.id
 end
 if op.action=='send' then
-  if value and redis.call('SISMEMBER',KEYS[10],op.actor)~=1 then error('Conversation is read-only for nonparticipants') end
+  if value and redis.call('SISMEMBER',KEYS[9],op.actor)~=1 then error('Conversation is read-only for nonparticipants') end
   if op.rules_revision and op.rules_revision~=cjson.null then
-    expect(KEYS[13],'hash')
-    local raw=redis.call('HGET',KEYS[13],'document')
+    expect(KEYS[12],'hash')
+    local raw=redis.call('HGET',KEYS[12],'document')
     local revision=raw and decode(raw).revision or '0'
     if revision~=op.rules_revision then error('conversation_rules_conflict') end
   end
   capacity('messages_total')
-  if redis.call('EXISTS',KEYS[11])==1 then stream_capacity(hash(redis.call('XINFO','STREAM',KEYS[11]))) end
+  if redis.call('EXISTS',KEYS[10])==1 then stream_capacity(hash(redis.call('XINFO','STREAM',KEYS[10]))) end
 end
 -- No fallible validation after this point.
 if not value then
@@ -376,14 +366,14 @@ if not value then
   redis.call('HSET',KEYS[4],op.id,cjson.encode(value))
   redis.call('HINCRBY',KEYS[5],op.kind..'_count',1)
   for _,member in ipairs(pair) do
-    redis.call('SADD',KEYS[10],member)
+    redis.call('SADD',KEYS[9],member)
     event('conversation.member_added',member,op.id,op.actor)
   end
-  if op.name and op.name~=cjson.null then redis.call('SADD',KEYS[12],op.id) end
+  if op.name and op.name~=cjson.null then redis.call('SADD',KEYS[11],op.id) end
   if op.system then redis.call('HSET',KEYS[8],'all',op.id) end
 end
 if op.action=='send' then
-  local sid=redis.call('XADD',KEYS[11],'MAXLEN','~',message_retention,'*','data',op.data)
+  local sid=redis.call('XADD',KEYS[10],'MAXLEN','~',message_retention,'*','data',op.data)
   redis.call('HINCRBY',KEYS[5],'messages_total',1)
   return sid
 end
@@ -396,9 +386,9 @@ RULES = (
     + """
 valid()
 local op=cjson.decode(ARGV[1])
-readable(op.id,op.actor,KEYS[10])
-expect(KEYS[13],'hash')
-local raw=redis.call('HGET',KEYS[13],'document')
+readable(op.id,op.actor,KEYS[9])
+expect(KEYS[12],'hash')
+local raw=redis.call('HGET',KEYS[12],'document')
 if op.action=='read' then return raw or false end
 authorize(op.actor,op.token)
 local revision=raw and decode(raw).revision or '0'
@@ -406,9 +396,9 @@ if revision~=op.revision then error('conversation_rules_conflict') end
 local document=decode(op.document)
 if revision==document.revision then return 0 end
 if document.content=='' then
-  redis.call('HDEL',KEYS[13],'document')
+  redis.call('HDEL',KEYS[12],'document')
 else
-  redis.call('HSET',KEYS[13],'document',op.document)
+  redis.call('HSET',KEYS[12],'document',op.document)
 end
 return 1
 """
@@ -419,24 +409,24 @@ EDIT = (
     + """
 valid()
 local op=cjson.decode(ARGV[1])
-expect(KEYS[10],'set'); expect(KEYS[11],'set'); expect(KEYS[12],'set')
+expect(KEYS[9],'set'); expect(KEYS[10],'set'); expect(KEYS[11],'set')
 authorize(op.actor,op.token)
 local value=record(op.id)
 if not value then error('Unknown conversation: '..op.id) end
 if op.action=='rename' then
-  readable(op.id,op.actor,KEYS[10])
-  if redis.call('SISMEMBER',KEYS[10],op.actor)~=1 then error('Conversation is read-only for nonparticipants') end
+  readable(op.id,op.actor,KEYS[9])
+  if redis.call('SISMEMBER',KEYS[9],op.actor)~=1 then error('Conversation is read-only for nonparticipants') end
   if value.revision~=op.revision or value.name~=op.previous then error('Conversation revision conflict; reload before renaming') end
   if value.name==op.name then return 0 end
   if value.revision>=max_safe_integer then fail('revision exhausted') end
   value.name=op.name; value.updated_at=timestamp(); value.revision=value.revision+1
-  if op.previous~=cjson.null then redis.call('SREM',KEYS[11],op.id) end
-  if op.name~=cjson.null then redis.call('SADD',KEYS[12],op.id) end
+  if op.previous~=cjson.null then redis.call('SREM',KEYS[10],op.id) end
+  if op.name~=cjson.null then redis.call('SADD',KEYS[11],op.id) end
   redis.call('HSET',KEYS[4],op.id,cjson.encode(value))
   return 1
 end
 if value.kind~='gc' or redis.call('HGET',KEYS[8],'all')==op.id then error('Cannot edit DM/system membership') end
-local changed=redis.call(op.join and 'SADD' or 'SREM',KEYS[10],op.actor)
+local changed=redis.call(op.join and 'SADD' or 'SREM',KEYS[9],op.actor)
 if changed==1 then event(op.join and 'conversation.member_added' or 'conversation.member_removed',op.actor,op.id,op.actor) end
 return changed
 """
@@ -465,7 +455,7 @@ if op.action=='renew' or op.action=='release' then
   else redis.call('ZADD',KEYS[3],math.max(tonumber(score),now+lease_millis),member) end
   return 1
 end
-expect(KEYS[10],'set')
+expect(KEYS[9],'set')
 local human=member_record(op.owner,false)
 local system=redis.call('HGET',KEYS[8],'all')
 if not system or system~=op.system then fail('missing system conversation') end
@@ -473,10 +463,6 @@ local system_record=record(system)
 if not system_record or system_record.kind~='gc' then fail('invalid system conversation') end
 if member~=op.owner and value and value.owner~=op.owner then error('Agent owner mismatch') end
 if live and lease.token~=op.token then error('Agent already online') end
-if op.root~='' then
-  local managed=redis.call('HGET',KEYS[9],member)
-  if not managed or cjson.decode(managed).root~=op.root then error('Agent identity changed') end
-end
 -- All validation precedes registration and expiry settlement.
 local human_record=human or new_member(op.owner,cjson.null)
 local agent_record=value
@@ -485,14 +471,14 @@ if not human then
   redis.call('HSET',KEYS[2],op.owner,cjson.encode(human_record))
   event('team.member_added',op.owner,nil,op.owner)
 end
-if redis.call('SADD',KEYS[10],op.owner)==1 then event('conversation.member_added',op.owner,system,op.owner) end
+if redis.call('SADD',KEYS[9],op.owner)==1 then event('conversation.member_added',op.owner,system,op.owner) end
 if member==op.owner then return 1 end
 if not value then
   value=agent_record
   event('team.member_added',member,nil,op.owner)
 end
 if score and not live then expire(member,nil,'expired') end
-if redis.call('SADD',KEYS[10],member)==1 then event('conversation.member_added',member,system,op.owner) end
+if redis.call('SADD',KEYS[9],member)==1 then event('conversation.member_added',member,system,op.owner) end
 local changed=live and lease.endpoint~=op.endpoint
 value.lease={token=op.token,endpoint=op.endpoint}
 redis.call('HSET',KEYS[2],member,cjson.encode(value))
@@ -522,12 +508,11 @@ if op.action=='team' then
 end
 if op.action=='due' then return redis.call('ZRANGEBYSCORE',KEYS[3],'-inf',now,'LIMIT',0,batch_size) end
 if op.action=='ids' then return redis.call('HKEYS',KEYS[4]) end
-if op.action=='roster' then return redis.call('HGETALL',KEYS[9]) end
 if op.action=='contacts' then
   local result={}
   for i,id in ipairs(op.conversations) do
-    local members=KEYS[9+i*2-1]
-    local messages=KEYS[9+i*2]
+    local members=KEYS[8+i*2-1]
+    local messages=KEYS[8+i*2]
     expect(members,'set'); expect(messages,'stream')
     if string.sub(op.actor,1,6)=='human:' or redis.call('SISMEMBER',members,op.actor)==1 then
       local value=readable(id,op.actor,members)
@@ -545,56 +530,19 @@ if op.action=='stats' then
     stats.conversations_total=redis.call('HLEN',KEYS[4])
     return cjson.encode(stats)
   end
-  readable(op.id,op.actor,KEYS[10]); expect(KEYS[11],'stream')
+  readable(op.id,op.actor,KEYS[9]); expect(KEYS[10],'stream')
   local count=0; local retained=0; local last=cjson.null
-  if redis.call('EXISTS',KEYS[11])==1 then
-    local stream=hash(redis.call('XINFO','STREAM',KEYS[11]))
+  if redis.call('EXISTS',KEYS[10])==1 then
+    local stream=hash(redis.call('XINFO','STREAM',KEYS[10]))
     count=integer(stream['entries-added'],0,max_safe_integer)
     retained=stream.length
     if stream['last-entry'] then last=stream['last-entry'][1] end
   end
-  return cjson.encode({participants_count=redis.call('SCARD',KEYS[10]),messages_total=count,messages_retained=retained,last_message_stream_id=last})
+  return cjson.encode({participants_count=redis.call('SCARD',KEYS[9]),messages_total=count,messages_retained=retained,last_message_stream_id=last})
 end
 if op.action=='messages' then
-  readable(op.id,op.actor,KEYS[10]); expect(KEYS[11],'stream')
-  return redis.call(op.reverse and 'XREVRANGE' or 'XRANGE',KEYS[11],op.start,op.finish,'COUNT',op.count)
-end
-return 1
-"""
-)
-
-ROSTER = (
-    COMMON
-    + """
-valid()
-local op=cjson.decode(ARGV[1])
-local old=redis.call('HGET',KEYS[9],op.agent) or ''
-if old~=op.previous then return 0 end
-local value=member_record(op.agent,false)
-if value and value.owner~=op.owner then error('Agent owner mismatch') end
-if op.updated=='' then
-  if current_lease(KEYS[2],KEYS[3],op.agent) then return 0 end
-  if redis.call('HLEN',KEYS[4])~=#op.conversations then return 0 end
-  local conversations={}
-  for i,id in ipairs(op.conversations) do
-    local info=record(id)
-    if not info then return 0 end
-    expect(KEYS[9+i],'set')
-    if info.kind=='gc' then table.insert(conversations,{id,KEYS[9+i]}) end
-  end
-  if redis.call('ZSCORE',KEYS[3],op.agent) then expire(op.agent,nil,'expired') end
-  for _,row in ipairs(conversations) do
-    if redis.call('SREM',row[2],op.agent)==1 then event('conversation.member_removed',op.agent,row[1],nil) end
-  end
-  redis.call('HDEL',KEYS[9],op.agent)
-  if redis.call('HDEL',KEYS[2],op.agent)==1 then event('team.member_removed',op.agent,nil,nil) end
-else
-  local created=not value and new_member(op.agent,op.owner) or nil
-  redis.call('HSET',KEYS[9],op.agent,op.updated)
-  if not value then
-    redis.call('HSET',KEYS[2],op.agent,cjson.encode(created))
-    event('team.member_added',op.agent,nil,nil)
-  end
+  readable(op.id,op.actor,KEYS[9]); expect(KEYS[10],'stream')
+  return redis.call(op.reverse and 'XREVRANGE' or 'XRANGE',KEYS[10],op.start,op.finish,'COUNT',op.count)
 end
 return 1
 """
@@ -625,20 +573,20 @@ TALK_CURSOR = (
     + """
 valid()
 local op=cjson.decode(ARGV[1])
-readable(op.id,op.actor,KEYS[10])
-expect(KEYS[11],'stream'); expect(KEYS[12],'hash')
-local saved=redis.call('HGET',KEYS[12],op.id) or '0-0'
+readable(op.id,op.actor,KEYS[9])
+expect(KEYS[10],'stream'); expect(KEYS[11],'hash')
+local saved=redis.call('HGET',KEYS[11],op.id) or '0-0'
 local ms,seq=string.match(saved,'^(%d+)%-(%d+)$')
 if not ms or (ms~='0' and string.sub(ms,1,1)=='0') or (seq~='0' and string.sub(seq,1,1)=='0') then fail('invalid talk cursor') end
 if less('18446744073709551615-18446744073709551615',saved) or #seq>20 or (#seq==20 and seq>'18446744073709551615') then fail('invalid talk cursor') end
 if op.action=='read' then return saved end
 authorize(op.actor,op.token)
 less(op.cursor,op.cursor)
-local last=redis.call('XREVRANGE',KEYS[11],'+','-','COUNT',1)
+local last=redis.call('XREVRANGE',KEYS[10],'+','-','COUNT',1)
 local tail=last[1] and last[1][1] or '0-0'
 if less(op.cursor,saved) then error('Talk cursor cannot move backwards') end
 if less(tail,op.cursor) then error('Talk cursor exceeds conversation stream tail') end
-if op.cursor~=saved then redis.call('HSET',KEYS[12],op.id,op.cursor) end
+if op.cursor~=saved then redis.call('HSET',KEYS[11],op.id,op.cursor) end
 return op.cursor
 """
 )

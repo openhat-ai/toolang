@@ -207,14 +207,16 @@ class SetupWatcher:
         validate_models_config(configs)
         adapter_configs = merge_plugin_configs(configs, family="model_adapter")
         toolset_configs = merge_plugin_configs(configs, family="toolset")
-        if self._setup is None:
-            teaming = resolve_teaming_setup(
-                inputs.sources, root=self.layout.place_config, home=self.layout.config
-            )
-        else:
-            teaming = self._setup.teaming
+        teaming = resolve_teaming_setup(
+            inputs.sources,
+            root=(self.layout.root or self.layout.place) / "config.toml",
+            home=self.layout.config,
+        )
         toolset_configs["convo"] = (
-            teaming.toolset_config(root=self.layout.root or self.layout.place)
+            teaming.toolset_config(
+                root=self.layout.root or self.layout.place,
+                gateway=inputs.envs.get("TOOLANG_HOST_GATEWAY"),
+            )
             if teaming
             else {}
         )

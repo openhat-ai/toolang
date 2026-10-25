@@ -1,6 +1,7 @@
 """Live Hub guidance is scoped, trusted, recalled, and checked before effects."""
 
 from toolang.execution.types import StepRef
+from toolang.teaming.schemas import HubConnection
 
 import asyncio
 from dataclasses import replace
@@ -45,7 +46,12 @@ def action(identity, operation, **arguments):
 def server(monkeypatch):
     server = FakeServer(server_type="valkey")
     monkeypatch.setattr(
-        conversations, "AgentClient", lambda root, actor: make_client(server, actor)
+        conversations,
+        "AgentClient",
+        lambda root, actor, **_: make_client(server, actor),
+    )
+    monkeypatch.setattr(
+        conversations, "connection_for", lambda _: HubConnection("http://hub", "test")
     )
     return server
 
