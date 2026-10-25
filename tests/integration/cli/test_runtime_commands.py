@@ -522,13 +522,11 @@ def test_runtime_warns_when_development_source_uses_index_package(
     agent_server_acquisition.warn_development_package_source(startup)
 
     stderr = capsys.readouterr().err
-    assert ("will install Toolang from the package index" in stderr) is warns
+    assert (
+        "will use Toolang from the package index; local changes won't apply." in stderr
+    ) is warns
     if warns:
         assert "--dev dist" in stderr
-        if development[1] is not None:
-            assert str(development[1]) in stderr
-        else:
-            assert "source at" not in stderr
 
 
 @pytest.mark.parametrize("command", ["serve", "start", "_serve"])

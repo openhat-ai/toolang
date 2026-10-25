@@ -894,11 +894,18 @@ def test_agent_server_launches_with_the_requested_lifecycle(
     assert shutdown_progress.finished == int(temporary)
 
 
+@pytest.mark.parametrize("color", [False, True])
 def test_agent_server_warns_when_a_development_cli_uses_the_package_index(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
+    color: bool,
 ) -> None:
+    monkeypatch.setenv("FORCE_COLOR", "1")
+    monkeypatch.setenv("TERM", "xterm")
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    if not color:
+        monkeypatch.setenv("NO_COLOR", "1")
     layout = AgentLayout.resident(tmp_path, "alice")
     _set_status(monkeypatch, layout, _status(value="stopped"))
     monkeypatch.setattr(
@@ -950,11 +957,10 @@ def test_agent_server_warns_when_a_development_cli_uses_the_package_index(
     ):
         pass
 
+    prefix = "\x1b[33mWarning:\x1b[0m" if color else "Warning:"
     assert capsys.readouterr().err.splitlines() == [
-        "Warning: the new docker guest will install Toolang from the package index, "
-        f"not from {tmp_path}.",
-        "Build the current source with `uv build --wheel`, then run this command "
-        "again with `--dev dist`.",
+        f"{prefix} Docker will use Toolang from the package index; local changes won't apply.",
+        "To include local changes, run `uv build --wheel` and rerun with `--dev dist`.",
     ]
 
 
