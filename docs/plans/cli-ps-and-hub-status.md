@@ -48,9 +48,12 @@ hub running: version <version>, pid 10402, endpoint 127.0.0.1:7001
 hub not running
 ```
 
-Hub help description and command order:
+`too hub` help, including usage and command order:
 
 ```text
+$ too hub
+Usage: too hub [COMMAND]
+
 Manage the hub service.
 
 Commands:
