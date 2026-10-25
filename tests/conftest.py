@@ -15,14 +15,13 @@ def toolang_wheel():
     """Write a small wheel with real distribution and source-version metadata."""
     from toolang.common.version import displayed_toolang_version
 
-    def write(path, version=None, *, content="", build_info=True):
+    def write(path, version=None, *, build_info=True):
         path.parent.mkdir(parents=True, exist_ok=True)
         with ZipFile(path, "w") as wheel:
             wheel.writestr(
                 "toolang-0.4.0b1.dist-info/METADATA",
                 "Name: toolang\nVersion: 0.4.0b1\n",
             )
-            wheel.writestr("toolang/payload.txt", content)
             if build_info:
                 identity = (
                     version if version is not None else displayed_toolang_version()
@@ -33,8 +32,6 @@ def toolang_wheel():
                         {
                             "schema": 1,
                             "source_version": identity,
-                            "revision": None,
-                            "dirty": identity.endswith("*"),
                         }
                     ),
                 )

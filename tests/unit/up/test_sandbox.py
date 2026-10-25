@@ -30,15 +30,6 @@ from toolang.up import process as process_runtime
 from toolang.up.server import ServeSpec
 
 
-@pytest.fixture(autouse=True)
-def installed_guest_package(monkeypatch):
-    monkeypatch.setattr(
-        sandbox,
-        "toolang_requirement",
-        lambda: "toolang==0.4.0b1",
-    )
-
-
 class FakeSandbox:
     name = "fake"
     location = "guest"
@@ -232,107 +223,6 @@ def _launch_spec(tmp_path: Path) -> sandbox.LaunchSpec:
         config={},
         environ={},
     )
-
-
-@pytest.mark.parametrize("selection", ["host", "unknown"])
-def test_non_guest_and_unknown_plugins_do_not_resolve_a_guest_package(
-    tmp_path, monkeypatch, selection
-):
-    implementation = FakeSandbox()
-    implementation.location = "host"
-
-    def create(name, **kwargs):
-        if name == "unknown":
-            raise ValueError("unknown toolang.sandbox plugin: unknown")
-        return implementation
-
-    async def ready(*args, **kwargs):
-        return None
-
-    monkeypatch.setattr(sandbox, "create_sandbox", create)
-    monkeypatch.setattr(sandbox, "_wait_ready", ready)
-    monkeypatch.setattr(
-        sandbox, "toolang_requirement", lambda: pytest.fail("must not select a package")
-    )
-    spec = replace(_launch_spec(tmp_path), sandbox=selection)
-    if selection == "unknown":
-        with pytest.raises(ValueError, match="unknown toolang.sandbox plugin"):
-            asyncio.run(sandbox.launch(spec))
-    else:
-        asyncio.run(sandbox.launch(spec))
-        prepared = implementation.calls[0]
-        assert isinstance(prepared, tuple)
-        request = cast(SandboxRequest, prepared[2])
-        assert request.package_requirement is None
-
-
-def test_guest_launch_binds_an_explicit_wheel(tmp_path, monkeypatch, toolang_wheel):
-    from toolang.up.instance import read_instance
-
-    implementation = FakeSandbox()
-    monkeypatch.setattr(sandbox, "create_sandbox", lambda *a, **k: implementation)
-    wheel = tmp_path / "toolang-0.4.0b1-py3-none-any.whl"
-    toolang_wheel(wheel)
-
-    async def ready(*args, **kwargs):
-        return None
-
-    monkeypatch.setattr(
-        sandbox,
-        "toolang_requirement",
-        lambda: pytest.fail("must use the explicit wheel"),
-    )
-    monkeypatch.setattr(sandbox, "_wait_ready", ready)
-    spec = replace(_launch_spec(tmp_path), dev_artifact=wheel)
-    asyncio.run(sandbox.launch(spec))
-    prepared = implementation.calls[0]
-    assert isinstance(prepared, tuple)
-    request = cast(SandboxRequest, prepared[2])
-    assert request.local_dev_artifact == wheel
-    assert request.package_requirement is None
-    entry = read_instance(spec.serve.layout.runtime_status)
-    assert entry is not None
-    assert "development_digest" in entry["control"]["startup_contract"]
-
-
-@pytest.mark.parametrize("replacement", ["v0.4.0b1-2-g22222222", "unknown"])
-@pytest.mark.parametrize("confirmed", [False, True])
-def test_guest_launch_rechecks_a_wheel_replaced_after_resolution(
-    tmp_path, monkeypatch, toolang_wheel, replacement, confirmed
-):
-    monkeypatch.setattr(
-        sandbox, "displayed_toolang_version", lambda: "v0.4.0b1-1-g11111111"
-    )
-    implementation = FakeSandbox()
-    monkeypatch.setattr(sandbox, "create_sandbox", lambda *a, **k: implementation)
-
-    async def ready(*args, **kwargs):
-        return None
-
-    monkeypatch.setattr(sandbox, "_wait_ready", ready)
-    wheel = toolang_wheel(tmp_path / "toolang-test.whl", "v0.4.0b1-1-g11111111")
-    spec = asyncio.run(
-        sandbox.resolve_launch(
-            layout=_launch_spec(tmp_path).serve.layout,
-            environ={},
-            sandbox="fake",
-            dev=Path(f"{wheel}!") if confirmed else wheel,
-        )
-    )
-    toolang_wheel(wheel, replacement)
-
-    if confirmed:
-        asyncio.run(sandbox.launch(spec))
-        prepared = implementation.calls[0]
-        assert isinstance(prepared, tuple)
-        request = cast(SandboxRequest, prepared[2])
-        assert request.expected_toolang_version == (
-            None if replacement == "unknown" else replacement
-        )
-    else:
-        with pytest.raises(ValueError, match="Toolang version mismatch.*Append !"):
-            asyncio.run(sandbox.launch(spec))
-        assert implementation.calls == []
 
 
 def test_resolve_selection_uses_explicit_home_root_host_precedence(
@@ -662,7 +552,6 @@ def test_launch_delegates_complete_spec_and_stop_releases_state(
     assert isinstance(prepare, tuple)
     assert prepare[:2] == ("prepare", "value:with:colons")
     request = cast(SandboxRequest, prepare[2])
-    assert request.package_requirement == "toolang==0.4.0b1"
     assert request.hosted_place == Path("/runtime")
     assert request.agent_address == spec.serve.layout.address
     assert request.toolang_root == tmp_path.resolve()
@@ -1370,25 +1259,45 @@ def test_launch_cannot_adopt_a_healthy_server_from_another_generation(
         thread.join(timeout=2)
 
 
-def test_resolve_dev_artifact_accepts_one_toolang_wheel(
-    tmp_path: Path, toolang_wheel
-) -> None:
+def test_resolve_dev_artifact_accepts_one_toolang_wheel(tmp_path: Path) -> None:
     wheel = tmp_path / "toolang-1.2.3-py3-none-any.whl"
-    toolang_wheel(wheel)
+    wheel.write_bytes(b"wheel")
 
     assert sandbox.resolve_dev_artifact(wheel, sandbox="docker") == wheel
 
 
+@pytest.mark.parametrize("path_kind", ["file", "directory", "cwd"])
+@pytest.mark.parametrize("confirmed", [False, True])
+def test_resolve_launch_preserves_wheel_confirmation(
+    tmp_path, monkeypatch, path_kind, confirmed
+):
+    monkeypatch.chdir(tmp_path)
+    wheel = tmp_path / "toolang-test.whl"
+    wheel.write_bytes(b"wheel")
+    raw = str(wheel) if path_kind == "file" else str(tmp_path)
+    if path_kind == "cwd":
+        raw = ""
+    spec = asyncio.run(
+        sandbox.resolve_launch(
+            layout=_launch_spec(tmp_path).serve.layout,
+            environ={},
+            sandbox="docker",
+            dev=Path(f"{raw}!" if confirmed else raw),
+        )
+    )
+    assert spec.dev_artifact == wheel
+    assert spec.dev_version_confirmed is confirmed
+
+
 def test_resolve_dev_artifact_selects_newest_wheel_recursively(
     tmp_path: Path,
-    toolang_wheel,
 ) -> None:
     older = tmp_path / "toolang-1.0.0-py3-none-any.whl"
     nested = tmp_path / "nested"
     nested.mkdir()
     newer = nested / "toolang-0.9.0-py3-none-any.whl"
-    toolang_wheel(older)
-    toolang_wheel(newer)
+    older.write_bytes(b"older")
+    newer.write_bytes(b"newer")
     (tmp_path / "pyproject.toml").write_text(
         '[project]\nname = "toolang"\nversion = "2.0.0"\n',
         encoding="utf-8",
@@ -1399,13 +1308,11 @@ def test_resolve_dev_artifact_selects_newest_wheel_recursively(
     assert sandbox.resolve_dev_artifact(tmp_path, sandbox="docker") == newer
 
 
-def test_resolve_dev_artifact_breaks_timestamp_ties_by_path(
-    tmp_path: Path, toolang_wheel
-) -> None:
+def test_resolve_dev_artifact_breaks_timestamp_ties_by_path(tmp_path: Path) -> None:
     first = tmp_path / "toolang-a.whl"
     second = tmp_path / "toolang-b.whl"
-    toolang_wheel(first)
-    toolang_wheel(second)
+    first.write_bytes(b"first")
+    second.write_bytes(b"second")
     os.utime(first, ns=(1_000_000_000, 1_000_000_000))
     os.utime(second, ns=(1_000_000_000, 1_000_000_000))
 
@@ -1433,90 +1340,6 @@ def test_resolve_dev_artifact_rejects_invalid_paths(tmp_path: Path) -> None:
         sandbox.resolve_dev_artifact(empty, sandbox="docker")
     with pytest.raises(FileNotFoundError, match="No Toolang wheels found"):
         sandbox.resolve_dev_artifact(unrelated, sandbox="docker")
-
-
-@pytest.mark.parametrize(
-    "version",
-    [
-        "v0.4.0",
-        "v0.4.0a1",
-        "v0.4.0b1",
-        "v0.4.0rc1",
-        "v0.4.0.dev1",
-        "v0.4.0b1-1-g12345678",
-        "v0.4.0b1-1-g12345678*",
-    ],
-)
-def test_dev_wheel_matches_the_complete_cli_version(
-    tmp_path, monkeypatch, toolang_wheel, version
-):
-    monkeypatch.setattr(sandbox, "displayed_toolang_version", lambda: version)
-    wheel = toolang_wheel(tmp_path / "toolang-test.whl", version)
-    assert sandbox.resolve_dev_artifact(wheel, sandbox="docker") == wheel
-
-
-@pytest.mark.parametrize("directory", [False, True])
-@pytest.mark.parametrize("confirmed", [False, True])
-def test_dev_version_mismatch_requires_confirmation_on_the_path(
-    tmp_path, monkeypatch, toolang_wheel, directory, confirmed
-):
-    monkeypatch.setattr(
-        sandbox, "displayed_toolang_version", lambda: "v0.4.0b1-1-g11111111*"
-    )
-    wheel = toolang_wheel(tmp_path / "toolang-test.whl", "v0.4.0b1-1-g22222222*")
-    selected = tmp_path if directory else wheel
-    raw = Path(f"{selected}!" if confirmed else str(selected))
-    if confirmed:
-        assert sandbox.resolve_dev_artifact(raw, sandbox="docker") == wheel
-    else:
-        with pytest.raises(
-            ValueError, match="version mismatch.*11111111.*22222222.*Append !"
-        ):
-            sandbox.resolve_dev_artifact(raw, sandbox="docker")
-
-
-@pytest.mark.parametrize("confirmed", [False, True])
-def test_wheel_without_source_provenance_requires_confirmation(
-    tmp_path, toolang_wheel, confirmed
-):
-    wheel = toolang_wheel(tmp_path / "toolang-test.whl", build_info=False)
-    if confirmed:
-        assert (
-            sandbox.resolve_dev_artifact(Path(f"{wheel}!"), sandbox="docker") == wheel
-        )
-    else:
-        with pytest.raises(ValueError, match="wheel unknown.*Append !"):
-            sandbox.resolve_dev_artifact(wheel, sandbox="docker")
-
-
-def test_unknown_controller_identity_cannot_establish_a_wheel_match(
-    tmp_path, monkeypatch, toolang_wheel
-):
-    monkeypatch.setattr(sandbox, "displayed_toolang_version", lambda: "unknown")
-    wheel = toolang_wheel(tmp_path / "toolang-test.whl", "unknown")
-    with pytest.raises(ValueError, match="version mismatch.*Append !"):
-        sandbox.resolve_dev_artifact(wheel, sandbox="docker")
-    assert sandbox.resolve_dev_artifact(Path(f"{wheel}!"), sandbox="docker") == wheel
-
-
-def test_confirmation_does_not_accept_a_broken_wheel(tmp_path):
-    wheel = tmp_path / "toolang-test.whl"
-    wheel.write_bytes(b"not a zip")
-    with pytest.raises(ValueError, match="Invalid Toolang wheel"):
-        sandbox.resolve_dev_artifact(Path(f"{wheel}!"), sandbox="docker")
-
-
-def test_directory_selection_does_not_fall_back_to_an_older_matching_wheel(
-    tmp_path, monkeypatch, toolang_wheel
-):
-    monkeypatch.setattr(sandbox, "displayed_toolang_version", lambda: "v0.4.0b1")
-    older = toolang_wheel(tmp_path / "toolang-older.whl", "v0.4.0b1")
-    newer = toolang_wheel(tmp_path / "toolang-newer.whl", "v0.4.0b1-1-g12345678")
-    os.utime(older, ns=(1_000_000_000, 1_000_000_000))
-    os.utime(newer, ns=(2_000_000_000, 2_000_000_000))
-    with pytest.raises(ValueError, match="version mismatch"):
-        sandbox.resolve_dev_artifact(tmp_path, sandbox="docker")
-    assert sandbox.resolve_dev_artifact(Path(f"{tmp_path}!"), sandbox="docker") == newer
 
 
 def test_resolve_dev_artifact_rejects_host_before_path_validation(

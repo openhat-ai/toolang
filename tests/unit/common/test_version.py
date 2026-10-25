@@ -239,43 +239,10 @@ def test_development_source_ignores_non_editable_distribution(
     assert version.development_source() == (False, None)
 
 
-@pytest.mark.parametrize(
-    "origin",
-    [
-        None,
-        {"url": "file:///tmp/custom.whl", "archive_info": {}},
-        {"url": "https://example.test/toolang.git", "vcs_info": {"vcs": "git"}},
-    ],
-)
-def test_installed_artifacts_do_not_infer_source_from_their_surroundings(
-    monkeypatch, origin
-):
-    distribution = SimpleNamespace(
-        read_text=lambda _: json.dumps(origin) if origin is not None else None
-    )
-    monkeypatch.setattr(version, "package_distribution", lambda _: distribution)
-    monkeypatch.setattr(
-        version,
-        "source_project_root",
-        lambda: pytest.fail("must not infer live source"),
-    )
-    assert version.development_source() == (False, None)
-
-
 def test_unknown_package_version_requires_an_explicit_wheel(monkeypatch):
     monkeypatch.setattr(version, "base_toolang_version", lambda: "unknown")
     with pytest.raises(ValueError, match="Cannot determine.*--dev PATH"):
         version.toolang_requirement()
-
-
-@pytest.mark.parametrize(
-    "value", ["0.4.0", "0.4.0a1", "0.4.0b1", "0.4.0rc1", "0.4.0.dev1"]
-)
-def test_package_requirement_preserves_the_complete_distribution_version(
-    monkeypatch, value
-):
-    monkeypatch.setattr(version, "package_version", lambda _: value)
-    assert version.toolang_requirement() == f"toolang=={value}"
 
 
 def test_wheel_version_reads_embedded_identity_instead_of_distribution_version(

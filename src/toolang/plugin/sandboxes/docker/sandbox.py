@@ -34,6 +34,11 @@ from toolang.common.place_codes import root_code
 from toolang.plugin.catalogs.models_dev.path import MODEL_CATALOG_ENV
 from toolang.up.records import RuntimeReference
 from toolang.common.files import atomic_write_text
+from toolang.common.version import (
+    displayed_toolang_version,
+    toolang_requirement,
+    wheel_source_version,
+)
 
 from ._cli import (
     DEFAULT_HOST_GATEWAY,
@@ -339,6 +344,7 @@ class DockerSandbox:
         stage_guest_files(active_dir)
 
         hosted_dev_artifact: Path | None = None
+        expected_version = displayed_toolang_version()
         if request.local_dev_artifact is not None:
             artifact = request.local_dev_artifact
             if not artifact.is_file() or artifact.suffix.casefold() != ".whl":
@@ -346,7 +352,23 @@ class DockerSandbox:
             staged = active_dir / artifact.name
             if artifact.resolve() != staged.resolve():
                 shutil.copy2(artifact, staged)
+            actual_version = wheel_source_version(staged)
+            if not request.dev_version_confirmed and (
+                "unknown" in {expected_version, actual_version}
+                or actual_version != expected_version
+            ):
+                raise ValueError(
+                    f"Toolang version mismatch: current {expected_version}, "
+                    f"wheel {actual_version}. Append ! to the --dev path "
+                    "to confirm this wheel."
+                )
+            expected_version = None
             hosted_dev_artifact = runtime_dir / staged.name
+        elif expected_version == "unknown":
+            raise ValueError(
+                "Cannot determine the current Toolang version; use --dev PATH! "
+                "to confirm a specific wheel."
+            )
         guest_env_path = active_dir / "guest.env"
         hosted_env_path = (
             request.environment_path
@@ -380,10 +402,8 @@ class DockerSandbox:
         package_source = (
             str(hosted_dev_artifact)
             if hosted_dev_artifact is not None
-            else request.package_requirement
+            else toolang_requirement()
         )
-        if package_source is None:
-            raise ValueError("Docker requires a resolved Toolang package or wheel")
         command = list(request.command)
         if "--sandbox" in command:
             command[command.index("--sandbox") + 1] = f"{self.name}:{image}"
@@ -408,8 +428,8 @@ class DockerSandbox:
             endpoint=request.endpoint,
             envs={
                 **(
-                    {"TOOLANG_GUEST_EXPECTED_VERSION": request.expected_toolang_version}
-                    if request.expected_toolang_version is not None
+                    {"TOOLANG_GUEST_EXPECTED_VERSION": expected_version}
+                    if expected_version is not None
                     else {}
                 ),
                 "TOOLANG_HOST_GATEWAY": DEFAULT_HOST_GATEWAY,

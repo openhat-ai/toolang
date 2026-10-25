@@ -69,11 +69,6 @@ from toolang.up.instance import (
 from toolang.up.registry import RuntimeRegistration, remove_registration
 from toolang.up.workload import begin_workload, fail_workload, management_operation
 from toolang.up.config import placement_policy
-from toolang.common.version import (
-    displayed_toolang_version,
-    toolang_requirement,
-    wheel_source_version,
-)
 from toolang.up.types import ExecutionDrivers, ServerLifetime
 
 if TYPE_CHECKING:
@@ -362,22 +357,6 @@ async def _launch_locked(
         on_host = implementation.location == "host"
         layout = spec.serve.layout
         local_root = (spec.serve.toolang_root or layout.root or layout.place).resolve()
-        package_requirement = None
-        expected_version = None
-        if not on_host and spec.dev_artifact is None:
-            package_requirement = toolang_requirement()
-            expected_version = displayed_toolang_version()
-            if expected_version == "unknown":
-                raise ValueError(
-                    "Cannot determine the current Toolang version; use --dev PATH! "
-                    "to confirm a specific wheel."
-                )
-        elif not on_host:
-            assert spec.dev_artifact is not None
-            version = _validate_wheel_version(
-                spec.dev_artifact, confirmed=spec.dev_version_confirmed
-            )
-            expected_version = version if version != "unknown" else None
         hosted_root = implementation.runtime_place(local_root)
         hosted_place = layout.place if on_host else hosted_root
         hosted_home = hosted_place / "agents" / layout.name
@@ -527,8 +506,7 @@ async def _launch_locked(
                 )
             ),
             local_dev_artifact=spec.dev_artifact,
-            package_requirement=package_requirement,
-            expected_toolang_version=expected_version,
+            dev_version_confirmed=spec.dev_version_confirmed,
             remove_on_exit=spec.serve.lifetime == "automatic",
             foreground_owner=spec.serve.lifetime == "foreground",
         )
@@ -1015,9 +993,7 @@ def resolve_dev_artifact(raw: Path | None, *, sandbox: str) -> Path | None:
             "installation."
         )
 
-    value = str(raw)
-    confirmed = value.endswith("!")
-    candidate = Path(value[:-1] if confirmed else value).expanduser().resolve()
+    candidate = Path(str(raw).removesuffix("!")).expanduser().resolve()
     if not candidate.exists():
         raise FileNotFoundError(f"--dev path not found: {candidate}")
     if candidate.is_file():
@@ -1025,7 +1001,6 @@ def resolve_dev_artifact(raw: Path | None, *, sandbox: str) -> Path | None:
             raise ValueError(f"--dev file is not a Toolang wheel: {candidate}")
         if not _is_toolang_wheel(candidate):
             raise ValueError(f"--dev file is not a Toolang wheel: {candidate}")
-        _validate_wheel_version(candidate, confirmed=confirmed)
         return candidate
     if not candidate.is_dir():
         raise ValueError(f"--dev path is not a file or directory: {candidate}")
@@ -1039,22 +1014,7 @@ def resolve_dev_artifact(raw: Path | None, *, sandbox: str) -> Path | None:
         raise FileNotFoundError(
             f"No Toolang wheels found under --dev directory: {candidate}"
         )
-    selected = min(wheels, key=lambda path: (-path.stat().st_mtime_ns, str(path)))
-    _validate_wheel_version(selected, confirmed=confirmed)
-    return selected
-
-
-def _validate_wheel_version(path: Path, *, confirmed: bool) -> str:
-    actual = wheel_source_version(path)
-    if confirmed:
-        return actual
-    expected = displayed_toolang_version()
-    if "unknown" in {actual, expected} or actual != expected:
-        raise ValueError(
-            f"Toolang version mismatch: current {expected}, wheel {actual}. "
-            "Append ! to the --dev path to confirm this wheel."
-        )
-    return actual
+    return min(wheels, key=lambda path: (-path.stat().st_mtime_ns, str(path)))
 
 
 def _is_toolang_wheel(path: Path) -> bool:

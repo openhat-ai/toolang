@@ -341,7 +341,6 @@ def _request(
             ),
         ),
         local_dev_artifact=dev,
-        package_requirement="toolang==0.4.0b1",
     )
 
 
@@ -349,33 +348,65 @@ def _request(
     "version", ["0.4.0", "0.4.0a1", "0.4.0b1", "0.4.0rc1", "0.4.0.dev1"]
 )
 def test_docker_passes_the_exact_package_requirement_to_the_installer(
-    tmp_path, version
+    tmp_path, monkeypatch, version
 ):
-    request = replace(_request(tmp_path), package_requirement=f"toolang=={version}")
-    plan = docker_sandbox.DockerSandbox({}).prepare("rust:1.75", request)
+    from toolang.common import version as versions
+
+    monkeypatch.setattr(versions, "base_toolang_version", lambda: version)
+    plan = docker_sandbox.DockerSandbox({}).prepare("rust:1.75", _request(tmp_path))
     assert plan.command[5] == f"toolang=={version}"
     assert "toolang" not in plan.command
 
 
-def test_docker_does_not_choose_an_unversioned_package(tmp_path):
-    request = replace(_request(tmp_path), package_requirement=None)
-    with pytest.raises(ValueError, match="resolved Toolang package or wheel"):
-        docker_sandbox.DockerSandbox({}).prepare(None, request)
-
-
-def test_docker_passes_the_selected_cli_identity_to_the_guest(tmp_path):
+def test_docker_passes_the_controller_identity_for_index_installs(
+    tmp_path, monkeypatch
+):
+    identity = "v0.4.0b1-1-g12345678*"
+    monkeypatch.setattr(docker_sandbox, "displayed_toolang_version", lambda: identity)
     request = _request(tmp_path)
     request = replace(
         request,
-        expected_toolang_version="v0.4.0b1-1-g12345678*",
         envs={**request.envs, "TOOLANG_GUEST_EXPECTED_VERSION": "wrong-image-value"},
     )
     plan = docker_sandbox.DockerSandbox({}).prepare(None, request)
-    assert (
-        plan.envs["TOOLANG_GUEST_EXPECTED_VERSION"] == request.expected_toolang_version
-    )
+    assert plan.envs["TOOLANG_GUEST_EXPECTED_VERSION"] == identity
     generated = Path(plan.meta["stage_dir"]) / "active/guest.env"
     assert "TOOLANG_GUEST_EXPECTED_VERSION" not in dotenv_values(generated)
+
+
+@pytest.mark.parametrize("confirmed", [False, True])
+@pytest.mark.parametrize(
+    "current,actual",
+    [
+        ("v0.4.0b1", "v0.4.0b1"),
+        ("v0.4.0b1-1-g11111111*", "v0.4.0b1-1-g22222222*"),
+        ("v0.4.0b1-1-g11111111*", "v0.4.0b1-1-g11111111"),
+        ("v0.4.0b1", "unknown"),
+        ("unknown", "unknown"),
+    ],
+)
+def test_docker_checks_wheel_identity_only_during_preparation(
+    tmp_path, monkeypatch, toolang_wheel, current, actual, confirmed
+):
+    monkeypatch.setattr(docker_sandbox, "displayed_toolang_version", lambda: current)
+    wheel = toolang_wheel(tmp_path / "toolang-test.whl", actual)
+    request = replace(_request(tmp_path, dev=wheel), dev_version_confirmed=confirmed)
+    if not confirmed and (actual != current or actual == "unknown"):
+        with pytest.raises(ValueError, match="Toolang version mismatch.*Append !"):
+            docker_sandbox.DockerSandbox({}).prepare(None, request)
+    else:
+        plan = docker_sandbox.DockerSandbox({}).prepare(None, request)
+        staged = Path(plan.meta["stage_dir"]) / "active" / wheel.name
+        assert staged.read_bytes() == wheel.read_bytes()
+        assert "TOOLANG_GUEST_EXPECTED_VERSION" not in plan.envs
+
+
+def test_confirmation_does_not_accept_an_invalid_wheel(tmp_path):
+    wheel = tmp_path / "toolang-test.whl"
+    wheel.write_bytes(b"invalid wheel")
+    request = replace(_request(tmp_path, dev=wheel), dev_version_confirmed=True)
+    with pytest.raises(ValueError, match="Invalid Toolang wheel"):
+        docker_sandbox.DockerSandbox({}).prepare(None, request)
 
 
 def test_host_sandbox_parses_own_spec_and_prepares_local_process(
@@ -656,6 +687,7 @@ def test_host_cached_workload_rejects_stale_reference(
 def test_docker_sandbox_prepares_and_launches(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    toolang_wheel,
 ) -> None:
     calls: dict[str, object] = {}
 
@@ -672,8 +704,7 @@ def test_docker_sandbox_prepares_and_launches(
         lambda name: name == _CONTAINER_ID,
     )
     dev = tmp_path / "dist" / "toolang-1.2.3-py3-none-any.whl"
-    dev.parent.mkdir(parents=True)
-    dev.write_bytes(b"wheel")
+    toolang_wheel(dev)
     (tmp_path / "shared").mkdir()
     control_lock = AgentLayout.resident(tmp_path, "alice").runtime_status.with_suffix(
         ".lock"
@@ -769,6 +800,14 @@ def test_docker_sandbox_prepares_and_launches(
         "/root/.toolang/.runtime/active/alice/guest.env",
     )
 
+    original_wheel = dev.read_bytes()
+    dev.write_bytes(b"replaced after preparation")
+    assert (stage_dir / "active" / dev.name).read_bytes() == original_wheel
+    monkeypatch.setattr(
+        docker_sandbox,
+        "wheel_source_version",
+        lambda _: pytest.fail("prepared wheels must not be checked again"),
+    )
     ref = asyncio.run(sandbox.launch(plan))
 
     assert ref.runtime_id == _CONTAINER_ID

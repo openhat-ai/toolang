@@ -135,29 +135,23 @@ On attachment, explicit values must match saved settings; omitted values retain
 the running settings. Stop the existing agent before changing them.
 
 Commands that start a new guest accept `--dev [PATH]`. This includes `serve`,
-`start`, `chat`, Script `run`, and `rerun`. Without `--dev`, the guest installs the
-controller's exact distribution version, including alpha, beta, rc, and dev
-releases, then verifies its complete `too --version` identity before starting.
-The identity includes Git revision and dirty state when present; a matching
-package version alone does not establish a matching build.
-
-`--dev` selects a local Toolang wheel. Bare `--dev` uses `.` (the invocation
-working directory, not script directory or agent home). `PATH` is either a wheel
-file or a directory searched recursively for Toolang wheels. Directory selection
-uses the newest modification time and breaks ties by absolute path. The selected
-wheel's distribution metadata and embedded source identity are checked before
-sandbox preparation. A mismatch or unknown identity fails instead of selecting
-another wheel. Toolang never builds a wheel automatically.
-
-Append `!` to a wheel or directory path to confirm a different or unknown source
-identity. This bypasses only the version comparison; the wheel must still be a
-valid Toolang artifact. Quote paths containing `!` to avoid shell interpretation:
+`start`, `chat`, Script `run`, and `rerun`. Without `--dev`, Docker installs
+`toolang==<controller distribution version>` and checks the installed CLI's full
+`too --version` identity, including revision and dirty marker. Prereleases retain
+their alpha, beta, rc, or dev version. Bare `--dev` uses `.` (the working directory,
+not the script directory or agent home). An explicit `PATH` selects that path.
+`PATH` is either one Toolang `.whl` file or a directory to search recursively
+for Toolang wheels. Directory selection uses the most recent file modification
+time and breaks equal-time ties by absolute path. The selected concrete wheel
+is copied into Docker's launch materials and checked against the controller's
+complete identity once during preparation. A mismatch or unknown identity fails;
+append `!` to the wheel or directory path to confirm it, such as `--dev 'dist!'`.
+Later installation and startup do not repeat this comparison. Build a wheel and
+select it with:
 
 ```sh
 uv build --wheel
-too alice start --sandbox docker --dev dist
-too alice start --sandbox docker --dev 'dist!'
-too alice start --sandbox docker --dev 'dist/toolang-0.4.0b1-py3-none-any.whl!'
+too alice start --sandbox docker --dev
 ```
 
 A following non-option token is consumed as PATH. Before a runnable selector or
@@ -166,22 +160,20 @@ input, use `--dev=.` or terminate options with `--dev --`. For example,
 `too demo.too summarize --dev -- hello` both select from the working directory.
 Use `--dev=PATH` or a `./` prefix for paths beginning with `-`. Repeated `--dev`
 options use the last value; a runnable-level occurrence overrides the script
-root value. Explicit empty paths (`--dev=` or `--dev ""`) resolve to `.`;
-`--dev '!'` selects that directory with version confirmation.
+root value. Explicit empty paths (`--dev=` or `--dev ""`) also resolve to `.`.
 
 Help displays environment, default, and bare-option metadata as separate tags:
 `[env: NAME=] [default: VALUE] [bare: VALUE]`. Only applicable tags are shown.
 For `--dev`, `[bare: .]` describes the value used when PATH is omitted; it does
 not change the default when the entire option is absent.
 
-Package selection applies only while starting a new guest: host execution uses
-the current Toolang installation, and an attached AgentServer retains its
-selected package. Explicit wheels must still match a running server's bound path
-and content, even with `!`. Source users can build and select a wheel manually;
-non-editable custom artifacts also need an explicit wheel when their exact
-version is unavailable from the configured index. Installation failures never
-substitute another version. A confirmed wheel can still be incompatible with
-the controller's runtime arguments or protocol.
+`--dev` does not treat a directory as a source project and does not rebuild
+after launch. It applies only while starting a new guest: host execution uses
+the current Toolang installation, and an attached AgentServer has already
+selected its package. Explicit wheels must still match an existing server's bound
+path and content, including with `!`. Confirmation does not bypass wheel validity
+checks or guarantee compatibility with the controller. Toolang never builds or
+caches wheels automatically.
 
 Sandbox selection and implementation configuration are separate:
 
