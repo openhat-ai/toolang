@@ -375,8 +375,12 @@ class DockerSandbox:
                 )
             )
         package_source = (
-            str(hosted_dev_artifact) if hosted_dev_artifact is not None else "toolang"
+            str(hosted_dev_artifact)
+            if hosted_dev_artifact is not None
+            else request.package_requirement
         )
+        if package_source is None:
+            raise ValueError("Docker requires a resolved Toolang package or wheel")
         command = list(request.command)
         if "--sandbox" in command:
             command[command.index("--sandbox") + 1] = f"{self.name}:{image}"

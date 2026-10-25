@@ -135,9 +135,12 @@ On attachment, explicit values must match saved settings; omitted values retain
 the running settings. Stop the existing agent before changing them.
 
 Commands that start a new guest accept `--dev [PATH]`. This includes `serve`,
-`start`, `chat`, Script `run`, and `rerun`. Omitting `--dev` keeps the
-existing package selection. Bare `--dev` uses `.` (the process working directory,
-not the script directory or agent home). An explicit `PATH` selects that path.
+`start`, `chat`, Script `run`, and `rerun`. Without `--dev`, an installed Toolang
+distribution selects its exact package version, including alpha, beta, rc, and
+dev releases. An editable installation or directly imported source project
+automatically builds a wheel from that source. Bare `--dev` uses `.` (the process
+working directory, not the script directory or agent home). An explicit `PATH`
+selects that path.
 `PATH` is either one Toolang `.whl` file or a directory to search recursively
 for Toolang wheels. Directory selection uses the most recent file modification
 time and breaks equal-time ties by absolute path. The selected concrete wheel
@@ -162,13 +165,19 @@ Help displays environment, default, and bare-option metadata as separate tags:
 For `--dev`, `[bare: .]` describes the value used when PATH is omitted; it does
 not change the default when the entire option is absent.
 
-`--dev` does not treat a directory as a source project and does not rebuild
-after launch. It applies only while starting a new guest: host execution uses
-the current Toolang installation, and an attached AgentServer has already
-selected its package. When the controlling CLI runs from development source, a
-new guest without `--dev` warns that it will install Toolang from the package
-index instead of the local source. The warning includes the wheel build command
-and does not block launch or query the package index.
+Explicit `--dev` paths select existing wheels; directories are not built as
+source projects. Automatic source builds use uv, or the current interpreter's
+pip when uv is unavailable, and cache completed wheels under the controller
+root's `.cache/packages`. Source contents, build configuration, and source
+provenance determine reuse. Source changes apply to the next new guest, not an
+already running server. Build failures do not fall back to a published package.
+
+Package selection applies only while starting a new guest: host execution uses
+the current Toolang installation, and an attached AgentServer retains its
+selected package. A non-editable local wheel or VCS installation is an installed
+artifact, not live source. Its exact distribution version must be available from
+the configured index; use `--dev PATH` for a custom artifact that is unavailable
+there. Automatic selection never substitutes a different distribution version.
 
 Sandbox selection and implementation configuration are separate:
 

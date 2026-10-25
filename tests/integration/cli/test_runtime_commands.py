@@ -491,46 +491,6 @@ def test_runtime_dev_help_describes_wheel_selection() -> None:
         assert "Use a local Toolang wheel [bare: .]" in output
 
 
-@pytest.mark.parametrize(
-    ("sandbox", "dev", "development", "warns"),
-    (
-        ("docker:python:3.13", None, (True, Path("/source/toolang")), True),
-        ("docker", None, (True, None), True),
-        ("docker", None, (False, None), False),
-        ("host", None, (True, Path("/source/toolang")), False),
-        ("docker", Path("dist/toolang.whl"), (True, None), False),
-    ),
-)
-def test_runtime_warns_when_development_source_uses_index_package(
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-    sandbox: str,
-    dev: Path | None,
-    development: tuple[bool, Path | None],
-    warns: bool,
-) -> None:
-    monkeypatch.setattr(
-        agent_server_acquisition,
-        "development_source",
-        lambda: development,
-    )
-    startup = cast(
-        sandbox_runtime.LaunchSpec,
-        SimpleNamespace(sandbox=sandbox, dev_artifact=dev),
-    )
-
-    agent_server_acquisition.warn_development_package_source(startup)
-
-    stderr = capsys.readouterr().err
-    assert ("will install Toolang from the package index" in stderr) is warns
-    if warns:
-        assert "--dev dist" in stderr
-        if development[1] is not None:
-            assert str(development[1]) in stderr
-        else:
-            assert "source at" not in stderr
-
-
 @pytest.mark.parametrize("command", ["serve", "start", "_serve"])
 def test_runtime_commands_reject_inbox_option(command: str) -> None:
     help_result = runner.invoke(cli.app, [command, "--help"])

@@ -30,6 +30,15 @@ from toolang.up import process as process_runtime
 from toolang.up.server import ServeSpec
 
 
+@pytest.fixture(autouse=True)
+def installed_guest_package(monkeypatch):
+    monkeypatch.setattr(
+        sandbox,
+        "resolve_guest_package",
+        lambda artifact, **kwargs: ("toolang==0.4.0b1", artifact),
+    )
+
+
 class FakeSandbox:
     name = "fake"
     location = "guest"
@@ -223,6 +232,68 @@ def _launch_spec(tmp_path: Path) -> sandbox.LaunchSpec:
         config={},
         environ={},
     )
+
+
+@pytest.mark.parametrize("selection", ["host", "unknown"])
+def test_non_guest_and_unknown_plugins_do_not_resolve_a_guest_package(
+    tmp_path, monkeypatch, selection
+):
+    implementation = FakeSandbox()
+    implementation.location = "host"
+
+    def create(name, **kwargs):
+        if name == "unknown":
+            raise ValueError("unknown toolang.sandbox plugin: unknown")
+        return implementation
+
+    async def ready(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(sandbox, "create_sandbox", create)
+    monkeypatch.setattr(sandbox, "_wait_ready", ready)
+    monkeypatch.setattr(
+        sandbox, "resolve_guest_package", lambda *a, **k: pytest.fail("must not build")
+    )
+    spec = replace(_launch_spec(tmp_path), sandbox=selection)
+    if selection == "unknown":
+        with pytest.raises(ValueError, match="unknown toolang.sandbox plugin"):
+            asyncio.run(sandbox.launch(spec))
+    else:
+        asyncio.run(sandbox.launch(spec))
+        prepared = implementation.calls[0]
+        assert isinstance(prepared, tuple)
+        request = cast(SandboxRequest, prepared[2])
+        assert request.package_requirement is None
+
+
+def test_guest_launch_binds_the_automatically_built_wheel(tmp_path, monkeypatch):
+    from toolang.up.instance import read_instance
+
+    implementation = FakeSandbox()
+    monkeypatch.setattr(sandbox, "create_sandbox", lambda *a, **k: implementation)
+    wheel = tmp_path / "toolang-0.4.0b1-py3-none-any.whl"
+    wheel.write_bytes(b"built wheel")
+
+    def package(artifact, *, cache, **kwargs):
+        assert artifact is None
+        assert cache == tmp_path / ".cache" / "packages"
+        return None, wheel
+
+    async def ready(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(sandbox, "resolve_guest_package", package)
+    monkeypatch.setattr(sandbox, "_wait_ready", ready)
+    spec = _launch_spec(tmp_path)
+    asyncio.run(sandbox.launch(spec))
+    prepared = implementation.calls[0]
+    assert isinstance(prepared, tuple)
+    request = cast(SandboxRequest, prepared[2])
+    assert request.local_dev_artifact == wheel
+    assert request.package_requirement is None
+    entry = read_instance(spec.serve.layout.runtime_status)
+    assert entry is not None
+    assert "development_digest" in entry["control"]["startup_contract"]
 
 
 def test_resolve_selection_uses_explicit_home_root_host_precedence(
@@ -552,6 +623,7 @@ def test_launch_delegates_complete_spec_and_stop_releases_state(
     assert isinstance(prepare, tuple)
     assert prepare[:2] == ("prepare", "value:with:colons")
     request = cast(SandboxRequest, prepare[2])
+    assert request.package_requirement == "toolang==0.4.0b1"
     assert request.hosted_place == Path("/runtime")
     assert request.agent_address == spec.serve.layout.address
     assert request.toolang_root == tmp_path.resolve()

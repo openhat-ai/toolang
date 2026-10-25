@@ -239,7 +239,6 @@ def test_agent_serve_publishes_once_at_outer_cli(tmp_path, monkeypatch, publicat
             sandbox="fake", serve=SimpleNamespace(layout=layout)
         ),
     )
-    monkeypatch.setattr(runtime, "warn_development_package_source", lambda _: None)
 
     async def run(*_args, **_kwargs):
         assert events == ["start"]

@@ -894,7 +894,7 @@ def test_agent_server_launches_with_the_requested_lifecycle(
     assert shutdown_progress.finished == int(temporary)
 
 
-def test_agent_server_warns_when_a_development_cli_uses_the_package_index(
+def test_agent_server_does_not_warn_about_a_package_index_fallback(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -950,12 +950,7 @@ def test_agent_server_warns_when_a_development_cli_uses_the_package_index(
     ):
         pass
 
-    assert capsys.readouterr().err.splitlines() == [
-        "Warning: the new docker guest will install Toolang from the package index, "
-        f"not from {tmp_path}.",
-        "Build the current source with `uv build --wheel`, then run this command "
-        "again with `--dev dist`.",
-    ]
+    assert capsys.readouterr().err == ""
 
 
 @pytest.mark.parametrize(
@@ -1522,7 +1517,7 @@ def test_persistent_acquisition_waits_for_http_after_running_report(
     )
 
 
-def test_startup_warning_suspends_the_lock_wait_presenter(tmp_path, monkeypatch):
+def test_launch_progress_retains_the_lock_wait_presenter(tmp_path, monkeypatch):
     from io import StringIO
 
     from toolang.base.types.progress import ProgressEvent
@@ -1564,13 +1559,6 @@ def test_startup_warning_suspends_the_lock_wait_presenter(tmp_path, monkeypatch)
     )
     launch = SimpleNamespace(sandbox="docker", dev_artifact=None)
     monkeypatch.setattr(agent_server, "_resolve_launch", lambda *a, **k: launch)
-    observed = []
-
-    def warn(_launch):
-        observed.append(presenter._live_display is None)
-        print("Development package warning", file=stream)
-
-    monkeypatch.setattr(agent_server, "warn_development_package_source", warn)
     handle = agent_server.sandbox_runtime.SandboxHandle(
         cast(Any, None),
         SandboxState(
@@ -1589,8 +1577,7 @@ def test_startup_warning_suspends_the_lock_wait_presenter(tmp_path, monkeypatch)
         layout, sandbox="docker", ui_base_url="https://ui.test"
     ):
         assert presenter._live_display is None
-    assert observed == [True]
-    assert stream.getvalue().count("Development package warning") == 1
+    assert "Development package warning" not in stream.getvalue()
 
 
 def test_attach_finishes_remote_source_progress_without_preparing_state(

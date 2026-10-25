@@ -60,6 +60,18 @@ def base_toolang_version() -> str:
     return "unknown"
 
 
+def toolang_requirement() -> str:
+    """Pin guest installs to the distribution version, including prereleases."""
+
+    version = base_toolang_version()
+    if version == "unknown" or not version.strip():
+        raise ValueError(
+            "Cannot determine the Toolang package version; use --dev PATH "
+            "with a Toolang wheel."
+        )
+    return f"toolang=={version}"
+
+
 def development_source() -> tuple[bool, Path | None]:
     """Return whether Toolang runs from development source and its local path."""
 

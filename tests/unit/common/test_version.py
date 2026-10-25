@@ -239,6 +239,35 @@ def test_development_source_ignores_non_editable_distribution(
     assert version.development_source() == (False, None)
 
 
+@pytest.mark.parametrize(
+    "origin",
+    [
+        None,
+        {"url": "file:///tmp/custom.whl", "archive_info": {}},
+        {"url": "https://example.test/toolang.git", "vcs_info": {"vcs": "git"}},
+    ],
+)
+def test_installed_artifacts_do_not_infer_source_from_their_surroundings(
+    monkeypatch, origin
+):
+    distribution = SimpleNamespace(
+        read_text=lambda _: json.dumps(origin) if origin is not None else None
+    )
+    monkeypatch.setattr(version, "package_distribution", lambda _: distribution)
+    monkeypatch.setattr(
+        version,
+        "source_project_root",
+        lambda: pytest.fail("must not infer live source"),
+    )
+    assert version.development_source() == (False, None)
+
+
+def test_unknown_package_version_requires_an_explicit_wheel(monkeypatch):
+    monkeypatch.setattr(version, "base_toolang_version", lambda: "unknown")
+    with pytest.raises(ValueError, match="Cannot determine.*--dev PATH"):
+        version.toolang_requirement()
+
+
 def test_development_source_keeps_editable_signal_without_safe_local_path(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

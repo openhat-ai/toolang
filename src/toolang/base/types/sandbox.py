@@ -63,6 +63,7 @@ class SandboxRequest:
     remove_on_exit: bool = False
     foreground_owner: bool = False
     local_dev_artifact: Path | None = None
+    package_requirement: str | None = None
     dotenv_envs: dict[str, str] = field(default_factory=dict, repr=False)
     environment_path: Path | None = None
     agent_address: str | None = None

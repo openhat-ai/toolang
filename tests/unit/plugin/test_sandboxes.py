@@ -341,7 +341,26 @@ def _request(
             ),
         ),
         local_dev_artifact=dev,
+        package_requirement="toolang==0.4.0b1",
     )
+
+
+@pytest.mark.parametrize(
+    "version", ["0.4.0", "0.4.0a1", "0.4.0b1", "0.4.0rc1", "0.4.0.dev1"]
+)
+def test_docker_passes_the_exact_package_requirement_to_the_installer(
+    tmp_path, version
+):
+    request = replace(_request(tmp_path), package_requirement=f"toolang=={version}")
+    plan = docker_sandbox.DockerSandbox({}).prepare("rust:1.75", request)
+    assert plan.command[5] == f"toolang=={version}"
+    assert "toolang" not in plan.command
+
+
+def test_docker_does_not_choose_an_unversioned_package(tmp_path):
+    request = replace(_request(tmp_path), package_requirement=None)
+    with pytest.raises(ValueError, match="resolved Toolang package or wheel"):
+        docker_sandbox.DockerSandbox({}).prepare(None, request)
 
 
 def test_host_sandbox_parses_own_spec_and_prepares_local_process(

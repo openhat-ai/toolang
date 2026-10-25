@@ -69,6 +69,7 @@ from toolang.up.instance import (
 from toolang.up.registry import RuntimeRegistration, remove_registration
 from toolang.up.workload import begin_workload, fail_workload, management_operation
 from toolang.up.config import placement_policy
+from toolang.up.packages import resolve_guest_package
 from toolang.up.types import ExecutionDrivers, ServerLifetime
 
 if TYPE_CHECKING:
@@ -355,6 +356,16 @@ async def _launch_locked(
         on_host = implementation.location == "host"
         layout = spec.serve.layout
         local_root = (spec.serve.toolang_root or layout.root or layout.place).resolve()
+        package_requirement = None
+        if not on_host:
+            package_requirement, artifact = await asyncio.to_thread(
+                resolve_guest_package,
+                spec.dev_artifact,
+                cache=local_root / ".cache" / "packages",
+                progress=progress,
+                progress_id=spec.progress_id,
+            )
+            spec = replace(spec, dev_artifact=artifact)
         hosted_root = implementation.runtime_place(local_root)
         hosted_place = layout.place if on_host else hosted_root
         hosted_home = hosted_place / "agents" / layout.name
@@ -504,6 +515,7 @@ async def _launch_locked(
                 )
             ),
             local_dev_artifact=spec.dev_artifact,
+            package_requirement=package_requirement,
             remove_on_exit=spec.serve.lifetime == "automatic",
             foreground_owner=spec.serve.lifetime == "foreground",
         )
