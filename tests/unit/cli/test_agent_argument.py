@@ -230,8 +230,7 @@ def test_native_conversion_and_callback_run_once(args):
     parent = Context(command, info_name="too")
     ctx = Context(child, info_name="call", parent=parent)
     assert ctx.get_usage().splitlines() == [
-        "Usage: too <AGENT> call [OPTIONS] <COUNT>",
-        "Usage: too call [OPTIONS] <AGENT> <COUNT>",
+        "Usage: too call <AGENT> [OPTIONS] <COUNT>",
     ]
     assert seen == [("alice", ParameterSource.COMMANDLINE)]
     with pytest.raises(UsageError, match="not a valid int"):
@@ -402,7 +401,7 @@ def test_eager_help_precedes_selector_validation(
     monkeypatch.setattr("sys.argv", ["too"])
     args = [selector, "chat"] if agent_first else ["chat", selector]
     assert cli.main([*args, "--help"]) == 0
-    assert "Usage: too <AGENT> chat" in capsys.readouterr().out
+    assert "Usage: too chat <AGENT> [OPTIONS]" in capsys.readouterr().out
     assert cli.main(args) == 2
     assert "Invalid value for 'AGENT'" in capsys.readouterr().err
 

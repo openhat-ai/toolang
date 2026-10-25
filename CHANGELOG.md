@@ -34,6 +34,16 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   `--dev` path.
   ([#960](https://github.com/openhat-ai/toolang/pull/960))
 
+- `too AGENT info` titles show only the uppercase agent name, relative script
+  homes stay relative to the current directory, and missing agents error at
+  exit 1.
+  ([#963](https://github.com/openhat-ai/toolang/pull/963))
+
+- Help and diagnostics for `info`, `cd`, `chat`, `serve`, `start`, and `stop`
+  show one command-first usage, and resource help drops the accepted-forms
+  footer.
+  ([#964](https://github.com/openhat-ai/toolang/pull/964))
+
 ### Fixed
 
 - `too hub` records local process state in `hub/pid.json` and removes it after

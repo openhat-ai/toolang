@@ -399,7 +399,7 @@ def test_cli_exposes_plural_list_resources_and_removes_channels() -> None:
         ),
         (
             ["chat"],
-            "Usage: toolang <AGENT> chat [OPTIONS]",
+            "Usage: toolang chat <AGENT> [OPTIONS]",
             "AGENT",
             "{AGENT}",
         ),
