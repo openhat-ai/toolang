@@ -133,7 +133,7 @@ def status(ctx: typer.Context) -> None:
         typer.echo(f"hub unknown: {' '.join(str(exc).split())}")
         return
     if record is None or runtime_status_label(record.status) == "down":
-        typer.echo("hub down")
+        typer.echo("hub not running")
         return
     version = "unknown"
     try:
@@ -145,6 +145,4 @@ def status(ctx: typer.Context) -> None:
     except (httpx.HTTPError, ValueError):
         pass
     host = f"[{record.host}]" if ":" in record.host else record.host
-    typer.echo(
-        f"hub up: version {version}, endpoint {host}:{record.port}, pid {record.pid}"
-    )
+    typer.echo(f"hub running: {version}, {host}:{record.port}, {record.pid}")

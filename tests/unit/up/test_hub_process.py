@@ -207,10 +207,13 @@ def test_graceful_sigterm_removes_actual_uvicorn_record(tmp_path):
             hub.stop(force=True)
 
 
-def test_failed_and_timed_out_start_leave_no_child_or_owned_record(tmp_path):
+def test_failed_and_timed_out_start_leave_no_child_or_owned_record(
+    tmp_path, monkeypatch
+):
     hub = HubProcess(tmp_path)
     with pytest.raises(TeamingError, match="startup failed"):
         hub.start([sys.executable, "-c", "raise SystemExit(1)"])
+    monkeypatch.setattr(hub, "ready", lambda _: False)
     script = "import os,sys,time,psutil; from pathlib import Path; from toolang.up.records import HubRecord; HubRecord(pid=os.getpid(),created=psutil.Process().create_time(),port=7001).save(Path(sys.argv[1])); time.sleep(60)"
     with pytest.raises(TeamingError, match="startup timed out"):
         hub.start([sys.executable, "-c", script, str(hub.path)], timeout=1)

@@ -136,16 +136,14 @@ def test_empty_lists_print_only_their_summary(tmp_path, command, noun):
     result = _invoke(root, *command)
 
     assert result.exit_code == 0, result.stderr
-    assert result.stdout == (
-        "0 agents: 0 up, 0 resident\n" if command == ("ls",) else f"0 {noun}\n"
-    )
+    assert result.stdout == f"0 {noun}\n"
 
 
 @pytest.mark.parametrize("count", [1, 2])
 @pytest.mark.parametrize(
     "collection,noun,heading",
     [
-        ("agents", "agent", "NAME"),
+        ("agents", "agent", "AGENT"),
         ("workspaces", "workspace", "WORKSPACE"),
         ("chores", "chore", "CHORE"),
         ("threads", "thread", "THREAD"),
@@ -220,14 +218,17 @@ def test_lists_have_flush_left_tables_and_displayed_record_summaries(
     assert result.exit_code == 0, result.stderr
     lines = strip_ansi(result.stdout).splitlines()
     assert lines[0].startswith(heading)
-    assert lines[1].startswith("─") and set(lines[1]) == {"─"}
-    assert lines[2] and not lines[2].startswith(" ")
-    assert lines[-2] == ""
+    data_start = 2
+    assert lines[1].startswith("─") and set(lines[1]) <= {"─", " "}
+    assert lines[data_start] and not lines[data_start].startswith(" ")
+    assert not lines[-2].strip()
     expected_summary = f"{count} {noun if count == 1 else noun + 's'}"
     if collection == "agents":
-        expected_summary += f": 0 up, {count} resident"
+        expected_summary += f", 0 running, {count} resident"
     assert lines[-1] == expected_summary
-    assert sum(set(line) == {"─"} for line in lines) == 1
+    assert sum("─" in line and set(line) <= {"─", " "} for line in lines) == (
+        2 if collection == "agents" else 1
+    )
     numeric_headers = {
         "agents": ("PORT",),
         "threads": ("RUNS",),
@@ -236,7 +237,8 @@ def test_lists_have_flush_left_tables_and_displayed_record_summaries(
     }
     for header in numeric_headers.get(collection, ()):
         right_edge = lines[0].index(header) + len(header)
-        assert all(row[right_edge - 1] != " " for row in lines[2:-2])
+        data_end = -3 if collection == "agents" else -2
+        assert all(row[right_edge - 1] != " " for row in lines[data_start:data_end])
 
 
 @pytest.mark.parametrize(
@@ -268,7 +270,7 @@ def test_agent_listing_maps_states_without_changing_observations(
         "up" if status == "running" else "unknown" if status == "unknown" else "down"
     )
     assert snapshot.status == status
-    assert "1 agent:" in result.stdout
+    assert "1 resident" in result.stdout
 
 
 def test_workspace_list_excludes_implicit_lab_and_does_not_prepare_state(

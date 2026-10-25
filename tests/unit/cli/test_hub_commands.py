@@ -81,8 +81,7 @@ def test_hub_status_uses_record_and_keeps_up_when_version_unavailable(
     version = "server" if metadata == "valid" else "unknown"
     endpoint = f"[{host}]:9999" if ":" in host else f"{host}:9999"
     assert (
-        capsys.readouterr().out
-        == f"hub up: version {version}, endpoint {endpoint}, pid {record.pid}\n"
+        capsys.readouterr().out == f"hub running: {version}, {endpoint}, {record.pid}\n"
     )
     assert len(requests) == 1
 
@@ -115,16 +114,16 @@ def test_hub_status_ignores_malformed_root_configuration(tmp_path, monkeypatch, 
     )
     assert cli.main(["--root", str(tmp_path), "hub", "status"]) == 0
     assert capsys.readouterr().out == (
-        f"hub up: version server, endpoint 127.0.0.1:9999, pid {record.pid}\n"
+        f"hub running: server, 127.0.0.1:9999, {record.pid}\n"
     )
 
 
 @pytest.mark.parametrize(
     "local,expected",
     [
-        ("absent", "hub down"),
-        ("starting", "hub down"),
-        ("stale", "hub down"),
+        ("absent", "hub not running"),
+        ("starting", "hub not running"),
+        ("stale", "hub not running"),
         ("corrupt", "hub unknown:"),
         ("denied", "hub unknown:"),
     ],
@@ -256,6 +255,6 @@ def test_root_api_settings_rejected_and_convo_list_requires_running_hub(
     assert cli.main(["--root", str(tmp_path), "ps"]) == 0
     output = capsys.readouterr().out
     assert output.splitlines() == [
-        "0 agents: 0 up, 0 resident, 0 visiting, 0 roaming",
-        "hub down",
+        "0 agents",
+        "hub not running",
     ]

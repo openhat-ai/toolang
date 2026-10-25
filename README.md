@@ -130,7 +130,7 @@ too new NAME                 # Create an agent
 too clone SOURCE [NAME]      # Clone an agent
 too AGENT info               # Show agent information
 too AGENT cd                 # Enter an agent home
-too ls                       # List resident agents and their status
+too ls                       # List agents and their status
 too AGENT start              # Start an agent in the background
 too AGENT stop               # Stop an agent
 too AGENT chat               # Chat directly with an agent
@@ -150,7 +150,7 @@ too models                   # List available models
 too providers                # List available model providers
 
 too AGENT inspect            # Inspect agent runs
-too ps                       # Show agent instances and hub status
+too ps                       # Show agents and hub status
 too [AGENT] top              # Monitor active runs
 ```
 

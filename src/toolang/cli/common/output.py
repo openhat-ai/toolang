@@ -143,6 +143,8 @@ def echo_table(
     max_widths: Sequence[int | None] | None = None,
     width: int | None = None,
     console: Console | None = None,
+    table_box: box.Box | None = box.HORIZONTALS,
+    show_footer: bool = False,
 ) -> None:
     console = console or _TABLE_CONSOLE
     if width is not None:
@@ -158,7 +160,16 @@ def echo_table(
             no_color=console.no_color,
             highlight=False,
         )
-    console.print(_make_table(headers, rows, justify=justify, max_widths=max_widths))
+    console.print(
+        _make_table(
+            headers,
+            rows,
+            justify=justify,
+            max_widths=max_widths,
+            table_box=table_box,
+            show_footer=show_footer,
+        )
+    )
 
 
 def echo_collection_summary(
@@ -301,11 +312,15 @@ def _make_table(
     *,
     justify: Sequence[TableJustify | None] | None,
     max_widths: Sequence[int | None] | None = None,
+    table_box: box.Box | None = box.HORIZONTALS,
+    show_footer: bool = False,
 ) -> Table:
     table = Table(
-        box=box.HORIZONTALS,
+        box=table_box,
         show_edge=False,
         header_style="",
+        footer_style="",
+        show_footer=show_footer,
         show_lines=False,
         pad_edge=False,
         collapse_padding=True,

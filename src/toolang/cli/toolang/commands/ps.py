@@ -5,6 +5,7 @@ from pathlib import Path
 
 import httpx
 from pydantic import ValidationError
+from rich import box
 from rich.console import Console
 from rich.text import Text
 import typer
@@ -21,12 +22,12 @@ from toolang.up.watcher import RuntimeWatcher
 
 
 def ps(ctx: typer.Context) -> None:
-    """Show agent instances and hub status"""
+    """Show agents and hub status"""
     _show(context_root(ctx), residents_only=False)
 
 
 def ls(ctx: typer.Context) -> None:
-    """List resident agents and their status"""
+    """List agents and their status"""
     _show(context_root(ctx), residents_only=True)
 
 
@@ -55,7 +56,7 @@ def _hub_line(root: Path) -> str:
                 endpoint + "/healthz", headers={"X-Toolang-Backend": info.identity}
             )
             if health.status_code != 200:
-                return "hub down"
+                return "hub not running"
             ready = health.json()
             if (
                 not isinstance(ready, dict)
@@ -64,10 +65,10 @@ def _hub_line(root: Path) -> str:
             ):
                 raise ValueError("invalid hub readiness response")
             if not ready["ok"]:
-                return "hub down"
-        return f"hub up: version {info.version.strip() or 'unknown'}, url {endpoint}"
+                return "hub not running"
+        return f"hub running, {info.version.strip() or 'unknown'}, {endpoint}"
     except httpx.HTTPError:
-        return "hub down"
+        return "hub not running"
     except (JSONDecodeError, ValidationError):
         return "hub unknown: invalid hub response"
     except (OSError, RuntimeError, ValueError, ToolangError) as exc:
@@ -96,17 +97,6 @@ def render_snapshot(
     rows = []
     for item, state in zip(instances, states, strict=True):
         address = item.label.partition("#")[0]
-        label = Text(
-            _safe_text(console, item.name),
-            style={
-                "resident": "bright_cyan",
-                "visiting": "bright_yellow",
-                "roaming": "bright_magenta",
-            }[item.placement],
-        )
-        label.append(
-            _safe_text(console, address[len(item.name) :]), style="default dim"
-        )
         drivers = (
             format_drivers(frozenset(item.drivers))
             if state == "up" and item.drivers is not None
@@ -115,36 +105,38 @@ def render_snapshot(
         port = ports.get(item.identity)
         rows.append(
             (
-                label,
-                Text(state, style="dim" if state == "down" else ""),
+                _safe_text(console, address),
+                state,
                 drivers,
                 str(port) if port is not None else "-",
             )
         )
+    rows.sort(key=lambda row: ("up", "down", "unknown").index(row[1]))
     if rows:
         echo_table(
-            ("NAME", "STATUS", "DRIVERS", "PORT"),
+            ("AGENT", "STATUS", "DRIVERS", "PORT"),
             rows,
             justify=("left", "left", "left", "right"),
             max_widths=(max(20, console.width),) * 4,
             console=console,
+            table_box=box.SIMPLE,
+            show_footer=True,
         )
-        console.print()
-    up = (
+    running = (
         str(states.count("up"))
         if snapshot.membership_complete and "unknown" not in states
         else "-"
     )
-    summary = (
-        f"{len(instances)} {'agent' if len(instances) == 1 else 'agents'}: {up} up"
-    )
+    summary = f"{len(instances)} {'agent' if len(instances) == 1 else 'agents'}"
+    if instances or snapshot.partial:
+        summary += f", {running} running"
     placements = (
         ("resident", "visiting", "roaming") if hub_line is not None else ("resident",)
     )
     for placement in placements:
-        summary += (
-            f", {sum(item.placement == placement for item in instances)} {placement}"
-        )
+        count = sum(item.placement == placement for item in instances)
+        if count:
+            summary += f", {count} {placement}"
     if snapshot.partial or "unknown" in states:
         summary += ", partial"
     console.print(Text(summary), soft_wrap=True)

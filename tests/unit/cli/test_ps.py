@@ -36,7 +36,7 @@ def inventory(tmp_path, *instances, complete=True, diagnostics=()):
     )
 
 
-def render(snapshot, *, hub="hub down", width=120, terminal=False):
+def render(snapshot, *, hub="hub not running", width=120, terminal=False):
     stream = io.StringIO()
     ps.render_snapshot(
         snapshot,
@@ -79,6 +79,7 @@ def test_three_state_mapping(raw, expected):
 def test_mixed_inventory_labels_drivers_ports_and_footer(tmp_path, alice):
     data = inventory(
         tmp_path,
+        replace(alice, name="eve", identity="eve", state="unknown", drivers=None),
         alice,
         replace(alice, name="bob", identity="bob", state="stopped", drivers=None),
         replace(
@@ -94,37 +95,45 @@ def test_mixed_inventory_labels_drivers_ports_and_footer(tmp_path, alice):
             drivers=("chore",),
         ),
     )
-    text = render(data, hub="hub up: version test, url http://hub.example:7001")
-    assert text.splitlines()[0].split() == ["NAME", "STATUS", "DRIVERS", "PORT"]
+    text = render(data, hub="hub running, test, http://hub.example:7001")
+    assert text.splitlines()[0].split() == ["AGENT", "STATUS", "DRIVERS", "PORT"]
     assert "TYPE" not in text and "TALK" not in text and "├" not in text
     assert "alice@t0123456789" in text and "alice@s9876543210" in text
     assert "#runtime" not in text
     assert "chat,talk" in text and "none" in text and "chore" in text
     assert "8123" in text
-    assert text.splitlines()[-2:] == [
-        "4 agents: 3 up, 2 resident, 1 visiting, 1 roaming",
-        "hub up: version test, url http://hub.example:7001",
+    assert [line.split()[0] for line in text.splitlines()[2:7]] == [
+        "alice",
+        "alice@t0123456789",
+        "alice@s9876543210",
+        "bob",
+        "eve",
     ]
-    assert data.snapshot.instances[1].state == "stopped"
+    assert text.splitlines()[-2:] == [
+        "5 agents, - running, 3 resident, 1 visiting, 1 roaming, partial",
+        "hub running, test, http://hub.example:7001",
+    ]
+    assert data.snapshot.instances[0].state == "unknown"
+    assert data.snapshot.instances[2].state == "stopped"
 
 
 @pytest.mark.parametrize(
-    "state,drivers,complete,count",
+    "state,drivers,complete,summary",
     [
-        ("running", None, True, "1"),
-        ("starting", None, True, "0"),
-        ("unknown", None, True, "-"),
-        ("running", (), False, "-"),
+        ("running", None, True, "1 agent, 1 running"),
+        ("starting", None, True, "1 agent, 0 running"),
+        ("unknown", None, True, "1 agent, - running"),
+        ("running", (), False, "1 agent, - running"),
     ],
 )
 def test_counts_are_independent_of_driver_metadata(
-    tmp_path, alice, state, drivers, complete, count
+    tmp_path, alice, state, drivers, complete, summary
 ):
     data = inventory(
         tmp_path, replace(alice, state=state, drivers=drivers), complete=complete
     )
     text = render(data)
-    assert f"1 agent: {count} up, 1 resident, 0 visiting, 0 roaming" in text
+    assert f"{summary}, 1 resident" in text
     assert (", partial" in text) is (not complete or state == "unknown")
 
 
@@ -137,7 +146,7 @@ def test_missing_port_and_partial_diagnostics_remain_visible(tmp_path, alice):
     )
     data = replace(data, sources=())
     text = render(data)
-    assert "- up" in text and ", partial" in text
+    assert "1 agent, - running" in text and ", partial" in text
     assert "partial: registry unreadable" in text
     assert "partial: alice: drivers unavailable" in text
     assert "8123" not in text
@@ -145,10 +154,8 @@ def test_missing_port_and_partial_diagnostics_remain_visible(tmp_path, alice):
 
 def test_empty_lists_keep_their_own_summary(tmp_path):
     data = inventory(tmp_path)
-    assert (
-        render(data) == "0 agents: 0 up, 0 resident, 0 visiting, 0 roaming\nhub down\n"
-    )
-    assert render(data, hub=None) == "0 agents: 0 up, 0 resident\n"
+    assert render(data) == "0 agents\nhub not running\n"
+    assert render(data, hub=None) == "0 agents\n"
 
 
 @pytest.mark.parametrize("width", [20, 32, 40, 80, 120])
@@ -161,14 +168,16 @@ def test_complete_addresses_survive_narrow_and_plain_output(
     text = render(data, width=width, terminal=terminal)
     plain = Text.from_ansi(text).plain
     lines = plain.splitlines()
-    start = next(index for index, line in enumerate(lines) if set(line) == {"─"}) + 1
-    body = "\n".join(lines[start:]).split("\n\n", 1)[0]
-    assert address == "".join(
-        line.split("  ", 1)[0].strip() for line in body.splitlines()
+    start = next(index for index, line in enumerate(lines) if line.startswith("a"))
+    end = next(
+        index
+        for index in range(start, len(lines))
+        if "─" in lines[index] and set(lines[index]) <= {"─", " "}
     )
+    assert address == "".join(line.split()[0] for line in lines[start:end])
     assert "…" not in plain and "#" not in plain
-    if not terminal:
-        assert "\x1b" not in text
+    assert "─" in lines[start - 1]
+    assert "\x1b" not in text
 
 
 def test_ascii_stream_escapes_unicode_names(tmp_path, alice):
@@ -178,7 +187,7 @@ def test_ascii_stream_escapes_unicode_names(tmp_path, alice):
     stream = AsciiStream()
     ps.render_snapshot(
         inventory(tmp_path, replace(alice, diagnostic="/tmp/助手")),
-        hub_line="hub down",
+        hub_line="hub not running",
         console=Console(file=stream, width=80, color_system=None),
     )
     stream.getvalue().encode("ascii")
@@ -196,7 +205,7 @@ def test_ls_skips_hub_settings_and_network(tmp_path, monkeypatch, capsys):
         assert cli.main(["--root", str(tmp_path), "ls"]) == 0
     text = capsys.readouterr().out
     assert "up" in text and "talk" in text
-    assert text.splitlines()[-1] == "1 agent: 1 up, 1 resident"
+    assert text.splitlines()[-1] == "1 agent, 1 running, 1 resident"
     assert "hub" not in text and "visiting" not in text and "roaming" not in text
 
 
@@ -209,7 +218,7 @@ def test_ls_filters_nonresidents_before_probing(tmp_path, monkeypatch, capsys):
     source = tmp_path / "worker.too"
     source.write_text("flow main():\n  pass\n")
     roaming = allocate_roaming(source, toolang_root=tmp_path, register=False)
-    monkeypatch.setattr(ps, "_hub_line", lambda _: "hub down")
+    monkeypatch.setattr(ps, "_hub_line", lambda _: "hub not running")
     with (
         ForegroundWorkload(resident, toolang_root=tmp_path, drivers=frozenset()),
         ForegroundWorkload(roaming, toolang_root=tmp_path, drivers=frozenset()),
@@ -217,7 +226,7 @@ def test_ls_filters_nonresidents_before_probing(tmp_path, monkeypatch, capsys):
         assert cli.main(["--root", str(tmp_path), "ps"]) == 0
         text = capsys.readouterr().out
         assert roaming.address in text
-        assert "2 agents: 2 up, 1 resident, 0 visiting, 1 roaming" in text
+        assert "2 agents, 2 running, 1 resident, 1 roaming" in text
         original = RuntimeProbe.status
 
         def inspect(self, **kwargs):
@@ -228,16 +237,16 @@ def test_ls_filters_nonresidents_before_probing(tmp_path, monkeypatch, capsys):
         assert cli.main(["--root", str(tmp_path), "ls"]) == 0
         text = capsys.readouterr().out
         assert "worker" not in text
-        assert text.splitlines()[-1] == "1 agent: 1 up, 1 resident"
+        assert text.splitlines()[-1] == "1 agent, 1 running, 1 resident"
 
 
 @pytest.mark.parametrize(
     "mode,expected",
     [
-        ("healthy", "hub up: version server, url http://hub.example:7123"),
-        ("offline", "hub down"),
-        ("unready", "hub down"),
-        ("health_false", "hub down"),
+        ("healthy", "hub running, server, http://hub.example:7123"),
+        ("offline", "hub not running"),
+        ("unready", "hub not running"),
+        ("health_false", "hub not running"),
         ("health_number", "hub unknown: invalid hub readiness response"),
         ("health_extra", "hub unknown: invalid hub readiness response"),
         ("health_json", "hub unknown: invalid hub response"),
@@ -293,7 +302,7 @@ def test_ps_probes_only_configured_hub(tmp_path, monkeypatch, capsys, mode, expe
     assert cli.main(["--root", str(tmp_path), "ps"]) == 0
     lines = capsys.readouterr().out.splitlines()
     assert lines[-1] == expected
-    assert lines[-2] == "1 agent: 0 up, 1 resident, 0 visiting, 0 roaming"
+    assert lines[-2] == "1 agent, 0 running, 1 resident"
     assert "alice" in "\n".join(lines)
     assert requests
 
@@ -309,9 +318,7 @@ def test_invalid_client_settings_keep_agent_listing(tmp_path, capsys):
     AgentLayout.resident(tmp_path, "alice").home.mkdir(parents=True)
     assert cli.main(["--root", str(tmp_path), "ps"]) == 0
     text = capsys.readouterr().out
-    assert (
-        "alice" in text and "1 agent: 0 up, 1 resident, 0 visiting, 0 roaming" in text
-    )
+    assert "alice" in text and "1 agent, 0 running, 1 resident" in text
     assert text.splitlines()[-1].startswith("hub unknown:")
 
 
@@ -323,11 +330,11 @@ def test_malformed_root_configuration_keeps_agent_listing(tmp_path, capsys, comm
     with ForegroundWorkload(layout, toolang_root=tmp_path, drivers=frozenset()):
         assert cli.main(["--root", str(tmp_path), command]) == 0
     text = capsys.readouterr().out
-    assert "alice" in text and "1 agent: 1 up, 1 resident" in text
+    assert "alice" in text and "1 agent, 1 running, 1 resident" in text
     if command == "ps":
         assert text.splitlines()[-1].startswith("hub unknown:")
     else:
-        assert text.splitlines()[-1] == "1 agent: 1 up, 1 resident"
+        assert text.splitlines()[-1] == "1 agent, 1 running, 1 resident"
         assert "hub" not in text
 
 
@@ -338,12 +345,12 @@ def test_listing_failure_keeps_unknown_count_and_diagnostic(
         raise OSError("registry unreadable")
 
     monkeypatch.setattr(ps.RuntimeWatcher, "refresh", unreadable)
-    monkeypatch.setattr(ps, "_hub_line", lambda _: "hub down")
+    monkeypatch.setattr(ps, "_hub_line", lambda _: "hub not running")
     assert cli.main(["--root", str(tmp_path), "ps"]) == 0
     lines = capsys.readouterr().out.splitlines()
     assert lines == [
-        "0 agents: - up, 0 resident, 0 visiting, 0 roaming, partial",
-        "hub down",
+        "0 agents, - running, partial",
+        "hub not running",
         "partial: agent discovery: registry unreadable",
     ]
 
@@ -354,8 +361,13 @@ def test_command_placement_and_root_list_removal(tmp_path, monkeypatch, capsys):
     text = capsys.readouterr().out
     agent_section = text.split("Agent commands:\n", 1)[1].split("\n\n", 1)[0]
     inspection = text.split("Inspection commands:\n", 1)[1].split("\n\n", 1)[0]
-    assert "ls " in agent_section and "ps " not in agent_section
-    assert "ps " in inspection and inspection.index("ps ") < inspection.index("top ")
+    agent_names = [line.split()[0] for line in agent_section.splitlines()]
+    inspection_names = [line.split()[0] for line in inspection.splitlines()]
+    assert "ls" in agent_names and "ps" not in agent_names
+    assert agent_names.index("info") < agent_names.index("ls")
+    assert "List agents and their status" in agent_section
+    assert "Show agents and hub status" in inspection
+    assert inspection_names.index("top") < inspection_names.index("ps")
     assert not any(
         line.split()[0] == "list" for line in text.splitlines() if line.strip()
     )

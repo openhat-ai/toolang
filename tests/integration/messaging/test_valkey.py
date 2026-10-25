@@ -258,15 +258,13 @@ def test_hub_cli_lifecycle_with_separate_client_root(valkey, tmp_path, monkeypat
         record = json.loads(hub.path.read_text())
         assert set(record) == {"pid", "created", "host", "port", "status"}
         status = run(server, "hub", "status")
-        assert status.stdout.startswith("hub up: version ")
-        assert status.stdout.endswith(
-            f", endpoint 127.0.0.1:{port}, pid {record['pid']}\n"
-        )
+        assert status.stdout.startswith("hub running: ")
+        assert status.stdout.endswith(f", 127.0.0.1:{port}, {record['pid']}\n")
         result = run(client, "ps")
         assert result.returncode == 0
-        assert result.stdout.splitlines()[-1].startswith("hub up: version ")
-        assert f"url http://127.0.0.1:{port}" in result.stdout
-        assert run(client, "hub", "status").stdout == "hub down\n"
+        assert result.stdout.splitlines()[-1].startswith("hub running, ")
+        assert f", http://127.0.0.1:{port}" in result.stdout
+        assert run(client, "hub", "status").stdout == "hub not running\n"
         assert "unstarted" in result.stdout
         assert not HubProcess(client).path.exists()
         assert not (server / "agents").exists()
@@ -312,7 +310,7 @@ def test_hub_cli_lifecycle_with_separate_client_root(valkey, tmp_path, monkeypat
         direct = asyncio.run(exchange())
         assert run(server, "hub", "stop").returncode == 0
         assert not hub.path.exists()
-        assert run(client, "ps").stdout.splitlines()[-1] == "hub down"
+        assert run(client, "ps").stdout.splitlines()[-1] == "hub not running"
         assert run(client, "convo", "list").returncode != 0
         assert run(server, "hub", "start").returncode == 0
 

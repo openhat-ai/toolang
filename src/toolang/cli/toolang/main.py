@@ -47,8 +47,8 @@ _AGENT_PANEL_COMMAND_ORDER = (
     "new",
     "clone",
     "remove",
-    "ls",
     "info",
+    "ls",
     "cd",
 )
 _RUNTIME_PANEL_COMMAND_ORDER = ("serve", "start", "stop", "hub")
@@ -62,8 +62,8 @@ _INSPECTION_PANEL_COMMAND_ORDER = (
     "models",
     "providers",
     "inspect",
-    "ps",
     "top",
+    "ps",
 )
 _SCRIPT_PANEL_COMMAND_ORDER = ("init", "run")
 # `too more` collects the commands the root directory omits, grouped by panel.
@@ -390,7 +390,7 @@ _registered_command(
     "ls",
     "toolang.cli.toolang.commands.ps:ls",
     cls=MetadataCommand,
-    help="List resident agents and their status",
+    help="List agents and their status",
     rich_help_panel=AGENT_COMMAND_PANEL,
 )
 _registered_command(
@@ -542,7 +542,7 @@ _registered_command(
     "ps",
     "toolang.cli.toolang.commands.ps:ps",
     cls=MetadataCommand,
-    help="Show agent instances and hub status",
+    help="Show agents and hub status",
     rich_help_panel=INSPECTION_COMMAND_PANEL,
 )
 _registered_command(

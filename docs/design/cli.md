@@ -174,10 +174,13 @@ resource commands reject instance operands. There is no `--instance`/`-i` option
 
 `too ls` lists resident homes, including stopped ones. `too ps` also includes
 active or unresolved visiting/roaming instances under the same ROOT. Both use
-the shared `RuntimeWatcher` inventory and show `NAME`, `STATUS`, `DRIVERS`, and
-`PORT`, with complete `name`/`name@id` addresses matching `top`. Summaries put the
-up count before placement counts. Only `ps` adds the configured hub's availability,
-version, and URL; it does not inspect the managed hub process or its files.
+the shared `RuntimeWatcher` inventory and show `AGENT`, `STATUS`, `DRIVERS`, and
+`PORT`, with complete `name`/`name@id` addresses matching `top`. Rows use unstyled
+`SIMPLE` tables, ordered by `up`, `down`, then `unknown`, retaining inventory order
+within each state. Summaries show the total, running count, then nonzero placement
+counts: `3 agents, 1 running, 3 resident`; empty lists show `0 agents` without a
+table. Only `ps` adds the configured hub's availability, version, and URL; it does
+not inspect the managed hub process or its files.
 
 `too AGENT info` resolves one home without collecting an inventory. Its title
 shows only the uppercase agent name; `Home` gives its location, using a relative
@@ -205,9 +208,10 @@ and distribution packages. They do not invoke factories or load agent settings.
 `toolsets --all` reveals internal entries. These are plugin inventory, distinct
 from the configured resources exposed by `tools` and `models`.
 
-Shared list and inspection tables start at terminal column zero, with one header
-separator and no outer border rules. Responsive human tables use at least 80
-display cells and otherwise use the full terminal width; terminals narrower than
+Shared list and inspection tables start at terminal column zero, with a header
+separator. `ls` and `ps` add a bottom separator; other tables have no outer rules.
+Other responsive human tables use at least 80 display cells and otherwise use
+the full terminal width; terminals narrower than
 80 retain the 80-cell layout. Agent, workspace, chore, and plugin inventory
 lists label the first column with the singular object kind, such as `AGENT`,
 `WORKSPACE`, `CHORE`, or `ADAPTER`. Nonempty lists end with one blank line
@@ -222,7 +226,7 @@ Agent status in `ls`, `ps`, and `info` is `up` for confirmed running, `down` for
 known non-running phases, and `unknown` when observation cannot be verified.
 These are display labels; internal runtime and Run/Step states stay unchanged.
 Missing metadata does not downgrade a confirmed running instance. Listings use
-`- up` when state or coverage is uncertain and retain partial diagnostics.
+`- running` when state or coverage is uncertain and retain partial diagnostics.
 Agent ports and inspection run, step, and child counts are right-aligned; text
 fields retain their existing alignment.
 
@@ -321,9 +325,10 @@ its anchor and the visible suffix. All Thread kinds use the same branch state ch
 and [Chat](chat.md) owns session snapshots and queue behavior.
 
 The hub runs independently of an agent; bare `too hub` shows service help and
-`too hub status` shows the managed process in one line, using `up/down/unknown`.
-An up process reports version, bind endpoint, then PID; version lookup failure
-does not change its process state. Lifecycle commands retain their existing flags.
+`too hub status` prints `hub running: VERSION, HOST:PORT, PID`, `hub not running`,
+or `hub unknown: REASON`. Version lookup failure does not change its process state.
+The `ps` hub line is `hub running, VERSION, URL`, with the same unavailable and
+unknown forms. Lifecycle commands retain their existing flags.
 [Messaging](messaging.md) owns Talk/Convo and shared rules. [Top](top.md) owns
 current and recent observation.
 ## Terminal titles and pane marks
