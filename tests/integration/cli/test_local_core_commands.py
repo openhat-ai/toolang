@@ -4153,13 +4153,21 @@ def test_agent_info_reports_only_state_published_caps(
     assert "1 prompt" in strip_ansi(result.stdout)
 
 
+@pytest.mark.parametrize("relative", [False, True])
+@pytest.mark.parametrize("prefix", [False, True])
+@pytest.mark.parametrize("suffix", ["", "@", "@{code}"])
 def test_roaming_agent_info_uses_the_source_layout(
     tmp_path: Path,
     monkeypatch,
     capsys,
+    relative: bool,
+    prefix: bool,
+    suffix: str,
 ) -> None:
     monkeypatch.setenv("TOOLANG_ROOT", str(tmp_path))
-    source = tmp_path / "demo.too"
+    monkeypatch.chdir(tmp_path)
+    source = tmp_path / "examples" / "demo.too"
+    source.parent.mkdir()
     source.write_text(
         templates.load_template("agent").raw_text,
         encoding="utf-8",
@@ -4198,14 +4206,19 @@ def test_roaming_agent_info_uses_the_source_layout(
         ),
     )
 
-    result = cli.main([str(source), "info"])
+    selector = str(source.relative_to(tmp_path) if relative else source)
+    selector += suffix.format(code=selected.place_code)
+    arguments = [selector, "info"] if prefix else ["info", selector]
+    result = cli.main(arguments)
     capsys.readouterr()
 
     assert result == 0
-    assert captured["title"] == f"DEMO@{selected.place_code}"
+    assert captured["title"] == "DEMO"
     rows = cast(dict[str, str], captured["rows"])
     assert shortened == [selected.home]
-    assert rows["Home"] == "compact home"
+    assert rows["Home"] == (
+        str(selected.home.relative_to(tmp_path)) if relative else "compact home"
+    )
     assert "Caps" in rows
 
 
@@ -4248,7 +4261,7 @@ def test_visiting_agent_info_uses_the_materialized_layout(
     capsys.readouterr()
 
     assert result == 0
-    assert captured["title"] == f"RESEARCHER@{layout.place_code}"
+    assert captured["title"] == "RESEARCHER"
     rows = cast(dict[str, str], captured["rows"])
     assert rows["Home"] == shorten_home_path(layout.home)
 

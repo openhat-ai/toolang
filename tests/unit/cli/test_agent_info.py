@@ -18,6 +18,16 @@ from toolang.plugin.toolsets.collections import ToolCollection
 from toolang.setup import AgentSetup
 
 
+@pytest.mark.parametrize("arguments", [("info", "huk"), ("huk", "info")])
+def test_info_reports_a_missing_agent_without_an_info_card(tmp_path, capsys, arguments):
+    assert main(["--root", str(tmp_path), *arguments]) == 1
+
+    output = capsys.readouterr()
+    assert output.err.strip() == "Error: Agent huk not found"
+    assert not output.out.strip()
+    assert not (tmp_path / "agents" / "huk").exists()
+
+
 def test_info_preserves_details_when_the_runtime_reference_is_invalid(
     tmp_path, monkeypatch, capsys
 ):
@@ -162,6 +172,7 @@ def test_info_prepares_current_resources_for_all_placements(
     ):
         assert main([selector, "info"]) == 0
         text = capsys.readouterr().out
+        assert text.splitlines()[1].strip() == layout.name.upper()
         if running:
             assert "Resources: unavailable" in text
             assert "Status: running" in text
@@ -173,10 +184,6 @@ def test_info_prepares_current_resources_for_all_placements(
         labels = ("Home", "Caps", "Tools", "Models", "Chores", "Workspaces", "Status")
         positions = [text.index(f"{label}:") for label in labels]
         assert positions == sorted(positions)
-        title = layout.name.upper()
-        if layout.place_code:
-            title += f"@{layout.place_code}"
-        assert text.splitlines()[1].strip() == title
         assert ("Status: running" in text) is running
         assert layout.agent_state.exists()
         assert not layout.run_store.exists()

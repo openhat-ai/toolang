@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Mapping
 from datetime import UTC, datetime
+from os.path import relpath
 from pathlib import Path
 import shutil
 from typing import Annotated, cast
@@ -193,7 +194,7 @@ def info_agent(
                 progress=progress.sink,
             )
             progress.complete_preparation()
-    except (OSError, RuntimeError, ToolangError, ValueError, ClickException) as exc:
+    except (OSError, RuntimeError, ToolangError, ValueError) as exc:
         preparation_error = str(exc)
         layout = context_layout(ctx)
     status = user_call(runtime_status, layout, ui_base_url=ui_base_url())
@@ -215,8 +216,16 @@ def info_agent(
     message = runtime_value(status.message)
     if status.status not in {"running", "stopped"} and message != "-":
         status_value = f"{status_value}: {message}"
+    home = shorten_home_path(layout.home)
+    address = cli_context(ctx).address
+    if (
+        layout.placement == "roaming"
+        and (address is None or address.source is not None)
+        and not Path(agent).expanduser().is_absolute()
+    ):
+        home = relpath(layout.home)
     rows = [
-        ("Home", shorten_home_path(layout.home)),
+        ("Home", home),
         *resources,
         ("Status", status_value),
     ]
@@ -236,10 +245,7 @@ def info_agent(
             rows.append(("WebUI", status.webui_url))
     if preparation_error:
         rows.append(("Preparation", preparation_error))
-    title = layout.name.upper()
-    if layout.place_code:
-        title += f"@{layout.place_code}"
-    echo_pairs_table(rows, avatar=agent_avatar(), title=title)
+    echo_pairs_table(rows, avatar=agent_avatar(), title=layout.name.upper())
     if preparation_error:
         raise typer.Exit(1)
 
