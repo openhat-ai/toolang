@@ -384,6 +384,7 @@ async def _launch_locked(
             )
         catalog_mounts: tuple[SandboxMount, ...] = ()
         catalog_env: dict[str, str] = {}
+        catalog = None
         covered_mounts = (
             *source_mounts,
             SandboxMount(layout.home, hosted_home),
@@ -403,7 +404,9 @@ async def _launch_locked(
                     ),
                 )
         guest_environment = (
-            prepare_guest_environment(layout, mapping=workspace_mapping)
+            prepare_guest_environment(
+                layout, mapping=workspace_mapping, catalog=catalog
+            )
             if not on_host
             else {}
         )

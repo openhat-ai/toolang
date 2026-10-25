@@ -354,7 +354,10 @@ The guest uses its own packaged catalog without a mount or override. Automatic
 PLACE and HOME catalogs retain their owning scope. Independently selected
 catalogs, including an explicit selection of the default file, mount read-only
 at `G/.inputs/catalog.json`; only these need `TOOLANG_MODEL_CATALOG`.
-Changing the selected file or mounted workspace grants requires restart.
+Automatic catalog choices are captured in `root/catalog.json` or
+`home/catalog.json` origin entries. Later files cannot replace that selection;
+a missing selected file rejects refresh. Changing the selected file or mounted
+workspace grants requires restart.
 
 Assembly is split between [mount preparation](../../src/toolang/up/mounts.py),
 the [launch boundary](../../src/toolang/up/sandbox.py), and the

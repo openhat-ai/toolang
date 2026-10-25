@@ -80,7 +80,9 @@ Host records use the same shape with `path=source`. Only CLI additions marked
 `temporary=true` contribute canonical source paths to State composition. Setup
 intersects current canonical grants with captured bindings before selecting the
 execution root. Removed, new, or rebound grants cannot gain access through a
-stale patch. Logical `name://` paths remain unchanged. Restart the server to
+stale patch. If the host republishes an unchanged declaration with a new
+canonical symlink target, the guest retains that published source identity;
+its execution mount must still match. Logical `name://` paths remain unchanged. Restart the server to
 change captured mounts; no workspace mapping is read from environment variables.
 Temporary grants last for the server generation and are not written to authored
 configuration. [Hosting](hosting.md#docker-filesystem) owns mount paths and access.

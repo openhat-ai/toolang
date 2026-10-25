@@ -221,6 +221,7 @@ def config_sources(
                 or layout.config.exists()
                 or layout.config.is_symlink()
                 or (layout.home / "catalog.json").exists()
+                or (layout.home / "catalog.json").is_symlink()
             ):
                 sources += (
                     ConfigSource(runtime.origin("home", layout.config), home, "home"),

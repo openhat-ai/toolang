@@ -6,8 +6,12 @@ from collections.abc import Mapping
 from dataclasses import replace
 from hashlib import sha256
 import logging
+import os
 from pathlib import Path
+from typing import cast
 
+from toolang.common.config_runtime import RuntimeConfig
+from toolang.common.config_sources import PROJECTION_KEY
 from toolang.common.layout import AgentLayout, ensure_scratch_workspace
 from toolang.common.source import AcquiredSource
 from toolang.catalog import source as cap_source
@@ -63,6 +67,7 @@ from .cache import (
     load_home_layer,
     load_root_layer,
     layer_build_lock,
+    layer_revision_dir,
     publish_layer_current,
     publish_agent_current,
     write_layer,
@@ -418,6 +423,7 @@ def prepare_home(
     """Build or reuse one agent-home State layer."""
 
     _require_agent_home(layout)
+    layout = replace(layout, runtime_config=source_runtime(layout))
     source = scan_home_source(
         layout.place,
         layout.name,
@@ -455,6 +461,67 @@ def prepare_home(
             progress=progress,
         )
         return load_home_layer(layout)
+
+
+def source_runtime(layout: AgentLayout) -> RuntimeConfig | None:
+    """Reuse published host identities for unchanged authored workspace references.
+
+    Launch origins resolve paths unavailable in the guest. They must not undo a
+    later canonical identity published by the host after a symlink is retargeted.
+    Execution bindings remain frozen and will reject that newly bound source.
+    """
+    runtime = layout.runtime_config
+    if runtime is None or not runtime.origins:
+        return runtime
+
+    def declarations(path: Path, *, root: bool) -> Mapping[str, object]:
+        config = parse_config(path.read_bytes()) if path.exists() else {}
+        values = config.get("workspaces", {})
+        if root and PROJECTION_KEY not in config and isinstance(values, Mapping):
+            key = layout.config_key
+            values = (
+                cast(Mapping[str, object], values).get(key, {})
+                if key is not None
+                else {}
+            )
+        return cast(Mapping[str, object], values) if isinstance(values, Mapping) else {}
+
+    try:
+        _, root_revision, home_revision, _, _, _, _ = load_agent_revisions(layout)
+        home = load_home_layer(layout, home_revision)
+        root_source = (
+            layer_revision_dir(layout, "root", root_revision) / "source/config.toml"
+        )
+        home_source = home.revision_dir / "source/config.toml"
+        receipt = home.revision_dir / "source" / ROOT_WORKSPACE_SOURCE
+        root_grants = declarations(receipt, root=False)
+        home_grants = cast(Mapping[str, object], home.config.get("workspaces", {}))
+        origins = dict(runtime.origins)
+        for scope, current, captured, grants in (
+            ("root", layout.place_config, root_source, root_grants),
+            ("home", layout.config, home_source, home_grants),
+        ):
+            previous = declarations(captured, root=scope == "root")
+            for name, value in declarations(current, root=scope == "root").items():
+                canonical = grants.get(name)
+                if (
+                    not isinstance(value, str)
+                    or previous.get(name) != value
+                    or not isinstance(canonical, str)
+                    or scope == "home"
+                    and name in root_grants
+                ):
+                    continue
+                reference = os.path.normpath(
+                    str(runtime.origin(scope, current).parent / value)
+                )
+                origins[reference] = Path(canonical)
+        return (
+            replace(runtime, origins=origins) if origins != runtime.origins else runtime
+        )
+    except (OSError, KeyError, TypeError, ValueError):
+        # Missing/rejected snapshots are handled by ordinary source preparation.
+        return runtime
 
 
 def _matching_root(

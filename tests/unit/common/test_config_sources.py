@@ -351,3 +351,13 @@ def test_only_companion_directories_contribute_layers(tmp_path):
     assert [item.path.parent for item in config_sources(layout)] == [tmp_path, middle]
     assert resolve_model_catalog_path(layout) == catalog
     assert prepare_agent_state(layout).workspaces == {}
+
+
+def test_roaming_dangling_home_catalog_does_not_fall_back_to_project(tmp_path):
+    source = tmp_path / "aid.too"
+    source.write_text("flow run():\n  pass\n")
+    (tmp_path / "toolang.catalog.json").write_text("{}")
+    layout = materialize_roaming_program(source, toolang_root=tmp_path / "global")
+    (layout.home / "catalog.json").symlink_to(tmp_path / "missing.json")
+    with pytest.raises(ValueError, match="model catalog is not a file"):
+        resolve_model_catalog_path(layout)

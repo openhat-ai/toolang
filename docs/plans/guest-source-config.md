@@ -98,6 +98,9 @@ Patch and source rules:
   to open. Additional absolute reference keys retain canonical symlink/tilde
   targets captured on the host. Preserve this provenance; never
   rebase against guest HOME/cwd or resolve host paths through guest symlinks.
+  Named `root/catalog.json` and `home/catalog.json` origins pin automatic catalog
+  selection. For unchanged workspace declarations, use newer accepted canonical
+  identities from shared State without changing the captured execution bindings.
 - CLI orchestration parses the envelope and passes concrete source contexts to
   parsers. Build canonical State from original bytes and host origins; only
   then derive the patched execution/Setup view. Persist neither the envelope

@@ -8,6 +8,10 @@ import getpass
 import json
 import os
 import tomllib
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from toolang.plugin.catalogs.models_dev.path import ModelCatalogSelection
 
 from toolang.base.types.sandbox import SandboxMount
 from toolang.catalog.types import CAP_DIRECTORY_NAMES
@@ -146,9 +150,12 @@ def prepare_guest_environment(
     layout: AgentLayout,
     *,
     mapping: Mapping[str, tuple[str, str]],
+    catalog: ModelCatalogSelection | None = None,
 ) -> dict[str, str]:
     """Capture source origins and execution corrections without rewriting sources."""
     origins = {"root": str(layout.place_config), "home": str(layout.config)}
+    if catalog is not None and catalog.scope in {"root", "home"}:
+        origins[f"{catalog.scope}/catalog.json"] = str(catalog.path)
     overlays: dict[str, object] = {}
     for scope, path in (("root", layout.place_config), ("home", layout.config)):
         if not path.is_file():
@@ -167,9 +174,13 @@ def prepare_guest_environment(
             mounted = mapping.get(name)
             if mounted is not None and mounted[0] == str(canonical):
                 corrected[name] = mounted[1]
-        catalog = catalog_config(config)
-        if catalog and isinstance(catalog.get("path"), str) and catalog["path"]:
-            value = str(catalog["path"])
+        configured_catalog = catalog_config(config)
+        if (
+            configured_catalog
+            and isinstance(configured_catalog.get("path"), str)
+            and configured_catalog["path"]
+        ):
+            value = str(configured_catalog["path"])
             origins[os.path.normpath(str(path.parent / value))] = str(
                 resolve_path(value, path.parent)
             )

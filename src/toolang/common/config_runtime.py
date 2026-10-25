@@ -14,8 +14,9 @@ from types import MappingProxyType
 from typing import cast
 
 CONFIG_PATCH_ENV = "TOOLANG_CONFIG_PATCH"
-LAUNCH_SCHEMA = 1
+LAUNCH_SCHEMA = 2
 _SCOPES = {"root", "home"}
+_FILE_ORIGINS = {"root/catalog.json", "home/catalog.json"}
 _STATE_FIELDS = {
     "psyches",
     "skills",
@@ -161,7 +162,8 @@ class RuntimeConfig:
                 for key, value in _object(data.get("origins", {})).items()
             }
             if any(
-                key not in _SCOPES and not Path(key).is_absolute() for key in origins
+                key not in _SCOPES | _FILE_ORIGINS and not Path(key).is_absolute()
+                for key in origins
             ):
                 raise ValueError
             defaults = _object(data.get("defaults", {}))

@@ -71,9 +71,10 @@ def resolve_model_catalog_selection(
             (layout.place / "catalog.json", "root"),
         )
         for path, scope in candidates:
-            if path.exists() or path.is_symlink():
-                _require_catalog_candidate(path, label="mounted model catalog")
-                return ModelCatalogSelection(path, scope)
+            if f"{scope}/catalog.json" not in layout.runtime_config.origins:
+                continue
+            _require_catalog_candidate(path, label="mounted model catalog")
+            return ModelCatalogSelection(path, scope)
     else:
         for source in reversed(
             sources

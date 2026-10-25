@@ -2,6 +2,7 @@
 
 from pathlib import Path
 from dataclasses import replace
+import asyncio
 
 import pytest
 
@@ -13,6 +14,7 @@ from toolang.common.config_runtime import (
 from toolang.common.layout import AgentLayout
 from toolang.state.prepare import prepare_agent_state, inspect_root_caps
 from toolang.state.cache import layer_revision_dir
+from toolang.state.watcher import StateWatcher
 from toolang.up.mounts import prepare_source_mounts, prepare_guest_environment
 from toolang.up.source import materialize_roaming_program
 
@@ -110,13 +112,16 @@ def test_roaming_workspace_commands_edit_authored_root_instead_of_projection(tmp
     assert source.is_file()
 
 
-def test_incompatible_launch_schema_fails_before_state_writes(tmp_path):
+@pytest.mark.parametrize("schema", ["0", "1"])
+def test_incompatible_launch_schema_fails_before_state_writes(tmp_path, schema):
     from toolang.cli.toolang.main import main
 
     host = AgentLayout.resident(tmp_path, "aid")
     host.home.mkdir(parents=True)
     host.program.write_text("flow run():\n  pass\n")
-    assert main(["--root", str(tmp_path), "_serve", "aid", "--launch-schema", "0"]) == 1
+    assert (
+        main(["--root", str(tmp_path), "_serve", "aid", "--launch-schema", schema]) == 1
+    )
     assert not (host.place / ".state").exists()
     assert not (host.home / ".state").exists()
 
@@ -186,3 +191,92 @@ def test_shared_state_stays_stable_across_host_and_guest(tmp_path, project, link
     assert updated.revision != initial.revision
     assert prepare_agent_state(host).revision == updated.revision
     assert updated.workspaces == initial.workspaces
+
+
+@pytest.mark.parametrize("scope", ["root", "home"])
+def test_guest_does_not_restore_stale_symlink_identity_after_host_publication(
+    tmp_path, scope
+):
+    from toolang.setup.types import AgentEnvironment, AgentSetup
+
+    host = AgentLayout.resident(tmp_path / "host", "aid")
+    host.home.mkdir(parents=True)
+    first, second = tmp_path / "first", tmp_path / "second"
+    first.mkdir()
+    second.mkdir()
+    directory = host.place if scope == "root" else host.home
+    link = directory / "repo-link"
+    link.symlink_to(first, target_is_directory=True)
+    config = host.place_config if scope == "root" else host.config
+    table = "workspaces.aid" if scope == "root" else "workspaces"
+    config.write_text(f'[{table}]\nrepo = "./repo-link"\n')
+    if not host.place_config.exists():
+        host.place_config.write_text("")
+    initial = prepare_agent_state(host)
+    guest_place = tmp_path / "guest"
+    guest_place.mkdir()
+    for path in ("config.toml", ".state"):
+        (guest_place / path).symlink_to(host.place / path)
+    (guest_place / "agents").mkdir()
+    (guest_place / "agents/aid").symlink_to(host.home, target_is_directory=True)
+    target = guest_place / "workspaces/aid/repo"
+    runtime = RuntimeConfig.parse(
+        prepare_guest_environment(host, mapping={"repo": (str(first), str(target))})[
+            CONFIG_PATCH_ENV
+        ],
+        workspaces={"repo": WorkspaceBinding(first, target)},
+    )
+    guest = replace(host, place=guest_place, root=guest_place, runtime_config=runtime)
+    assert prepare_agent_state(guest).revision == initial.revision
+    watcher = StateWatcher(guest, initial_state=initial)
+    link.unlink()
+    link.symlink_to(second, target_is_directory=True)
+    changed = prepare_agent_state(host)
+    assert changed.workspaces["repo"] == str(second)
+    observed = asyncio.run(watcher._perform_check(requested=False))
+    assert observed.failure is None
+    assert observed.state.revision == changed.revision
+    for _ in range(3):
+        assert prepare_agent_state(guest).revision == changed.revision
+        assert prepare_agent_state(host).revision == changed.revision
+    assert (
+        len(
+            list(
+                layer_revision_dir(host, "home", changed.home_revision).parent.iterdir()
+            )
+        )
+        == 2
+    )
+    setup = AgentSetup(
+        layout=guest,
+        envs={},
+        environment=AgentEnvironment.capture(guest, sandbox="docker:test", environ={}),
+    )
+    assert "repo" not in setup.workspace_roots(changed.workspaces)
+
+
+@pytest.mark.parametrize("kind", ["packaged", "root", "home"])
+def test_guest_catalog_selection_is_fixed_for_the_launch(tmp_path, kind):
+    from toolang.plugin.catalogs.models_dev.path import resolve_model_catalog_selection
+
+    host = AgentLayout.resident(tmp_path, "aid")
+    host.home.mkdir(parents=True)
+    if kind in {"root", "home"}:
+        (host.place / "catalog.json").write_text("{}")
+    if kind == "home":
+        (host.home / "catalog.json").write_text("{}")
+    selected = resolve_model_catalog_selection(host)
+    patch = prepare_guest_environment(host, mapping={}, catalog=selected)[
+        CONFIG_PATCH_ENV
+    ]
+    guest = replace(host, runtime_config=RuntimeConfig.parse(patch))
+    assert resolve_model_catalog_selection(guest).path == selected.path
+    if kind == "home":
+        (host.home / "catalog.json").unlink()
+        with pytest.raises(FileNotFoundError, match="mounted model catalog"):
+            resolve_model_catalog_selection(guest)
+    else:
+        (host.home / "catalog.json").write_text("{}")
+        if kind == "packaged":
+            (host.place / "catalog.json").write_text("{}")
+        assert resolve_model_catalog_selection(guest).path == selected.path
