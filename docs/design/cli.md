@@ -176,8 +176,9 @@ includes residents plus active registered visiting/roaming instances, with statu
 and effective Talk selection. Both use the shared `RuntimeWatcher` inventory.
 
 `too AGENT info` resolves one home without collecting an inventory. Its title
-shows only the uppercase agent name; `Home` gives its
-location, followed by Caps, Tools, Models, Chores, Workspaces, and runtime status.
+shows only the uppercase agent name; `Home` gives its location, using a relative
+path for relative script operands. Caps, Tools, Models, Chores, Workspaces, and
+runtime status follow.
 Setup/State preparation creates no executor or Run store. `--catalog` selects
 the local catalog for stopped agents; owned agents report their runtime snapshot.
 Preparation failures preserve runtime ownership, show diagnostics, and

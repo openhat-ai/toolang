@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Mapping
 from datetime import UTC, datetime
+from os.path import relpath
 from pathlib import Path
 import shutil
 from typing import Annotated, cast
@@ -215,8 +216,16 @@ def info_agent(
     message = runtime_value(status.message)
     if status.status not in {"running", "stopped"} and message != "-":
         status_value = f"{status_value}: {message}"
+    home = shorten_home_path(layout.home)
+    address = cli_context(ctx).address
+    if (
+        layout.placement == "roaming"
+        and (address is None or address.source is not None)
+        and not Path(agent).expanduser().is_absolute()
+    ):
+        home = relpath(layout.home)
     rows = [
-        ("Home", shorten_home_path(layout.home)),
+        ("Home", home),
         *resources,
         ("Status", status_value),
     ]
