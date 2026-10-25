@@ -52,7 +52,7 @@ def test_display_order_is_independent_of_removal_priority(
     model_catalog._echo_models(records, width=width)
 
     lines = strip_ansi(stream.getvalue()).splitlines()
-    assert len(lines) == 3
+    assert len(lines) == 5
     assert lines[0].split() == columns.split()
     assert lines[0].startswith("MODEL") and lines[2].startswith(records[0]["ref"])
     assert set(lines[1]) == {"─"}
@@ -71,7 +71,7 @@ def test_required_columns_can_exceed_budget_without_losing_identity(capsys, iden
     model_catalog._echo_models([_record(ref=identity)], width=80)
 
     lines = capsys.readouterr().out.splitlines()
-    assert len(lines) == 3
+    assert len(lines) == 5
     assert lines[0].split() == ["MODEL", "CONTEXT", "PRICE", "($/1M)", "STATUS"]
     assert lines[2].startswith(identity)
     assert "1,000,000" in lines[2] and "1.00/2.00" in lines[2] and "ready" in lines[2]
@@ -134,7 +134,7 @@ def test_model_cells_preserve_literal_text_and_strip_terminal_instructions(capsy
     model_catalog._echo_models([record], width=240)
 
     lines = capsys.readouterr().out.splitlines()
-    assert len(lines) == 3
+    assert len(lines) == 5
     assert "vendor/[bold]模型👨‍👩‍👧‍👦" in lines[2]
     assert "bad-title" not in lines[2] and "\x1b" not in lines[2]
     assert "reasoning  tool_call" in lines[2]

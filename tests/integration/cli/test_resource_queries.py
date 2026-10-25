@@ -43,15 +43,16 @@ def test_cap_lists_keep_single_rows_and_complete_json(
     assert record["description"] == description.strip()
     assert record["location"].endswith("/skills/review/SKILL.md")
     lines = strip_ansi(human.stdout).splitlines()
-    assert len(lines) == 5
+    assert len(lines) == 6
     assert max(map(wcswidth, lines)) == max(80, width)
     assert lines[0].split() == ["CAP", "DESCRIPTION", "LOCATION", "STATUS"]
     assert lines[2].startswith("skill/review")
-    assert lines[2].endswith("ready")
+    assert lines[2].rstrip().endswith("ready")
     assert str(root) not in lines[2]
     assert "local,root,authored" not in human.stdout
     assert "…" in lines[2]
-    assert lines[-2] == ""
+    assert lines[-3] == lines[1]
+    assert not lines[-2].strip()
     assert lines[-1] == "1 " + ("cap" if command == ("caps",) else "skill")
 
 

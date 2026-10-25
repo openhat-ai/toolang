@@ -75,7 +75,7 @@ def test_column_omission_is_independent_of_display_order(
     _echo_chores(entries, width=width)
 
     lines = strip_ansi(stream.getvalue()).splitlines()
-    assert len(lines) == 3
+    assert len(lines) == 5
     assert " ".join(lines[0].split()) == headers
     assert lines[0].startswith("CHORE")
     assert lines[2].split()[0] == entries[0].runtime.thread_id
@@ -159,7 +159,7 @@ def test_fixed_fields_and_complete_line_suffix_can_exceed_width(capsys, identity
     _echo_chores([entry], width=80)
 
     lines = capsys.readouterr().out.splitlines()
-    assert len(lines) == 3
+    assert len(lines) == 5
     assert lines[2].startswith(identity)
     assert entry.schedule in lines[2] and "unsynced" in lines[2]
     assert lines[2].rstrip().endswith(":123456789")
@@ -211,7 +211,7 @@ def test_display_controls_and_whitespace_are_safe_without_interpreting_markup(ca
     _echo_chores([entry], width=400)
 
     lines = capsys.readouterr().out.splitlines()
-    assert len(lines) == 3
+    assert len(lines) == 5
     assert lines[2].startswith("维护e\u0301👨‍👩‍👧‍👦")
     assert "[bold]Review[/bold] changes." in lines[2]
     assert "Request failed." in lines[2] and "once" in lines[2]

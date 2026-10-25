@@ -52,16 +52,18 @@ def test_resource_rows_stay_single_line_at_the_full_terminal_width(
 
     rendered = strip_ansi(stream.getvalue())
     lines = rendered.splitlines()
-    assert len(lines) == 4
+    assert len(lines) == 6
     assert all(wcswidth(line) <= width for line in lines)
     assert wcswidth(lines[1]) == width
     assert set(lines[1]) == {"─"}
+    assert lines[1] == lines[-2]
+    assert not lines[-1].strip()
     assert not lines[0].startswith(" ")
     assert not lines[2].startswith(" ")
     assert records == before
     assert "not_allowed" in lines[2]
     assert "local,root,authored" not in rendered
-    assert lines[0].endswith("STATUS")
+    assert lines[0].rstrip().endswith("STATUS")
     if width >= 240:
         assert "SKILL.md" in lines[2]
 
@@ -83,9 +85,9 @@ def test_compact_rows_use_fresh_width_and_unavailable_terminal_fallback(
             [record], ("ref", "description", "tags"), heading="TOOL", json_=False
         )
         lines = capsys.readouterr().out.splitlines()
-        assert len(lines) == 3
+        assert len(lines) == 5
         assert lines[0].split() == ["TOOL", "DESCRIPTION", "STATUS"]
-        assert lines[2].startswith("shell/run") and lines[2].endswith("ready")
+        assert lines[2].startswith("shell/run") and lines[2].rstrip().endswith("ready")
         widths.append(wcswidth(lines[1]))
     assert widths == [120, 80, 80, 240, 120, 120]
 
@@ -107,7 +109,7 @@ def test_compact_output_sanitizes_controls_and_preserves_literal_markup(
         json_=False,
     )
     rendered = capsys.readouterr().out
-    assert len(rendered.splitlines()) == 3
+    assert len(rendered.splitlines()) == 5
     assert "\x1b" not in rendered and "bad title" not in rendered
     assert "[bold]Review[/bold] changes." in rendered
     assert record["location"] in rendered
@@ -144,8 +146,8 @@ def test_compact_records_never_shorten_identity_or_status(monkeypatch, capsys, w
         json_=False,
     )
     lines = capsys.readouterr().out.splitlines()
-    assert len(lines) == 3
-    assert identity in lines[2] and lines[2].endswith("not_allowed")
+    assert len(lines) == 5
+    assert identity in lines[2] and lines[2].rstrip().endswith("not_allowed")
     assert "local" not in lines[2]
 
 

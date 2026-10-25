@@ -102,6 +102,10 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   details.
   ([#966](https://github.com/openhat-ai/toolang/pull/966))
 
+- Collection and inspection tables now share the same bottom separator as
+  `too ls` and `too ps`, with a blank line before collection counts.
+  ([#967](https://github.com/openhat-ai/toolang/pull/967))
+
 ## [0.4.0b1] - 2026-10-24
 
 ### Added

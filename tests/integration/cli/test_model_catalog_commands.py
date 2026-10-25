@@ -58,7 +58,10 @@ def test_model_columns_follow_priority_without_changing_json_or_selection(
     else:
         expected = "MODEL CONTEXT MAX_OUTPUT PRICE ($/1M) INPUT OUTPUT FEATURES STATUS"
     assert lines[0].split() == expected.split()
-    assert len(lines) == 6 and lines[-2:] == ["", "2 models, 1 provider"]
+    assert len(lines) == 7
+    assert lines[-3] == lines[1]
+    assert not lines[-2].strip()
+    assert lines[-1] == "2 models, 1 provider"
     assert all(wcswidth(line) <= max(width, 80) for line in lines)
     assert all(
         line.startswith(ref) for line, ref in zip(lines[2:4], ("test/one", "test/two"))
@@ -137,7 +140,10 @@ def test_provider_table_fits_terminal_width_and_keeps_connection_columns(
     assert lines[0].split() == ["PROVIDER", "MODELS", "API", "ENV"]
     assert lines[0].startswith("PROVIDER") and lines[2].startswith("test")
     assert set(lines[1]) == {"─"}
-    assert len(lines) == 5 and lines[-2:] == ["", "1 provider"]
+    assert len(lines) == 6
+    assert lines[-3] == lines[1]
+    assert not lines[-2].strip()
+    assert lines[-1] == "1 provider"
     assert all(cell_len(line) <= max(80, width) for line in lines)
     assert "TEST_API_KEY" in lines[2] and "0/2" in lines[2]
     assert "…" in lines[2]

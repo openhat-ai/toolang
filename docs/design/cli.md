@@ -208,12 +208,13 @@ and distribution packages. They do not invoke factories or load agent settings.
 `toolsets --all` reveals internal entries. These are plugin inventory, distinct
 from the configured resources exposed by `tools` and `models`.
 
-Shared list and inspection tables start at terminal column zero, with a header
-separator. `ls` and `ps` add a bottom separator; other tables have no outer rules.
-Other responsive human tables use at least 80 display cells and otherwise use
-the full terminal width; terminals narrower than
-80 retain the 80-cell layout. Agent, workspace, chore, and plugin inventory
-lists label the first column with the singular object kind, such as `AGENT`,
+Shared list and inspection tables use Rich's `box.SIMPLE` with `show_edge=False`
+and `show_footer=True`: the first column starts at terminal column zero, matching
+header and footer separators frame the rows, and the empty footer separates the
+table from any following count. Responsive human tables use at least 80 display
+cells and otherwise use the full terminal width; terminals narrower than 80 retain
+the 80-cell layout. Agent, workspace, chore, and plugin inventory lists label the
+first column with the singular object kind, such as `AGENT`,
 `WORKSPACE`, `CHORE`, or `ADAPTER`. Nonempty lists end with one blank line
 followed by an unindented count of the displayed records; resource lists retain
 their group counts. Empty lists print only `0 <items>`, such as `0 agents` or

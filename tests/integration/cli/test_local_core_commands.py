@@ -111,7 +111,7 @@ def _human_record_rows(output: str, columns: tuple[str, ...]) -> list[dict[str, 
             ).rstrip()
             for index, (column, start) in enumerate(zip(columns, starts))
         }
-        for line in lines[2:-2]
+        for line in lines[2:-3]
     ]
 
 
@@ -226,9 +226,8 @@ def test_lists_have_flush_left_tables_and_displayed_record_summaries(
     if collection == "agents":
         expected_summary += f", 0 running, {count} resident"
     assert lines[-1] == expected_summary
-    assert sum("─" in line and set(line) <= {"─", " "} for line in lines) == (
-        2 if collection == "agents" else 1
-    )
+    assert sum("─" in line and set(line) <= {"─", " "} for line in lines) == 2
+    assert lines[-3] == lines[1]
     numeric_headers = {
         "agents": ("PORT",),
         "threads": ("RUNS",),
@@ -237,7 +236,7 @@ def test_lists_have_flush_left_tables_and_displayed_record_summaries(
     }
     for header in numeric_headers.get(collection, ()):
         right_edge = lines[0].index(header) + len(header)
-        data_end = -3 if collection == "agents" else -2
+        data_end = -3
         assert all(row[right_edge - 1] != " " for row in lines[data_start:data_end])
 
 
@@ -895,7 +894,7 @@ def test_chore_list_keeps_invalid_sources_without_thread_identity(
     result = _invoke(root, "alice", "chore", "list")
 
     assert result.exit_code == 0, result.stderr
-    rows = result.stdout.splitlines()[2:-2]
+    rows = result.stdout.splitlines()[2:-3]
     invalid = next(row for row in rows if "chores/bad .md" in row)
     assert invalid.split()[0] == "bad"
     assert "invalid chore name" in invalid
@@ -990,17 +989,18 @@ def test_chore_list_fits_terminal_and_omits_columns_in_priority_order(
     assert result.exit_code == 0, result.stderr
     lines = strip_ansi(result.stdout).splitlines()
     assert " ".join(lines[0].split()) == expected_headers
-    assert len(lines) == 7
+    assert len(lines) == 8
     assert wcswidth(lines[1]) == expected_width
     assert max(map(wcswidth, lines)) == expected_width
-    assert all(not line.startswith(" ") for line in lines if line)
+    assert all(not line.startswith(" ") for line in lines if line.strip())
     assert [line.split()[0] for line in lines[2:5]] == [
         chore.thread_id for chore in load_chores(layout)
     ]
     assert schedule in lines[3] and "2026-10-22T17:30:00+08:00" in lines[3]
     assert "done" in lines[2] and "pending" in lines[3] and "unsynced" in lines[4]
     assert "once" in lines[2] and lines[4].rstrip().endswith(":1")
-    assert lines[-2:] == ["", "3 chores"]
+    assert not lines[-2].strip()
+    assert lines[-1] == "3 chores"
     if expected_width == 120:
         assert "Provider…" in lines[3]
     with closing(ChoreStore(layout.chore_store, read_only=True)) as jobs:
@@ -1393,7 +1393,8 @@ def test_inspect_lists_root_and_related_record_subjects(
         "run_subject_first",
     ]
     assert human_runs.exit_code == 0, human_runs.stderr
-    assert human_runs.stdout.endswith("\n\n4 runs\n")
+    assert human_runs.stdout.splitlines()[-1] == "4 runs"
+    assert not human_runs.stdout.splitlines()[-2].strip()
     human_run_lines = [
         " ".join(line.split()) for line in strip_ansi(human_runs.stdout).splitlines()
     ]
@@ -1409,7 +1410,8 @@ def test_inspect_lists_root_and_related_record_subjects(
     assert "agic:test succeeded 0 chat_subject run_subject_first.2" in child_run_line
     assert child_run_line.split()[-1] == "2026-01-01T20:00:00+08:00"
     assert human_scoped_runs.exit_code == 0, human_scoped_runs.stderr
-    assert human_scoped_runs.stdout.endswith("\n\n3 runs\n")
+    assert human_scoped_runs.stdout.splitlines()[-1] == "3 runs"
+    assert not human_scoped_runs.stdout.splitlines()[-2].strip()
     human_scoped_lines = [
         " ".join(line.split())
         for line in strip_ansi(human_scoped_runs.stdout).splitlines()
@@ -2025,7 +2027,8 @@ def test_inspect_projects_run_tree_and_container_step_call(tmp_path: Path) -> No
     assert child_runs.exit_code == 0, child_runs.stderr
     assert [item["id"] for item in json.loads(child_runs.stdout)] == [child.id]
     assert human_child_runs.exit_code == 0, human_child_runs.stderr
-    assert human_child_runs.stdout.endswith("\n\n1 run\n")
+    assert human_child_runs.stdout.splitlines()[-1] == "1 run"
+    assert not human_child_runs.stdout.splitlines()[-2].strip()
     child_run_lines = [
         " ".join(line.split())
         for line in strip_ansi(human_child_runs.stdout).splitlines()
@@ -3413,12 +3416,13 @@ def test_tools_use_terminal_width_without_wrapping_or_changing_json(
     assert json.loads(before.stdout) == json.loads(after.stdout)
     assert json.loads(before.stdout)[0]["description"] == description
     lines = strip_ansi(human.stdout).splitlines()
-    assert len(lines) == 5
+    assert len(lines) == 6
     assert max(map(wcswidth, lines)) == width
     assert lines[0].split() == ["TOOL", "DESCRIPTION", "STATUS"]
-    assert lines[2].startswith("shell/echo") and lines[2].endswith("ready")
+    assert lines[2].startswith("shell/echo") and lines[2].rstrip().endswith("ready")
     assert "…" in lines[2]
-    assert lines[-2:] == ["", "1 tool"]
+    assert not lines[-2].strip()
+    assert lines[-1] == "1 tool"
 
 
 @pytest.mark.parametrize(
@@ -3702,7 +3706,7 @@ def test_root_cap_inspection_uses_resolved_metadata_and_shared_cache(
     rewrite = next(line for line in stdout.splitlines() if "prompt/rewrite" in line)
     assert "Rewrite" in rewrite
     if all_:
-        assert rewrite.endswith("ready")
+        assert rewrite.rstrip().endswith("ready")
         assert "remote,root" not in rewrite
         other = next(line for line in stdout.splitlines() if "prompt/other" in line)
         assert "Other" in other
@@ -3914,7 +3918,8 @@ def test_plugin_inventory_commands_list_entry_points_and_handle_empty_groups(
     assert output.startswith(header)
     assert output.splitlines()[1].startswith("─")
     assert not output.splitlines()[2].startswith(" ")
-    assert output.splitlines()[-2] == ""
+    assert not output.splitlines()[-2].strip()
+    assert output.splitlines()[-3] == output.splitlines()[1]
     assert output.splitlines()[-1].startswith("1 ")
     assert output.splitlines()[0].split() == [header, "PACKAGE"]
     assert "SOURCE" not in output
