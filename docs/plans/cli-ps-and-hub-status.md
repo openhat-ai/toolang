@@ -43,10 +43,10 @@ Keep runtime/API values unchanged. `ls`, `ps`, and agent `info` share this mappi
 - `hub status`: `starting`/`running` from verified process state; absent/stale
   process is `not running`; corrupt records/denied inspection are `unknown`.
   Version lookup failure does not change process state.
-- `ps` uses `hub <status>: <url>`: `running` after valid metadata/readiness,
-  `not running` after
-  connection/readiness failure, `unknown` for invalid configuration/response.
-  Unknown URL is `-`. These report availability, not server lifecycle.
+- `ps` reports `running` after valid metadata/readiness, including the remote
+  version and configured URL; connection/readiness failure is `hub not running`.
+  Invalid configuration/response is `hub unknown: <reason>`. These report
+  availability, not server lifecycle.
 - `top` retains Run/Step `pending`/`running`/`succeeded`/`failed`/`canceled` and
   operation labels. `unavailable`/`stale` qualify observation quality, not agents.
 - DRIVERS reuses `format_drivers`: `chat,chore,talk`, `none` for known empty,
@@ -62,8 +62,10 @@ Keep runtime/API values unchanged. `ls`, `ps`, and agent `info` share this mappi
 
 ```text
 4 agents: 2 resident, 1 visiting, 1 roaming, 3 running
-hub running: http://127.0.0.1:7001
+hub running: version 0.4.0b1, url http://127.0.0.1:7001
 ```
+
+An unavailable hub replaces only the second line with `hub not running`.
 
 `too ls` footer (resident count only; no visiting/roaming counts or hub line):
 
@@ -74,8 +76,8 @@ hub running: http://127.0.0.1:7001
 `too hub status` prints one status line:
 
 ```text
-hub running: version <version>, pid 10402, endpoint 127.0.0.1:7001
-hub starting: version unknown, pid 10402, endpoint 127.0.0.1:7001
+hub running: version 0.4.0b1, endpoint 127.0.0.1:7001, pid 10402
+hub starting: version unknown, endpoint 127.0.0.1:7001, pid 10402
 hub not running
 hub unknown: <reason>
 ```
@@ -110,7 +112,8 @@ Commands:
   independent of the client URL; `ps` has the two-line footer above, while `ls`
   has only its resident summary and never probes the hub. Metadata/inspection
   failures remain distinguishable from shutdown.
-- [ ] Assert command placement, exact help/status wording, bare help without
+- [ ] Assert command placement, exact help/status wording and field order,
+  remote hub version/URL versus managed process endpoint/PID, bare help without
   probing, root `list` removal, and unchanged lifecycle routing using offline tests.
 - [ ] Update CLI docs/examples, generate the changelog through
   `too aid.too update_changelog`, and run repository default verification.
