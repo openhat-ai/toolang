@@ -15,7 +15,7 @@ approval.
 - Both show only `NAME`, `STATUS`, `DRIVERS`, and right-aligned `PORT`, using
   `top`'s complete `name`/`name@id` addresses. Show observed launch drivers
   and service ports, using the state and metadata rules below.
-- Count displayed instances, placements, and confirmed `up` instances (`ls`
+- Count displayed instances, confirmed `up` instances, then placements (`ls`
   includes only the resident count). `ps` uses existing bounded readiness checks
   for `[teaming].hub`, without reading hub process files. No type column or tree.
 - Bare `too hub` shows help. `status` inspects this ROOT's managed process via
@@ -61,7 +61,7 @@ values, and persisted records unchanged. `ls`, `ps`, and agent `info` share:
 `too ps` footer (always two lines, including zero placement counts):
 
 ```text
-4 agents: 2 resident, 1 visiting, 1 roaming, 3 up
+4 agents: 3 up, 2 resident, 1 visiting, 1 roaming
 hub up: version 0.4.0b1, url http://127.0.0.1:7001
 ```
 
@@ -70,7 +70,7 @@ An unavailable hub replaces only the second line with `hub down`.
 `too ls` footer (resident count only; no visiting/roaming counts or hub line):
 
 ```text
-2 agents: 2 resident, 1 up
+2 agents: 1 up, 2 resident
 ```
 
 `too hub status` prints one of these lines:
@@ -81,13 +81,13 @@ hub down
 hub unknown: <reason>
 ```
 
-`too hub` help, including usage and command order:
+`too hub` help: description, usage, then commands in the order below:
 
 ```text
 $ too hub
-Usage: too hub [COMMAND]
-
 Manage the hub service.
+
+Usage: too hub [COMMAND]
 
 Commands:
   status  Show hub status
