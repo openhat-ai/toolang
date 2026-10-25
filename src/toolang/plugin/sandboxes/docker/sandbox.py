@@ -6,7 +6,6 @@ import asyncio
 from collections.abc import Mapping
 from contextlib import suppress
 from dataclasses import dataclass, field
-from hashlib import sha256
 import os
 import json
 from pathlib import Path
@@ -125,11 +124,9 @@ def _hosted_model_catalog_mounts(
     dotenv_envs: dict[str, str],
     process_envs: dict[str, str],
 ) -> tuple[SandboxMount, ...]:
-    """Rewrite selected catalog paths and mount host-external sources read-only."""
+    """Reuse captured read-only catalogs or bind explicit files at one target."""
 
     mounts: dict[tuple[Path, Path], SandboxMount] = {}
-    local_place = request.local_place.resolve()
-    local_home = request.local_home.resolve()
     if MODEL_CATALOG_ENV in process_envs:
         dotenv_envs.pop(MODEL_CATALOG_ENV, None)
     for section in (dotenv_envs, process_envs):
@@ -141,9 +138,10 @@ def _hosted_model_catalog_mounts(
             None,
         )
         if captured is None:
-            for mount in (
-                *request.mounts,
-                SandboxMount(request.local_home, request.hosted_home),
+            for mount in sorted(
+                _request_mounts(request),
+                key=lambda item: len(item.hosted_path.parts),
+                reverse=True,
             ):
                 guest_path = Path(raw_path)
                 if mount.local_path.is_dir() and guest_path.is_relative_to(
@@ -152,37 +150,32 @@ def _hosted_model_catalog_mounts(
                     local_path = mount.local_path / guest_path.relative_to(
                         mount.hosted_path
                     )
-                    if local_path.is_file():
-                        captured = SandboxMount(local_path, guest_path, read_only=True)
-                        break
+                    captured = SandboxMount(local_path, guest_path)
+                    break
         if captured is not None:
             if not captured.local_path.is_file():
                 raise ValueError(
                     f"model catalog is not a regular file: {captured.local_path}"
                 )
-            continue
-        local_path = Path(raw_path).expanduser().resolve(strict=True)
+            if captured.read_only:
+                continue
+            local_path = captured.local_path.resolve(strict=True)
+        else:
+            local_path = Path(raw_path).expanduser().resolve(strict=True)
         if not local_path.is_file():
             raise ValueError(f"model catalog is not a regular file: {local_path}")
-        try:
-            relative = local_path.relative_to(local_home)
-        except ValueError:
-            pass
-        else:
-            section[MODEL_CATALOG_ENV] = str(request.hosted_home / relative)
-            continue
-        try:
-            relative = local_path.relative_to(local_place)
-        except ValueError:
-            digest = sha256(str(local_path).encode("utf-8")).hexdigest()[:16]
-            hosted_path = (
-                request.hosted_place / ".inputs" / "models" / digest / local_path.name
-            )
-        else:
-            hosted_path = request.hosted_place / relative
-        section[MODEL_CATALOG_ENV] = str(hosted_path)
+        hosted_path = request.hosted_place / ".inputs" / "catalog.json"
         mount = SandboxMount(local_path, hosted_path, read_only=True)
-        if mount not in request.mounts:
+        existing = tuple(
+            item for item in request.mounts if item.hosted_path == hosted_path
+        )
+        if any(
+            not item.read_only or item.local_path.resolve() != local_path
+            for item in existing
+        ):
+            raise ValueError("model catalog target conflicts with an existing mount")
+        section[MODEL_CATALOG_ENV] = str(hosted_path)
+        if not existing:
             mounts[(local_path, hosted_path)] = mount
     return tuple(mounts.values())
 

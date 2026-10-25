@@ -191,7 +191,7 @@ def test_invalid_agent_file_fails_without_fallback_or_secret_output(
     shell_environment = dict(os.environ)
     result = CliRunner().invoke(app, ["--root", str(root), "alice", "tools"])
     assert result.exit_code == 1
-    assert ".alice.env:1" in "".join(result.stderr.split())
+    assert ".alice.env:1" in "".join(result.stderr.replace("│", "").split())
     assert "synthetic-secret" not in result.output
     assert dict(os.environ) == shell_environment
 

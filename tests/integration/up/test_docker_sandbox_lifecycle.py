@@ -916,6 +916,76 @@ def test_guest_current_watch_accepts_source_changes_without_restoring_grants(
             assert _revision_counts(agent.layout) == counts
 
 
+@pytest.mark.parametrize("guest_path", [False, True])
+@pytest.mark.parametrize("writable_file_mount", [False, True])
+def test_docker_catalog_fallback_is_read_only(
+    tmp_path, docker_wheel_dir, guest_path, writable_file_mount
+):
+    from toolang.base.types.sandbox import SandboxMount, SandboxRequest
+    from toolang.plugin.catalogs.models_dev.path import MODEL_CATALOG_ENV
+    from toolang.plugin.loading import create_sandbox
+
+    root = tmp_path / "root"
+    home = root / "agents/alice"
+    home.mkdir(parents=True)
+    catalog = home / "company.json"
+    catalog.write_text('{"providers": [], "models": []}')
+    guest = Path("/root/.toolang")
+    hosted_home = guest / "agents/alice"
+    hosted_catalog = hosted_home / catalog.name
+    script = """
+import errno, json, os
+from pathlib import Path
+from toolang.common.environment import apply_environment_file
+values = apply_environment_file(Path('/root/.toolang/.alice.env'), {})
+path = Path(values['TOOLANG_MODEL_CATALOG'])
+assert path == Path('/root/.toolang/.inputs/catalog.json'), path
+assert json.loads(path.read_text()) == {'providers': [], 'models': []}
+try:
+    descriptor = os.open(path, os.O_WRONLY)
+except OSError as error:
+    assert error.errno == errno.EROFS, error
+else:
+    os.close(descriptor)
+    raise AssertionError('selected catalog is writable')
+Path('/root/.toolang/agents/alice/home-stays-writable').write_text('ok')
+"""
+    port = _available_port()
+    log_path = home / ".runtime/agent.log"
+    request = SandboxRequest(
+        local_place=root,
+        local_home=home,
+        hosted_place=guest,
+        hosted_home=hosted_home,
+        agent_name="alice",
+        agent_address="alice",
+        toolang_root=root,
+        bind_host="127.0.0.1",
+        endpoint_host="localhost",
+        port=port,
+        endpoint=f"http://localhost:{port}",
+        command=("/tmp/toolang-runtime/tools/toolang/bin/python", "-c", script),
+        working_directory=hosted_home,
+        output="file",
+        log_path=log_path,
+        envs={MODEL_CATALOG_ENV: str(hosted_catalog if guest_path else catalog)},
+        mounts=(SandboxMount(catalog, hosted_catalog),) if writable_file_mount else (),
+        local_dev_artifact=next(docker_wheel_dir.glob("*.whl")),
+    )
+    sandbox = create_sandbox("docker", config={})
+    plan = sandbox.prepare("python:3.13-slim", request)
+    ref = None
+    try:
+        ref = asyncio.run(sandbox.launch(plan))
+        code = asyncio.run(sandbox.wait(ref))
+        assert code == 0, log_path.read_text()
+        assert (home / "home-stays-writable").read_text() == "ok"
+    finally:
+        if ref is not None:
+            asyncio.run(sandbox.stop(ref, force=True))
+            asyncio.run(sandbox.release(ref))
+
+
 @pytest.mark.parametrize(
     ("placement", "catalog_kind"),
     [
