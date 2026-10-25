@@ -224,8 +224,11 @@ def info_agent(
         rows.append(("Drivers", _drivers_summary(runtime_state.get("drivers"))))
     if status.status != "stopped":
         if status.sandbox:
-            rows.append(("Sandbox", status.sandbox))
-        if runtime_identity is not None:
+            sandbox = status.sandbox
+            if runtime_identity is not None and runtime_identity[0] == "Container":
+                sandbox += f" ({runtime_identity[1]})"
+            rows.append(("Sandbox", sandbox))
+        if runtime_identity is not None and runtime_identity[0] != "Container":
             rows.append(runtime_identity)
         if status.endpoint:
             rows.append(("API", status.endpoint))
@@ -316,7 +319,6 @@ def _local_resources(
             return [("Resources", "unavailable (runtime-owned HOME)")], None
         try:
             return [
-                ("Resources", "runtime startup snapshot"),
                 ("Caps", _cap_counts_summary(counts["caps"])),
                 ("Tools", f"{counts['tools']} tools, {counts['toolsets']} toolsets"),
                 (

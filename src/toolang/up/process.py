@@ -225,6 +225,12 @@ def runtime_identity_row(
                 ref.runtime_kind == "container"
                 or state.sandbox.partition(":")[0] == "docker"
             ):
+                # Before creation, Docker's reference contains only its planned name.
+                if (
+                    state.sandbox.partition(":")[0] == "docker"
+                    and ref.runtime_id == ref.runtime_name
+                ):
+                    return None
                 short_id = (
                     ref.runtime_id[:12]
                     if len(ref.runtime_id) >= 12
@@ -233,13 +239,7 @@ def runtime_identity_row(
                     )
                     else ref.runtime_id
                 )
-                runtime_name = ref.runtime_name
-                value = (
-                    f"{runtime_name} ({short_id})"
-                    if runtime_name is not None and runtime_name != short_id
-                    else short_id
-                )
-                return "Container", value
+                return "Container", short_id
             return "Runtime", f"{ref.runtime_kind}:{ref.runtime_id}"
         return None
     pid = (runtime_state or {}).get("pid")

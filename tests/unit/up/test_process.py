@@ -194,7 +194,7 @@ def test_runtime_identity_uses_environment_process_without_sandbox_state() -> No
 
 
 @pytest.mark.parametrize("preparing", [False, True])
-def test_runtime_identity_formats_named_docker_container(
+def test_runtime_identity_formats_docker_container_id(
     tmp_path: Path, preparing
 ) -> None:
     layout = AgentLayout.resident(tmp_path, "alice")
@@ -212,10 +212,8 @@ def test_runtime_identity_formats_named_docker_container(
         launch_id="fixture",
     ).save(layout.runtime_status)
 
-    assert process.runtime_identity_row({"pid": 1}, layout=layout) == (
-        "Container",
-        name if preparing else f"{name} (176191c1528b)",
-    )
+    expected = None if preparing else ("Container", "176191c1528b")
+    assert process.runtime_identity_row({"pid": 1}, layout=layout) == expected
 
 
 def test_runtime_identity_does_not_use_retired_container_name_alias(
