@@ -566,10 +566,10 @@ def test_htop_header_selection_and_bottom_bars_cover_the_terminal_width():
         assert style.dim is False
         assert lines[-2].get_style_at_offset(console, index).bgcolor is None
     footer = lines[-1]
-    for label in ("F1", "F3", "F5", "F7", "F8", "F10"):
+    for label in ("F1", "F3", "F5", "F6", "F7", "F8", "F10"):
         key_style = footer.get_style_at_offset(console, footer.plain.index(label))
-        assert key_style.color is not None and key_style.color.name == "white"
-        assert key_style.bgcolor is not None and key_style.bgcolor.name == "black"
+        assert key_style.color is not None and key_style.color.is_default
+        assert key_style.bgcolor is not None and key_style.bgcolor.is_default
     for index in (footer.plain.index("Help"), len(footer) - 1):
         action = footer.get_style_at_offset(console, index)
         assert action.color is not None and action.color.name == "black"
