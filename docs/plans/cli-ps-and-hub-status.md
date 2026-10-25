@@ -15,43 +15,44 @@ approval.
 - Both show only `NAME`, `STATUS`, `DRIVERS`, and right-aligned `PORT`, using
   `top`'s complete `name`/`name@id` addresses. Show observed launch drivers
   and service ports, using the state and metadata rules below.
-- Count displayed instances, placements, and confirmed running instances (`ls`
+- Count displayed instances, placements, and confirmed `up` instances (`ls`
   includes only the resident count). `ps` uses existing bounded readiness checks
   for `[teaming].hub`, without reading hub process files. No type column or tree.
 - Bare `too hub` shows help. `status` inspects this ROOT's managed process via
   `[hub]`/`hub/pid.json`: actual bind address/PID and its `/info` version
   (`unknown` on lookup failure), independently of client settings and agents.
-- Preserve lifecycle, unknown/intermediate states, partial diagnostics, and
+- Preserve lifecycle, internal observations, partial diagnostics, and
   terminal conventions. Configuration, protocol, persistence, authentication,
   compatibility, and migration changes are outside scope.
 - Run/Step status values and presentation remain unchanged and outside scope.
 
 ## Agent and hub state presentation
 
-Keep runtime/API values unchanged. `ls`, `ps`, and agent `info` share this mapping:
+Human-facing agent and hub states use only `up`, `down`, and `unknown`.
+Map observations at presentation time; keep inventory selection, runtime/API
+values, and persisted records unchanged. `ls`, `ps`, and agent `info` share:
 
-| Runtime observation | Display | Meaning |
-| --- | --- | --- |
-| `preparing` | `preparing` | Preparing source/environment. |
-| `starting` | `starting` | Launch underway, not ready. |
-| `running` | `running` | Running, including idle instances. |
-| `stopped` / never started | `not running` | No active runtime. |
-| `failed` | `failed` | Confirmed agent launch/runtime failure. |
-| Inspection/ownership error | `unknown` | Runtime state cannot be verified. |
+| Observation | Display |
+| --- | --- |
+| Confirmed `running`, including idle instances | `up` |
+| Known non-running phase: preparing, starting, stopped, failed, exited, never started | `down` |
+| Unverifiable/unrecognized state or inspection error | `unknown` |
 
-- `ls`/`ps` show labels in STATUS and reasons below the footer; `info` retains
-  uptime/reason details. Inspection errors mean `unknown`, never `failed`/stopped.
-- `hub status`: `starting`/`running` from verified process state; absent/stale
-  process is `not running`; corrupt records/denied inspection are `unknown`.
-  Version lookup failure does not change process state.
-- `ps` reports `running` after valid metadata/readiness, including the remote
-  version and configured URL; connection/readiness failure is `hub not running`.
+- Do not expose transient phases or failure/exit distinctions in status labels
+  or summaries. `ls`/`ps` put agent inspection diagnostics below the footer;
+  `info` retains uptime and inspection details. Unverifiable runtime identity
+  means `unknown`, not `down`.
+- `hub status`: verified running record/process is `up`; starting, absent, or
+  stale process is `down`; corrupt records/denied inspection are `unknown`.
+  Version lookup failure changes only metadata, not process state.
+- `ps` reports `up` after valid metadata/readiness, including the remote
+  version and configured URL; connection/readiness failure is `hub down`.
   Invalid configuration/response is `hub unknown: <reason>`. These report
   availability, not server lifecycle.
 - DRIVERS reuses `format_drivers`: `chat,chore,talk`, `none` for known empty,
   `-` for missing/inapplicable. PORT uses `-` when missing; version uses `unknown`.
-  Metadata failure never downgrades a confirmed `running` instance.
-- Count displayed rows; running count is `-` when runtime state or coverage is
+  Metadata failure never downgrades a confirmed `up` instance.
+- Count displayed rows; the `up` count is `-` when runtime state or coverage is
   unknown. Incomplete agent inspection adds `, partial` to the first footer line.
   Hub probes do not affect agent states/counts.
 
@@ -60,24 +61,23 @@ Keep runtime/API values unchanged. `ls`, `ps`, and agent `info` share this mappi
 `too ps` footer (always two lines, including zero placement counts):
 
 ```text
-4 agents: 2 resident, 1 visiting, 1 roaming, 3 running
-hub running: version 0.4.0b1, url http://127.0.0.1:7001
+4 agents: 2 resident, 1 visiting, 1 roaming, 3 up
+hub up: version 0.4.0b1, url http://127.0.0.1:7001
 ```
 
-An unavailable hub replaces only the second line with `hub not running`.
+An unavailable hub replaces only the second line with `hub down`.
 
 `too ls` footer (resident count only; no visiting/roaming counts or hub line):
 
 ```text
-2 agents: 2 resident, 1 running
+2 agents: 2 resident, 1 up
 ```
 
-`too hub status` prints one status line:
+`too hub status` prints one of these lines:
 
 ```text
-hub running: version 0.4.0b1, endpoint 127.0.0.1:7001, pid 10402
-hub starting: version unknown, endpoint 127.0.0.1:7001, pid 10402
-hub not running
+hub up: version 0.4.0b1, endpoint 127.0.0.1:7001, pid 10402
+hub down
 hub unknown: <reason>
 ```
 
@@ -103,10 +103,12 @@ Commands:
 - [ ] Reuse `up/watcher.py`/`up/observation.py` for snapshot data and
   `up/hub.py` for process identity checks; simplify `commands/hub.py` accordingly.
 - [ ] Share CLI state/driver formatting with `commands/agent.py` info output;
-  leave runtime records and API schemas unchanged.
+  restrict displayed agent/hub states to `up`/`down`/`unknown` without changing
+  inventory selection, runtime records, API schemas, or Run/Step states.
 - [ ] Cover both listings: resident-only/mixed/empty inventories, duplicate names,
-  every state mapping above, empty/unknown drivers, missing ports/version,
-  uncertain counts, and partial/narrow/plain output. Assert agreement with `info`.
+  every state mapping (including transient phases and exit causes), empty/unknown
+  drivers, missing ports/version, uncertain counts, and partial/narrow/plain
+  output. Assert agreement with `info`.
 - [ ] Verify both client hub outcomes leave agent rows intact; server status is
   independent of the client URL; `ps` has the two-line footer above, while `ls`
   has only its resident summary and never probes the hub. Metadata/inspection
