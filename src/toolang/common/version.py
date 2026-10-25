@@ -12,6 +12,7 @@ from pathlib import Path
 import tomllib
 from urllib.parse import urlsplit
 from urllib.request import url2pathname
+from zipfile import BadZipFile, ZipFile
 
 _BUILD_INFO_NAME = "_build_info.json"
 _UNKNOWN_SOURCE_VERSION = "unknown"
@@ -87,13 +88,18 @@ def development_source() -> tuple[bool, Path | None]:
     return True, _local_file_url(url) if isinstance(url, str) else None
 
 
-def embedded_source_version() -> str:
-    """Return validated source provenance from an installed artifact."""
+def embedded_source_version(wheel: Path | None = None) -> str:
+    """Read source provenance from the installed package or a wheel."""
 
     path = Path(__file__).resolve().parents[1] / _BUILD_INFO_NAME
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+        if wheel is None:
+            raw = path.read_text(encoding="utf-8")
+        else:
+            with ZipFile(wheel) as archive:
+                raw = archive.read(f"toolang/{_BUILD_INFO_NAME}").decode("utf-8")
+        payload = json.loads(raw)
+    except (BadZipFile, KeyError, OSError, ValueError):
         return _UNKNOWN_SOURCE_VERSION
     if not isinstance(payload, Mapping):
         return _UNKNOWN_SOURCE_VERSION

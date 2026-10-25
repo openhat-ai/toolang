@@ -4,8 +4,31 @@ from __future__ import annotations
 
 import os
 import time
+import json
+from zipfile import ZipFile
 
 import pytest
+
+
+@pytest.fixture
+def toolang_wheel():
+    from toolang.common.version import displayed_toolang_version
+
+    def write(path, version=None):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with ZipFile(path, "w") as wheel:
+            wheel.writestr(
+                "toolang/_build_info.json",
+                json.dumps(
+                    {
+                        "schema": 1,
+                        "source_version": version or displayed_toolang_version(),
+                    }
+                ),
+            )
+        return path
+
+    return write
 
 
 @pytest.fixture

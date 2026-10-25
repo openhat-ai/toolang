@@ -32,6 +32,7 @@ from toolang.base.types.progress import (
 )
 from toolang.base.types.sandbox import SandboxOutput, SandboxRef, SandboxRequest
 from toolang.common.files import file_lock_path
+from toolang.common.version import embedded_source_version, toolang_version
 from toolang.common.environment import agent_environment_paths
 from toolang.common.progress import emit_progress
 from toolang.common.layout import AgentLayout, agent_workspaces_path
@@ -990,7 +991,8 @@ def resolve_dev_artifact(raw: Path | None, *, sandbox: str) -> Path | None:
             "installation."
         )
 
-    candidate = raw.expanduser().resolve()
+    confirmed = str(raw).endswith("!")
+    candidate = Path(str(raw).removesuffix("!")).expanduser().resolve()
     if not candidate.exists():
         raise FileNotFoundError(f"--dev path not found: {candidate}")
     if candidate.is_file():
@@ -998,6 +1000,7 @@ def resolve_dev_artifact(raw: Path | None, *, sandbox: str) -> Path | None:
             raise ValueError(f"--dev file is not a Toolang wheel: {candidate}")
         if not _is_toolang_wheel(candidate):
             raise ValueError(f"--dev file is not a Toolang wheel: {candidate}")
+        _validate_dev_version(candidate, confirmed=confirmed)
         return candidate
     if not candidate.is_dir():
         raise ValueError(f"--dev path is not a file or directory: {candidate}")
@@ -1011,7 +1014,21 @@ def resolve_dev_artifact(raw: Path | None, *, sandbox: str) -> Path | None:
         raise FileNotFoundError(
             f"No Toolang wheels found under --dev directory: {candidate}"
         )
-    return min(wheels, key=lambda path: (-path.stat().st_mtime_ns, str(path)))
+    selected = min(wheels, key=lambda path: (-path.stat().st_mtime_ns, str(path)))
+    _validate_dev_version(selected, confirmed=confirmed)
+    return selected
+
+
+def _validate_dev_version(path: Path, *, confirmed: bool) -> None:
+    if confirmed:
+        return
+    actual = embedded_source_version(path).removeprefix("v")
+    current = toolang_version()
+    if actual == "unknown" or actual != current:
+        raise ValueError(
+            f"Toolang version mismatch: current {current}, wheel {actual}. "
+            "Append ! to the --dev path to confirm this wheel."
+        )
 
 
 def _is_toolang_wheel(path: Path) -> bool:

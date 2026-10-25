@@ -135,14 +135,17 @@ On attachment, explicit values must match saved settings; omitted values retain
 the running settings. Stop the existing agent before changing them.
 
 Commands that start a new guest accept `--dev [PATH]`. This includes `serve`,
-`start`, `chat`, Script `run`, and `rerun`. Omitting `--dev` keeps the
-existing package selection. Bare `--dev` uses `.` (the process working directory,
+`start`, `chat`, Script `run`, and `rerun`. Without `--dev`, Docker installs
+`toolang==<controller distribution version>`. Bare `--dev` uses `.` (the working directory,
 not the script directory or agent home). An explicit `PATH` selects that path.
 `PATH` is either one Toolang `.whl` file or a directory to search recursively
 for Toolang wheels. Directory selection uses the most recent file modification
 time and breaks equal-time ties by absolute path. The selected concrete wheel
-is staged into Docker and supplies its `too _serve` command. Build a current
-wheel and select it with:
+is staged into Docker and supplies its `too _serve` command. During argument
+resolution, its embedded identity must match the current `too --version`, including
+revision and dirty marker. A different or unknown identity requires a trailing
+`!` on the file or directory path, such as `--dev 'dist!'`. This check runs once.
+Build a current wheel and select it with:
 
 ```sh
 uv build --wheel

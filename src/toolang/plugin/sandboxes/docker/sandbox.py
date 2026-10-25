@@ -34,6 +34,7 @@ from toolang.common.place_codes import root_code
 from toolang.plugin.catalogs.models_dev.path import MODEL_CATALOG_ENV
 from toolang.up.records import RuntimeReference
 from toolang.common.files import atomic_write_text
+from toolang.common.version import base_toolang_version
 
 from ._cli import (
     DEFAULT_HOST_GATEWAY,
@@ -375,7 +376,9 @@ class DockerSandbox:
                 )
             )
         package_source = (
-            str(hosted_dev_artifact) if hosted_dev_artifact is not None else "toolang"
+            str(hosted_dev_artifact)
+            if hosted_dev_artifact is not None
+            else f"toolang=={base_toolang_version()}"
         )
         command = list(request.command)
         if "--sandbox" in command:

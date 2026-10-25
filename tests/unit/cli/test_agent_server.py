@@ -366,7 +366,7 @@ def test_startup_override_cannot_be_silently_ignored_by_an_existing_runtime(
 
 @pytest.mark.parametrize("selection", ["omitted", "same", "changed"])
 def test_running_server_retains_or_verifies_explicit_startup_settings(
-    tmp_path, monkeypatch, selection
+    tmp_path, monkeypatch, selection, toolang_wheel
 ):
     from toolang.up.contract import startup_contract
     from toolang.up.instance import update_instance
@@ -382,7 +382,7 @@ def test_running_server_retains_or_verifies_explicit_startup_settings(
         ),
     )
     wheel = tmp_path / "toolang-0.0.0-py3-none-any.whl"
-    wheel.write_bytes(b"original wheel")
+    toolang_wheel(wheel)
     catalog = tmp_path / "models.json"
     compact = ModelOverride(identity="test/compact")
     spec = agent_server._resolve_launch(
@@ -410,7 +410,7 @@ def test_running_server_retains_or_verifies_explicit_startup_settings(
         else {"dev": wheel, "model_catalog": catalog, "compact_override": compact}
     )
     if selection == "changed":
-        wheel.write_bytes(b"changed wheel")
+        wheel.write_bytes(wheel.read_bytes() + b"changed wheel")
         with pytest.raises(
             agent_server.AgentServerAcquisitionError,
             match="development wheel contents.*restart",

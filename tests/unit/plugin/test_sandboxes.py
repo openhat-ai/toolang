@@ -848,14 +848,21 @@ def test_docker_sandbox_rewrites_root_model_catalog_and_mounts_it_read_only(
     ] == str(expected)
 
 
+@pytest.mark.parametrize(
+    "version", ["0.4.0", "0.4.0a1", "0.4.0b1", "0.4.0rc1", "0.4.0.dev1"]
+)
 def test_docker_background_sandbox_uses_docker_output_and_durable_diagnostics(
     tmp_path: Path,
+    monkeypatch,
+    version,
 ) -> None:
+    monkeypatch.setattr(docker_sandbox, "base_toolang_version", lambda: version)
     request = _request(tmp_path)
     sandbox = create_sandbox("docker", config={})
 
     plan = sandbox.prepare(None, request)
 
+    assert plan.command[5] == f"toolang=={version}"
     log_path = cast(Path, request.log_path)
     assert log_path.is_file()
     assert stat.S_IMODE(log_path.stat().st_mode) == 0o600
