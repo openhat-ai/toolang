@@ -5,7 +5,7 @@ from dataclasses import dataclass
 import getpass
 from pathlib import Path
 
-from toolang.common.config_sources import ConfigSource, read_config
+from toolang.common.config_sources import ConfigSource, read_config, merge_mappings
 from toolang.teaming.config import (
     TeamingRootConfig,
     root_config,
@@ -37,17 +37,20 @@ def resolve_teaming_setup(
     home: Path,
     default_human: str | None = None,
 ) -> TeamingSetup:
+    root_layers: list[Mapping[str, object]] = []
     root_raw: Mapping[str, object] | None = None
     home_raw: Mapping[str, object] = {}
     for source in sources:
-        if source.path == root:
-            root_raw = source.config
-        elif source.path == home:
+        if source.scope == "root" or source.scope is None and source.path == root:
+            root_layers.append(source.config)
+        elif source.scope == "home" or source.scope is None and source.path == home:
             home_raw = source.config
         elif "teaming" in source.config:
             raise TeamingError(
                 f"{source.path}: teaming requires explicit root/home scope"
             )
+    if root_layers:
+        root_raw = merge_mappings(root_layers)
     if root_raw is None:
         root_raw = read_config(root, include_workspaces=False)
     client = root_config(

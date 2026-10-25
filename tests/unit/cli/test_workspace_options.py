@@ -220,7 +220,13 @@ def test_hosted_startup_transports_captured_grants_without_resolving_again(
         layout=layout, port=7001, workspace_additions=bindings, workdir="repo://src"
     )
     argv = build_serve_argv(spec, place=Path("/guest"))
-    assert json.loads(argv[argv.index("--workspace-bindings") + 1]) == bindings
+    assert json.loads(argv[argv.index("--workspace-bindings") + 1]) == {
+        "repo": {
+            "source": bindings["repo"],
+            "path": bindings["repo"],
+            "temporary": True,
+        }
+    }
     assert argv[argv.index("--initial-workdir") + 1] == "repo://src"
     assert argv[argv.index("--placement") + 1] == layout.placement
     assert argv[argv.index("--store-schema") + 1] == "63"

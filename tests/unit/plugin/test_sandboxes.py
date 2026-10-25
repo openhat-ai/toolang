@@ -757,7 +757,6 @@ def test_docker_sandbox_prepares_and_launches(
         "TOOLANG_HOST_GATEWAY": "host.docker.internal",
         "TOOLANG_ROOT": "/root/.toolang",
         "TOOLANG_SANDBOX": "docker:python:3.13-slim",
-        "TOOLANG_WORKSPACE_MOUNTS": "{}",
         "TOOLANG_WORKSPACE_LOCATION": "guest",
     }
     assert run_call["log_path"] is None
@@ -2482,21 +2481,28 @@ def test_missing_old_stage_cannot_remove_a_replacement_preparation_slot(tmp_path
     assert stage.parent.is_dir()
 
 
-def test_guest_config_and_active_mounts_have_disjoint_sources(tmp_path):
+def test_original_config_and_active_mounts_have_disjoint_sources(tmp_path):
     sandbox = docker_sandbox.DockerSandbox({})
+    request = _request(tmp_path)
+    original = tmp_path / "config.toml"
+    original.write_text("# authored input\n")
     request = replace(
-        _request(tmp_path), guest_config='[workspaces.alice]\nrepo = "/guest/repo"\n'
+        request,
+        mounts=(
+            *request.mounts,
+            SandboxMount(original, Path("/root/.toolang/config.toml"), read_only=True),
+        ),
     )
     plan = sandbox.prepare(None, request)
     stage = Path(plan.meta["stage_dir"])
     active = next(m for m in plan.mounts if m.local_path == stage / "active")
-    config = next(m for m in plan.mounts if m.local_path == stage / "config.toml")
+    config = next(
+        m for m in plan.mounts if m.hosted_path == Path("/root/.toolang/config.toml")
+    )
     assert active.read_only and config.read_only
-    assert config.hosted_path == Path("/root/.toolang/config.toml")
-    assert active.hosted_path == Path("/root/.toolang/.runtime/active/alice")
-    assert not config.local_path.is_relative_to(active.local_path)
+    assert config.local_path == original
     assert not (active.local_path / "config.toml").exists()
-    assert config.local_path.read_text() == request.guest_config
+    assert not (stage / "config.toml").exists()
 
 
 def test_rejected_duplicate_preparation_preserves_current_diagnostics(tmp_path):

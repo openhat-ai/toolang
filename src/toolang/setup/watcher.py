@@ -210,7 +210,7 @@ class SetupWatcher:
         toolset_configs = merge_plugin_configs(configs, family="toolset")
         teaming = resolve_teaming_setup(
             inputs.sources,
-            root=(self.layout.root or self.layout.place) / "config.toml",
+            root=self.layout.place_config,
             home=self.layout.config,
         )
         toolset_configs["convo"] = teaming.toolset_config(
@@ -536,7 +536,7 @@ def _build_setup(
         layout=layout,
         envs=captured_envs,
         revision=revision,
-        environment=AgentEnvironment.capture(layout, sandbox=sandbox),
+        environment=AgentEnvironment.capture(layout, sandbox=sandbox, environ=envs),
         defaults=defaults,
         limits=limits,
         compact=compact,

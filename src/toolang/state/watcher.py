@@ -309,6 +309,7 @@ class StateWatcher:
                 home_observation,
                 previous_observation=self._checked_home_observation,
                 previous_manifest=self._checked_home_source,
+                runtime=self.layout.runtime_config,
                 invalidated=invalidated_home,
             )
         except Exception as exc:

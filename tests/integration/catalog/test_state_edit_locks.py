@@ -141,7 +141,11 @@ def test_home_writers_share_edit_lock_across_processes(tmp_path, family):
     contended, done = ctx.Event(), ctx.Event()
     process = ctx.Process(target=_mutate, args=(layout, family, contended, done))
     try:
-        with EditLock(layout.home_edit_lock).write():
+        with EditLock(
+            layout.place_state / "edit.lock"
+            if family == "projection"
+            else layout.home_edit_lock
+        ).write():
             process.start()
             assert contended.wait(10), family
             assert not done.is_set()
@@ -180,7 +184,7 @@ def test_catalog_reads_and_unchanged_projection_do_not_create_guards(tmp_path):
 
     layout = prepare_roaming_home(source, toolang_root=tmp_path)
     layout.home.mkdir(parents=True, exist_ok=True)
-    layout.config.write_text(
+    layout.place_config.write_text(
         project_sources(script_sources(source), source=source, catalog=None)
     )
     caps = CapsManager(layout)
@@ -253,7 +257,7 @@ def test_delayed_roaming_projection_does_not_overwrite_newer_workspace_config(
     @contextmanager
     def write(lock):
         if (
-            lock.path == layout.home_edit_lock
+            lock.path == layout.place_state / "edit.lock"
             and current_thread().name.startswith("old-projection")
             and not paused.is_set()
         ):
@@ -274,7 +278,9 @@ def test_delayed_roaming_projection_does_not_overwrite_newer_workspace_config(
         finally:
             resume.set()
         pending.result(timeout=10)
-    projected = ConfiguredWorkspaces(layout.config, lock_path=layout.home_edit_lock)
+    projected = ConfiguredWorkspaces(
+        layout.place_config, lock_path=layout.place_state / "edit.lock"
+    )
     assert set(projected.list()) == {"first", "second"}
 
 

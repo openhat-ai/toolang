@@ -292,7 +292,7 @@ def _sync_roaming_project(layout: AgentLayout, source: Path) -> None:
         source_catalog,
     )
 
-    home = layout.home
+    place = layout.place
     root_lock = EditLock(layout.place_edit_lock)
 
     def capture():
@@ -301,9 +301,38 @@ def _sync_roaming_project(layout: AgentLayout, source: Path) -> None:
 
     sources, catalog = root_lock.read(capture)
     projected = project_sources(sources, source=source, catalog=catalog)
-    target = home / "config.toml"
-    catalog_target = home / "catalog.json"
-    lock = EditLock(layout.home_edit_lock)
+    target = place / "config.toml"
+    catalog_target = place / "catalog.json"
+    lock = EditLock(layout.place_state / "edit.lock")
+
+    def retire_previous_projection() -> None:
+        # Relocate generated inputs only after the new PLACE projection succeeds.
+        old_config = layout.config
+        old_lock = EditLock(layout.home_edit_lock)
+
+        def owned() -> bool:
+            if old_config.is_symlink():
+                return (
+                    old_config.resolve() == source.with_name("toolang.toml").resolve()
+                )
+            return old_config.is_file() and old_config.read_text().startswith(
+                PROJECTION_HEADER
+            )
+
+        if not old_lock.read(owned):
+            return
+        with old_lock.write():
+            if not owned():
+                return
+            previous = read_config(old_config)
+            old_catalog = layout.home / "catalog.json"
+            known_catalogs = {source.with_name("toolang.catalog.json").resolve()}
+            for value in (previous.get("__toolang_catalog__"), catalog):
+                if isinstance(value, str | Path):
+                    known_catalogs.add(Path(value).resolve())
+            if old_catalog.is_symlink() and old_catalog.resolve() in known_catalogs:
+                old_catalog.unlink()
+            old_config.unlink()
 
     def needs_update() -> bool:
         previous_catalog = None
@@ -326,7 +355,7 @@ def _sync_roaming_project(layout: AgentLayout, source: Path) -> None:
                     and isinstance(previous_source, str)
                 ):
                     old_source = Path(previous_source)
-                    old_home = AgentLayout.roaming(old_source).home
+                    old_home = AgentLayout.roaming(old_source).place
                     if os.readlink(path) == os.path.relpath(
                         previous_catalog, start=old_home
                     ):
@@ -387,11 +416,12 @@ def _sync_roaming_project(layout: AgentLayout, source: Path) -> None:
                         _replace_relative_symlink(catalog_target, catalog)
                     elif catalog_target.is_symlink():
                         catalog_target.unlink()
-        # Root edits and home projection never hold each other's guards. An
-        # older invocation delayed on the home guard must not leave a stale
+        # Authored edits and projection never hold each other's guards. An
+        # older invocation delayed on the projection guard must not leave a stale
         # projection behind after a newer root edit/projection has completed.
         current_sources, current_catalog = root_lock.read(capture)
         if (sources, catalog) == (current_sources, current_catalog):
+            retire_previous_projection()
             return
         sources, catalog = current_sources, current_catalog
         projected = project_sources(sources, source=source, catalog=catalog)

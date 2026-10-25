@@ -351,6 +351,7 @@ def inspect_agent_caps(
         layout.name,
         root_config=layout.root_config,
         workspace_key=layout.config_key,
+        runtime=layout.runtime_config,
     )
     accepted = accept_sources(authored, scope="home", include_programs=False)
     for record in accepted.records:
@@ -422,6 +423,7 @@ def prepare_home(
         layout.name,
         root_config=layout.root_config,
         workspace_key=layout.config_key,
+        runtime=layout.runtime_config,
     )
     current = _matching_home(
         layout,
@@ -436,6 +438,7 @@ def prepare_home(
             layout.name,
             root_config=layout.root_config,
             workspace_key=layout.config_key,
+            runtime=layout.runtime_config,
         )
         current = _matching_home(
             layout,
@@ -498,7 +501,15 @@ def _matching_home(
 
             config = layer.revision_dir / "source/config.toml"
             raw = parse_config(config.read_bytes()) if config.is_file() else {}
-            expected = configured_workspaces(rebase_config(raw, layout.home))
+            expected = configured_workspaces(
+                rebase_config(
+                    raw,
+                    layout.runtime_config.origin("home", layout.config).parent
+                    if layout.runtime_config
+                    else layout.home,
+                    runtime=layout.runtime_config,
+                )
+            )
             policy = layer.revision_dir / "source" / ROOT_WORKSPACE_SOURCE
             if policy.is_file():
                 expected.update(
@@ -626,13 +637,14 @@ def _build_layer_revision(
         observation = _observe_scope_source(layout, scope=scope)
         try:
             authored = (
-                read_root_source(layout.place)
+                read_root_source(layout.place, runtime=layout.runtime_config)
                 if scope == "root"
                 else read_authored_source(
                     layout.place,
                     layout.name,
                     root_config=layout.root_config,
                     workspace_key=layout.config_key,
+                    runtime=layout.runtime_config,
                 )
             )
         except SourceChangedError:

@@ -15,7 +15,8 @@ import tomlkit
 
 from toolang.catalog.types import CAP_DIR_BY_KIND, CAP_KINDS
 from toolang.common.errors import ToolangError
-from toolang.common.config_sources import read_config, rebase_config
+from toolang.common.config_sources import PROJECTION_KEY, read_config, rebase_config
+from toolang.common.config_runtime import RuntimeConfig
 from toolang.common.files import EditLock, atomic_write_text
 from toolang.common.policy import resolve_query_sentinels
 
@@ -168,21 +169,41 @@ def configured_workspaces(config: Mapping[str, object]) -> dict[str, str]:
 
 
 def root_workspace_overrides(
-    config: Mapping[str, object], key: str | None, directory: Path
+    config: Mapping[str, object],
+    key: str | None,
+    directory: Path,
+    *,
+    runtime: RuntimeConfig | None = None,
 ) -> dict[str, str]:
     """Select one stable identity without inheriting same-name foreign sources."""
     raw = config.get("workspaces", {})
     if not isinstance(raw, Mapping):
         raise ValueError("root workspaces config must be a table")
-    selected = cast(Mapping[str, object], raw).get(key, {}) if key is not None else {}
+    selected = (
+        raw
+        if PROJECTION_KEY in config
+        else cast(Mapping[str, object], raw).get(key, {})
+        if key is not None
+        else {}
+    )
     if not isinstance(selected, Mapping):
         raise ValueError(f"root workspace config must be a table: {key}")
-    return configured_workspaces(rebase_config({"workspaces": selected}, directory))
+    return configured_workspaces(
+        rebase_config({"workspaces": selected}, directory, runtime=runtime)
+    )
 
 
-def root_workspace_content(content: bytes, key: str | None, directory: Path) -> bytes:
+def root_workspace_content(
+    content: bytes,
+    key: str | None,
+    directory: Path,
+    *,
+    runtime: RuntimeConfig | None = None,
+) -> bytes:
     """Capture only this agent's resolved workspace policy, excluding Setup fields."""
-    grants = root_workspace_overrides(parse_config(content), key, directory)
+    grants = root_workspace_overrides(
+        parse_config(content), key, directory, runtime=runtime
+    )
     return tomlkit.dumps({"workspaces": grants}).encode() if grants else b""
 
 

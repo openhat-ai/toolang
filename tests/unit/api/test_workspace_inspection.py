@@ -25,7 +25,18 @@ def test_workspace_inspection_uses_published_state_and_runtime_paths(
     source = "/host-only/repo" if guest else str(runtime_repo)
     layout.config.write_text(f'[workspaces]\nrepo = "{source}"\n')
     if guest == "mapped-config":
-        layout.place_config.write_text(f'[workspaces.alice]\nrepo = "{runtime_repo}"\n')
+        import json
+        from toolang.common.config_runtime import RuntimeConfig, WorkspaceBinding
+
+        layout = replace(
+            layout,
+            runtime_config=RuntimeConfig.parse(
+                json.dumps({"home": {"workspaces": {"repo": str(runtime_repo)}}}),
+                workspaces={
+                    "repo": WorkspaceBinding(type(runtime_repo)(source), runtime_repo)
+                },
+            ),
+        )
     core = AgentCore(layout)
     state = asyncio.run(core.state.refresh())
     environment = AgentEnvironment.capture(layout, sandbox="host")

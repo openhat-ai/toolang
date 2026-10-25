@@ -58,10 +58,10 @@ _SETUP_PLUGIN_FAMILIES = frozenset({"model_catalog", "model_adapter", "toolset"}
 def load_setup_config(layout: AgentLayout) -> dict[str, object]:
     """Load the root-scoped setup configuration."""
 
-    return (
-        {}
-        if layout.project_inputs
-        else read_config(layout.place_config, include_workspaces=False)
+    from toolang.common.config_sources import config_sources, merge_mappings
+
+    return merge_mappings(
+        [source.config for source in config_sources(layout, include_agent=False)]
     )
 
 

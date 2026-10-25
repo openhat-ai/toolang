@@ -335,7 +335,8 @@ def test_materialize_roaming_program_links_source_and_config(tmp_path: Path) -> 
         source, place_code=layout.place_code, root=tmp_path
     )
     assert layout.program.is_symlink()
-    assert layout.config.is_file()
+    assert layout.place_config.is_file()
+    assert not layout.config.exists()
     assert (layout.program.parent / os.readlink(layout.program)).resolve() == source
     from toolang.common.config_sources import config_sources
 

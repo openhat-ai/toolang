@@ -7,24 +7,24 @@ owns invocation syntax and [Hosting](hosting.md) owns sandbox mounts.
 
 ## Grant construction
 
-State merges HOME `config.toml` `[workspaces]` with the matching ROOT
-`config.toml` table. ROOT wins for a shared name; HOME supplies other names.
+State merges HOME `[workspaces]` with the agent-root policy in PLACE. The root
+policy wins for a shared name; HOME supplies other names. Resident PLACE equals
+the Toolang root; nonresident agents do not inherit its agent configuration.
 
-| Placement | Matching ROOT table |
+| Placement | Root policy |
 | --- | --- |
 | Resident | `[workspaces.hak]` |
-| Visiting | `[workspaces."https://toolang.ai/lex.too"]` |
-| Roaming | `[workspaces."/Users/bryan/project/check.too"]` |
+| Visiting | Matching ref table in its managed PLACE, normally empty |
+| Roaming | Flat `[workspaces]` in source-local `toolang.toml` |
 
-Keys are the resident name, canonical requested ref/URL, or canonical source-file
-path. ROOT configuration can define grants for every agent, selecting only its
-matching table. Paths may be anywhere on the host.
+Keyed PLACE tables select only the matching stable agent identity. Roaming
+project layers retain their flat workspace syntax. Paths may be anywhere on the host.
 Absolute host paths are recommended in both HOME and ROOT configuration.
 `workspace add` resolves paths at the client's procdir and writes canonical
 absolute paths. Authored relative paths resolve at their declaring file.
-Roaming source-local declarations are captured in HOME; ancestor project
-configuration grants no access. Home State captures only the selected
-ROOT workspace policy, so unrelated ROOT Setup edits do not change its revision.
+Roaming project configuration is captured in `PLACE/config.toml`; ancestor
+project configuration grants no access. Home State retains a receipt of only
+the selected root workspace policy, so unrelated root Setup edits do not change it.
 Source discovery and process directories are distinct from execution workdir.
 
 Setup adds the implicit `lab` workspace at `PLACE/workspaces/<agent>/lab`,
@@ -68,26 +68,20 @@ State publication cannot grant new paths to an accepted Run. Changing workdir
 selects among those grants. Per-tool-call contexts capture that authority and
 must not be retained on shared plugin objects.
 
-Guest startup captures host grants and projects their paths into generated ROOT
-configuration. For example:
+Guest startup captures grants before constructing execution paths. Authored
+configuration and State keep canonical host paths; runtime configuration patches
+carry configured guest paths and common startup records preserve both identities:
 
-```toml
-# Host ROOT/config.toml
-[workspaces.hak]
-repo = "/Volumes/projects/demo"
+```json
+{"repo":{"source":"/Volumes/projects/demo","path":"/root/.toolang/workspaces/hak/repo","temporary":false}}
 ```
 
-```toml
-# Generated guest ROOT/config.toml, with the default Docker root
-[workspaces.hak]
-repo = "/root/.toolang/workspaces/hak/repo"
-```
-
-Host configuration remains unchanged. Captured mappings normalize guest paths
-back to host sources for Run authority and attaching-client compatibility;
-logical `name://` paths work in either environment. Runtime resolution uses that
-mapping without probing client directories again. A new or remapped grant needs
-a compatible mount, so restart the server to change its captured grants.
+Host records use the same shape with `path=source`. Only CLI additions marked
+`temporary=true` contribute canonical source paths to State composition. Setup
+intersects current canonical grants with captured bindings before selecting the
+execution root. Removed, new, or rebound grants cannot gain access through a
+stale patch. Logical `name://` paths remain unchanged. Restart the server to
+change captured mounts; no workspace mapping is read from environment variables.
 Temporary grants last for the server generation and are not written to authored
 configuration. [Hosting](hosting.md#docker-filesystem) owns mount paths and access.
 

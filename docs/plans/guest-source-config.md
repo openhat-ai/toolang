@@ -1,7 +1,7 @@
 # Preserve agent source configuration in Docker
 
-Status: approved in discussion on 2026-10-25; design only, not implemented.
-Patch and internal binding shapes describe intended changes, not current APIs.
+Status: implemented locally; approved in discussion on 2026-10-25.
+Patch and internal binding shapes describe the approved implementation contract.
 
 ## Goal and boundary
 
@@ -94,8 +94,9 @@ Patch and source rules:
   win. Top-level `root`/`home` overlay the execution view. Recursively merge
   objects, replace scalar/array leaves, and preserve omitted fields. Reject
   unknown envelope keys, non-object scopes, and nulls; no deletion/expression DSL.
-- `origins` contains absolute canonical host source filenames, not guest files
-  to open. Preserve captured host path provenance, including symlinks; never
+- `origins` contains absolute host source filenames, not guest files
+  to open. Additional absolute reference keys retain canonical symlink/tilde
+  targets captured on the host. Preserve this provenance; never
   rebase against guest HOME/cwd or resolve host paths through guest symlinks.
 - CLI orchestration parses the envelope and passes concrete source contexts to
   parsers. Build canonical State from original bytes and host origins; only
@@ -145,7 +146,8 @@ only temporary entries contribute `source` values to State's CLI additions.
 Their `path` values never become State inputs. Host records use `path=source`.
 This preserves one shape and validator for both runtimes. Reuse the existing
 internal option; add no guest-only flags or options patch in dotenv. Validate
-records at entry and reject incompatible launcher/guest inputs before State writes.
+records at entry; the shared `--launch-schema` marker makes older guests reject
+the new contract before State writes.
 Directory-form `--workdir` follows ordinary grant normalization; workspace URIs
 remain unchanged. Preserve canonical host grants in State/Run captures while
 using guest paths for execution. `guest.sh` keeps bootstrap and `exec "$@"`;

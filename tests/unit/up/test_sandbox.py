@@ -30,6 +30,16 @@ from toolang.up import process as process_runtime
 from toolang.up.server import ServeSpec
 
 
+def captured_workspace_mounts(request):
+    assert "TOOLANG_WORKSPACE_MOUNTS" not in request.envs
+    values = json.loads(
+        request.command[request.command.index("--workspace-bindings") + 1]
+    )
+    return {
+        name: [binding["source"], binding["path"]] for name, binding in values.items()
+    }
+
+
 class FakeSandbox:
     name = "fake"
     location = "guest"
@@ -706,7 +716,7 @@ def test_mount_layout_preserves_root_place_and_home_scopes(
         guest_root = Path("/runtime")
         guest_place = guest_root
         assert request.hosted_runtime == guest_root / ".runtime/active/alice"
-        assert request.guest_config is not None
+        assert "TOOLANG_CONFIG_PATCH" in request.dotenv_envs
         assert len({mount.hosted_path for mount in request.mounts}) == len(
             request.mounts
         )
@@ -718,7 +728,7 @@ def test_mount_layout_preserves_root_place_and_home_scopes(
         assert layout.lab == host_lab
         assert host_lab.is_dir()
         assert SandboxMount(host_lab, guest_lab) in request.mounts
-        assert json.loads(request.envs["TOOLANG_WORKSPACE_MOUNTS"])["lab"] == [
+        assert captured_workspace_mounts(request)["lab"] == [
             str(host_lab),
             str(guest_lab),
         ]
@@ -733,7 +743,7 @@ def test_mount_layout_preserves_root_place_and_home_scopes(
             assert not any(
                 mount.local_path == source.parent for mount in request.mounts
             )
-        assert request.envs[MODEL_CATALOG_ENV] == "/runtime/catalog.json"
+        assert request.envs[MODEL_CATALOG_ENV] == "/runtime/.inputs/catalog.json"
         assert (
             SandboxMount(root / "hub", guest_root / "hub", read_only=True)
             not in request.mounts
@@ -1418,7 +1428,7 @@ def test_guest_launch_snapshots_workspace_mounts_and_unavailable_roots(
         assert SandboxMount(lab_root.resolve(), hosted_lab) in request.mounts
         assert not any(mount.local_path == missing for mount in request.mounts)
         assert request.envs["TOOLANG_WORKSPACE_LOCATION"] == "guest"
-        assert json.loads(request.envs["TOOLANG_WORKSPACE_MOUNTS"]) == {
+        assert captured_workspace_mounts(request) == {
             "repo": [str(repo), str(hosted)],
             "lab": [str(lab_root.resolve()), str(hosted_lab)],
         }
@@ -1430,16 +1440,126 @@ def test_guest_launch_snapshots_workspace_mounts_and_unavailable_roots(
         )
         # This launch retains only the mounts captured before the config changed.
         assert not any(mount.local_path == new for mount in request.mounts)
-        assert "new" not in json.loads(request.envs["TOOLANG_WORKSPACE_MOUNTS"])
+        assert "new" not in captured_workspace_mounts(request)
     finally:
         asyncio.run(sandbox.stop(spec.serve.layout, force=True))
     assert handle.state.sandbox == "fake:value:with:colons"
+
+
+@pytest.mark.parametrize("catalog_kind", ["packaged", "root", "custom", "home"])
+def test_guest_catalog_launch_preserves_selection_provenance(
+    tmp_path, monkeypatch, catalog_kind
+):
+    from toolang.plugin.catalogs.models_dev.path import (
+        MODEL_CATALOG_ENV,
+        PACKAGED_MODEL_CATALOG,
+    )
+
+    implementation = FakeSandbox()
+    monkeypatch.setattr(
+        sandbox, "create_sandbox", lambda *_args, **_kwargs: implementation
+    )
+
+    async def ready(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(sandbox, "_wait_ready", ready)
+    spec = _launch_spec(tmp_path)
+    if catalog_kind in {"root", "custom"}:
+        catalog = spec.serve.layout.place / "catalog.json"
+        catalog.write_text("{}")
+    elif catalog_kind == "home":
+        (spec.serve.layout.home / "catalog.json").write_text("{}")
+    if catalog_kind == "custom":
+        spec = replace(spec, environ={MODEL_CATALOG_ENV: str(catalog)})
+    asyncio.run(sandbox.launch(spec))
+    prepared = implementation.calls[0]
+    assert isinstance(prepared, tuple)
+    request = cast(SandboxRequest, prepared[2])
+    assert not any(m.local_path == PACKAGED_MODEL_CATALOG for m in request.mounts)
+    if catalog_kind == "custom":
+        assert request.envs[MODEL_CATALOG_ENV] == "/runtime/.inputs/catalog.json"
+        assert (
+            SandboxMount(catalog, Path("/runtime/.inputs/catalog.json"), read_only=True)
+            in request.mounts
+        )
+    else:
+        assert MODEL_CATALOG_ENV not in request.envs
+    assert all(
+        m.local_path == spec.serve.layout.place_config
+        for m in request.mounts
+        if m.hosted_path == Path("/runtime/config.toml")
+    )
+
+
+def test_guest_argv_preserves_cli_workspace_order_and_state_identity(
+    tmp_path, monkeypatch
+):
+    from toolang.common.config_runtime import parse_workspace_bindings
+
+    implementation = FakeSandbox()
+    monkeypatch.setattr(
+        sandbox, "create_sandbox", lambda *_args, **_kwargs: implementation
+    )
+
+    async def ready(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(sandbox, "_wait_ready", ready)
+    spec = _launch_spec(tmp_path)
+    first = tmp_path / "nested/first"
+    last = tmp_path / "last"
+    first.mkdir(parents=True)
+    last.mkdir()
+    additions = {"zz": str(first), "aa": str(last)}
+    spec = replace(
+        spec, serve=replace(spec.serve, workspace_additions=additions, workdir="aa://")
+    )
+    asyncio.run(sandbox.launch(spec))
+    prepared = implementation.calls[0]
+    assert isinstance(prepared, tuple)
+    request = cast(SandboxRequest, prepared[2])
+    records = parse_workspace_bindings(
+        request.command[request.command.index("--workspace-bindings") + 1]
+    )
+    captured = {
+        name: str(binding.source)
+        for name, binding in records.items()
+        if binding.temporary
+    }
+    assert list(captured.items()) == list(additions.items())
+    before = state_prepare.load_agent_state(spec.serve.layout)
+    assert (
+        state_prepare.prepare_agent_state(
+            spec.serve.layout, workspace_additions=captured
+        ).revision
+        == before.revision
+    )
+    assert request.command[request.command.index("--initial-workdir") + 1] == "aa://"
+
+
+def test_guest_rejects_temporary_workspace_lost_before_mounting(tmp_path, monkeypatch):
+    implementation = FakeSandbox()
+    monkeypatch.setattr(
+        sandbox, "create_sandbox", lambda *_args, **_kwargs: implementation
+    )
+    spec = _launch_spec(tmp_path)
+    spec = replace(
+        spec,
+        serve=replace(
+            spec.serve, workspace_additions={"gone": str(tmp_path / "missing")}
+        ),
+    )
+    with pytest.raises(ValueError, match="temporary workspaces must remain available"):
+        asyncio.run(sandbox.launch(spec))
+    assert implementation.calls == []
 
 
 @pytest.mark.parametrize("linked", [False, True])
 def test_guest_workspace_config_retains_its_host_origin(tmp_path, monkeypatch, linked):
     import tomllib
     from toolang.common.config_sources import rebase_config
+    from toolang.common.config_runtime import RuntimeConfig, parse_workspace_bindings
 
     implementation = FakeSandbox()
     monkeypatch.setattr(
@@ -1474,10 +1594,24 @@ def test_guest_workspace_config_retains_its_host_origin(tmp_path, monkeypatch, l
     content = (
         config_mount.local_path if config_mount else spec.serve.layout.config
     ).read_text()
-    guest_config = rebase_config(tomllib.loads(content), request.hosted_home)
+    runtime = RuntimeConfig.parse(
+        request.envs["TOOLANG_CONFIG_PATCH"],
+        workspaces=parse_workspace_bindings(
+            request.command[request.command.index("--workspace-bindings") + 1]
+        ),
+    )
+    guest_config = rebase_config(
+        tomllib.loads(content),
+        runtime.origin("home", request.hosted_home / "config.toml").parent,
+        runtime=runtime,
+    )
     assert len({mount.hosted_path for mount in request.mounts}) == len(request.mounts)
-    assert config_mount is not None and config_mount.read_only
-    captured = json.loads(request.envs["TOOLANG_WORKSPACE_MOUNTS"])
+    assert (
+        (config_mount is not None and config_mount.read_only)
+        if linked
+        else config_mount is None
+    )
+    captured = captured_workspace_mounts(request)
     assert guest_config["workspaces"] == {"repo": captured["repo"][0]}
 
 

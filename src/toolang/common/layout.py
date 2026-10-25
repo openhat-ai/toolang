@@ -8,6 +8,7 @@ import re
 from typing import Literal
 
 from .source import AcquiredSource
+from .config_runtime import RuntimeConfig
 from .place_codes import (
     root_code,
     decode_place_code,
@@ -69,6 +70,9 @@ class AgentLayout:
     source_ref: str | None = field(default=None, compare=False)
     source_edit_lock: Path | None = field(default=None, compare=False)
     request_order_ns: int | None = field(default=None, compare=False)
+    runtime_config: RuntimeConfig | None = field(
+        default=None, compare=False, repr=False
+    )
     program_acquisition: AcquiredSource | None = field(
         default=None, compare=False, repr=False
     )
@@ -183,7 +187,7 @@ class AgentLayout:
 
     @property
     def root_config(self) -> Path:
-        return (self.root or self.place) / "config.toml"
+        return self.place_config
 
     @property
     def config_key(self) -> str | None:

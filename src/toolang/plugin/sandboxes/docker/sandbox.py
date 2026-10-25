@@ -365,16 +365,6 @@ class DockerSandbox:
             ),
             SandboxMount(active_dir, runtime_dir, read_only=True),
         ]
-        if request.guest_config is not None:
-            guest_config = files.stage / "config.toml"
-            atomic_write_text(guest_config, request.guest_config)
-            mounts.append(
-                SandboxMount(
-                    guest_config,
-                    (request.hosted_root or request.hosted_place) / "config.toml",
-                    read_only=True,
-                )
-            )
         package_source = (
             str(hosted_dev_artifact)
             if hosted_dev_artifact is not None
@@ -406,9 +396,6 @@ class DockerSandbox:
                 "TOOLANG_HOST_GATEWAY": DEFAULT_HOST_GATEWAY,
                 "TOOLANG_ROOT": str(hosted_env_path.parent),
                 "TOOLANG_SANDBOX": f"{self.name}:{image}",
-                "TOOLANG_WORKSPACE_MOUNTS": request.envs.get(
-                    "TOOLANG_WORKSPACE_MOUNTS", "{}"
-                ),
                 "TOOLANG_WORKSPACE_LOCATION": "guest",
                 **(
                     {
