@@ -247,7 +247,13 @@ def test_presence_expires_naturally_and_gc_names_remain_nonunique(
             ) as alice,
             Valkey.from_url(valkey.url, decode_responses=True) as raw,
             httpx.AsyncClient(
-                base_url=connection.endpoint, timeout=20, trust_env=False
+                base_url=connection.endpoint,
+                headers={
+                    "X-Toolang-Backend": connection.identity,
+                    "X-Toolang-Human": "human%3Aowner",
+                },
+                timeout=20,
+                trust_env=False,
             ) as http,
         ):
             async with aconnect_sse(http, "GET", "/team/events") as stream:

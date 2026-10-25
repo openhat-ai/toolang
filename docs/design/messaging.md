@@ -274,10 +274,8 @@ An independent heartbeat renews a backend presence deadline. Expired leases
 grant no authority even before cleanup; graceful stop releases the lease. hub
 reconciles expiry independently of discovery. Readers compare deadlines with
 their own clocks without writing backend state; heartbeat renewal changes only
-the deadline. hub scans resident homes at startup and periodically. Two successful scans
-confirming absence plus no live lease remove an agent from the roster and ordinary
-GCs. DM membership and all historical data remain. A live process with a missing home
-stays visible. A recreated name retains its DM identity and history.
+the deadline. Hub does not scan homes. Lease expiry or release marks an agent
+offline while retaining memberships, history, and queued messages.
 
 Streams retain approximately 10,000 entries. Readers use independent full Stream-ID
 cursors and report retention gaps. Uncertain sends report their UUID without
@@ -314,16 +312,14 @@ The backend separates authoritative data by purpose:
 | Data | Authority |
 | --- | --- |
 | Team directory | Typed identities, public metadata, and private leases |
-| Agent roster | Root ownership and discovery state; no duplicate presence or names |
-| Presence | Lease deadlines, independent of discovery |
+| Presence | Lease deadlines |
 | Conversations | Metadata, membership, messages, rules, and nonunique name indexes |
 | Talk cursors | Persistent agent/conversation consumption progress |
 | Execution events | Retained feed, byte accounting, projections, and recovery generations |
 
-Discovery atomically creates directory/roster entries. Two confirmed absent
-scans and no live lease remove an agent and its GC memberships, preserving DMs
-and history. Expiry alone changes presence. Another root cannot adopt a root
-claim. Raw leases remain private; responses expose metadata and deadlines.
+First registration creates the agent's directory entry with its declared human
+owner. Home removal does not remove Hub members. Raw leases remain private;
+responses expose metadata and deadlines.
 
 Participant pairs resolve DMs directly. Conversation/message counters commit
 with their records. Active execution-event generations persist; staging

@@ -1,8 +1,9 @@
 """Real Hub transport with deterministic model turns and fault injection."""
 
-from toolang.setup.teaming import load_teaming_root
+from toolang.setup.teaming import TeamingSetup, load_teaming_root
 
 import asyncio
+from dataclasses import replace
 import json
 import sys
 
@@ -35,6 +36,7 @@ from toolang.teaming.events import HubScope
 from toolang.teaming.stream_client import HubStreamState
 from toolang.driver.talk import MessagingLoop
 from toolang.teaming.runtime import TeamingLoop
+from toolang.teaming.config import TeamingHomeConfig
 
 pytestmark = pytest.mark.live_valkey
 
@@ -53,7 +55,8 @@ def test_inflight_message_survives_hub_restart_and_scoped_fanout(
                 if c["name"] == "all"
             )
         gate = AsyncGate()
-        msg = ConvoToolset({"root": str(tmp_path)})
+        teaming = TeamingSetup(load_teaming_root(tmp_path), TeamingHomeConfig(True))
+        msg = ConvoToolset(teaming.toolset_config(root=tmp_path))
         tools = tools_from_toolsets(
             {"convo": LoadedPlugin("convo", "convo", msg, "built-in")}
         )
@@ -78,6 +81,7 @@ def test_inflight_message_survives_hub_restart_and_scoped_fanout(
                 ModelCallResult(message=ModelMessage.assistant("Handled.")),
             ],
         )
+        harness.setup = replace(harness.setup, teaming=teaming)
         client = AgentClient(
             tmp_path,
             connection=load_teaming_root(tmp_path).connection(),

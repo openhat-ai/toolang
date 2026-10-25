@@ -250,12 +250,12 @@ def test_agents_reconnect_through_hub_without_direct_backend_access(valkey, tmp_
                 # or publishes directly; both still execute and stream over HTTP.
                 runs = {name: await local_run(name) for name in agents}
                 assert await driver._client.dbsize() == 0
-                async with AgentClient(
-                    tmp_path,
-                    connection=load_teaming_root(tmp_path).connection(),
-                    actor="agent:alice",
-                ) as remote:
-                    with pytest.raises(BackendUnavailable):
+                with pytest.raises(BackendUnavailable):
+                    async with AgentClient(
+                        tmp_path,
+                        connection=load_teaming_root(tmp_path).connection(),
+                        actor="agent:alice",
+                    ) as remote:
                         await remote.targets()
                 await asyncio.to_thread(cli, "hub", "start", "--port", str(hub_port))
                 original = hub_connection(tmp_path)
@@ -324,7 +324,7 @@ def test_hub_event_fanout_and_recovery(valkey, running_hub, tmp_path, monkeypatc
             registered = await http.put(
                 "/agents/agent:alice/lease",
                 headers={"X-Toolang-Agent-Lease": "lease"},
-                json={"managed": False},
+                json={"owner": "human:owner", "endpoint": ""},
             )
             registered.raise_for_status()
             service = driver.events
