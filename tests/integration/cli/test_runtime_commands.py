@@ -523,10 +523,12 @@ def test_runtime_warns_when_development_source_uses_index_package(
 
     stderr = capsys.readouterr().err
     assert (
-        "will use Toolang from the package index; local changes won't apply." in stderr
+        "will install Toolang from the package index instead of the local build."
+        in stderr
     ) is warns
     if warns:
-        assert "--dev dist" in stderr
+        assert "\n\nTo use the local build," in stderr
+        assert "--dev PATH" in stderr
 
 
 @pytest.mark.parametrize("command", ["serve", "start", "_serve"])

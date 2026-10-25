@@ -504,8 +504,8 @@ def warn_development_package_source(
     sandbox_name = launch.sandbox.partition(":")[0].capitalize()
     warning = Text.assemble(
         ("Warning:", "yellow"),
-        f" {sandbox_name} will use Toolang from the package index; local changes won't apply.\n"
-        "To include local changes, run `uv build --wheel` and rerun with `--dev dist`.",
+        f" {sandbox_name} will install Toolang from the package index instead of the local build.\n\n"
+        "To use the local build, run `uv build --wheel` and rerun with `--dev PATH`.",
     )
     Console(stderr=True, highlight=False).print(warning, soft_wrap=True)
 

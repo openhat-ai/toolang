@@ -959,8 +959,9 @@ def test_agent_server_warns_when_a_development_cli_uses_the_package_index(
 
     prefix = "\x1b[33mWarning:\x1b[0m" if color else "Warning:"
     assert capsys.readouterr().err.splitlines() == [
-        f"{prefix} Docker will use Toolang from the package index; local changes won't apply.",
-        "To include local changes, run `uv build --wheel` and rerun with `--dev dist`.",
+        f"{prefix} Docker will install Toolang from the package index instead of the local build.",
+        "",
+        "To use the local build, run `uv build --wheel` and rerun with `--dev PATH`.",
     ]
 
 
