@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from functools import cache
-from email.parser import Parser
 from importlib.metadata import distribution as package_distribution
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as package_version
@@ -62,18 +61,6 @@ def base_toolang_version() -> str:
     return "unknown"
 
 
-def toolang_requirement() -> str:
-    """Pin guest installs to the distribution version, including prereleases."""
-
-    version = base_toolang_version()
-    if version == "unknown" or not version.strip():
-        raise ValueError(
-            "Cannot determine the Toolang package version; use --dev PATH "
-            "with a Toolang wheel."
-        )
-    return f"toolang=={version}"
-
-
 def development_source() -> tuple[bool, Path | None]:
     """Return whether Toolang runs from development source and its local path."""
 
@@ -101,52 +88,18 @@ def development_source() -> tuple[bool, Path | None]:
     return True, _local_file_url(url) if isinstance(url, str) else None
 
 
-def embedded_source_version() -> str:
-    """Return validated source provenance from an installed artifact."""
+def embedded_source_version(wheel: Path | None = None) -> str:
+    """Read source provenance from the installed package or a wheel."""
 
     path = Path(__file__).resolve().parents[1] / _BUILD_INFO_NAME
     try:
-        raw = path.read_text(encoding="utf-8")
-    except OSError:
-        return _UNKNOWN_SOURCE_VERSION
-    return _build_source_version(raw)
-
-
-def wheel_source_version(path: Path) -> str:
-    """Read a Toolang wheel's CLI version without importing its code."""
-
-    try:
-        with ZipFile(path) as wheel:
-            metadata_paths = [
-                name
-                for name in wheel.namelist()
-                if name.endswith(".dist-info/METADATA")
-            ]
-            if len(metadata_paths) != 1:
-                raise ValueError("expected one distribution metadata file")
-            metadata = Parser().parsestr(wheel.read(metadata_paths[0]).decode("utf-8"))
-            if metadata.get("Name", "").casefold() != "toolang" or not metadata.get(
-                "Version"
-            ):
-                raise ValueError("distribution is not Toolang")
-            try:
-                raw = wheel.read(f"toolang/{_BUILD_INFO_NAME}").decode("utf-8")
-            except KeyError:
-                return _UNKNOWN_SOURCE_VERSION
-    except (BadZipFile, OSError, UnicodeError, ValueError) as exc:
-        raise ValueError(f"Invalid Toolang wheel: {path}") from exc
-    version = _build_source_version(raw)
-    return (
-        version
-        if version == _UNKNOWN_SOURCE_VERSION
-        else f"v{version.removeprefix('v')}"
-    )
-
-
-def _build_source_version(raw: str) -> str:
-    try:
+        if wheel is None:
+            raw = path.read_text(encoding="utf-8")
+        else:
+            with ZipFile(wheel) as archive:
+                raw = archive.read(f"toolang/{_BUILD_INFO_NAME}").decode("utf-8")
         payload = json.loads(raw)
-    except json.JSONDecodeError:
+    except (BadZipFile, KeyError, OSError, ValueError):
         return _UNKNOWN_SOURCE_VERSION
     if not isinstance(payload, Mapping):
         return _UNKNOWN_SOURCE_VERSION

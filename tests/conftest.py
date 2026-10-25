@@ -12,29 +12,20 @@ import pytest
 
 @pytest.fixture
 def toolang_wheel():
-    """Write a small wheel with real distribution and source-version metadata."""
     from toolang.common.version import displayed_toolang_version
 
-    def write(path, version=None, *, build_info=True):
+    def write(path, version=None):
         path.parent.mkdir(parents=True, exist_ok=True)
         with ZipFile(path, "w") as wheel:
             wheel.writestr(
-                "toolang-0.4.0b1.dist-info/METADATA",
-                "Name: toolang\nVersion: 0.4.0b1\n",
+                "toolang/_build_info.json",
+                json.dumps(
+                    {
+                        "schema": 1,
+                        "source_version": version or displayed_toolang_version(),
+                    }
+                ),
             )
-            if build_info:
-                identity = (
-                    version if version is not None else displayed_toolang_version()
-                )
-                wheel.writestr(
-                    "toolang/_build_info.json",
-                    json.dumps(
-                        {
-                            "schema": 1,
-                            "source_version": identity,
-                        }
-                    ),
-                )
         return path
 
     return write

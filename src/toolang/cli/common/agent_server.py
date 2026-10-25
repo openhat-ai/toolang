@@ -438,6 +438,9 @@ def _prepare_agent_server(
         drivers=effective_drivers,
         lifetime=policy.client_lifetime,
     )
+    with progress.suspended():
+        warn_development_package_source(launch)
+
     try:
         handle = run_foreground(
             sandbox_runtime.launch(launch, progress=progress.sink), closing=closing
@@ -485,6 +488,35 @@ def sandbox_matches(requested: str, running: str) -> bool:
     if requested_name.strip() != running_name.strip():
         return False
     return not separator or requested.strip() == running.strip()
+
+
+def warn_development_package_source(
+    launch: sandbox_runtime.LaunchSpec,
+) -> None:
+    """Warn when a development CLI starts a guest from the package index."""
+
+    if launch.dev_artifact is not None or launch.sandbox.partition(":")[0] == "host":
+        return
+    detected, source = development_source()
+    if not detected:
+        return
+    sandbox_name = launch.sandbox.partition(":")[0]
+    if source is None:
+        warning = (
+            "Warning: the current Toolang process is a development build, but the "
+            f"new {sandbox_name} guest will install Toolang from the package index."
+        )
+    else:
+        warning = (
+            f"Warning: the new {sandbox_name} guest will install Toolang from the "
+            f"package index, not from {source}."
+        )
+    print(warning, file=sys.stderr)
+    print(
+        "Build the current source with `uv build --wheel`, then run this command "
+        "again with `--dev dist`.",
+        file=sys.stderr,
+    )
 
 
 def _attached_server(

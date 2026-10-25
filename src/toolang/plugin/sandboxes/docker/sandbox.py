@@ -34,11 +34,7 @@ from toolang.common.place_codes import root_code
 from toolang.plugin.catalogs.models_dev.path import MODEL_CATALOG_ENV
 from toolang.up.records import RuntimeReference
 from toolang.common.files import atomic_write_text
-from toolang.common.version import (
-    displayed_toolang_version,
-    toolang_requirement,
-    wheel_source_version,
-)
+from toolang.common.version import base_toolang_version
 
 from ._cli import (
     DEFAULT_HOST_GATEWAY,
@@ -70,7 +66,7 @@ DEFAULT_IMAGE = "python:3.13-slim"
 # Requests already contain the resolved agent environment. Only an explicit
 # legacy pattern adds another restriction.
 DEFAULT_ENVIRONMENT_ALLOW_PATTERN = r".*"
-_CONTROL_ENV_NAMES = RUNTIME_ENV_NAMES | {"TOOLANG_GUEST_EXPECTED_VERSION"}
+_CONTROL_ENV_NAMES = RUNTIME_ENV_NAMES
 _STARTUP_EVENT_INTERVAL_SEC = 0.05
 _STARTUP_EVENT_MAX_BYTES = 1024
 _STARTUP_EVENT_MAP: dict[str, tuple[ProgressStage, str, ProgressStatus]] = {
@@ -88,7 +84,6 @@ _STARTUP_EVENT_MAP: dict[str, tuple[ProgressStage, str, ProgressStatus]] = {
     "toolang.check.running": ("create", "Checking Toolang...", "running"),
     "toolang.check.ok": ("create", "Checked Toolang", "running"),
     "toolang.check.failed": ("create", "Failed to check Toolang", "failed"),
-    "toolang.version.failed": ("create", "Toolang version mismatch", "failed"),
     "server.running": ("start", "Starting agent...", "running"),
 }
 _STARTUP_EVENT_TRANSITIONS = {
@@ -103,9 +98,7 @@ _STARTUP_EVENT_TRANSITIONS = {
         {"toolang.install.ok", "toolang.install.failed"}
     ),
     "toolang.install.ok": frozenset({"toolang.check.running"}),
-    "toolang.check.running": frozenset(
-        {"toolang.check.ok", "toolang.check.failed", "toolang.version.failed"}
-    ),
+    "toolang.check.running": frozenset({"toolang.check.ok", "toolang.check.failed"}),
     "toolang.check.ok": frozenset({"server.running"}),
 }
 
@@ -344,7 +337,6 @@ class DockerSandbox:
         stage_guest_files(active_dir)
 
         hosted_dev_artifact: Path | None = None
-        expected_version = displayed_toolang_version()
         if request.local_dev_artifact is not None:
             artifact = request.local_dev_artifact
             if not artifact.is_file() or artifact.suffix.casefold() != ".whl":
@@ -352,23 +344,7 @@ class DockerSandbox:
             staged = active_dir / artifact.name
             if artifact.resolve() != staged.resolve():
                 shutil.copy2(artifact, staged)
-            actual_version = wheel_source_version(staged)
-            if not request.dev_version_confirmed and (
-                "unknown" in {expected_version, actual_version}
-                or actual_version != expected_version
-            ):
-                raise ValueError(
-                    f"Toolang version mismatch: current {expected_version}, "
-                    f"wheel {actual_version}. Append ! to the --dev path "
-                    "to confirm this wheel."
-                )
-            expected_version = None
             hosted_dev_artifact = runtime_dir / staged.name
-        elif expected_version == "unknown":
-            raise ValueError(
-                "Cannot determine the current Toolang version; use --dev PATH! "
-                "to confirm a specific wheel."
-            )
         guest_env_path = active_dir / "guest.env"
         hosted_env_path = (
             request.environment_path
@@ -402,7 +378,7 @@ class DockerSandbox:
         package_source = (
             str(hosted_dev_artifact)
             if hosted_dev_artifact is not None
-            else toolang_requirement()
+            else f"toolang=={base_toolang_version()}"
         )
         command = list(request.command)
         if "--sandbox" in command:
@@ -427,11 +403,6 @@ class DockerSandbox:
             log_path=request.log_path,
             endpoint=request.endpoint,
             envs={
-                **(
-                    {"TOOLANG_GUEST_EXPECTED_VERSION": expected_version}
-                    if expected_version is not None
-                    else {}
-                ),
                 "TOOLANG_HOST_GATEWAY": DEFAULT_HOST_GATEWAY,
                 "TOOLANG_ROOT": str(hosted_env_path.parent),
                 "TOOLANG_SANDBOX": f"{self.name}:{image}",
@@ -739,7 +710,6 @@ async def _observe_startup_events(
                 "python.install.failed",
                 "toolang.install.failed",
                 "toolang.check.failed",
-                "toolang.version.failed",
                 "server.running",
             }:
                 return
@@ -821,8 +791,6 @@ def _startup_event_detail(token: str, *, package_source: str) -> str | None:
         return "Toolang installation failed."
     if token == "toolang.check.failed":
         return "The installed Toolang package cannot start the required AgentServer."
-    if token == "toolang.version.failed":
-        return "The installed Toolang version does not match the selected version."
     return None
 
 

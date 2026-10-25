@@ -344,71 +344,6 @@ def _request(
     )
 
 
-@pytest.mark.parametrize(
-    "version", ["0.4.0", "0.4.0a1", "0.4.0b1", "0.4.0rc1", "0.4.0.dev1"]
-)
-def test_docker_passes_the_exact_package_requirement_to_the_installer(
-    tmp_path, monkeypatch, version
-):
-    from toolang.common import version as versions
-
-    monkeypatch.setattr(versions, "base_toolang_version", lambda: version)
-    plan = docker_sandbox.DockerSandbox({}).prepare("rust:1.75", _request(tmp_path))
-    assert plan.command[5] == f"toolang=={version}"
-    assert "toolang" not in plan.command
-
-
-def test_docker_passes_the_controller_identity_for_index_installs(
-    tmp_path, monkeypatch
-):
-    identity = "v0.4.0b1-1-g12345678*"
-    monkeypatch.setattr(docker_sandbox, "displayed_toolang_version", lambda: identity)
-    request = _request(tmp_path)
-    request = replace(
-        request,
-        envs={**request.envs, "TOOLANG_GUEST_EXPECTED_VERSION": "wrong-image-value"},
-    )
-    plan = docker_sandbox.DockerSandbox({}).prepare(None, request)
-    assert plan.envs["TOOLANG_GUEST_EXPECTED_VERSION"] == identity
-    generated = Path(plan.meta["stage_dir"]) / "active/guest.env"
-    assert "TOOLANG_GUEST_EXPECTED_VERSION" not in dotenv_values(generated)
-
-
-@pytest.mark.parametrize("confirmed", [False, True])
-@pytest.mark.parametrize(
-    "current,actual",
-    [
-        ("v0.4.0b1", "v0.4.0b1"),
-        ("v0.4.0b1-1-g11111111*", "v0.4.0b1-1-g22222222*"),
-        ("v0.4.0b1-1-g11111111*", "v0.4.0b1-1-g11111111"),
-        ("v0.4.0b1", "unknown"),
-        ("unknown", "unknown"),
-    ],
-)
-def test_docker_checks_wheel_identity_only_during_preparation(
-    tmp_path, monkeypatch, toolang_wheel, current, actual, confirmed
-):
-    monkeypatch.setattr(docker_sandbox, "displayed_toolang_version", lambda: current)
-    wheel = toolang_wheel(tmp_path / "toolang-test.whl", actual)
-    request = replace(_request(tmp_path, dev=wheel), dev_version_confirmed=confirmed)
-    if not confirmed and (actual != current or actual == "unknown"):
-        with pytest.raises(ValueError, match="Toolang version mismatch.*Append !"):
-            docker_sandbox.DockerSandbox({}).prepare(None, request)
-    else:
-        plan = docker_sandbox.DockerSandbox({}).prepare(None, request)
-        staged = Path(plan.meta["stage_dir"]) / "active" / wheel.name
-        assert staged.read_bytes() == wheel.read_bytes()
-        assert "TOOLANG_GUEST_EXPECTED_VERSION" not in plan.envs
-
-
-def test_confirmation_does_not_accept_an_invalid_wheel(tmp_path):
-    wheel = tmp_path / "toolang-test.whl"
-    wheel.write_bytes(b"invalid wheel")
-    request = replace(_request(tmp_path, dev=wheel), dev_version_confirmed=True)
-    with pytest.raises(ValueError, match="Invalid Toolang wheel"):
-        docker_sandbox.DockerSandbox({}).prepare(None, request)
-
-
 def test_host_sandbox_parses_own_spec_and_prepares_local_process(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -687,7 +622,6 @@ def test_host_cached_workload_rejects_stale_reference(
 def test_docker_sandbox_prepares_and_launches(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
-    toolang_wheel,
 ) -> None:
     calls: dict[str, object] = {}
 
@@ -704,7 +638,8 @@ def test_docker_sandbox_prepares_and_launches(
         lambda name: name == _CONTAINER_ID,
     )
     dev = tmp_path / "dist" / "toolang-1.2.3-py3-none-any.whl"
-    toolang_wheel(dev)
+    dev.parent.mkdir(parents=True)
+    dev.write_bytes(b"wheel")
     (tmp_path / "shared").mkdir()
     control_lock = AgentLayout.resident(tmp_path, "alice").runtime_status.with_suffix(
         ".lock"
@@ -800,14 +735,6 @@ def test_docker_sandbox_prepares_and_launches(
         "/root/.toolang/.runtime/active/alice/guest.env",
     )
 
-    original_wheel = dev.read_bytes()
-    dev.write_bytes(b"replaced after preparation")
-    assert (stage_dir / "active" / dev.name).read_bytes() == original_wheel
-    monkeypatch.setattr(
-        docker_sandbox,
-        "wheel_source_version",
-        lambda _: pytest.fail("prepared wheels must not be checked again"),
-    )
     ref = asyncio.run(sandbox.launch(plan))
 
     assert ref.runtime_id == _CONTAINER_ID
@@ -921,14 +848,21 @@ def test_docker_sandbox_rewrites_root_model_catalog_and_mounts_it_read_only(
     ] == str(expected)
 
 
+@pytest.mark.parametrize(
+    "version", ["0.4.0", "0.4.0a1", "0.4.0b1", "0.4.0rc1", "0.4.0.dev1"]
+)
 def test_docker_background_sandbox_uses_docker_output_and_durable_diagnostics(
     tmp_path: Path,
+    monkeypatch,
+    version,
 ) -> None:
+    monkeypatch.setattr(docker_sandbox, "base_toolang_version", lambda: version)
     request = _request(tmp_path)
     sandbox = create_sandbox("docker", config={})
 
     plan = sandbox.prepare(None, request)
 
+    assert plan.command[5] == f"toolang=={version}"
     log_path = cast(Path, request.log_path)
     assert log_path.is_file()
     assert stat.S_IMODE(log_path.stat().st_mode) == 0o600
@@ -1113,74 +1047,6 @@ def test_docker_guest_preserves_image_environment_and_scopes_uv_overrides(
     ]
     assert (tmp_path / "install-env").read_text() == "http://image-proxy/$literal\n"
     assert not diagnostic.exists()
-
-
-@pytest.mark.parametrize(
-    "expected,actual,accepted",
-    [
-        ("v0.4.0a1", "v0.4.0a1", True),
-        ("v0.4.0b1", "v0.4.0b1", True),
-        ("v0.4.0rc1", "v0.4.0rc1", True),
-        ("v0.4.0.dev1", "v0.4.0.dev1", True),
-        ("v0.4.0b1-1-g11111111*", "v0.4.0b1-1-g11111111*", True),
-        ("v0.4.0b1-1-g11111111*", "v0.4.0b1-1-g22222222*", False),
-        ("v0.4.0b1-1-g11111111*", "v0.4.0b1-1-g11111111", False),
-    ],
-)
-def test_guest_checks_the_complete_version_before_starting_workload(
-    tmp_path, expected, actual, accepted
-):
-    tools = tmp_path / "tools"
-    tools.mkdir()
-    _link_guest_utilities(tools)
-    _write_fake_guest_tools(tools, python=sys.executable)
-    _write_executable(
-        tools / "too-template",
-        "#!/bin/sh\n"
-        'if [ "$1" = "_serve" ] && [ "$2" = "--help" ]; then exit 0; fi\n'
-        f"if [ \"$1\" = \"--version\" ]; then printf '%s\\n' '{actual}'; exit 0; fi\n"
-        "exit 1\n",
-    )
-    diagnostic = tmp_path / "diagnostic.log"
-    events = tmp_path / "startup.events"
-    workload = tmp_path / "workload.log"
-    result = subprocess.run(
-        [
-            "/bin/sh",
-            str(Path(docker_guest.__file__).with_name("guest.sh")),
-            str(diagnostic),
-            str(diagnostic),
-            str(events),
-            "toolang==0.4.0b1",
-            str(workload),
-            "--",
-            sys.executable,
-            "-c",
-            "import os; assert 'TOOLANG_GUEST_EXPECTED_VERSION' not in os.environ; print('started')",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=15,
-        env={
-            "HOSTNAME": _CONTAINER_ID[:12],
-            "PATH": str(tools),
-            "TOOLANG_GUEST_RUNTIME": str(tmp_path / "runtime"),
-            "TOOLANG_TEST_PYTHON": sys.executable,
-            "TOOLANG_TEST_TOO": str(tools / "too-template"),
-            "TOOLANG_GUEST_EXPECTED_VERSION": expected,
-        },
-    )
-    if accepted:
-        assert result.returncode == 0, result.stderr
-        assert workload.read_text() == "started\n"
-        assert events.read_text().splitlines()[-1] == "server.running"
-    else:
-        assert result.returncode == 69
-        assert not workload.exists()
-        assert events.read_text().splitlines()[-1] == "toolang.version.failed"
-        message = result.stderr
-        assert f"expected {expected}, installed {actual}" in message
-        assert "--dev PATH!" in message
 
 
 @pytest.mark.parametrize("command", ["too", "toolang", "custom"])
@@ -1770,26 +1636,8 @@ def test_docker_guest_requires_the_default_short_container_hostname(
     ]
 
 
-@pytest.mark.parametrize(
-    "failure,detail,label",
-    [
-        (
-            "toolang.check.failed",
-            "The installed Toolang package cannot start the required AgentServer.",
-            "Failed to check Toolang",
-        ),
-        (
-            "toolang.version.failed",
-            "The installed Toolang version does not match the selected version.",
-            "Toolang version mismatch",
-        ),
-    ],
-)
 def test_docker_startup_observer_preserves_order_and_curated_failure(
     tmp_path: Path,
-    failure,
-    detail,
-    label,
 ) -> None:
     path = tmp_path / "startup.events"
     path.write_text(
@@ -1801,7 +1649,7 @@ def test_docker_startup_observer_preserves_order_and_curated_failure(
         "toolang.install.running\n"
         "toolang.install.ok\n"
         "toolang.check.running\n"
-        f"{failure}\n",
+        "toolang.check.failed\n",
         encoding="utf-8",
     )
     events: list[ProgressEvent] = []
@@ -1827,7 +1675,7 @@ def test_docker_startup_observer_preserves_order_and_curated_failure(
             "runtime",
             "create",
             "failed",
-            detail,
+            "The installed Toolang package cannot start the required AgentServer.",
         ),
     ]
     assert [event.label for event in events] == [
@@ -1836,7 +1684,7 @@ def test_docker_startup_observer_preserves_order_and_curated_failure(
         "Installing Toolang from toolang.whl...",
         "Installed Toolang from toolang.whl",
         "Checking Toolang...",
-        label,
+        "Failed to check Toolang",
     ]
 
 

@@ -157,16 +157,6 @@ validate_toolang() {
         progress toolang.check.failed
         fail "Installed Toolang executable is unavailable" 69
     fi
-    if [ -n "${TOOLANG_GUEST_EXPECTED_VERSION:-}" ]; then
-        ACTUAL_VERSION=$("$TOO_BIN" --version) || {
-            progress toolang.check.failed
-            fail "Could not read the installed Toolang version" 69
-        }
-        if [ "$ACTUAL_VERSION" != "$TOOLANG_GUEST_EXPECTED_VERSION" ]; then
-            progress toolang.version.failed
-            fail "Toolang version mismatch: expected $TOOLANG_GUEST_EXPECTED_VERSION, installed $ACTUAL_VERSION. Use a matching wheel or --dev PATH! to confirm a different build." 69
-        fi
-    fi
     if ! "$TOO_BIN" _serve --help; then
         progress toolang.check.failed
         fail "The installed Toolang package cannot start the required AgentServer" 69
@@ -227,7 +217,6 @@ bootstrap() (
 )
 
 exec_workload() {
-    unset TOOLANG_GUEST_EXPECTED_VERSION
     prepare_workload "$@" || exit "$?"
     shift 6
     case "$1" in

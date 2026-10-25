@@ -239,24 +239,6 @@ def test_development_source_ignores_non_editable_distribution(
     assert version.development_source() == (False, None)
 
 
-def test_unknown_package_version_requires_an_explicit_wheel(monkeypatch):
-    monkeypatch.setattr(version, "base_toolang_version", lambda: "unknown")
-    with pytest.raises(ValueError, match="Cannot determine.*--dev PATH"):
-        version.toolang_requirement()
-
-
-def test_wheel_version_reads_embedded_identity_instead_of_distribution_version(
-    tmp_path, toolang_wheel
-):
-    wheel = toolang_wheel(tmp_path / "toolang-0.4.0b1.whl", "v0.4.0b1-2-g12345678*")
-    assert version.wheel_source_version(wheel) == "v0.4.0b1-2-g12345678*"
-
-
-def test_wheel_without_provenance_reports_unknown(tmp_path, toolang_wheel):
-    wheel = toolang_wheel(tmp_path / "toolang-test.whl", build_info=False)
-    assert version.wheel_source_version(wheel) == "unknown"
-
-
 def test_development_source_keeps_editable_signal_without_safe_local_path(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

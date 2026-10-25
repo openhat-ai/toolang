@@ -1259,45 +1259,25 @@ def test_launch_cannot_adopt_a_healthy_server_from_another_generation(
         thread.join(timeout=2)
 
 
-def test_resolve_dev_artifact_accepts_one_toolang_wheel(tmp_path: Path) -> None:
+def test_resolve_dev_artifact_accepts_one_toolang_wheel(
+    tmp_path: Path, toolang_wheel
+) -> None:
     wheel = tmp_path / "toolang-1.2.3-py3-none-any.whl"
-    wheel.write_bytes(b"wheel")
+    toolang_wheel(wheel)
 
     assert sandbox.resolve_dev_artifact(wheel, sandbox="docker") == wheel
 
 
-@pytest.mark.parametrize("path_kind", ["file", "directory", "cwd"])
-@pytest.mark.parametrize("confirmed", [False, True])
-def test_resolve_launch_preserves_wheel_confirmation(
-    tmp_path, monkeypatch, path_kind, confirmed
-):
-    monkeypatch.chdir(tmp_path)
-    wheel = tmp_path / "toolang-test.whl"
-    wheel.write_bytes(b"wheel")
-    raw = str(wheel) if path_kind == "file" else str(tmp_path)
-    if path_kind == "cwd":
-        raw = ""
-    spec = asyncio.run(
-        sandbox.resolve_launch(
-            layout=_launch_spec(tmp_path).serve.layout,
-            environ={},
-            sandbox="docker",
-            dev=Path(f"{raw}!" if confirmed else raw),
-        )
-    )
-    assert spec.dev_artifact == wheel
-    assert spec.dev_version_confirmed is confirmed
-
-
 def test_resolve_dev_artifact_selects_newest_wheel_recursively(
     tmp_path: Path,
+    toolang_wheel,
 ) -> None:
     older = tmp_path / "toolang-1.0.0-py3-none-any.whl"
     nested = tmp_path / "nested"
     nested.mkdir()
     newer = nested / "toolang-0.9.0-py3-none-any.whl"
-    older.write_bytes(b"older")
-    newer.write_bytes(b"newer")
+    toolang_wheel(older)
+    toolang_wheel(newer)
     (tmp_path / "pyproject.toml").write_text(
         '[project]\nname = "toolang"\nversion = "2.0.0"\n',
         encoding="utf-8",
@@ -1308,11 +1288,13 @@ def test_resolve_dev_artifact_selects_newest_wheel_recursively(
     assert sandbox.resolve_dev_artifact(tmp_path, sandbox="docker") == newer
 
 
-def test_resolve_dev_artifact_breaks_timestamp_ties_by_path(tmp_path: Path) -> None:
+def test_resolve_dev_artifact_breaks_timestamp_ties_by_path(
+    tmp_path: Path, toolang_wheel
+) -> None:
     first = tmp_path / "toolang-a.whl"
     second = tmp_path / "toolang-b.whl"
-    first.write_bytes(b"first")
-    second.write_bytes(b"second")
+    toolang_wheel(first)
+    toolang_wheel(second)
     os.utime(first, ns=(1_000_000_000, 1_000_000_000))
     os.utime(second, ns=(1_000_000_000, 1_000_000_000))
 
@@ -1340,6 +1322,23 @@ def test_resolve_dev_artifact_rejects_invalid_paths(tmp_path: Path) -> None:
         sandbox.resolve_dev_artifact(empty, sandbox="docker")
     with pytest.raises(FileNotFoundError, match="No Toolang wheels found"):
         sandbox.resolve_dev_artifact(unrelated, sandbox="docker")
+
+
+@pytest.mark.parametrize("directory", [False, True])
+@pytest.mark.parametrize("confirmed", [False, True])
+@pytest.mark.parametrize("actual", ["v0.4.0b1", "v0.4.0b1-1-g12345678*", "unknown"])
+def test_dev_wheel_requires_a_matching_identity_or_confirmation(
+    tmp_path, monkeypatch, toolang_wheel, directory, confirmed, actual
+):
+    monkeypatch.setattr(sandbox, "toolang_version", lambda: "0.4.0b1")
+    wheel = toolang_wheel(tmp_path / "toolang-test.whl", actual)
+    raw = tmp_path if directory else wheel
+    raw = Path(f"{raw}!") if confirmed else raw
+    if confirmed or actual == "v0.4.0b1":
+        assert sandbox.resolve_dev_artifact(raw, sandbox="docker") == wheel
+    else:
+        with pytest.raises(ValueError, match="version mismatch.*Append !"):
+            sandbox.resolve_dev_artifact(raw, sandbox="docker")
 
 
 def test_resolve_dev_artifact_rejects_host_before_path_validation(

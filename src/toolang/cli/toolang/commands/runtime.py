@@ -78,6 +78,7 @@ from ...common.context import (
 )
 from ...common.agent_server import (
     DEVELOPMENT_WHEEL_HELP,
+    warn_development_package_source,
 )
 from ...common.output import active_agent_error
 from toolang.common.version import development_source
@@ -187,6 +188,8 @@ def run(
             )
             if prepared is not target:
                 launch = replace(launch, serve=replace(launch.serve, layout=prepared))
+            with progress.suspended():
+                warn_development_package_source(launch)
             launch_started = True
             if launch.sandbox == "host":
                 from toolang.up.server import serve as serve_agent
@@ -385,6 +388,8 @@ def start(
                 dev=dev,
                 background=True,
             )
+            with progress.suspended():
+                warn_development_package_source(launch)
             launch_started = True
             handle = user_call(
                 asyncio.run,

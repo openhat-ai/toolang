@@ -365,9 +365,8 @@ def test_startup_override_cannot_be_silently_ignored_by_an_existing_runtime(
 
 
 @pytest.mark.parametrize("selection", ["omitted", "same", "changed"])
-@pytest.mark.parametrize("confirmed", [False, True])
 def test_running_server_retains_or_verifies_explicit_startup_settings(
-    tmp_path, monkeypatch, selection, confirmed
+    tmp_path, monkeypatch, selection, toolang_wheel
 ):
     from toolang.up.contract import startup_contract
     from toolang.up.instance import update_instance
@@ -383,14 +382,13 @@ def test_running_server_retains_or_verifies_explicit_startup_settings(
         ),
     )
     wheel = tmp_path / "toolang-0.0.0-py3-none-any.whl"
-    wheel.write_bytes(b"original wheel")
-    requested_wheel = Path(f"{wheel}!") if confirmed else wheel
+    toolang_wheel(wheel)
     catalog = tmp_path / "models.json"
     compact = ModelOverride(identity="test/compact")
     spec = agent_server._resolve_launch(
         layout,
         sandbox="docker:python:3.13-slim",
-        dev=requested_wheel,
+        dev=wheel,
         model_catalog=catalog,
         base_environ={},
         compact_override=compact,
@@ -409,14 +407,10 @@ def test_running_server_retains_or_verifies_explicit_startup_settings(
     options: dict[str, Any] = (
         {}
         if selection == "omitted"
-        else {
-            "dev": requested_wheel,
-            "model_catalog": catalog,
-            "compact_override": compact,
-        }
+        else {"dev": wheel, "model_catalog": catalog, "compact_override": compact}
     )
     if selection == "changed":
-        wheel.write_bytes(b"changed wheel")
+        wheel.write_bytes(wheel.read_bytes() + b"changed wheel")
         with pytest.raises(
             agent_server.AgentServerAcquisitionError,
             match="development wheel contents.*restart",
@@ -900,7 +894,7 @@ def test_agent_server_launches_with_the_requested_lifecycle(
     assert shutdown_progress.finished == int(temporary)
 
 
-def test_agent_server_does_not_warn_about_a_package_index_fallback(
+def test_agent_server_warns_when_a_development_cli_uses_the_package_index(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -956,7 +950,12 @@ def test_agent_server_does_not_warn_about_a_package_index_fallback(
     ):
         pass
 
-    assert capsys.readouterr().err == ""
+    assert capsys.readouterr().err.splitlines() == [
+        "Warning: the new docker guest will install Toolang from the package index, "
+        f"not from {tmp_path}.",
+        "Build the current source with `uv build --wheel`, then run this command "
+        "again with `--dev dist`.",
+    ]
 
 
 @pytest.mark.parametrize(
@@ -1523,7 +1522,7 @@ def test_persistent_acquisition_waits_for_http_after_running_report(
     )
 
 
-def test_launch_progress_retains_the_lock_wait_presenter(tmp_path, monkeypatch):
+def test_startup_warning_suspends_the_lock_wait_presenter(tmp_path, monkeypatch):
     from io import StringIO
 
     from toolang.base.types.progress import ProgressEvent
@@ -1565,6 +1564,13 @@ def test_launch_progress_retains_the_lock_wait_presenter(tmp_path, monkeypatch):
     )
     launch = SimpleNamespace(sandbox="docker", dev_artifact=None)
     monkeypatch.setattr(agent_server, "_resolve_launch", lambda *a, **k: launch)
+    observed = []
+
+    def warn(_launch):
+        observed.append(presenter._live_display is None)
+        print("Development package warning", file=stream)
+
+    monkeypatch.setattr(agent_server, "warn_development_package_source", warn)
     handle = agent_server.sandbox_runtime.SandboxHandle(
         cast(Any, None),
         SandboxState(
@@ -1583,7 +1589,8 @@ def test_launch_progress_retains_the_lock_wait_presenter(tmp_path, monkeypatch):
         layout, sandbox="docker", ui_base_url="https://ui.test"
     ):
         assert presenter._live_display is None
-    assert "Development package warning" not in stream.getvalue()
+    assert observed == [True]
+    assert stream.getvalue().count("Development package warning") == 1
 
 
 def test_attach_finishes_remote_source_progress_without_preparing_state(
