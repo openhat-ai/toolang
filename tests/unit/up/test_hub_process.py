@@ -70,6 +70,27 @@ def test_stop_cleans_verified_process_record(tmp_path, monkeypatch, force):
     assert not hub.path.exists()
 
 
+@pytest.mark.parametrize("stage", ["kill", "wait"])
+def test_force_stop_cleans_record_when_process_exits_after_timeout(
+    tmp_path, monkeypatch, stage
+):
+    hub = HubProcess(tmp_path)
+    saved = record()
+    saved.save(hub.path)
+    process = Mock()
+    process.create_time.return_value = saved.created
+    process.status.return_value = psutil.STATUS_RUNNING
+    process.wait.side_effect = [
+        psutil.TimeoutExpired(10),
+        psutil.NoSuchProcess(saved.pid),
+    ]
+    if stage == "kill":
+        process.kill.side_effect = psutil.NoSuchProcess(saved.pid)
+    monkeypatch.setattr("toolang.up.hub.psutil.Process", Mock(return_value=process))
+    assert hub.stop(force=True)
+    assert not hub.path.exists()
+
+
 def test_stop_timeout_preserves_record(tmp_path, monkeypatch):
     hub = HubProcess(tmp_path)
     saved = record()

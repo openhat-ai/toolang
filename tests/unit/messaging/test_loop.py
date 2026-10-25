@@ -636,6 +636,7 @@ def test_hosted_lifespan_starts_and_stops_messaging(
         AsyncMock(),
     )
     entered, stopped = asyncio.Event(), asyncio.Event()
+    clients = []
 
     def message_loop(**kwargs):
         assert (
@@ -647,6 +648,7 @@ def test_hosted_lifespan_starts_and_stops_messaging(
     class Lifecycle:
         def __init__(self, publisher, *, messaging, **kwargs):
             assert (messaging is not None) == ("talk" in drivers)
+            clients.append(kwargs["client"])
 
         def start(self):
             assert scheduler.start.await_count == 0
@@ -667,6 +669,18 @@ def test_hosted_lifespan_starts_and_stops_messaging(
             async with app.lifespan(app):
                 if enabled:
                     await asyncio.wait_for(entered.wait(), 1)
+                    from toolang.teaming.errors import MessagingError
+
+                    current = core.setup.current.return_value.teaming
+                    assert clients[0].config.endpoint == current.root.hub
+                    core.setup.current.return_value.teaming = replace(
+                        current, home=TeamingHomeConfig(False)
+                    )
+                    try:
+                        with pytest.raises(MessagingError, match="disabled"):
+                            _ = clients[0].config
+                    finally:
+                        core.setup.current.return_value.teaming = current
             assert stopped.is_set() == enabled
 
         asyncio.run(scenario())

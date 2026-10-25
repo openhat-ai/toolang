@@ -153,8 +153,11 @@ class HubProcess:
                 raise TeamingError(
                     "Hub did not stop; use 'too hub stop --force'"
                 ) from exc
-            process.kill()
-            process.wait(timeout=5)
+            try:
+                process.kill()
+                process.wait(timeout=5)
+            except psutil.NoSuchProcess:
+                pass
         assert record is not None
         self._clear(record)
         return True

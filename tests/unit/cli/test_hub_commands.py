@@ -60,12 +60,18 @@ def test_hub_status_queries_configured_url_independently_of_local_process(
     assert [r.url.path for r in requests] == ["/info", "/healthz"]
 
 
-@pytest.mark.parametrize("local", ["starting", "stale", "corrupt"])
+@pytest.mark.parametrize("local", ["starting", "stale", "corrupt", "denied"])
 def test_local_record_does_not_block_target_inspection(
     tmp_path, monkeypatch, capsys, local
 ):
     process = hub.HubProcess(tmp_path)
-    if local == "corrupt":
+    if local == "denied":
+
+        def denied(_):
+            raise psutil.AccessDenied(os.getpid())
+
+        monkeypatch.setattr(hub.HubProcess, "current", denied)
+    elif local == "corrupt":
         process.path.parent.mkdir()
         process.path.write_text("invalid")
     else:
@@ -96,10 +102,15 @@ def test_local_record_does_not_block_target_inspection(
     assert output.splitlines()[0].split() == ["hub", "running", "vtest"]
     assert (
         "Local Hub: "
-        + {"starting": "starting", "stale": "not running", "corrupt": "unknown"}[local]
+        + {
+            "starting": "starting",
+            "stale": "not running",
+            "corrupt": "unknown",
+            "denied": "unknown",
+        }[local]
         in output
     )
-    if local == "corrupt":
+    if local in {"corrupt", "denied"}:
         assert "record inspection failed" in output
 
 

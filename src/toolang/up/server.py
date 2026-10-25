@@ -59,6 +59,7 @@ from toolang.driver.chore.scheduler import ChoreDriver
 from toolang.driver.talk import MessagingLoop
 from toolang.teaming.runtime import TeamingLoop
 from toolang.teaming.agent_client import AgentClient, AgentEventClient
+from toolang.teaming.errors import MessagingError
 
 DEFAULT_WATCH_DEBOUNCE_MS = state_watcher.DEFAULT_DEBOUNCE_MS
 RUNTIME_SHUTDOWN_TASK_TIMEOUT_SEC = 1.0
@@ -626,8 +627,8 @@ def _serve_workload(
 
                     def current_hub_connection():
                         teaming = current_setup().teaming
-                        if teaming is None:
-                            raise RuntimeError("Teaming configuration is unavailable")
+                        if teaming is None or not teaming.home.enabled:
+                            raise MessagingError("Teaming is disabled for this agent")
                         return teaming.root.connection(
                             gateway=environ.get("TOOLANG_HOST_GATEWAY")
                         )

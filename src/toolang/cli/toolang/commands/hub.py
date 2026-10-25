@@ -1,6 +1,7 @@
 """Status and lifecycle commands for the root-scoped teaming Hub."""
 
 import httpx
+import psutil
 
 import os
 import sys
@@ -134,7 +135,7 @@ def status(ctx: typer.Context) -> None:
     try:
         record = HubProcess(root).current()
         local_state = record.status if record is not None else "not running"
-    except (ValueError, OSError) as exc:
+    except (ValueError, OSError, psutil.Error) as exc:
         local_state = "unknown"
         diagnostic = f"record inspection failed: {exc}"
     endpoint = None
