@@ -7,6 +7,11 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ## [Unreleased]
 
+### Fixed
+
+- `too ls` and `too ps` show the sandbox selector before the driver, with
+  `-` for inactive instances or missing metadata.
+
 ## [0.4.0b2] - 2026-10-25
 
 ### Changed
