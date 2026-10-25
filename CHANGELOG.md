@@ -85,9 +85,12 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   fails, instead of leaving it running.
   ([#961](https://github.com/openhat-ai/toolang/pull/961))
 
+- `too ls`, `too ps`, and `too hub status` still report runtime state when the
+  Toolang root configuration is malformed.
+  ([#966](https://github.com/openhat-ai/toolang/pull/966))
+
 - `too ps` shows malformed Hub readiness as `unknown` instead of `up` or
-  `down`, and `too hub status` inspects the managed process despite an invalid
-  root configuration.
+  `down`, and invalid Hub responses omit internal validation details.
   ([#966](https://github.com/openhat-ai/toolang/pull/966))
 
 ## [0.4.0b1] - 2026-10-24
