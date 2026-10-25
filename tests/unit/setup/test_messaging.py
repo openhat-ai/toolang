@@ -27,11 +27,10 @@ def test_defaults_enable_agent_teaming(home):
     setup = resolve(home=home)
     assert setup.root.human == "human:owner"
     assert setup.root.hub == "http://127.0.0.1:7001"
-    assert setup.home.enabled
+    assert setup.enabled
     assert setup.toolset_config(root=ROOT.parent) == {
         "root": "/root",
         "hub": "http://127.0.0.1:7001",
-        "human": "human:owner",
     }
 
 
@@ -43,10 +42,10 @@ def test_clients_ignore_server_settings_and_preserve_root_identity():
     setup = resolve(raw)
     assert setup.root.human == "human:brice"
     assert setup.root.hub == "https://hub.example/team"
-    assert not resolve(raw, {"teaming": {"enabled": False}}).home.enabled
+    assert not resolve(raw, {"teaming": {"enabled": False}}).enabled
     assert not resolve(
         {"teaming": {"enabled": False}}, {"teaming": {"enabled": True}}
-    ).home.enabled
+    ).enabled
     assert (
         resolve({"teaming": {"enabled": False}}).toolset_config(root=ROOT.parent) == {}
     )

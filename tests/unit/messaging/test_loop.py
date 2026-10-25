@@ -23,7 +23,7 @@ from toolang.teaming.messaging import MessagingClient
 from toolang.teaming.schemas import Message, HubConnection
 from toolang.teaming.backend.valkey import ValkeyBackend
 from tests.unit.messaging.keys import convo_key
-from toolang.teaming.config import BackendConfig, TeamingHomeConfig, TeamingRootConfig
+from toolang.teaming.config import BackendConfig, TeamingRootConfig
 from toolang.plugin.toolsets.convo import ConvoToolset
 from toolang.plugin.toolsets.loading import tools_from_toolsets
 from toolang.plugin.models.query import first_model_ref
@@ -627,7 +627,7 @@ def test_hosted_lifespan_starts_and_stops_messaging(
     from toolang.setup.teaming import TeamingSetup
 
     core.setup.current.return_value.teaming = TeamingSetup(
-        TeamingRootConfig("human:owner"), TeamingHomeConfig(enabled)
+        TeamingRootConfig("human:owner"), enabled=enabled
     )
     scheduler = MagicMock()
     scheduler.start, scheduler.pause, scheduler.stop = (
@@ -674,7 +674,7 @@ def test_hosted_lifespan_starts_and_stops_messaging(
                     current = core.setup.current.return_value.teaming
                     assert clients[0].config.endpoint == current.root.hub
                     core.setup.current.return_value.teaming = replace(
-                        current, home=TeamingHomeConfig(False)
+                        current, enabled=False
                     )
                     try:
                         with pytest.raises(MessagingError, match="disabled"):

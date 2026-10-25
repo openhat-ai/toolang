@@ -7,7 +7,6 @@ from pathlib import Path
 
 from toolang.common.config_sources import ConfigSource, read_config
 from toolang.teaming.config import (
-    TeamingHomeConfig,
     TeamingRootConfig,
     root_config,
     home_config,
@@ -18,20 +17,17 @@ from toolang.teaming.errors import TeamingError
 @dataclass(frozen=True)
 class TeamingSetup:
     root: TeamingRootConfig
-    home: TeamingHomeConfig
+    enabled: bool
 
     def toolset_config(
         self, *, root: Path, gateway: str | None = None
     ) -> dict[str, object]:
-        return (
-            {
-                "root": str(root),
-                "hub": self.root.connection(gateway=gateway).endpoint,
-                "human": self.root.human,
-            }
-            if self.home.enabled
-            else {}
-        )
+        if not self.enabled:
+            return {}
+        return {
+            "root": str(root),
+            "hub": self.root.connection(gateway=gateway).endpoint,
+        }
 
 
 def resolve_teaming_setup(
@@ -41,11 +37,7 @@ def resolve_teaming_setup(
     home: Path,
     default_human: str | None = None,
 ) -> TeamingSetup:
-    root_raw: Mapping[str, object] = (
-        {}
-        if any(source.path == root for source in sources)
-        else read_config(root, include_workspaces=False)
-    )
+    root_raw: Mapping[str, object] | None = None
     home_raw: Mapping[str, object] = {}
     for source in sources:
         if source.path == root:
@@ -56,13 +48,15 @@ def resolve_teaming_setup(
             raise TeamingError(
                 f"{source.path}: teaming requires explicit root/home scope"
             )
+    if root_raw is None:
+        root_raw = read_config(root, include_workspaces=False)
     client = root_config(
         root_raw,
         source=root,
         default_human=default_human if default_human is not None else getpass.getuser(),
     )
     local = home_config(home_raw, source=home)
-    return TeamingSetup(client, TeamingHomeConfig(client.enabled and local.enabled))
+    return TeamingSetup(client, enabled=client.enabled and local.enabled)
 
 
 def load_teaming_root(root: Path) -> TeamingRootConfig:

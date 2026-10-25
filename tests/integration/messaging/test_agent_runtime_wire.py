@@ -36,7 +36,6 @@ from toolang.teaming.events import HubScope
 from toolang.teaming.stream_client import HubStreamState
 from toolang.driver.talk import MessagingLoop
 from toolang.teaming.runtime import TeamingLoop
-from toolang.teaming.config import TeamingHomeConfig
 
 pytestmark = pytest.mark.live_valkey
 
@@ -55,7 +54,7 @@ def test_inflight_message_survives_hub_restart_and_scoped_fanout(
                 if c["name"] == "all"
             )
         gate = AsyncGate()
-        teaming = TeamingSetup(load_teaming_root(tmp_path), TeamingHomeConfig(True))
+        teaming = TeamingSetup(load_teaming_root(tmp_path), enabled=True)
         msg = ConvoToolset(teaming.toolset_config(root=tmp_path))
         tools = tools_from_toolsets(
             {"convo": LoadedPlugin("convo", "convo", msg, "built-in")}

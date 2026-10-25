@@ -187,7 +187,7 @@ class HubInfo(BaseModel):
     model_config = ConfigDict(extra="ignore", strict=True, frozen=True)
     version: str
     api_version: HubAPIVersion
-    identity: str
+    identity: str = Field(min_length=1)
 
     @field_validator("version")
     @classmethod

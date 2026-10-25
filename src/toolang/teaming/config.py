@@ -14,6 +14,10 @@ from .errors import TeamingError
 from .schemas import HubConnection, identifier
 
 
+DEFAULT_BACKEND_URL = "redis://localhost:6379/0"
+DEFAULT_HUB_URL = "http://127.0.0.1:7001"
+
+
 @dataclass(frozen=True)
 class BackendConfig:
     url: str
@@ -66,7 +70,7 @@ class BackendConfig:
 @dataclass(frozen=True)
 class TeamingRootConfig:
     human: str
-    hub: str = "http://127.0.0.1:7001"
+    hub: str = DEFAULT_HUB_URL
     enabled: bool = True
 
     def connection(self, *, gateway: str | None = None) -> HubConnection:
@@ -76,9 +80,6 @@ class TeamingRootConfig:
 @dataclass(frozen=True)
 class TeamingHomeConfig:
     enabled: bool
-
-
-DEFAULT_BACKEND_URL = "redis://localhost:6379/0"
 
 
 def _table(value: object, path: str, source: Path) -> Mapping[str, object]:
@@ -112,7 +113,7 @@ def root_config(
     enabled = raw.get("enabled", True)
     if not isinstance(enabled, bool):
         raise TeamingError(f"{source}: teaming.enabled must be a boolean")
-    url = raw.get("hub", "http://127.0.0.1:7001")
+    url = raw.get("hub", DEFAULT_HUB_URL)
     try:
         if not isinstance(url, str) or url != url.strip():
             raise ValueError

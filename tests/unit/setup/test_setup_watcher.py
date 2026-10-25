@@ -550,6 +550,33 @@ def test_teaming_url_refreshes_without_mutating_captured_setup(tmp_path, monkeyp
     assert first.teaming.root.hub == "http://first"
 
 
+@pytest.mark.parametrize("disabled_by", [None, "root", "home"])
+@pytest.mark.parametrize("field", ["human", "hub"])
+def test_teaming_refresh_tracks_settings_without_loading_tools(
+    tmp_path, monkeypatch, disabled_by, field
+):
+    watcher, counts = _watcher(monkeypatch, tmp_path)
+    watcher = SetupWatcher(
+        watcher.layout, model_catalog=tmp_path / "catalog.json", validate_defaults=False
+    )
+    watcher.layout.home.mkdir(parents=True, exist_ok=True)
+    if disabled_by == "home":
+        watcher.layout.config.write_text("[teaming]\nenabled = false\n")
+    enabled = "false" if disabled_by == "root" else "true"
+    config = watcher.layout.place_config
+    value = "http://first" if field == "hub" else "first"
+    config.write_text(f'[teaming]\nenabled = {enabled}\n{field} = "{value}"\n')
+    first = asyncio.run(watcher.refresh())
+    config.write_text(config.read_text().replace("first", "second"))
+    second = asyncio.run(watcher.refresh())
+    assert second is not first
+    assert second.revision != first.revision
+    assert first.teaming is not None and second.teaming is not None
+    assert "first" in getattr(first.teaming.root, field)
+    assert "second" in getattr(second.teaming.root, field)
+    assert counts["toolsets"] == 0
+
+
 @pytest.mark.parametrize("enabled", [None, False, True])
 def test_teaming_consumers_share_scoped_configuration(tmp_path, monkeypatch, enabled):
     from toolang.setup.teaming import load_teaming_root
@@ -578,7 +605,7 @@ def test_teaming_consumers_share_scoped_configuration(tmp_path, monkeypatch, ena
     assert setup.teaming is not None
     msg = setup.toolsets()["convo"]
     assert isinstance(msg, ConvoToolset)
-    assert setup.teaming.home.enabled is (enabled is not False)
+    assert setup.teaming.enabled is (enabled is not False)
     assert msg.root == (tmp_path if enabled is not False else None)
     resolved = load_teaming_root(tmp_path)
     assert resolved.hub == setup.teaming.root.hub == "http://127.0.0.1:7001"

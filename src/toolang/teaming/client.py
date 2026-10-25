@@ -32,7 +32,6 @@ from .schemas import (
     Targets,
     HubConnection,
     HubInfo,
-    HUB_API_VERSION,
     Message,
     Resolution,
     conversation_id,
@@ -104,8 +103,6 @@ class HubClient:
             ) from exc
         try:
             info = _response(_INFO, response.json())
-            if not info.identity or info.api_version != HUB_API_VERSION:
-                raise ValueError("Missing Hub identity")
         except (ValueError, MessagingError) as exc:
             raise MessagingError(
                 f"Incompatible Hub metadata at {connection.endpoint}"

@@ -623,11 +623,11 @@ def _serve_workload(
                         get_agent_state=current_state,
                     )
                 messaging_setup = current_setup().teaming
-                if messaging_setup is not None and messaging_setup.home.enabled:
+                if messaging_setup is not None and messaging_setup.enabled:
 
                     def current_hub_connection():
                         teaming = current_setup().teaming
-                        if teaming is None or not teaming.home.enabled:
+                        if teaming is None or not teaming.enabled:
                             raise MessagingError("Teaming is disabled for this agent")
                         return teaming.root.connection(
                             gateway=environ.get("TOOLANG_HOST_GATEWAY")

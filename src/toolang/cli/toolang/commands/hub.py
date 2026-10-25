@@ -146,8 +146,6 @@ def status(ctx: typer.Context) -> None:
             response = client.get(endpoint + "/info")
             response.raise_for_status()
             info = HubInfo.model_validate(response.json())
-            if not info.identity:
-                raise ValueError("Hub metadata has no identity")
             version = version_label(info.version)
             health = client.get(
                 endpoint + "/healthz", headers={"X-Toolang-Backend": info.identity}
