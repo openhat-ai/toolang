@@ -24,15 +24,33 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   the local Hub process state.
   ([#961](https://github.com/openhat-ai/toolang/pull/961))
 
+- `too AGENT info` shows the short container ID beside the sandbox selector,
+  drops the container-name row, and omits the `Resources: runtime startup
+  snapshot` annotation.
+  ([#962](https://github.com/openhat-ai/toolang/pull/962))
+
+- Guest package warnings use concise local build wording and color only
+  `Warning:`, and development wheel mismatches point to appending `!` to the
+  `--dev` path.
+  ([#960](https://github.com/openhat-ai/toolang/pull/960))
+
 ### Fixed
 
-- `too hub` removes its own process record after shutdown, confirmed stop,
-  forced stop, and failed startup, so stopped Hubs no longer appear running.
+- `too hub` records local process state in `hub/pid.json` and removes it after
+  shutdown, confirmed stop, forced stop, and failed startup.
   ([#961](https://github.com/openhat-ai/toolang/pull/961))
 
 - Docker guests install sandbox packages from the controller release and
   validate development wheel versions during preparation and before launch.
   ([#958](https://github.com/openhat-ai/toolang/pull/958))
+
+- `too hub` still reports configured-target availability and version when local
+  process inspection is denied, showing local process state as unknown.
+  ([#961](https://github.com/openhat-ai/toolang/pull/961))
+
+- `too hub` terminates a Hub child it launched when initial process inspection
+  fails, instead of leaving it running.
+  ([#961](https://github.com/openhat-ai/toolang/pull/961))
 
 ## [0.4.0b1] - 2026-10-24
 

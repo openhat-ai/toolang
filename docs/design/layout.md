@@ -67,11 +67,11 @@ ${TOOLANG_ROOT}/
 
 The root hub stores its process record, lock, and log at:
 
-- `${TOOLANG_ROOT}/hub/hub.json`
+- `${TOOLANG_ROOT}/hub/pid.json`
 - `${TOOLANG_ROOT}/hub/hub.lock`
 - `${TOOLANG_ROOT}/hub/hub.log`
 
-The private `hub.json` contains only `pid`, `created`, `host`, `port`, and
+The private `pid.json` contains only `pid`, `created`, `host`, `port`, and
 `status` (`starting` or `running`). It describes the local process and is removed
 after stop; clients use `[teaming]` in `ROOT/config.toml`. Human and backend
 identity are absent from this record.

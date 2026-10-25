@@ -22,7 +22,7 @@ from .records import HubRecord
 
 class HubProcess:
     def __init__(self, root: Path) -> None:
-        self.path = root / "hub" / "hub.json"
+        self.path = root / "hub" / "pid.json"
         self.lock = root / "hub" / "hub.lock"
         self.log = root / "hub" / "hub.log"
 
@@ -53,7 +53,7 @@ class HubProcess:
         try:
             with httpx.Client(trust_env=False, timeout=1) as client:
                 response = client.get(
-                    record.connection.endpoint + "/healthz",
+                    record.endpoint + "/healthz",
                 )
             return response.status_code == 200 and response.json() == {"ok": True}
         except (httpx.HTTPError, ValueError):
@@ -102,11 +102,12 @@ class HubProcess:
                 stderr=log,
                 start_new_session=True,
             )
+        created = None
         try:
-            created = psutil.Process(child.pid).create_time()
-        except psutil.NoSuchProcess:
-            created = None
-        try:
+            try:
+                created = psutil.Process(child.pid).create_time()
+            except psutil.NoSuchProcess:
+                pass
             deadline = time.monotonic() + timeout
             while time.monotonic() < deadline:
                 if child.poll() is not None:

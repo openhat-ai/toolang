@@ -9,8 +9,9 @@ import json
 from urllib.parse import urlsplit, parse_qs, unquote
 
 from toolang.common.place_codes import root_code
+from toolang.common.urls import replace_guest_loopback
 from .errors import TeamingError
-from .schemas import identifier
+from .schemas import HubConnection, identifier
 
 
 @dataclass(frozen=True)
@@ -68,10 +69,7 @@ class TeamingRootConfig:
     hub: str = "http://127.0.0.1:7001"
     enabled: bool = True
 
-    def connection(self, *, gateway: str | None = None):
-        from toolang.common.urls import replace_guest_loopback
-        from .schemas import HubConnection
-
+    def connection(self, *, gateway: str | None = None) -> HubConnection:
         return HubConnection(replace_guest_loopback(self.hub, gateway))
 
 

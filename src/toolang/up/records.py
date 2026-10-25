@@ -7,7 +7,6 @@ import json
 from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 from toolang.common.files import atomic_write_text
-from toolang.teaming.schemas import HubConnection
 from pathlib import Path
 from typing import cast
 
@@ -111,11 +110,11 @@ class HubRecord(BaseModel):
     status: Literal["starting", "running"] = "running"
 
     @property
-    def connection(self) -> HubConnection:
+    def endpoint(self) -> str:
         host = {"0.0.0.0": "127.0.0.1", "::": "::1"}.get(self.host, self.host)
         if ":" in host:
             host = f"[{host}]"
-        return HubConnection(f"http://{host}:{self.port}")
+        return f"http://{host}:{self.port}"
 
     def save(self, path: Path) -> None:
         if path.exists():

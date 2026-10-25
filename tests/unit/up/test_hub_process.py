@@ -28,7 +28,7 @@ def test_private_record_has_only_process_fields(tmp_path):
     hub = HubProcess(tmp_path)
     saved = record()
     saved.save(hub.path)
-    assert hub.path == tmp_path / "hub" / "hub.json"
+    assert hub.path == tmp_path / "hub" / "pid.json"
     assert hub.path.stat().st_mode & 0o777 == 0o600
     assert set(json.loads(hub.path.read_text())) == {
         "pid",
@@ -153,6 +153,21 @@ def test_backend_construction_failure_removes_starting_record(tmp_path, monkeypa
         port = listener.getsockname()[1]
     with pytest.raises(TeamingError, match="invalid backend"):
         serve(tmp_path, config, port=port)
+    assert not hub.path.exists()
+
+
+def test_start_cleans_child_when_process_inspection_fails(tmp_path, monkeypatch):
+    hub = HubProcess(tmp_path)
+    child = Mock(pid=1234)
+    child.poll.return_value = None
+    monkeypatch.setattr("toolang.up.hub.subprocess.Popen", Mock(return_value=child))
+    monkeypatch.setattr(
+        "toolang.up.hub.psutil.Process", Mock(side_effect=psutil.AccessDenied(1234))
+    )
+    with pytest.raises(psutil.AccessDenied):
+        hub.start(["hub"])
+    child.terminate.assert_called_once()
+    child.wait.assert_called_once_with(timeout=5)
     assert not hub.path.exists()
 
 

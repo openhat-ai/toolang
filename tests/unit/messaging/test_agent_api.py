@@ -124,7 +124,7 @@ def test_agent_tools_without_hub_never_construct_backend(tmp_path, monkeypatch):
 def test_agent_connects_by_url_ignoring_process_records(tmp_path):
     async def scenario():
         (tmp_path / "hub").mkdir()
-        (tmp_path / "hub" / "hub.json").write_text("invalid record")
+        (tmp_path / "hub" / "pid.json").write_text("invalid record")
         human = client(FakeServer(server_type="valkey"), "human:owner")
         app = create_app(human.config, backend=human.backend, version="test")
         requests = []

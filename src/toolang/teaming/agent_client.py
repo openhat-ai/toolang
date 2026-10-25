@@ -11,7 +11,7 @@ import httpx
 
 from .client import HubClient
 from .errors import BackendUnavailable, MessagingError
-from .discovery import host_token
+from .lease import host_token
 from .schemas import HubConnection, Message, TalkCursor, conversation_id, target
 
 _CONNECTIONS: ContextVar[dict[Path, HubConnection]] = ContextVar(

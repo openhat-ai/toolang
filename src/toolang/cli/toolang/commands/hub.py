@@ -92,7 +92,7 @@ def start(ctx: typer.Context, port: PortOption = None) -> None:
             str(selected),
         ],
     )
-    typer.echo(f"Hub started: {record.connection.endpoint}")
+    typer.echo(f"Hub started: {record.endpoint}")
 
 
 def serve(ctx: typer.Context, port: PortOption = None) -> None:

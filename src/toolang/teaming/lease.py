@@ -1,4 +1,4 @@
-"""Process-local lease identity shared by teaming callers."""
+"""Process-local lease tokens shared by backend and HTTP messaging."""
 
 from functools import lru_cache
 import os

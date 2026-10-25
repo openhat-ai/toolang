@@ -58,7 +58,7 @@ url = "redis://localhost:6379/0"
    launch paths, preserving human identity and HOME opt-out. Remove obsolete
    Hub-file mounts and server/backend fields from client inputs. Reuse existing
    networking behavior; all targets use the same HTTP client.
-5. **Process control:** Keep `hub.json` as local `pid/created/host/port/status`
+5. **Process control:** Use `hub/pid.json` as local `pid/created/host/port/status`
    state, without human/identity. Verify PID creation time. Clean owned records
    during ASGI teardown and after confirmed exit, including force/startup failure.
    Use the lifetime lock and compare process identity to protect replacements.

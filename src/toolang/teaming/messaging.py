@@ -11,7 +11,7 @@ from .ids import dm_id
 
 from .backend import Backend
 from .backend.factory import create_backend
-from .discovery import host_token as host_token
+from .lease import host_token as host_token
 from .types import RENEW_SECONDS as RENEW_SECONDS
 from .config import BackendConfig
 from .errors import ConversationAccessDenied, LeaseLost, MessagingError

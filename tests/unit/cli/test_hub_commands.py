@@ -167,7 +167,7 @@ def test_hub_start_and_serve_port_precedence(
     def start(self, argv):
         seen.append(int(argv[-1]))
         assert argv[-4:-1] == ["hub", "serve", "--port"]
-        return SimpleNamespace(connection=SimpleNamespace(endpoint="http://hub"))
+        return SimpleNamespace(endpoint="http://hub")
 
     def serve(root, config, *, port):
         assert root == tmp_path

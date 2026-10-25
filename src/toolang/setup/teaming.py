@@ -67,9 +67,8 @@ def resolve_teaming_setup(
 
 def load_teaming_root(root: Path) -> TeamingRootConfig:
     path = root / "config.toml"
-    value = read_config(path, include_workspaces=False)
-    return resolve_teaming_setup(
-        (ConfigSource(path, value),),
-        root=path,
-        home=root / "agents" / "_unused" / "config.toml",
-    ).root
+    return root_config(
+        read_config(path, include_workspaces=False),
+        source=path,
+        default_human=getpass.getuser(),
+    )

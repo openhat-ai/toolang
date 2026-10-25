@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import tomllib
 
 from toolang.common.layout import AgentLayout
 from toolang.state.prepare import prepare_agent_state
@@ -10,11 +11,54 @@ import pytest
 from toolang.base.types.sandbox import SandboxMount
 from toolang.up.mounts import (
     prepare_catalog_mount,
+    prepare_guest_config,
     prepare_linked_state_source_mounts,
     prepare_place_mounts,
     prepare_workspace_mounts,
     prepare_source_mounts,
 )
+
+
+@pytest.mark.parametrize("resident", [False, True])
+def test_guest_config_keeps_one_root_snapshot(tmp_path, monkeypatch, resident):
+    from toolang.up import mounts
+    from toolang.setup import teaming
+
+    root = tmp_path / "root"
+    place = root if resident else tmp_path / "project"
+    root.mkdir()
+    place.mkdir(exist_ok=True)
+    path = root / "config.toml"
+    path.write_text(
+        '[env]\nkeep = ["FIRST"]\n[teaming]\nhuman = "first"\nhub = "http://first"\n'
+        '[hub.backend]\nurl = "redis://server-only"\n'
+    )
+    read_config = mounts.read_config
+    reads = 0
+
+    def read(source, **kwargs):
+        nonlocal reads
+        captured = read_config(source, **kwargs)
+        if source == path:
+            reads += 1
+            path.write_text(
+                '[env]\nkeep = ["SECOND"]\n[teaming]\nhuman = "second"\nhub = "http://second"\n'
+            )
+        return captured
+
+    monkeypatch.setattr(mounts, "read_config", read)
+    monkeypatch.setattr(teaming, "read_config", read)
+    projected = tomllib.loads(
+        prepare_guest_config(place, path, None, workspaces={}, mapping={})
+    )
+    assert projected["env"] == {"keep": ["FIRST"]}
+    assert projected["teaming"] == {
+        "human": "first",
+        "enabled": True,
+        "hub": "http://first",
+    }
+    assert "hub" not in projected
+    assert reads == 1
 
 
 def test_prepare_place_mounts_owns_place_inputs(tmp_path: Path) -> None:
