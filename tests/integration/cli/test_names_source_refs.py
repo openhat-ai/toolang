@@ -72,14 +72,15 @@ def test_new_rejects_invalid_names_without_writing(tmp_path, name):
     assert not root.exists()
 
 
-def test_new_accepts_64_characters_and_lists_valid_peers(tmp_path):
+def test_new_accepts_64_characters_and_lists_valid_peers(tmp_path, monkeypatch):
+    monkeypatch.setenv("COLUMNS", "160")
     root = tmp_path / "root"
     name = "a" * 64
     assert runner.invoke(app, ["--root", str(root), "new", name]).exit_code == 0
     legacy = root / "agents" / "old.name"
     legacy.mkdir()
     (legacy / "agent.too").write_text("flow main():\n  pass\n")
-    result = runner.invoke(app, ["--root", str(root), "list"])
+    result = runner.invoke(app, ["--root", str(root), "ls"])
     assert result.exit_code == 0, result.output
     assert name in result.output
 

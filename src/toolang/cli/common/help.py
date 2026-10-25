@@ -170,7 +170,7 @@ class CliCommand(TyperCommand):
 
 
 class MetadataCommand(CliCommand):
-    """Offline metadata commands that never load user factories or execute code."""
+    """Inspect metadata without resolving user environments or invoking plugins."""
 
     def invoke(self, ctx: Context) -> Any:
         return TyperCommand.invoke(self, ctx)

@@ -42,10 +42,9 @@ from ...common.context import (
 )
 from ...common.output import (
     agent_avatar,
-    echo_collection_summary,
     echo_pairs_table,
-    echo_table,
     parse_utc_timestamp,
+    runtime_status_label,
     runtime_value,
     shorten_home_path,
 )
@@ -150,32 +149,6 @@ def remove_agent(
     typer.echo(f"Agent {agent} removed")
 
 
-def list_agents(ctx: typer.Context) -> None:
-    items = agents.AgentProcess.list(
-        context_root(ctx),
-        ui_base_url=ui_base_url(),
-    )
-    if not items:
-        echo_collection_summary(0, "agent")
-        return
-    rows = [
-        (
-            item.name,
-            "not running" if item.status == "stopped" else item.status,
-            item.sandbox if item.status == "running" and item.sandbox else "-",
-            str(item.port) if item.port is not None else "-",
-            item.webui_url or "-",
-        )
-        for item in items
-    ]
-    echo_table(
-        ("AGENT", "STATUS", "SANDBOX", "PORT", "WEBUI"),
-        rows,
-        justify=("left", "left", "left", "right", "left"),
-    )
-    echo_collection_summary(len(items), "agent")
-
-
 def info_agent(
     ctx: typer.Context,
     agent: Annotated[str, AgentArgument("home", both_orders=True)],
@@ -208,13 +181,13 @@ def info_agent(
     runtime_state = {**entry.get("control", {}), **entry.get("workload", {})}
     runtime_identity = agents.runtime_identity_row(runtime_state)
     started_at = runtime_value(runtime_state.get("started_at"))
-    status_value = "not running" if status.status == "stopped" else status.status
-    if status.status == "running" and started_at != "-":
+    status_value = runtime_status_label(status.status)
+    if status_value == "up" and started_at != "-":
         online = _human_uptime_since(started_at)
         if online is not None:
-            status_value = f"{status.status} ({online})"
+            status_value = f"{status_value} ({online})"
     message = runtime_value(status.message)
-    if status.status not in {"running", "stopped"} and message != "-":
+    if status_value == "unknown" and message != "-":
         status_value = f"{status_value}: {message}"
     home = shorten_home_path(layout.home)
     address = cli_context(ctx).address
@@ -326,10 +299,15 @@ def _local_resources(
         try:
             return [
                 ("Caps", _cap_counts_summary(counts["caps"])),
-                ("Tools", f"{counts['tools']} tools, {counts['toolsets']} toolsets"),
+                (
+                    "Tools",
+                    f"{_count(counts['tools'], 'tool')}, "
+                    f"{_count(counts['toolsets'], 'toolset')}",
+                ),
                 (
                     "Models",
-                    f"{counts['models']} models, {counts['providers']} providers",
+                    f"{_count(counts['models'], 'model')}, "
+                    f"{_count(counts['providers'], 'provider')}",
                 ),
                 ("Chores", _count(counts["chores"], "chore")),
                 ("Workspaces", ", ".join(counts["workspaces"]) or "-"),
@@ -420,4 +398,4 @@ def _human_uptime_since(timestamp_text: str) -> str | None:
     if started is None:
         return None
     total_seconds = max(int((_utc_now() - started).total_seconds()), 0)
-    return f"up {format_duration(total_seconds)}"
+    return format_duration(total_seconds)

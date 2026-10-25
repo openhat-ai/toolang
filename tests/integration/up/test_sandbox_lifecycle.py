@@ -64,7 +64,7 @@ def test_host_sandbox_runs_without_backend_with_default_teaming(tmp_path: Path) 
         )
         assert info.returncode == 0, info.stderr
         assert "PID" in info.stdout and state.ref.runtime_id in info.stdout
-        assert "running" in info.stdout and state.ref.endpoint in info.stdout
+        assert "Status: up" in info.stdout and state.ref.endpoint in info.stdout
         with urlopen(f"http://localhost:{port}/healthz", timeout=2) as response:
             assert response.status == 200
 
@@ -431,14 +431,14 @@ def test_foreground_serve_is_one_process_and_kill_preserves_restart_settings(
                 "sandbox",
             }
             monitored = subprocess.run(
-                (*base, "list"), capture_output=True, text=True, timeout=10
+                (*base, "ls"), capture_output=True, text=True, timeout=10
             )
             assert monitored.returncode == 0, monitored.stderr
             assert "alice" in monitored.stdout
             workload.kill()
             workload.wait(timeout=5)
             listed = subprocess.run(
-                (*base, "list"), capture_output=True, text=True, timeout=10
+                (*base, "ls"), capture_output=True, text=True, timeout=10
             )
             assert listed.returncode == 0, listed.stderr
             entry = read_instance(layout.runtime_status)

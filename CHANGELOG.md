@@ -9,9 +9,14 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ### Changed
 
-- **Breaking:** Clients read `[teaming].hub`, `human`, and `enabled`, while
-  servers read `[hub]` host and port; migrate `[teaming.hub].port` to
-  `[hub].port` and `[teaming.backend].url` to `[hub.backend].url`, then
+- **Breaking:** Root `too list` is replaced by resident-only `too ls`; use
+  `too ps` for the former instance overview and `too hub status` for the
+  managed Hub process.
+  ([#966](https://github.com/openhat-ai/toolang/pull/966))
+
+- **Breaking:** Clients read the Hub URL from `[teaming].hub` plus `human` and
+  `enabled`, while servers read `[hub]` host and port. Move `[teaming.hub].port`
+  to `[hub].port` and `[teaming.backend].url` to `[hub.backend].url`, then
   restart the Hub and agents.
   ([#961](https://github.com/openhat-ai/toolang/pull/961))
 
@@ -20,9 +25,31 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   messages.
   ([#961](https://github.com/openhat-ai/toolang/pull/961))
 
-- `too hub` shows configured-target availability and version separately from
-  the local Hub process state.
-  ([#961](https://github.com/openhat-ai/toolang/pull/961))
+- Bare `too hub` shows service help, while `too hub status` prints
+  `hub running: VERSION, HOST:PORT, PID` or `hub not running`.
+  ([#966](https://github.com/openhat-ai/toolang/pull/966))
+
+- `too ls` lists residents without contacting the Hub, while `too ps` lists
+  resident, visiting, and roaming instances with addresses, launch drivers,
+  service ports, and `up`, `down`, or `unknown` status.
+  ([#966](https://github.com/openhat-ai/toolang/pull/966))
+
+- `too ls` and `too ps` render unstyled tables with `AGENT` headings and header
+  and bottom separators, ordering rows by `up`, `down`, then `unknown`.
+  ([#966](https://github.com/openhat-ai/toolang/pull/966))
+
+- The `too ps` footer shows `hub running` with the configured client Hub's
+  version and URL, or `hub not running`; managed process details appear only in
+  `too hub status`.
+  ([#961](https://github.com/openhat-ai/toolang/pull/961)) ([#966](https://github.com/openhat-ai/toolang/pull/966))
+
+- Status labels in `too ls`, `too ps`, and `too AGENT info` use `up`, `down`,
+  and `unknown`, leaving runtime records and Run and Step states unchanged.
+  ([#966](https://github.com/openhat-ai/toolang/pull/966))
+
+- `too ls` and `too ps` summaries show total agents and running count before
+  nonzero placement counts, and empty inventories print only `0 agents`.
+  ([#966](https://github.com/openhat-ai/toolang/pull/966))
 
 - `too AGENT info` shows the short container ID beside the sandbox selector,
   drops the container-name row, and omits the `Resources: runtime startup
@@ -39,9 +66,13 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   exit 1.
   ([#963](https://github.com/openhat-ai/toolang/pull/963))
 
-- Help and diagnostics for `info`, `cd`, `chat`, `serve`, `start`, and `stop`
-  show one command-first usage, and resource help drops the accepted-forms
-  footer.
+- `too ls` and `too ps` help describes the new listings, with `info` before
+  `ls` and `top` before `ps` in their groups.
+  ([#966](https://github.com/openhat-ai/toolang/pull/966))
+
+- Help for `info`, `cd`, `chat`, `serve`, `start`, and `stop` shows one
+  command-first usage and drops the accepted-agent-forms footer, with `too cd`
+  keeping its agent optional.
   ([#964](https://github.com/openhat-ai/toolang/pull/964))
 
 ### Fixed
@@ -54,13 +85,22 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   validate development wheel versions during preparation and before launch.
   ([#958](https://github.com/openhat-ai/toolang/pull/958))
 
-- `too hub` still reports configured-target availability and version when local
-  process inspection is denied, showing local process state as unknown.
-  ([#961](https://github.com/openhat-ai/toolang/pull/961))
+- `too hub status` shows local process state as `unknown` when process
+  inspection is denied.
+  ([#961](https://github.com/openhat-ai/toolang/pull/961)) ([#966](https://github.com/openhat-ai/toolang/pull/966))
 
 - `too hub` terminates a Hub child it launched when initial process inspection
   fails, instead of leaving it running.
   ([#961](https://github.com/openhat-ai/toolang/pull/961))
+
+- `too ls`, `too ps`, and `too hub status` still report runtime state when the
+  Toolang root configuration is malformed.
+  ([#966](https://github.com/openhat-ai/toolang/pull/966))
+
+- `too ps` shows malformed Hub readiness as `unknown` instead of `hub running`
+  or `hub not running`, and invalid Hub responses omit internal validation
+  details.
+  ([#966](https://github.com/openhat-ai/toolang/pull/966))
 
 ## [0.4.0b1] - 2026-10-24
 

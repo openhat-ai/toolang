@@ -118,7 +118,7 @@ def _human_record_rows(output: str, columns: tuple[str, ...]) -> list[dict[str, 
 @pytest.mark.parametrize(
     "command,noun",
     [
-        (("list",), "agents"),
+        (("ls",), "agents"),
         (("alice", "workspace", "list"), "workspaces"),
         (("alice", "chore", "list"), "chores"),
         (("alice", "inspect", "threads"), "threads"),
@@ -128,7 +128,7 @@ def _human_record_rows(output: str, columns: tuple[str, ...]) -> list[dict[str, 
 )
 def test_empty_lists_print_only_their_summary(tmp_path, command, noun):
     root = tmp_path / "toolang"
-    if command != ("list",):
+    if command != ("ls",):
         _create_agent(root)
         if "inspect" in command:
             RunStore(AgentLayout.resident(root, "alice").run_store).close()
@@ -159,7 +159,7 @@ def test_lists_have_flush_left_tables_and_displayed_record_summaries(
     if collection == "agents":
         for index in range(count):
             _create_agent(root, name=f"agent{index}")
-        command = ("list",)
+        command = ("ls",)
     else:
         _create_agent(root)
         layout = AgentLayout.resident(root, "alice")
@@ -218,11 +218,17 @@ def test_lists_have_flush_left_tables_and_displayed_record_summaries(
     assert result.exit_code == 0, result.stderr
     lines = strip_ansi(result.stdout).splitlines()
     assert lines[0].startswith(heading)
-    assert lines[1].startswith("─") and set(lines[1]) == {"─"}
-    assert lines[2] and not lines[2].startswith(" ")
-    assert lines[-2] == ""
-    assert lines[-1] == f"{count} {noun if count == 1 else noun + 's'}"
-    assert sum(set(line) == {"─"} for line in lines) == 1
+    data_start = 2
+    assert lines[1].startswith("─") and set(lines[1]) <= {"─", " "}
+    assert lines[data_start] and not lines[data_start].startswith(" ")
+    assert not lines[-2].strip()
+    expected_summary = f"{count} {noun if count == 1 else noun + 's'}"
+    if collection == "agents":
+        expected_summary += f", 0 running, {count} resident"
+    assert lines[-1] == expected_summary
+    assert sum("─" in line and set(line) <= {"─", " "} for line in lines) == (
+        2 if collection == "agents" else 1
+    )
     numeric_headers = {
         "agents": ("PORT",),
         "threads": ("RUNS",),
@@ -231,13 +237,14 @@ def test_lists_have_flush_left_tables_and_displayed_record_summaries(
     }
     for header in numeric_headers.get(collection, ()):
         right_edge = lines[0].index(header) + len(header)
-        assert all(row[right_edge - 1] != " " for row in lines[2:-2])
+        data_end = -3 if collection == "agents" else -2
+        assert all(row[right_edge - 1] != " " for row in lines[data_start:data_end])
 
 
 @pytest.mark.parametrize(
     "status", ["stopped", "preparing", "starting", "running", "failed", "unknown"]
 )
-def test_agent_list_uses_not_running_for_stopped_display_only(
+def test_agent_listing_maps_states_without_changing_observations(
     tmp_path, monkeypatch, status
 ):
     snapshot = agents.AgentStatus(
@@ -248,19 +255,22 @@ def test_agent_list_uses_not_running_for_stopped_display_only(
         webui_url=None,
         sandbox=None,
     )
-    monkeypatch.setattr(agents.AgentProcess, "list", lambda *args, **kwargs: [snapshot])
+    from toolang.up.observation import RuntimeProbe
 
-    result = _invoke(tmp_path, "list")
+    _create_agent(tmp_path)
+    monkeypatch.setattr(RuntimeProbe, "status", lambda *args, **kwargs: snapshot)
+
+    result = _invoke(tmp_path, "ls")
 
     assert result.exit_code == 0, result.stderr
     lines = strip_ansi(result.stdout).splitlines()
     start = lines[0].index("STATUS")
-    end = lines[0].index("SANDBOX")
+    end = lines[0].index("DRIVERS")
     assert lines[2][start:end].strip() == (
-        "not running" if status == "stopped" else status
+        "up" if status == "running" else "unknown" if status == "unknown" else "down"
     )
     assert snapshot.status == status
-    assert lines[-2:] == ["", "1 agent"]
+    assert "1 resident" in result.stdout
 
 
 def test_workspace_list_excludes_implicit_lab_and_does_not_prepare_state(
@@ -3985,7 +3995,7 @@ def test_agent_info_builds_state_and_setup_without_server(
     assert "Caps" in result.stdout
     assert "Models" in result.stdout
     assert "Tools" in result.stdout
-    assert "not running" in result.stdout
+    assert "Status: down" in result.stdout
 
 
 @pytest.mark.parametrize(
@@ -4095,15 +4105,11 @@ def test_agent_info_fields_follow_the_compact_layout(
     workspace_names = ["lab"]
     assert rows["Workspaces"] == ", ".join(workspace_names)
     status_value = rows["Status"]
-    if status == "stopped":
-        assert status_value == "not running"
-    elif status == "running":
-        assert status_value.startswith("running (up ")
+    if status == "running":
+        assert status_value.startswith("up (")
         assert rows["Drivers"] == "chat,chore,talk"
-    elif status == "failed":
-        assert status_value == "failed: runtime failed"
     else:
-        assert status_value == status
+        assert status_value == ("unknown" if status == "unknown" else "down")
 
 
 def test_agent_info_reports_only_state_published_caps(
@@ -4467,8 +4473,16 @@ def test_non_execution_commands_reject_workspace_options(
     assert f"No such option: {option}" in strip_ansi(result.stderr)
 
 
+@pytest.mark.parametrize(
+    "count,models,tools",
+    [
+        (0, "0 models, 0 providers", "0 tools, 0 toolsets"),
+        (1, "1 model, 1 provider", "1 tool, 1 toolset"),
+        (2, "2 models, 2 providers", "2 tools, 2 toolsets"),
+    ],
+)
 def test_running_roaming_info_uses_runtime_resource_summary(
-    tmp_path, monkeypatch, capsys
+    tmp_path, monkeypatch, capsys, count, models, tools
 ):
     from toolang.cli.common.client import RuntimeClient
     from toolang.up.workload import ForegroundWorkload
@@ -4500,10 +4514,10 @@ def test_running_roaming_info_uses_runtime_resource_summary(
                     "caps": {
                         kind: 0 for kind in ("psyches", "skills", "services", "prompts")
                     },
-                    "models": 0,
-                    "providers": 0,
-                    "tools": 0,
-                    "toolsets": 0,
+                    "models": count,
+                    "providers": count,
+                    "tools": count,
+                    "toolsets": count,
                     "chores": 0,
                     "workspaces": ["lab", "bound"],
                 }
@@ -4513,6 +4527,8 @@ def test_running_roaming_info_uses_runtime_resource_summary(
         output = capsys.readouterr()
     assert result == 0, output.err
     assert "Workspaces: lab, bound" in output.out
+    assert f"Models: {models}" in output.out
+    assert f"Tools: {tools}" in output.out
     assert "Resources:" not in output.out
 
 

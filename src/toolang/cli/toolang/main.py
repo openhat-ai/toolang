@@ -47,8 +47,8 @@ _AGENT_PANEL_COMMAND_ORDER = (
     "new",
     "clone",
     "remove",
-    "list",
     "info",
+    "ls",
     "cd",
 )
 _RUNTIME_PANEL_COMMAND_ORDER = ("serve", "start", "stop", "hub")
@@ -63,6 +63,7 @@ _INSPECTION_PANEL_COMMAND_ORDER = (
     "providers",
     "inspect",
     "top",
+    "ps",
 )
 _SCRIPT_PANEL_COMMAND_ORDER = ("init", "run")
 # `too more` collects the commands the root directory omits, grouped by panel.
@@ -386,8 +387,9 @@ _registered_command(
     rich_help_panel=AGENT_COMMAND_PANEL,
 )
 _registered_command(
-    "list",
-    "toolang.cli.toolang.commands.agent:list_agents",
+    "ls",
+    "toolang.cli.toolang.commands.ps:ls",
+    cls=MetadataCommand,
     help="List agents and their status",
     rich_help_panel=AGENT_COMMAND_PANEL,
 )
@@ -534,6 +536,13 @@ _registered_command(
     "toolang.cli.toolang.commands.model_catalog:models_command",
     help="List available models",
     epilog="Omit AGENT to use settings from the Toolang root.",
+    rich_help_panel=INSPECTION_COMMAND_PANEL,
+)
+_registered_command(
+    "ps",
+    "toolang.cli.toolang.commands.ps:ps",
+    cls=MetadataCommand,
+    help="Show agents and hub status",
     rich_help_panel=INSPECTION_COMMAND_PANEL,
 )
 _registered_command(

@@ -293,8 +293,8 @@ def test_cli_visible_commands_follow_the_public_panel_order(arguments, capsys) -
             "new",
             "clone",
             "remove",
-            "list",
             "info",
+            "ls",
             "cd",
         ),
         "Cap commands": ("psyche", "skill", "service", "prompt"),
@@ -307,6 +307,7 @@ def test_cli_visible_commands_follow_the_public_panel_order(arguments, capsys) -
             "providers",
             "inspect",
             "top",
+            "ps",
         ),
         "Script commands": ("init", "run"),
     }

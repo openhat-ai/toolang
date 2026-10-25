@@ -1027,12 +1027,12 @@ def test_remove_deletes_stopped_agent_home_without_authored_source(
     layout.runtime.mkdir(parents=True)
     layout.home_state.mkdir(parents=True)
 
-    listed = runner.invoke(cli.app, ["--root", str(root), "list"])
+    listed = runner.invoke(cli.app, ["--root", str(root), "ls"])
     removed = runner.invoke(cli.app, ["--root", str(root), "remove", "alice"])
 
     assert listed.exit_code == 0, listed.stderr
     assert "alice" in listed.stdout
-    assert "not running" in listed.stdout
+    assert "down" in listed.stdout
     assert removed.exit_code == 0, removed.stderr
     assert removed.stdout.strip() == "Agent alice removed"
     assert not layout.home.exists()
@@ -1136,7 +1136,7 @@ def test_bare_dev_preserves_host_and_missing_wheel_errors(
     ) in error
 
 
-def test_info_shows_starting_identity_without_stale_report(
+def test_info_shows_starting_process_as_down_without_stale_report(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from toolang.plugin.sandboxes.host import process_ref
@@ -1157,7 +1157,7 @@ def test_info_shows_starting_identity_without_stale_report(
     monkeypatch.setattr(sandbox_runtime, "_health_ready", lambda _url: False)
     result = runner.invoke(cli.app, ["--root", str(root), "alice", "info"])
     assert result.exit_code == 0, result.stderr
-    assert "starting" in result.stdout
+    assert re.search(r"\bStatus: down\s*$", strip_ansi(result.stdout), re.MULTILINE)
     assert "PID" in result.stdout and str(os.getpid()) in result.stdout
     assert ref.endpoint in result.stdout
     assert "stale.invalid" not in result.stdout

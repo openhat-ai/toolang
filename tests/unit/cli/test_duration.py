@@ -9,7 +9,7 @@ from toolang.cli.toolang.commands import agent
 
 @pytest.mark.parametrize(
     ("seconds", "expected"),
-    [(0, "up 0s"), (68.9, "up 1m8s"), (3661, "up 1h1m1s")],
+    [(0, "0s"), (68.9, "1m8s"), (3661, "1h1m1s")],
 )
 def test_agent_uptime_uses_compact_duration(
     monkeypatch: pytest.MonkeyPatch, seconds: float, expected: str
