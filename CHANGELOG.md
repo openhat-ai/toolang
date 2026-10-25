@@ -133,6 +133,10 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   files appear, reject missing selected catalogs, and treat dangling roaming
   `HOME` catalogs as invalid.
 
+- Docker sandbox fallback catalog bindings use read-only
+  `PLACE/.inputs/catalog.json`, resolve guest paths from the most specific
+  mount, and reject conflicting targets.
+
 ## [0.4.0b1] - 2026-10-24
 
 ### Added
