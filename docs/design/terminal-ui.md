@@ -44,7 +44,7 @@ RGB foreground. Human names inherit the terminal foreground, and their `▮`
 markers stay bright cyan regardless of assigned member colors. Bodies keep
 their normal foreground and backgrounds. Member-color changes affect new
 rendering; committed scrollback is not recolored.
-Agent messages end with a thin dotted `┈` rule in `default dim`.
+Agent messages end with a thin solid `─` rule in `default dim`.
 
 Both clients resolve one palette before interactive input or run output.
 `TOOLANG_COLOR_SCHEME` accepts `dark`, `light`, or three `#RRGGBB` values in

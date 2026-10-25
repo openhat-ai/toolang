@@ -123,7 +123,7 @@ def message_block(
         Group(
             header,
             content,
-            Padding(Rule(characters="┈", style="default dim"), (0, 0, 0, padding)),
+            Padding(Rule(characters="─", style="default dim"), (0, 0, 0, padding)),
         )
         if agent
         else Group(header, content)

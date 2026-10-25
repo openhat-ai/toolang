@@ -37,9 +37,9 @@ def test_agent_rule_follows_body_without_a_gap_and_preserves_block_spacing(
     else:
         assert lines[0] == "• alice" + " " * (width - len("• alice"))
     assert [line.strip() for line in lines[1:-2]] == ["First.", "", "Last."]
-    assert lines[-2] == " " * (gutter + 2) + "┈" * (width - gutter - 2)
+    assert lines[-2] == " " * (gutter + 2) + "─" * (width - gutter - 2)
     assert lines[-1] == " " * width
-    rules = [segment for segment in segments if "┈" in segment.text]
+    rules = [segment for segment in segments if "─" in segment.text]
     assert rules
     for segment in rules:
         assert segment.style is not None and segment.style.dim is True
@@ -77,7 +77,7 @@ def test_agent_divider_touches_the_last_visible_markdown_row(body, width, own_me
     )
     rows = list(Segment.split_lines(console.render(block)))
     lines = ["".join(segment.text for segment in row) for row in rows]
-    assert lines[-2].strip().startswith("┈")
+    assert lines[-2].strip().startswith("─")
     assert lines[-3].strip() or any(
         segment.style
         and segment.style.bgcolor
@@ -112,8 +112,8 @@ def test_rule_follows_wrapped_names_and_body_within_terminal_cell_width(
     )
     lines = console.render_lines(block)
     text_lines = ["".join(segment.text for segment in line) for line in lines]
-    assert text_lines[-2].strip(" ") == "┈" * text_lines[-2].count("┈")
-    assert text_lines[-2].endswith("┈")
+    assert text_lines[-2].strip(" ") == "─" * text_lines[-2].count("─")
+    assert text_lines[-2].endswith("─")
     assert name + "body" == "".join("".join(text_lines[:-2]).split()).replace("•", "")
     text = "".join(text_lines)
     assert "…" not in text
@@ -129,7 +129,7 @@ def test_human_headers_have_no_rule(own_message):
         60,
         LIGHT_TERMINAL_SURFACES,
     )
-    assert "┈" not in "".join(segment.text for segment in console.render(block))
+    assert "─" not in "".join(segment.text for segment in console.render(block))
 
 
 @pytest.mark.parametrize("sender", ["agent:alice", "human:visitor"])
