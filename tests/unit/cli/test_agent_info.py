@@ -18,6 +18,16 @@ from toolang.plugin.toolsets.collections import ToolCollection
 from toolang.setup import AgentSetup
 
 
+@pytest.mark.parametrize("arguments", [("info", "huk"), ("huk", "info")])
+def test_info_reports_a_missing_agent_without_an_info_card(tmp_path, capsys, arguments):
+    assert main(["--root", str(tmp_path), *arguments]) == 1
+
+    output = capsys.readouterr()
+    assert output.err.strip() == "Error: Agent huk not found"
+    assert not output.out.strip()
+    assert not (tmp_path / "agents" / "huk").exists()
+
+
 def test_info_preserves_details_when_the_runtime_reference_is_invalid(
     tmp_path, monkeypatch, capsys
 ):

@@ -193,7 +193,7 @@ def info_agent(
                 progress=progress.sink,
             )
             progress.complete_preparation()
-    except (OSError, RuntimeError, ToolangError, ValueError, ClickException) as exc:
+    except (OSError, RuntimeError, ToolangError, ValueError) as exc:
         preparation_error = str(exc)
         layout = context_layout(ctx)
     status = user_call(runtime_status, layout, ui_base_url=ui_base_url())
