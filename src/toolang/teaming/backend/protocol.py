@@ -31,10 +31,9 @@ class EventBackend(EventPublisher, Protocol):
 
 
 class Backend(Protocol):
-    """Shared team, roster, presence, conversation and message storage.
+    """Shared team, presence, conversation and message storage.
 
-    Team is the member directory; roster is optional root/discovery metadata for
-    agents in that directory. Presence deadlines remain the online authority.
+    Team is the member directory. Presence deadlines remain the online authority.
     Registration and presence expiry publish team events atomically. Conversation
     mutations enforce actor membership and lease fencing in the same transaction.
     Reads never renew leases or reconcile expired presence.
@@ -51,21 +50,13 @@ class Backend(Protocol):
 
     async def initialize(self) -> None: ...
 
-    # Team directory and optional discovery metadata
+    # Team directory
 
     async def team(self) -> list[TeamMember]: ...
 
     async def participants(self) -> dict[str, dict[str, Any]]: ...
 
     async def known_participant(self, member: str) -> bool: ...
-
-    async def roster(self) -> dict[str, dict]: ...
-
-    async def reconcile_roster(
-        self, agent: str, owner: str, previous: dict | None, updated: dict | None
-    ) -> bool:
-        """Compare and replace discovery metadata; return False on a conflict."""
-        ...
 
     # Lease ownership and presence maintenance
 
@@ -76,7 +67,6 @@ class Backend(Protocol):
         agent: str | None = None,
         token: str = "",
         endpoint: str = "",
-        root: str = "",
     ) -> None: ...
 
     async def renew_lease(self, agent: str, token: str) -> bool:

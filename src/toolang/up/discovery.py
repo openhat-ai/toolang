@@ -35,12 +35,6 @@ def agent_layouts(root: Path, *, agent: str | None = None) -> tuple[AgentLayout,
         return ()
 
 
-def agent_roster(root: Path) -> set[str]:
-    if not root.is_dir():
-        raise FileNotFoundError(root)
-    return {f"agent:{layout.name}" for layout in agent_layouts(root)}
-
-
 def _is_directory(path: Path) -> bool:
     try:
         return S_ISDIR(path.stat().st_mode)

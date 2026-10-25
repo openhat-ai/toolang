@@ -30,8 +30,10 @@ def test_talk_member_subscription_filters_unrelated_changes_and_preserves_header
                 200, headers={"content-type": "text/event-stream"}, stream=stream
             )
 
-        connection = HubConnection("http://hub", "human:owner", "backend")
-        async with HubClient(connection, transport=httpx.MockTransport(request)) as hub:
+        connection = HubConnection("http://hub", "backend")
+        async with HubClient(
+            connection, actor="human:owner", transport=httpx.MockTransport(request)
+        ) as hub:
             async with hub.team_changes(
                 "gc_00000001", include_presence=include_presence
             ) as changes:

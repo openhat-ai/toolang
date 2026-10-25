@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from collections.abc import Mapping, Sequence
+import getpass
 from hashlib import sha256
 
 from toolang.base.types.sandbox import SandboxMount
@@ -14,6 +15,7 @@ from toolang.common.layout import (
 )
 from toolang.state.source import observe_home_source, observe_root_source
 from toolang.common.config_sources import read_config
+from toolang.teaming.config import root_config as parse_teaming_root
 
 
 def mapped_path(path: Path, mounts: Sequence[SandboxMount]) -> Path | None:
@@ -151,10 +153,24 @@ def prepare_guest_config(
     """Project one guest root without modifying either authored configuration."""
     import tomlkit
 
-    config = read_config(local_place / "config.toml", include_workspaces=False)
-    root = read_config(root_config, include_workspaces=False)
+    local_config = local_place / "config.toml"
+    config = read_config(local_config, include_workspaces=False)
+    root = (
+        config
+        if local_config == root_config
+        else read_config(root_config, include_workspaces=False)
+    )
     if "env" in root:
         config["env"] = root["env"]
+    client = parse_teaming_root(
+        root, source=root_config, default_human=getpass.getuser()
+    )
+    config["teaming"] = {
+        "human": client.human.removeprefix("human:"),
+        "enabled": client.enabled,
+        "hub": client.hub,
+    }
+    config.pop("hub", None)
     if key is not None:
         config["workspaces"] = {
             key: {

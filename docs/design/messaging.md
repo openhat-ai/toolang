@@ -4,38 +4,45 @@ hub coordinates conversations, membership, presence, and event delivery through
 Redis/Valkey. Only hub connects directly to the backend. Agents reconnect when
 hub returns; local execution continues while it is unavailable. Uncertain sends are never automatically repeated.
 
-Root configuration selects the human identity, backend, and hub endpoint:
+Both optional sections live in `ROOT/config.toml`; defaults are shown below
+except `human`, which defaults to the client's OS username.
 
 ```toml
 [teaming]
-human = "brice" # Defaults to the OS username.
+human = "brice"
+enabled = true
+hub = "http://127.0.0.1:7001"
 
-[teaming.backend]
-url = "redis://localhost:6379/0"
-
-[teaming.hub]
+[hub]
+host = "127.0.0.1"
 port = 7001
+
+[hub.backend]
+url = "redis://localhost:6379/0"
 ```
 
-Teaming is enabled by default. Home `[teaming] enabled = false` opts an agent
-out after restart; root settings are not accepted in home configuration.
-Membership lives only in the backend. [Hosting](hosting.md) owns process startup
-and port selection; [Layout](layout.md) owns private discovery records.
+Clients resolve only `[teaming]`; the server resolves only `[hub]`. Root
+`enabled = false` disables client participation; HOME `[teaming] enabled = false`
+additionally opts an agent out. Human identity and URL remain root-owned.
+[Hosting](hosting.md) owns process startup; [Layout](layout.md#hub-files) owns
+local process records.
 
-hub binds loopback and assumes trusted local clients. Its private discovery
-record publishes the actual endpoint and backend identity. `/info` reports the
-source version and `api_version: 0`; `HUB_API_VERSION` also versions publication,
-staging, and event wires. The one-shot hub roster describes discovered instances
-and recorded launches, not delivery or live presence.
+Clients connect to the configured URL without reading Hub files or accessing
+Redis/Valkey. Existing `TOOLANG_HOST_GATEWAY` handling rewrites loopback URLs
+for guest clients. `/info` returns `{version, api_version, identity}` without
+registering participants. Clients validate metadata before application requests
+and pin its opaque dataset identity through `X-Toolang-Backend`, including SSE
+and admitted Talk batches. New connections use refreshed settings; identity
+mismatches reject old batches without replaying messages.
 
-Agent clients read `ROOT/hub/hub.json`, including when their place is outside
-the selected Toolang root. Presence, event export, conversation tools, and rule
-lookups use that same root. When `TOOLANG_HOST_GATEWAY` is set,
-they route the discovered loopback endpoint through that gateway using the same
-URL transformation as local model catalogs. The recorded port, human, and
-backend identity remain unchanged; record refresh and batch identity pinning
-still apply. The record must be visible below the selected guest root, and the
-Hub listener must be reachable through the gateway.
+Human requests declare a percent-encoded `human:<name>` in `X-Toolang-Human`;
+missing or invalid actors fail before storage access. Agent routes derive the
+actor from their path and lease; registration accepts `{owner, endpoint}` with
+owner supplied by the client's `teaming.human`. Hub startup has no human actor.
+Agents become known on first registration. Lease expiry/release retains members,
+conversation history, cursors, and offline messages. Hub never scans HOME or
+removes members because local files disappear. Local CLI listings may discover
+unstarted agents without registering them.
 
 hub store schema `5` owns messaging and execution-event data. Incompatible or
 corrupt initialized stores fail closed without resets, mutation, or import.
@@ -48,13 +55,9 @@ ownership fail without adopting or modifying another dataset.
 Backend connection identity includes both the configured URL and canonical root,
 so Hub API and Talk identity checks distinguish roots on the same backend.
 
-Only v0 state is supported; `v1` is reserved for stabilization. Old unscoped
-`too:teaming:v0:*` data is left untouched, without migration or fallback. Restart
-Hub and reopen Talk after upgrading; existing Hub conversation history is not
-imported. Local execution history is unaffected.
-hub and clients must use compatible versions and backend data. Restart applies
-configuration changes; Talk must be reopened when its endpoint, backend, or
-human identity changes.
+Hub and clients must use compatible protocol versions. Talk must be reopened
+when its endpoint, dataset, or human identity changes. Authentication is outside
+the current protocol.
 
 ## Conversations and targets
 
@@ -142,8 +145,7 @@ titles never replace canonical identity.
 
 Each directory member receives a `color` when first created. hub chooses the
 least-used of `red`, `green`, `yellow`, `blue`, `magenta`, and `cyan`, breaking
-ties in that order. Registration, lease updates, and restart preserve it; member
-removal deletes it. Talk uses this color for agent names and message markers;
+ties in that order. Registration, lease updates, and restart preserve it. Talk uses this color for agent names and message markers;
 human names keep the terminal foreground and their markers stay bright cyan.
 `color` is required and accepts a standard ANSI color name or `#RRGGBB`.
 
@@ -272,10 +274,8 @@ An independent heartbeat renews a backend presence deadline. Expired leases
 grant no authority even before cleanup; graceful stop releases the lease. hub
 reconciles expiry independently of discovery. Readers compare deadlines with
 their own clocks without writing backend state; heartbeat renewal changes only
-the deadline. hub scans resident homes at startup and periodically. Two successful scans
-confirming absence plus no live lease remove an agent from the roster and ordinary
-GCs. DM membership and all historical data remain. A live process with a missing home
-stays visible. A recreated name retains its DM identity and history.
+the deadline. Hub does not scan homes. Lease expiry or release marks an agent
+offline while retaining memberships, history, and queued messages.
 
 Streams retain approximately 10,000 entries. Readers use independent full Stream-ID
 cursors and report retention gaps. Uncertain sends report their UUID without
@@ -312,16 +312,14 @@ The backend separates authoritative data by purpose:
 | Data | Authority |
 | --- | --- |
 | Team directory | Typed identities, public metadata, and private leases |
-| Agent roster | Root ownership and discovery state; no duplicate presence or names |
-| Presence | Lease deadlines, independent of discovery |
+| Presence | Lease deadlines |
 | Conversations | Metadata, membership, messages, rules, and nonunique name indexes |
 | Talk cursors | Persistent agent/conversation consumption progress |
 | Execution events | Retained feed, byte accounting, projections, and recovery generations |
 
-Discovery atomically creates directory/roster entries. Two confirmed absent
-scans and no live lease remove an agent and its GC memberships, preserving DMs
-and history. Expiry alone changes presence. Another root cannot adopt a root
-claim. Raw leases remain private; responses expose metadata and deadlines.
+First registration creates the agent's directory entry with its declared human
+owner. Home removal does not remove Hub members. Raw leases remain private;
+responses expose metadata and deadlines.
 
 Participant pairs resolve DMs directly. Conversation/message counters commit
 with their records. Active execution-event generations persist; staging

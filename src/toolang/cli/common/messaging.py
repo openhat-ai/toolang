@@ -1,10 +1,11 @@
-"""Hub discovery and stable context identities for human messaging clients."""
+"""Hub configuration and stable context identities for human messaging clients."""
 
 from hashlib import sha256
 from pathlib import Path
 
 from toolang.teaming.schemas import HubConnection
-from toolang.up.hub import HubProcess
+from toolang.setup.teaming import load_teaming_root
+from toolang.teaming.errors import TeamingError
 
 
 def talk_identity(root: Path, connection: str, human: str) -> str:
@@ -19,5 +20,7 @@ def talk_context(root: Path, connection: str, human: str, endpoint: str) -> str:
 
 
 def settings(root: Path) -> tuple[HubConnection, str]:
-    config = HubProcess(root).connection()
-    return config, config.human
+    config = load_teaming_root(root)
+    if not config.enabled:
+        raise TeamingError("Teaming is disabled for this root")
+    return config.connection(), config.human

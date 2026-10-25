@@ -1,11 +1,11 @@
 # Hub Client and Server Separation
 
-Proposed; implementation requires approval. Clients must use configured Hub HTTP
+Approved in [#959](https://github.com/openhat-ai/toolang/pull/959). Clients must use configured Hub HTTP
 connections without backend access or Hub files; successful local stop must
 remove the stopped process's record. Supersedes discovery/scanning decisions in
 [agent Hub transport](agent-hub-transport.md) and [teaming](teaming.md).
 Authentication, deployment-specific adaptations/tests, data migration, and
-permanent-member removal APIs are outside scope. No implementation is included.
+permanent-member removal APIs are outside scope.
 
 ## Configuration
 
@@ -58,13 +58,12 @@ url = "redis://localhost:6379/0"
    launch paths, preserving human identity and HOME opt-out. Remove obsolete
    Hub-file mounts and server/backend fields from client inputs. Reuse existing
    networking behavior; all targets use the same HTTP client.
-5. **Process control:** Keep `hub.json` as local `pid/created/host/port/status`
+5. **Process control:** Use `hub/pid.json` as local `pid/created/host/port/status`
    state, without human/identity. Verify PID creation time. Clean owned records
    during ASGI teardown and after confirmed exit, including force/startup failure.
    Use the lifetime lock and compare process identity to protect replacements.
    Preserve existing stop timeouts and report cleanup failure. Keep atomic private
-   writes and log/lock locations; reconcile verified dead legacy records without
-   trusting their human.
+   writes and log/lock locations. Use only the new record format.
 6. **Inspection:** `too hub` shows configured-target availability/version separately
    from local process state and retains local agent listings. Corrupt local state
    cannot block remote inspection. Start/stop always control the local process.
@@ -73,22 +72,18 @@ url = "redis://localhost:6379/0"
 
 | Area | Touchpoints | Required checks |
 | --- | --- | --- |
-| Configuration | `teaming/config.py`, `setup/teaming.py`, `up/config.py` | Defaults, section isolation, enablement, precedence, legacy-key diagnostics. |
+| Configuration | `teaming/config.py`, `setup/teaming.py`, `up/config.py` | Defaults, section isolation, enablement, precedence. |
 | Transport and membership | `teaming/` clients, API, lifecycle, roster/backend; existing setup/launch and tool callers | Mock HTTP verifies the configured URL and no HOME/backend dependency; registration, offline delivery, owner/lease conflicts, actors, dataset isolation and reconnect. |
 | Process and CLI | `up/{hub,records}.py`, CLI Hub commands | Real SIGTERM regression, forced stop, failed/timed-out startup, stop timeout, replacement race; mocked target availability independent of local process state. |
 
 Use configuration units, mock HTTP, and the process regression; keep tests offline.
 Implementation updates focused design docs and generates the changelog through
-`too aid.too update_changelog`, then runs repository default checks. This plan
-change needs source/example/link verification and `git diff --check` only.
+`too aid.too update_changelog`, then runs repository default checks.
 
-## Upgrade and limits
+## Limits
 
-Move `teaming.backend` to `hub.backend`, old `teaming.hub.port` to `hub.port`,
-and make `teaming.hub` a URL string; reject legacy shapes with migration diagnostics.
-Upgrade Hub/clients together. Preserve backend schema, identity, history, and
-namespace guards; legacy roster rows become inert. Local control may decode old
-process records only for verified stop/cleanup.
+Use the new configuration, API, and process-record formats directly; do not add
+backward compatibility or migration handling.
 
 Offline and previously discovered members remain until a future explicit removal
 operation. All clients share the endpoint's agent-name namespace; changing the

@@ -62,10 +62,10 @@ def convo_app() -> typer.Typer:
 def _membership(ctx: typer.Context, operation: str, conversation: str) -> None:
     try:
         conversation_id(conversation)
-        config, _ = settings(context_root(ctx))
+        config, human = settings(context_root(ctx))
 
         async def change() -> None:
-            async with HubClient(config) as client:
+            async with HubClient(config, actor=human) as client:
                 if operation == "join":
                     await client.join_conversation(conversation)
                 else:
@@ -96,10 +96,10 @@ def create(
 ) -> None:
     """Create a group conversation"""
     try:
-        config, _ = settings(context_root(ctx))
+        config, human = settings(context_root(ctx))
 
         async def creating() -> str:
-            async with HubClient(config) as client:
+            async with HubClient(config, actor=human) as client:
                 return (await client.create_conversation(name)).id
 
         typer.echo(asyncio.run(creating()))
@@ -151,7 +151,7 @@ def rules(
             raise typer.BadParameter(str(exc), param_hint="--revision") from exc
     try:
         conversation_id(conversation)
-        config, _ = settings(context_root(ctx))
+        config, human = settings(context_root(ctx))
         request = None
         if update is not None:
             source = (
@@ -174,7 +174,7 @@ def rules(
             request = SetRulesRequest(content=content, revision=revision)
 
         async def transfer():
-            async with HubClient(config) as client:
+            async with HubClient(config, actor=human) as client:
                 return (
                     await client.get_rules(conversation)
                     if request is None

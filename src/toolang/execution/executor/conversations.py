@@ -8,7 +8,8 @@ from typing import TYPE_CHECKING
 from toolang.common.layout import AgentLayout
 from toolang.teaming.agent_client import AgentClient
 from toolang.teaming.errors import MessagingError
-from toolang.teaming.schemas import ConversationRules, convo_target
+from toolang.teaming.schemas import ConversationRules, HubConnection, convo_target
+from toolang.setup.types import AgentSetup
 
 from ..records import RecallControlPayload
 from ..types import ConversationScope, ConvoRulesRecallTarget
@@ -33,11 +34,18 @@ class ConversationAccess:
         )
 
 
+def connection_for(setup: AgentSetup) -> HubConnection:
+    teaming = setup.teaming
+    if teaming is None or not teaming.enabled:
+        raise MessagingError("Teaming is disabled for this agent")
+    return teaming.root.connection(gateway=setup.envs.get("TOOLANG_HOST_GATEWAY"))
+
+
 async def load_source(
-    layout: AgentLayout, scope: ConversationScope
+    layout: AgentLayout, scope: ConversationScope, *, connection: HubConnection
 ) -> RecallControlPayload:
     async with AgentClient(
-        layout.root or layout.place, actor=f"agent:{layout.name}"
+        layout.root or layout.place, actor=f"agent:{layout.name}", connection=connection
     ) as client:
         with client.session():
             if client.config.identity != scope.backend:
@@ -51,11 +59,15 @@ async def load_source(
 
 
 async def load_target(
-    layout: AgentLayout, target: str, *, pending: bool = False
+    layout: AgentLayout,
+    target: str,
+    *,
+    connection: HubConnection,
+    pending: bool = False,
 ) -> ConversationAccess:
     destination = convo_target(target, layout.name)
     async with AgentClient(
-        layout.root or layout.place, actor=f"agent:{layout.name}"
+        layout.root or layout.place, actor=f"agent:{layout.name}", connection=connection
     ) as client:
         with client.session():
             resolved = await client.resolve(destination)
@@ -74,7 +86,12 @@ async def load_target(
 
 
 async def preflight(state: _AgicState, name: str, target: str) -> ConversationAccess:
-    access = await load_target(state.layout, target, pending=name == "convo__write")
+    access = await load_target(
+        state.layout,
+        target,
+        connection=connection_for(state.prepared.run.setup),
+        pending=name == "convo__write",
+    )
     if name == "convo__get_rules":
         return access
     payload = access.recall

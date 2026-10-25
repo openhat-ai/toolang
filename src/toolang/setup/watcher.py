@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections import Counter
 from collections.abc import AsyncIterator, Mapping, Sequence
-from dataclasses import dataclass, field, replace
+from dataclasses import asdict, dataclass, field, replace
 from types import MappingProxyType
 import logging
 from pathlib import Path
@@ -75,6 +75,7 @@ class _LoadedInputs:
 @dataclass(frozen=True, slots=True)
 class _Candidate:
     inputs: _LoadedInputs
+    teaming: TeamingSetup
     config_value: tuple[dict[str, object], ...]
     adapter_configs: dict[str, dict[str, object]]
     toolset_configs: dict[str, dict[str, object]]
@@ -207,16 +208,14 @@ class SetupWatcher:
         validate_models_config(configs)
         adapter_configs = merge_plugin_configs(configs, family="model_adapter")
         toolset_configs = merge_plugin_configs(configs, family="toolset")
-        if self._setup is None:
-            teaming = resolve_teaming_setup(
-                inputs.sources, root=self.layout.place_config, home=self.layout.config
-            )
-        else:
-            teaming = self._setup.teaming
-        toolset_configs["convo"] = (
-            teaming.toolset_config(root=self.layout.root or self.layout.place)
-            if teaming
-            else {}
+        teaming = resolve_teaming_setup(
+            inputs.sources,
+            root=(self.layout.root or self.layout.place) / "config.toml",
+            home=self.layout.config,
+        )
+        toolset_configs["convo"] = teaming.toolset_config(
+            root=self.layout.root or self.layout.place,
+            gateway=inputs.envs.get("TOOLANG_HOST_GATEWAY"),
         )
         catalog_path = resolve_model_catalog_path(
             self.layout,
@@ -243,6 +242,7 @@ class SetupWatcher:
         )
         candidate = _Candidate(
             inputs=inputs,
+            teaming=teaming,
             config_value=config_value,
             adapter_configs=adapter_configs,
             toolset_configs=toolset_configs,
@@ -265,7 +265,7 @@ class SetupWatcher:
                 ),
                 "adapters": adapter_configs,
                 "toolsets": toolset_configs,
-                "human": teaming.root.human if teaming else None,
+                "teaming": asdict(teaming),
                 "allow": allow,
                 "defaults": defaults,
                 "limits": limits,
@@ -389,6 +389,7 @@ class SetupWatcher:
     def _candidate_is_unchanged(self, candidate: _Candidate) -> bool:
         return (
             self._setup is not None
+            and candidate.teaming == self._setup.teaming
             and candidate.config_value == self._config
             and candidate.inputs.envs == self._setup.envs
             and candidate.adapter_configs == self._adapter_configs

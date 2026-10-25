@@ -1,5 +1,7 @@
 """Conversation workflows through real Hub HTTP, CLI processes, and terminals."""
 
+from toolang.setup.teaming import load_teaming_root
+
 import asyncio
 from contextlib import asynccontextmanager, suppress
 import json
@@ -14,6 +16,7 @@ from valkey.asyncio import Valkey
 from tests.integration.messaging.test_valkey import (
     valkey as valkey,
     running_hub as running_hub,
+    hub_connection,
 )
 from tests.support.chat_tui_pty import ChatTuiPtySession
 from toolang.teaming.agent_client import AgentClient
@@ -28,7 +31,9 @@ pytestmark = pytest.mark.live_valkey
 
 @asynccontextmanager
 async def active_agent(root, actor, owner):
-    async with AgentClient(root, actor=actor, managed=False) as client:
+    async with AgentClient(
+        root, connection=load_teaming_root(root).connection(), actor=actor
+    ) as client:
         await client.register(owner)
 
         async def renew():
@@ -78,16 +83,16 @@ def test_talk_empty_dm_first_send_peer_reply_and_observation(
         )
 
     async def scenario():
-        connection = running_hub.connection()
+        connection = hub_connection(tmp_path)
         async with (
-            HubClient(connection) as human,
-            active_agent(tmp_path, "agent:alice", connection.human) as alice,
-            active_agent(tmp_path, "agent:bob", connection.human) as bob,
+            HubClient(connection, actor="human:owner") as human,
+            active_agent(tmp_path, "agent:alice", "human:owner") as alice,
+            active_agent(tmp_path, "agent:bob", "human:owner") as bob,
             Valkey.from_url(valkey.url, decode_responses=True) as raw,
         ):
             server_version = (await human.info()).version
             assert server_version != "unknown"
-            direct = dm_id(connection.human, alice.actor)
+            direct = dm_id("human:owner", alice.actor)
             before = {
                 key: await raw.dump(key)
                 for key in (
@@ -148,11 +153,11 @@ def test_talk_empty_dm_first_send_peer_reply_and_observation(
                 tui.close()
             listing = await asyncio.to_thread(command, "list", group="convo")
             assert direct in listing.stdout and "Renamed pair" in listing.stdout
-            await alice.register(connection.human)
-            await bob.register(connection.human)
+            await alice.register("human:owner")
+            await bob.register("human:owner")
             tui = terminal("bob")
             try:
-                peer_direct = dm_id(connection.human, bob.actor)
+                peer_direct = dm_id("human:owner", bob.actor)
                 await asyncio.to_thread(tui.wait_for, "Type a message", peer_direct)
                 assert not await raw.hexists(Keys(valkey.root_code).convos, peer_direct)
                 receipt = await bob.send("human:owner", body="peer creates this DM")
@@ -185,10 +190,10 @@ def test_open_talk_updates_composer_when_gc_membership_changes(
     monkeypatch.setenv("TOOLANG_TMUX", "0")
 
     async def scenario():
-        connection = running_hub.connection()
+        connection = hub_connection(tmp_path)
         async with (
-            HubClient(connection) as human,
-            active_agent(tmp_path, "agent:alice", connection.human) as alice,
+            HubClient(connection, actor="human:owner") as human,
+            active_agent(tmp_path, "agent:alice", "human:owner") as alice,
         ):
             conversation = await alice.create_conversation("Observers")
             tui = ChatTuiPtySession.start(
@@ -232,20 +237,30 @@ def test_presence_expires_naturally_and_gc_names_remain_nonunique(
     valkey, running_hub, tmp_path
 ):
     async def scenario():
-        connection = running_hub.connection()
+        connection = hub_connection(tmp_path)
         async with (
-            HubClient(connection) as human,
-            AgentClient(tmp_path, actor="agent:alice", managed=False) as alice,
+            HubClient(connection, actor="human:owner") as human,
+            AgentClient(
+                tmp_path,
+                connection=load_teaming_root(tmp_path).connection(),
+                actor="agent:alice",
+            ) as alice,
             Valkey.from_url(valkey.url, decode_responses=True) as raw,
             httpx.AsyncClient(
-                base_url=connection.endpoint, timeout=20, trust_env=False
+                base_url=connection.endpoint,
+                headers={
+                    "X-Toolang-Backend": connection.identity,
+                    "X-Toolang-Human": "human%3Aowner",
+                },
+                timeout=20,
+                trust_env=False,
             ) as http,
         ):
             async with aconnect_sse(http, "GET", "/team/events") as stream:
                 events = stream.aiter_sse()
                 checkpoint = await anext(events)
                 assert checkpoint.event == "checkpoint"
-                await alice.register(connection.human)
+                await alice.register("human:owner")
                 deadline = int(
                     await raw.zscore(Keys(valkey.root_code).presence, alice.actor)
                 )

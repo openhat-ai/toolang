@@ -176,7 +176,7 @@ def directory_command(ctx: typer.Context) -> None:
         config, human = settings(context_root(ctx))
 
         async def listing():
-            async with HubClient(config) as client:
+            async with HubClient(config, actor=human) as client:
                 return await client.contacts(include_preview=True)
 
         conversations = asyncio.run(listing())

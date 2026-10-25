@@ -185,7 +185,7 @@ def test_talk_cursor_hub_api_is_agent_only_and_fenced(tmp_path):
     async def scenario():
         server = FakeServer(server_type="valkey")
         async with client(server, "human:owner") as human:
-            app = create_app(human, version="0.4.0-test")
+            app = create_app(human.config, backend=human.backend, version="0.4.0-test")
             async with (
                 agent(app, tmp_path) as alice,
                 httpx.AsyncClient(
@@ -308,7 +308,10 @@ def test_pending_cursor_is_discarded_after_backend_switch(tmp_path, monkeypatch)
             human.config = BackendConfig(
                 f"redis://cursor-{index}", root="/test/toolang"
             )
-        apps = [create_app(human, version="0.4.0-test") for human in humans]
+        apps = [
+            create_app(human.config, backend=human.backend, version="0.4.0-test")
+            for human in humans
+        ]
         current = 0
 
         async def dispatch(request):

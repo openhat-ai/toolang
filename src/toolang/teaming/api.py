@@ -3,7 +3,7 @@
 from collections.abc import Callable, AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Annotated, Any, cast
-from urllib.parse import quote
+from urllib.parse import unquote
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
@@ -34,40 +34,61 @@ from .messaging_api import messaging_router
 from .lifecycle import HubLifecycle
 from .team_api import team_router
 from .agent_api import agent_router
-from .roster import Roster
+from .backend import Backend
+from .backend.factory import create_backend
+from .config import BackendConfig
 
 
 def create_app(
-    client: MessagingClient,
+    config: BackendConfig,
     *,
     version: str,
+    backend: Backend | None = None,
     on_ready: Callable[[], None] | None = None,
-    roster: Roster | None = None,
+    on_stop: Callable[[], None] | None = None,
 ) -> FastAPI:
-    """Bind requests to one configured human; own the service for this lifespan."""
-    target(client.actor, kind="human")
-    info = HubInfo(version=version, api_version=HUB_API_VERSION)
+    """Own one backend; bind participant identities at request boundaries."""
+    store = backend if backend is not None else create_backend(config)
+    info = HubInfo(
+        version=version, api_version=HUB_API_VERSION, identity=config.identity
+    )
 
     async def prepare_request(
-        backend: Annotated[str | None, Header(alias="X-Toolang-Backend")] = None,
-        human: Annotated[str | None, Header(alias="X-Toolang-Human")] = None,
+        identity: Annotated[str | None, Header(alias="X-Toolang-Backend")] = None,
     ) -> None:
-        if (backend is not None and backend != client.config.identity) or (
-            human is not None and human != quote(client.actor, safe="")
-        ):
+        if identity is not None and identity != config.identity:
             raise HTTPException(
-                409,
-                {"code": "hub_changed", "detail": "Hub identity changed"},
+                409, {"code": "hub_changed", "detail": "Hub identity changed"}
             )
-        # Registration is idempotent; damaged or reset storage fails closed.
-        await client.register_human()
 
-    lifecycle = HubLifecycle(client, roster=roster)
+    async def human_client(
+        human: Annotated[str | None, Header(alias="X-Toolang-Human")] = None,
+    ) -> MessagingClient:
+        try:
+            actor = unquote(human) if human is not None else ""
+            target(actor, kind="human")
+        except MessagingError as exc:
+            raise HTTPException(
+                400,
+                {
+                    "code": "messaging_error",
+                    "detail": "A valid human actor is required",
+                },
+            ) from exc
+        client = MessagingClient(config, actor=actor, backend=store)
+        await client.register_human()
+        return client
+
+    lifecycle = HubLifecycle(store)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        async with lifecycle.lifespan(on_ready):
-            yield
+        try:
+            async with lifecycle.lifespan(on_ready):
+                yield
+        finally:
+            if on_stop:
+                on_stop()
 
     app = FastAPI(
         title="Toolang Hub API",
@@ -140,7 +161,8 @@ def create_app(
     async def health() -> dict[str, bool]:
         if not lifecycle.ready or lifecycle.failed:
             raise HTTPException(503, "Hub maintenance is not ready")
-        await client.backend.ping()
+        await store.ping()
+        await store.initialize()
         return {"ok": True}
 
     async def event_subscription(
@@ -152,7 +174,7 @@ def create_app(
         subscription = None
         try:
             subscription = HubSubscription(
-                client.backend.events, HubScope(agent, thread, run), after
+                store.events, HubScope(agent, thread, run), after
             )
             await subscription.prepare()
         except ScopeUnavailable as exc:
@@ -218,7 +240,7 @@ def create_app(
         finally:
             subscription.close()
 
-    app.include_router(team_router(lambda: client))
-    app.include_router(messaging_router(lambda: client, prefix="/msg"))
-    app.include_router(agent_router(client, roster=roster))
+    app.include_router(team_router(human_client))
+    app.include_router(messaging_router(human_client, prefix="/msg"))
+    app.include_router(agent_router(config, store))
     return app

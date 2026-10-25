@@ -13,43 +13,32 @@ from toolang.cli.toolang.commands import hub
 from toolang.cli.common.ports import agent_port
 from toolang.common.layout import AgentLayout
 from toolang.up.config import resolve_port_override
-from toolang.teaming.discovery import HubDiscovery
+from toolang.up.records import HubRecord
 
 
-@pytest.mark.parametrize(
-    "version,label",
-    [
-        ("0.4.0a5-3-g12345678*", "v0.4.0a5-3-g12345678*"),
-        ("v0.4.0a5-3-g12345678*", "v0.4.0a5-3-g12345678*"),
-        ("unknown", "unknown"),
-    ],
-)
 @pytest.mark.parametrize("healthy", [True, False])
-def test_hub_status_shows_server_version_in_shared_columns(
-    tmp_path, monkeypatch, capsys, version, label, healthy
+def test_hub_status_queries_configured_url_independently_of_local_process(
+    tmp_path, monkeypatch, capsys, healthy
 ):
-    import toolang.up.hub as module
-
-    saved = HubDiscovery(
-        pid=os.getpid(),
-        created=psutil.Process().create_time(),
-        port=7123,
-        human="human:owner",
-        identity="backend",
+    (tmp_path / "config.toml").write_text(
+        '[teaming]\nhub = "http://hub.example:7123"\n'
     )
-    saved.save(hub.HubProcess(tmp_path).path)
     client_type = httpx.Client
     requests = []
 
     def respond(request):
-        requests.append(request.url.path)
-        if request.url.path == "/healthz":
-            return httpx.Response(200 if healthy else 503, json={"ok": healthy})
-        assert request.url.path == "/info"
-        return httpx.Response(200, json={"version": version, "api_version": 0})
+        requests.append(request)
+        assert str(request.url).startswith("http://hub.example:7123/")
+        if request.url.path == "/info":
+            return httpx.Response(
+                200,
+                json={"version": "0.4.0-test", "api_version": 0, "identity": "dataset"},
+            )
+        assert request.headers["X-Toolang-Backend"] == "dataset"
+        return httpx.Response(200 if healthy else 503, json={"ok": healthy})
 
     monkeypatch.setattr(
-        module.httpx,
+        hub.httpx,
         "Client",
         lambda **kwargs: client_type(**kwargs, transport=httpx.MockTransport(respond)),
     )
@@ -59,98 +48,93 @@ def test_hub_status_shows_server_version_in_shared_columns(
         layout, toolang_root=tmp_path, drivers=frozenset({"chat", "talk"})
     ):
         assert cli.main(["--root", str(tmp_path), "hub"]) == 0
-        output = capsys.readouterr().out
-        rows = output.splitlines()
-        assert rows[0].split() == (
-            ["hub", "running", label] if healthy else ["hub", "not", "running"]
-        )
-        assert rows[0].index("running" if healthy else "not") == rows[1].index(
-            "running"
-        )
-        assert "1 agents, 1 running, 1 talk enabled" in output
-        assert "alice" in output
-        assert "http://127.0.0.1:7123" not in output
-        assert requests == ["/healthz", "/info"]
+    output = capsys.readouterr().out
+    assert output.splitlines()[0].split() == [
+        "hub",
+        "running" if healthy else "unavailable",
+        "v0.4.0-test",
+    ]
+    assert "alice" in output and "1 agents, 1 running, 1 talk enabled" in output
+    assert "Hub URL: http://hub.example:7123" in output
+    assert "Local Hub: not running" in output
+    assert [r.url.path for r in requests] == ["/info", "/healthz"]
 
 
-@pytest.mark.parametrize("healthy", [True, False])
-def test_hub_status_missing_metadata_keeps_readiness(
-    tmp_path, monkeypatch, capsys, healthy
+@pytest.mark.parametrize("local", ["starting", "stale", "corrupt", "denied"])
+def test_local_record_does_not_block_target_inspection(
+    tmp_path, monkeypatch, capsys, local
 ):
-    import toolang.up.hub as module
+    process = hub.HubProcess(tmp_path)
+    if local == "denied":
 
-    monkeypatch.setenv("TERM", "xterm-256color")
-    saved = HubDiscovery(
-        pid=os.getpid(),
-        created=psutil.Process().create_time(),
-        port=7123,
-        human="human:owner",
-        identity="backend",
-    )
-    saved.save(hub.HubProcess(tmp_path).path)
+        def denied(_):
+            raise psutil.AccessDenied(os.getpid())
+
+        monkeypatch.setattr(hub.HubProcess, "current", denied)
+    elif local == "corrupt":
+        process.path.parent.mkdir()
+        process.path.write_text("invalid")
+    else:
+        HubRecord(
+            pid=os.getpid(),
+            created=psutil.Process().create_time() - (10 if local == "stale" else 0),
+            port=9999,
+            status="starting",
+        ).save(process.path)
     client_type = httpx.Client
 
     def respond(request):
-        if request.url.path == "/healthz":
-            return httpx.Response(200 if healthy else 503, json={"ok": healthy})
-        return httpx.Response(404)
+        assert request.url.port == 7001
+        return httpx.Response(
+            200,
+            json={"version": "test", "api_version": 0, "identity": "dataset"}
+            if request.url.path == "/info"
+            else {"ok": True},
+        )
 
     monkeypatch.setattr(
-        module.httpx,
+        hub.httpx,
         "Client",
         lambda **kwargs: client_type(**kwargs, transport=httpx.MockTransport(respond)),
     )
     assert cli.main(["--root", str(tmp_path), "hub"]) == 0
     output = capsys.readouterr().out
-    assert output.splitlines()[0].split() == (
-        ["hub", "running", "unknown"] if healthy else ["hub", "not", "running"]
+    assert output.splitlines()[0].split() == ["hub", "running", "vtest"]
+    assert (
+        "Local Hub: "
+        + {
+            "starting": "starting",
+            "stale": "not running",
+            "corrupt": "unknown",
+            "denied": "unknown",
+        }[local]
+        in output
     )
-    assert output.splitlines()[1:] == ["└── no agents"]
-    assert "0 agents, 0 running, 0 talk enabled" not in output
+    if local in {"corrupt", "denied"}:
+        assert "record inspection failed" in output
 
 
-@pytest.mark.parametrize("state", ["starting", "stopped", "stale"])
-def test_hub_status_without_ready_process_skips_http(
-    tmp_path, monkeypatch, capsys, state
+@pytest.mark.parametrize("failure", ["offline", "metadata"])
+def test_failed_target_inspection_keeps_local_agents_visible(
+    tmp_path, monkeypatch, capsys, failure
 ):
-    import toolang.up.hub as module
-
-    monkeypatch.setenv("TERM", "xterm-256color")
-    if state != "stopped":
-        saved = HubDiscovery(
-            pid=os.getpid(),
-            created=psutil.Process().create_time() - (10 if state == "stale" else 0),
-            port=7123,
-            human="human:owner",
-            identity="backend",
-            status="starting" if state == "starting" else "running",
-        )
-        saved.save(hub.HubProcess(tmp_path).path)
-
-    def fail(**kwargs):
-        pytest.fail("Status must not query a stopped, stale, or starting Hub")
-
-    monkeypatch.setattr(module.httpx, "Client", fail)
-    assert cli.main(["--root", str(tmp_path), "hub"]) == 0
-    output = capsys.readouterr().out
-    assert output.splitlines()[0].split() == ["hub", "not", "running"]
-    assert output.splitlines()[1:] == ["└── no agents"]
-    assert "0 agents, 0 running, 0 talk enabled" not in output
-    assert "http://127.0.0.1:7123" not in output
-
-
-def test_hub_inspection_failure_keeps_local_agents_visible(tmp_path, capsys):
     (tmp_path / "agents" / "alice").mkdir(parents=True)
-    hub_dir = tmp_path / "hub"
-    hub_dir.mkdir()
-    (hub_dir / "hub.json").write_text("invalid")
+    client_type = httpx.Client
 
+    def respond(request):
+        if failure == "offline":
+            raise httpx.ConnectError("offline", request=request)
+        return httpx.Response(404)
+
+    monkeypatch.setattr(
+        hub.httpx,
+        "Client",
+        lambda **kwargs: client_type(**kwargs, transport=httpx.MockTransport(respond)),
+    )
     assert cli.main(["--root", str(tmp_path), "hub"]) == 0
     output = capsys.readouterr().out
-    assert output.splitlines()[0].split() == ["hub", "not", "running"]
+    assert "unavailable" in output.splitlines()[0]
     assert "alice" in output and "1 agents" in output
-    assert "Hub" in output
-    assert "partial: Hub: record inspection failed" in output
 
 
 def test_hub_status_command_is_removed(tmp_path, capsys):
@@ -176,14 +160,14 @@ def test_hub_start_and_serve_port_precedence(
     monkeypatch.delenv("TOOLANG_HUB_PORT", raising=False)
     if env is not None:
         monkeypatch.setenv("TOOLANG_HUB_PORT", env)
-    content = "" if configured is None else f"[teaming.hub]\nport = {configured}\n"
+    content = "" if configured is None else f"[hub]\nport = {configured}\n"
     (tmp_path / "config.toml").write_text(content)
     seen = []
 
     def start(self, argv):
         seen.append(int(argv[-1]))
         assert argv[-4:-1] == ["hub", "serve", "--port"]
-        return SimpleNamespace(connection=SimpleNamespace(endpoint="http://hub"))
+        return SimpleNamespace(endpoint="http://hub")
 
     def serve(root, config, *, port):
         assert root == tmp_path
@@ -231,16 +215,31 @@ def test_invalid_home_api_settings_report_source(tmp_path, config):
 
 
 def test_root_api_settings_rejected_and_convo_list_requires_running_hub(
-    tmp_path, capsys
+    tmp_path, capsys, monkeypatch
 ):
+    client_type, async_client_type = httpx.Client, httpx.AsyncClient
+
+    def offline(request):
+        raise httpx.ConnectError("offline", request=request)
+
+    def http_client(client, **kwargs):
+        kwargs["transport"] = httpx.MockTransport(offline)
+        return client(**kwargs)
+
+    monkeypatch.setattr(
+        httpx, "Client", lambda **kwargs: http_client(client_type, **kwargs)
+    )
+    monkeypatch.setattr(
+        httpx, "AsyncClient", lambda **kwargs: http_client(async_client_type, **kwargs)
+    )
     layout = AgentLayout.resident(tmp_path, "alice")
     (tmp_path / "config.toml").write_text("[api]\nport = 7001\n")
     with pytest.raises(ValueError, match="agent home scope"):
         agent_port(layout, None, environ={})
     assert cli.main(["--root", str(tmp_path), "convo", "list"]) != 0
-    assert "too hub start" in capsys.readouterr().err
+    assert "Hub is unavailable at http://127.0.0.1:7001" in capsys.readouterr().err
     assert cli.main(["--root", str(tmp_path), "hub"]) == 0
     output = capsys.readouterr().out
-    assert output.splitlines()[0].split() == ["hub", "not", "running"]
+    assert output.splitlines()[0].split() == ["hub", "unavailable"]
     assert "no agents" in output
     assert "0 agents, 0 running, 0 talk enabled" not in output

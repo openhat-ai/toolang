@@ -65,7 +65,9 @@ def talk_command(
                 identifier(name)
 
         async def resolve_or_send() -> Resolution:
-            async with HubClient(config) as client:
+            nonlocal config
+            async with HubClient(config, actor=human) as client:
+                config = client.config
                 resolved = (
                     await client.resolve(target, kind="system")
                     if target == "all"
@@ -104,7 +106,7 @@ def talk_command(
         surfaces = resolve_terminal_surfaces()
 
         async def interactive() -> None:
-            async with HubClient(config) as client:
+            async with HubClient(config, actor=human) as client:
                 info = (
                     await client.conversation(resolved)
                     if selection.exists
@@ -127,7 +129,7 @@ def talk_command(
                         root=root,
                         convo=resolved,
                         context=talk_context(
-                            root, config.identity, human, config.endpoint
+                            root, client.config.identity, human, client.config.endpoint
                         ),
                     ),
                 ).run()

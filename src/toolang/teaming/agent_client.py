@@ -3,7 +3,6 @@
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
-import os
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -11,8 +10,8 @@ from urllib.parse import quote
 import httpx
 
 from .client import HubClient
-from .errors import MessagingError
-from .discovery import host_token, hub_connection
+from .errors import BackendUnavailable, MessagingError
+from .lease import host_token
 from .schemas import HubConnection, Message, TalkCursor, conversation_id, target
 
 _CONNECTIONS: ContextVar[dict[Path, HubConnection]] = ContextVar(
@@ -27,17 +26,14 @@ class AgentClient(HubClient):
         *,
         actor: str,
         token: str | None = None,
-        connection: Callable[[], HubConnection] | None = None,
+        connection: HubConnection | Callable[[], HubConnection],
         transport: httpx.AsyncBaseTransport | None = None,
-        managed: bool = True,
     ) -> None:
         target(actor, kind="agent")
         self.root = root
-        self.managed = managed
         self.token = token if token is not None else host_token()
-        gateway = os.environ.get("TOOLANG_HOST_GATEWAY")
         super().__init__(
-            connection or (lambda: hub_connection(root, gateway=gateway)),
+            connection,
             actor=actor,
             prefix="/agents/" + quote(actor, safe=""),
             lease=self.token,
@@ -53,6 +49,8 @@ class AgentClient(HubClient):
         # Runs inherit the batch context, including newly created msg clients.
         # Copy on entry so independent tasks and other roots remain isolated.
         connection = self.config
+        if not connection.identity:
+            raise BackendUnavailable("Hub connection is not ready")
         token = _CONNECTIONS.set({**_CONNECTIONS.get(), self.root: connection})
         try:
             yield connection.identity
@@ -60,14 +58,12 @@ class AgentClient(HubClient):
             _CONNECTIONS.reset(token)
 
     async def register(self, owner: str, *, endpoint: str = "") -> None:
-        # Owner is supplied by the hosting boundary; Hub derives authority from
-        # its own root configuration, never a caller-provided owner field.
         await self._request(
             "PUT",
             "/lease",
             json={
                 "endpoint": endpoint,
-                "managed": self.managed,
+                "owner": owner,
             },
         )
 

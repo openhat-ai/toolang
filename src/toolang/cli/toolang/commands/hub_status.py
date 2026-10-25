@@ -20,6 +20,8 @@ class HubSnapshot:
     version: str | None
     instances: RuntimeInstanceSnapshot
     diagnostic: str | None = None
+    endpoint: str | None = None
+    local_state: str | None = None
 
     @property
     def partial(self) -> bool:
@@ -97,7 +99,7 @@ def _status_label(instance: RuntimeInstance) -> str:
 def _hub_fields(snapshot: HubSnapshot) -> tuple[str, str]:
     if snapshot.state == "running":
         return "running", snapshot.version or "unknown"
-    return "not running", ""
+    return snapshot.state, snapshot.version or ""
 
 
 def _column_widths(
@@ -161,8 +163,10 @@ def _row_lines(
     status_chunks = _wrap(console, status, status_width)
     talk_chunks = _wrap(console, detail, talk_width)
     row_count = max(len(name_chunks), len(status_chunks), len(talk_chunks))
-    status_style = "dim" if status in {"not running", "-"} else ""
-    talk_style = "dim" if detail in {"disabled", "-", "unknown"} else None
+    status_style = "dim" if status != "running" else ""
+    talk_style = (
+        "dim" if status != "running" or detail in {"disabled", "-", "unknown"} else None
+    )
     lines: list[Text] = []
 
     for row_index in range(row_count):
@@ -266,6 +270,11 @@ def render_hub_snapshot(snapshot: HubSnapshot, console: Console | None = None) -
         if snapshot.partial:
             summary += ", partial"
         console.print(Text(_safe_text(console, summary), no_wrap=True), soft_wrap=True)
+
+    if snapshot.endpoint is not None:
+        console.print(Text(f"Hub URL: {snapshot.endpoint}", no_wrap=True))
+    if snapshot.local_state is not None:
+        console.print(Text(f"Local Hub: {snapshot.local_state}", no_wrap=True))
 
     diagnostics = [
         f"{item.label}: {item.observed_state}: {item.diagnostic}"

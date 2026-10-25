@@ -20,10 +20,10 @@ from toolang.base.types.run import ModelCallResult, ToolCall
 from toolang.common.layout import AgentLayout
 from toolang.execution.records import RunControlPayload
 from toolang.teaming.messaging import MessagingClient
-from toolang.teaming.schemas import Message
+from toolang.teaming.schemas import Message, HubConnection
 from toolang.teaming.backend.valkey import ValkeyBackend
 from tests.unit.messaging.keys import convo_key
-from toolang.teaming.config import BackendConfig, TeamingHomeConfig, TeamingRootConfig
+from toolang.teaming.config import BackendConfig, TeamingRootConfig
 from toolang.plugin.toolsets.convo import ConvoToolset
 from toolang.plugin.toolsets.loading import tools_from_toolsets
 from toolang.plugin.models.query import first_model_ref
@@ -87,11 +87,18 @@ def harness_with_msg(path, server, responses, source="agic:\n  {{_}}\n", state=N
 def offline_rule_transport(monkeypatch):
     from toolang.execution.executor import conversations
 
+    monkeypatch.setattr(
+        conversations,
+        "connection_for",
+        lambda _: HubConnection("http://hub", CONFIG.identity),
+    )
     original = harness_with_msg
 
     def configured(path, server, *args, **kwargs):
         monkeypatch.setattr(
-            conversations, "AgentClient", lambda root, actor: make_client(server, actor)
+            conversations,
+            "AgentClient",
+            lambda root, actor, **_: make_client(server, actor),
         )
         return original(path, server, *args, **kwargs)
 
@@ -620,7 +627,7 @@ def test_hosted_lifespan_starts_and_stops_messaging(
     from toolang.setup.teaming import TeamingSetup
 
     core.setup.current.return_value.teaming = TeamingSetup(
-        TeamingRootConfig("human:owner", CONFIG, 7000), TeamingHomeConfig(enabled)
+        TeamingRootConfig("human:owner"), enabled=enabled
     )
     scheduler = MagicMock()
     scheduler.start, scheduler.pause, scheduler.stop = (
@@ -629,6 +636,7 @@ def test_hosted_lifespan_starts_and_stops_messaging(
         AsyncMock(),
     )
     entered, stopped = asyncio.Event(), asyncio.Event()
+    clients = []
 
     def message_loop(**kwargs):
         assert (
@@ -640,6 +648,7 @@ def test_hosted_lifespan_starts_and_stops_messaging(
     class Lifecycle:
         def __init__(self, publisher, *, messaging, **kwargs):
             assert (messaging is not None) == ("talk" in drivers)
+            clients.append(kwargs["client"])
 
         def start(self):
             assert scheduler.start.await_count == 0
@@ -660,6 +669,18 @@ def test_hosted_lifespan_starts_and_stops_messaging(
             async with app.lifespan(app):
                 if enabled:
                     await asyncio.wait_for(entered.wait(), 1)
+                    from toolang.teaming.errors import MessagingError
+
+                    current = core.setup.current.return_value.teaming
+                    assert clients[0].config.endpoint == current.root.hub
+                    core.setup.current.return_value.teaming = replace(
+                        current, enabled=False
+                    )
+                    try:
+                        with pytest.raises(MessagingError, match="disabled"):
+                            _ = clients[0].config
+                    finally:
+                        core.setup.current.return_value.teaming = current
             assert stopped.is_set() == enabled
 
         asyncio.run(scenario())

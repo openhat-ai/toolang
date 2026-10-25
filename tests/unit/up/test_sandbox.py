@@ -736,7 +736,7 @@ def test_mount_layout_preserves_root_place_and_home_scopes(
         assert request.envs[MODEL_CATALOG_ENV] == "/runtime/catalog.json"
         assert (
             SandboxMount(root / "hub", guest_root / "hub", read_only=True)
-            in request.mounts
+            not in request.mounts
         )
         assert not any(
             "model-catalog.json" in str(m.hosted_path)

@@ -229,11 +229,16 @@ class _ToolRuntime(ToolRuntime):
             for ref in execution.recall(self.step, payload, self.state.visible_recalls)
         }
         if conversations:
-            from .conversations import load_target
+            from .conversations import load_target, connection_for
 
             for target in dict.fromkeys(conversations):
                 payload = (
-                    await load_target(self.state.layout, target, pending=True)
+                    await load_target(
+                        self.state.layout,
+                        target,
+                        connection=connection_for(self.state.prepared.run.setup),
+                        pending=True,
+                    )
                 ).recall
                 for ref in execution.recall(
                     self.step, payload, self.state.visible_recalls

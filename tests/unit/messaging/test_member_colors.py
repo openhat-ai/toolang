@@ -14,7 +14,6 @@ from toolang.teaming.api import create_app
 from toolang.teaming.backend.valkey import scripts
 from tests.unit.messaging.keys import PREFIX, TEAM_MEMBERS
 from toolang.teaming.client import HubClient
-from toolang.teaming.roster import Roster
 from toolang.teaming.schemas import HubConnection
 from toolang.teaming.types import MEMBER_COLORS
 
@@ -61,28 +60,19 @@ def test_automatic_colors_prefer_unused_entries_then_balance_reuse():
     asyncio.run(scenario())
 
 
-def test_concurrent_roster_and_registration_use_distinct_free_colors():
+def test_concurrent_registration_uses_distinct_free_colors():
     async def scenario():
         async with client(FakeServer(server_type="valkey"), "human:owner") as human:
-            roster = Roster(
-                human.backend,
-                root="root",
-                owner=human.actor,
-                discover=lambda: {"agent:resident"},
-            )
             await asyncio.gather(
-                roster.scan(),
                 *(
                     human.backend.register(
-                        human.actor, agent=f"agent:transient{number}", token=str(number)
+                        human.actor, agent=f"agent:member{number}", token=str(number)
                     )
-                    for number in range(4)
-                ),
+                    for number in range(5)
+                )
             )
-            before = {row["member"]: row["color"] for row in await human.team()}
-            assert len(before) == 6 and len(set(before.values())) == 6
-            await roster.register("agent:resident", "lease", "", True)
-            assert {row["member"]: row["color"] for row in await human.team()} == before
+            colors = [row["color"] for row in await human.team()]
+            assert len(colors) == len(set(colors)) == 6
 
     asyncio.run(scenario())
 
@@ -148,30 +138,6 @@ def test_member_colors_are_excluded_from_execution_publication():
     asyncio.run(scenario())
 
 
-def test_removal_and_recreation_assigns_a_new_color():
-    async def scenario():
-        async with client(FakeServer(server_type="valkey"), "human:owner") as human:
-            backend, raw = human.backend, human.backend._client
-            found = {"agent:alice"}
-            roster = Roster(
-                backend, root="root", owner=human.actor, discover=lambda: set(found)
-            )
-            await roster.scan()
-            await set_color(raw, "agent:alice", "#123456")
-            found.clear()
-            await roster.scan()
-            await roster.scan()
-            assert not await raw.hexists(TEAM_MEMBERS, "agent:alice")
-            found.add("agent:alice")
-            await roster.scan()
-            assert (
-                json.loads(await raw.hget(TEAM_MEMBERS, "agent:alice"))["color"]
-                == "green"
-            )
-
-    asyncio.run(scenario())
-
-
 def test_color_snapshot_is_revalidated_if_an_existing_color_changes(monkeypatch):
     async def scenario():
         async with client(FakeServer(server_type="valkey"), "human:owner") as human:
@@ -198,14 +164,16 @@ def test_color_snapshot_is_revalidated_if_an_existing_color_changes(monkeypatch)
 def test_existing_team_route_exposes_colors_without_leases_or_new_routes():
     async def scenario():
         human = client(FakeServer(server_type="valkey"), "human:owner")
-        app = create_app(human, version="test")
+        app = create_app(human.config, backend=human.backend, version="test")
         async with (
             app.router.lifespan_context(app),
             HubClient(
-                HubConnection("http://hub", human.actor, CONFIG.identity),
+                HubConnection("http://hub", CONFIG.identity),
+                actor=human.actor,
                 transport=httpx.ASGITransport(app),
             ) as hub,
         ):
+            await human.register_human()
             await set_color(human.backend._client, human.actor, "#ABCDEF")
             rows = await hub.team()
             assert rows[0]["color"] == "#ABCDEF"

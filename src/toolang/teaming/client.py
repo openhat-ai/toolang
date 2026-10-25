@@ -62,14 +62,15 @@ class HubClient:
         config: HubConnection | Callable[[], HubConnection],
         *,
         transport: httpx.AsyncBaseTransport | None = None,
-        actor: str | None = None,
+        actor: str,
         prefix: str = "",
         lease: str | None = None,
     ) -> None:
         self._resolve: Callable[[], HubConnection] = (
             (lambda: config) if isinstance(config, HubConnection) else config
         )
-        self.actor = actor if actor is not None else self.config.human
+        self.actor = actor
+        self._connection: HubConnection | None = None
         self._prefix, self._lease = prefix, lease
         self._http = httpx.AsyncClient(
             timeout=15,
@@ -79,9 +80,42 @@ class HubClient:
 
     @property
     def config(self) -> HubConnection:
-        return self._resolve()
+        selected = self._resolve()
+        if selected.identity:
+            return selected
+        if (
+            self._connection is not None
+            and self._connection.endpoint == selected.endpoint
+        ):
+            return self._connection
+        return selected
+
+    async def connect(self) -> HubConnection:
+        connection = self.config
+        if connection.identity:
+            return connection
+        try:
+            response = await self._http.get(connection.endpoint + "/info")
+            response.raise_for_status()
+        except httpx.HTTPError as exc:
+            raise BackendUnavailable(
+                f"Hub is unavailable at {connection.endpoint}"
+            ) from exc
+        try:
+            info = _response(_INFO, response.json())
+        except (ValueError, MessagingError) as exc:
+            raise MessagingError(
+                f"Incompatible Hub metadata at {connection.endpoint}"
+            ) from exc
+        self._connection = HubConnection(connection.endpoint, info.identity)
+        return self._connection
 
     async def __aenter__(self) -> Self:
+        try:
+            await self.connect()
+        except BaseException:
+            await self.close()
+            raise
         return self
 
     async def __aexit__(self, *args: object) -> None:
@@ -91,10 +125,9 @@ class HubClient:
         await self._http.aclose()
 
     def _headers(self, connection: HubConnection) -> dict[str, str]:
-        headers = {
-            "X-Toolang-Backend": connection.identity,
-            "X-Toolang-Human": quote(connection.human, safe=""),
-        }
+        headers = {"X-Toolang-Backend": connection.identity}
+        if self.actor.startswith("human:"):
+            headers["X-Toolang-Human"] = quote(self.actor, safe="")
         if self._lease is not None:
             headers["X-Toolang-Agent-Lease"] = self._lease
         return headers
@@ -121,7 +154,7 @@ class HubClient:
     async def _request(
         self, method: str, path: str, *, message_id: str | None = None, **kwargs: Any
     ) -> Any:
-        connection = self.config
+        connection = await self.connect()
         try:
             response = await self._http.request(
                 method,
@@ -135,7 +168,7 @@ class HubClient:
                     f"Send unconfirmed for {message_id}; inspect history before retrying"
                 ) from exc
             raise BackendUnavailable(
-                "Hub is unavailable; check 'too hub' or run 'too hub start'"
+                f"Hub is unavailable at {connection.endpoint}"
             ) from exc
         try:
             data = response.json()
@@ -184,6 +217,7 @@ class HubClient:
         if message_id and response.status_code >= 500:
             raise SendUnconfirmed(f"Send unconfirmed for {message_id}: {detail}")
         if code == "hub_changed":
+            self._connection = None
             if self._lease is not None:
                 raise BackendUnavailable("Hub identity changed; reconnecting")
             raise MessagingError("Hub identity changed; reopen Talk")

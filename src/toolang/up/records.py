@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
+from typing import Literal
+from pydantic import BaseModel, ConfigDict, Field
+from toolang.common.files import atomic_write_text
 from pathlib import Path
 from typing import cast
 
@@ -93,3 +97,36 @@ class RuntimeReference:
             **({"source": str(self.source)} if self.source is not None else {}),
             **({"source_ref": self.source_ref} if self.source_ref is not None else {}),
         }
+
+
+class HubRecord(BaseModel):
+    """Private local Hub process identity; never client discovery."""
+
+    model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
+    pid: int = Field(gt=0)
+    created: float = Field(gt=0)
+    host: str = "127.0.0.1"
+    port: int = Field(ge=1, le=65535)
+    status: Literal["starting", "running"] = "running"
+
+    @property
+    def endpoint(self) -> str:
+        host = {"0.0.0.0": "127.0.0.1", "::": "::1"}.get(self.host, self.host)
+        if ":" in host:
+            host = f"[{host}]"
+        return f"http://{host}:{self.port}"
+
+    def save(self, path: Path) -> None:
+        if path.exists():
+            path.chmod(0o600)
+        atomic_write_text(path, self.model_dump_json() + "\n")
+
+    @classmethod
+    def load(cls, path: Path) -> HubRecord | None:
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            return cls.model_validate(data)
+        except FileNotFoundError:
+            return None
+        except (OSError, ValueError) as exc:
+            raise ValueError(f"Invalid Hub process record: {path}") from exc

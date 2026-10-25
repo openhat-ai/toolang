@@ -13,10 +13,12 @@ from toolang.base.types.tool import ConvoToolContext, ToolContext, ToolResult
 from toolang.base.utils.function_tools import create_function_tool, tool
 from toolang.base.utils.tool_descriptions import action_summary
 from toolang.teaming.agent_client import AgentClient
+from toolang.teaming.config import DEFAULT_HUB_URL
 from toolang.teaming.errors import MessagingError
 from toolang.teaming.schemas import (
     Conversation,
     Message,
+    HubConnection,
     conversation_name,
     participant,
     convo_target,
@@ -38,11 +40,14 @@ class ConvoToolset:
 
     def __init__(self, config: Mapping[str, Any]):
         self.root = Path(config["root"]) if config else None
+        self.hub = HubConnection(str(config.get("hub", DEFAULT_HUB_URL)))
 
     def connection(self, context: ToolContext) -> AgentClient:
         if self.root is None:
             raise MessagingError("Teaming is disabled for this agent")
-        return AgentClient(self.root, actor=f"agent:{context.home.name}")
+        return AgentClient(
+            self.root, actor=f"agent:{context.home.name}", connection=self.hub
+        )
 
     @asynccontextmanager
     async def _access(self, context: ToolContext) -> AsyncIterator[AgentClient]:
