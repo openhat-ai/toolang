@@ -4001,6 +4001,9 @@ def test_agent_info_fields_follow_the_compact_layout(
 
     root = tmp_path / "toolang"
     _create_agent(root)
+    container_id = (
+        "toolang-alice" if status == "preparing" else "48e080dcb99d" + "0" * 52
+    )
 
     class _SetupWatcher(_EmptySetupWatcher):
         async def refresh(self, *, progress=None) -> AgentSetup:
@@ -4045,9 +4048,10 @@ def test_agent_info_fields_follow_the_compact_layout(
             entry={
                 "launch_id": "internal-launch-id",
                 "control": {
+                    "sandbox": sandbox,
                     "drivers": ["chat", "chore", "talk"],
                     "ref": SandboxRef(
-                        "123" if sandbox == "host" else "48e080dcb99d" + "0" * 52,
+                        "123" if sandbox == "host" else container_id,
                         "http://localhost:8123",
                         runtime_kind="process" if sandbox == "host" else "container",
                         runtime_name=None if sandbox == "host" else "toolang-alice",
@@ -4082,9 +4086,10 @@ def test_agent_info_fields_follow_the_compact_layout(
     assert result.stdout == ""
     rows = dict(captured)
     if status != "stopped":
-        assert rows["Sandbox"] == (
-            "host" if sandbox == "host" else "docker:rust:1.75 (48e080dcb99d)"
-        )
+        expected_sandbox = sandbox
+        if sandbox != "host" and status != "preparing":
+            expected_sandbox += " (48e080dcb99d)"
+        assert rows["Sandbox"] == expected_sandbox
     assert "Root" not in rows and "Agent" not in rows and "Placement" not in rows
     assert rows["Models"] == "2 models, 1 provider"
     workspace_names = ["lab"]

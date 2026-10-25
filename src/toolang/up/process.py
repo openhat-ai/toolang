@@ -225,6 +225,12 @@ def runtime_identity_row(
                 ref.runtime_kind == "container"
                 or state.sandbox.partition(":")[0] == "docker"
             ):
+                # Before creation, Docker's reference contains only its planned name.
+                if (
+                    state.sandbox.partition(":")[0] == "docker"
+                    and ref.runtime_id == ref.runtime_name
+                ):
+                    return None
                 short_id = (
                     ref.runtime_id[:12]
                     if len(ref.runtime_id) >= 12

@@ -212,10 +212,8 @@ def test_runtime_identity_formats_docker_container_id(
         launch_id="fixture",
     ).save(layout.runtime_status)
 
-    assert process.runtime_identity_row({"pid": 1}, layout=layout) == (
-        "Container",
-        name if preparing else "176191c1528b",
-    )
+    expected = None if preparing else ("Container", "176191c1528b")
+    assert process.runtime_identity_row({"pid": 1}, layout=layout) == expected
 
 
 def test_runtime_identity_does_not_use_retired_container_name_alias(
