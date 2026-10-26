@@ -229,6 +229,7 @@ def edit_chore(
     chore: ChoreRef,
 ) -> None:
     """Edit a chore"""
+    require_prefix_agent(ctx)
     catalog = AuthoredChores(
         context_layout(ctx).home,
         lock_path=context_layout(ctx).home_edit_lock,
@@ -251,6 +252,7 @@ def delete_chore(
     chore: ChoreRef,
 ) -> None:
     """Delete a chore; keep history"""
+    require_prefix_agent(ctx)
     catalog = AuthoredChores(
         context_layout(ctx).home,
         lock_path=context_layout(ctx).home_edit_lock,

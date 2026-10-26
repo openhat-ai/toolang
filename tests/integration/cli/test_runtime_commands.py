@@ -724,6 +724,7 @@ def test_repeated_start_preserves_omitted_settings_and_checks_explicit_options(
         entry["workload"].update(api_version=AGENT_API_VERSION, lifetime="persistent")
 
     update_instance(layout.runtime_status, record)
+    layout.program.unlink()
     original = read_instance(layout.runtime_status)
     assert original is not None
     status = AgentStatus(

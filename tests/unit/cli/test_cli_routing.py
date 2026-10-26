@@ -507,6 +507,73 @@ def test_cli_complete_command_validates_the_resident_target(
     assert "Agent alice not found" in output.err
 
 
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        ["eve", "chat"],
+        ["chat", "eve"],
+        ["agent:eve", "chat"],
+        ["eve", "start"],
+        ["start", "eve"],
+        ["eve", "serve"],
+        ["serve", "eve"],
+        ["eve", "chore", "edit", "daily"],
+        ["eve", "chore", "delete", "daily"],
+    ],
+)
+def test_commands_reject_missing_resident_before_effects(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    arguments: list[str],
+) -> None:
+    from toolang.cli.toolang.commands import runtime
+
+    before = set(tmp_path.rglob("*"))
+    sessions = []
+    monkeypatch.setattr(
+        chat_commands,
+        "_chat_interactive",
+        lambda *_args, **_kwargs: sessions.append(True),
+    )
+    monkeypatch.setattr(
+        runtime,
+        "resolve_runtime_launch",
+        lambda *_args, **_kwargs: pytest.fail("missing resident reached startup"),
+    )
+
+    result = _call_main(["--root", str(tmp_path), *arguments])
+    output = capsys.readouterr()
+
+    assert result == 1
+    assert "Agent eve not found" in output.err
+    assert not output.out
+    assert not sessions
+    assert set(tmp_path.rglob("*")) == before
+
+
+@pytest.mark.parametrize("source", [None, "not valid Toolang source"])
+@pytest.mark.parametrize(
+    "arguments", [["eve", "chat"], ["chat", "eve"], ["agent:eve", "chat"]]
+)
+def test_chat_accepts_existing_resident_home_without_validating_source(
+    tmp_path, monkeypatch, source, arguments
+):
+    home = tmp_path / "agents" / "eve"
+    home.mkdir(parents=True)
+    if source is not None:
+        (home / "agent.too").write_text(source)
+    sessions = []
+    monkeypatch.setattr(
+        chat_commands,
+        "_chat_interactive",
+        lambda *_args, **_kwargs: sessions.append(True),
+    )
+
+    assert _call_main(["--root", str(tmp_path), *arguments]) == 0
+    assert sessions == [True]
+
+
 def test_cli_bare_words_do_not_trigger_resident_lookup(tmp_path, capsys):
     program = tmp_path / "agents" / "alice" / "agent.too"
     program.parent.mkdir(parents=True)
