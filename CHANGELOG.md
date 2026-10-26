@@ -21,6 +21,11 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   keeping their dim styling, spacing, and alignment.
   ([#971](https://github.com/openhat-ai/toolang/pull/971))
 
+- Remote agents from HTTPS URLs or `gh:` sources load with bundled CA roots,
+  working without a system CA file; transport failures report HTTP, TLS, or
+  timeout errors.
+  ([#973](https://github.com/openhat-ai/toolang/pull/973))
+
 ## [0.4.0b2] - 2026-10-25
 
 ### Changed
