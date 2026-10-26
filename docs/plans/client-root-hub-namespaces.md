@@ -2,146 +2,80 @@
 
 Status: proposed; implementation requires human confirmation.
 
-## Goal and success criteria
+## Goal and scope
 
-One running Hub must serve `/Users/brice/.toolang` and
-`/Users/bryan/.toolang` independently, including agents with identical names.
-Every client selects its dataset using its canonical host Toolang root.
-Connecting to the same Hub URL must not merge their participants or conversations.
+One Hub must serve Brice's and Bryan's Toolang roots independently, even with
+same-name agents. Currently HTTP requests use the Hub startup root, causing
+shared conversations and `Agent owner mismatch` during registration.
 
-The existing storage [root-code contract](../design/agent-addresses.md#short-codes)
-already provides the required key format. The missing boundary is HTTP:
-`HubConnection` currently carries only endpoint and dataset identity, while
-`create_app` binds every request to the Hub startup root. A second owner's
-same-name agent consequently fails registration with `Agent owner mismatch`.
+Cover the six paths below. Preserve commands, flags, configuration defaults, and
+local process ownership. Exclude authentication, cross-root messaging, migration,
+custom namespace overrides, automatic startup, and changes to `cd`.
 
-## Scope
+## Contract
 
-Cover human Talk/conversation commands, agent registration and Talk consumption,
-conversation tools, team inspection, execution-event publication/subscriptions,
-and root-scoped Hub availability checks. Preserve public commands, flags,
-configuration defaults, and local process ownership.
+1. Resolve `--root` > `TOOLANG_ROOT` > `~/.toolang` at CLI/setup boundaries.
+   Canonicalize the host root there and carry it through visiting, roaming, and
+   guest launches independently of HOME, PLACE, and mounted paths. Equal canonical
+   paths share a dataset, including across machines; different roots do not.
+2. Add the concrete root to `HubConnection`; send percent-encoded UTF-8 in
+   `X-Toolang-Root` on metadata, application, and SSE requests. Validate absolute,
+   normalized paths without resolving them on the Hub filesystem. Reject missing
+   or invalid application selectors before storage access; never use a default.
+3. Scoped `/info` echoes root and dataset identity without creating keys or
+   participants. Clients verify the root and pin endpoint/root/identity together;
+   application/SSE requests require `X-Toolang-Backend`. Keep existing identity,
+   lease fencing, batch isolation, and uncertain-send behavior.
+4. Reuse `toolang:<root_code>:v0:*`, store schema 5, full-root ownership records,
+   and collision checks. The selected backend owns all participant, conversation,
+   lease, cursor, statistics, staging, and event operations.
+5. A Hub registry admits one backend/`HubLifecycle` per requested root, serializing
+   initialization and reconciling expired leases before use. Retain lifecycles
+   until shutdown and close partial admissions, workers, and connections. Requests
+   retain their backend directly; namespace failures cannot disable healthy roots.
+   After restart, readmit/reconcile roots on demand without global discovery.
+6. The startup root owns listener/backend settings, PID, log, and lock only.
+   Rootless `/info` returns process version/API metadata; rootless `/healthz`
+   checks process/backend connectivity. Scoped health checks validate their root.
+   Keep API/event version 0, but require root-aware peers: reject missing root
+   echoes and unscoped application requests. Upgrade clients and Hub together;
+   leave existing data under its original root.
 
-Authentication, cross-root messaging, custom namespace overrides, data migration,
-automatic Hub startup, and `cd` shell root inheritance are outside scope. `cd`
-only changes directory; it need not preserve root selection for child commands.
-`talk enabled` does not start an agent; a stopped agent cannot respond.
+## Affected paths
 
-## Decisions
+All source paths below are relative to `src/toolang/`.
 
-1. **Root identity.** Resolve `--root` > `TOOLANG_ROOT` > `~/.toolang` at the
-   existing CLI/setup boundary and canonicalize there. Use the selected host root
-   for resident, visiting, and roaming agents; never hash HOME, PLACE, the source
-   path, the human name, or the Hub startup root. Guest launches carry the original
-   host identity separately from mounted guest paths. Core transport/storage
-   receives the concrete root string without reading environment or files.
-   Canonical aliases share a dataset; different canonical roots do not. Identical
-   canonical paths on different machines still share a dataset, as in the existing
-   path-based contract.
-2. **Wire selection.** Add the concrete namespace root to `HubConnection` and send
-   it as percent-encoded UTF-8 in `X-Toolang-Root` on metadata, application, and SSE
-   requests. Validate absolute, lexically normalized paths without resolving them
-   against the Hub machine's filesystem. Reject malformed or missing selectors
-   before dataset initialization or application access; never fall back to the
-   Hub startup root. Retain full-path ownership checks behind the R8 hash.
-3. **Metadata and fencing.** `/info` with a root returns version, API version,
-   root, and that root's opaque dataset identity without initializing storage or
-   registering a participant. Clients require the echoed root to match before
-   application requests. Keep the existing backend identity formula over backend
-   URL and canonical root, and require `X-Toolang-Backend` on application requests
-   and SSE. Bind connection caches, admitted Talk batches, tools, and subscriptions
-   to endpoint/root/identity together. Refreshing configuration cannot retarget an
-   admitted operation or replay an uncertain send.
-4. **Hub ownership.** The startup root owns listener/backend configuration, PID,
-   log, and lock only. A Hub-owned registry lazily admits each selected root with
-   its own `BackendConfig`, backend, and existing `HubLifecycle`. Serialize first
-   admission per root; initialize and reconcile expired presence before exposing
-   that dataset to requests. Retain admitted lifecycles until Hub shutdown; close
-   every backend and worker, including partial admissions. Requests and streams
-   retain their selected backend directly rather than reading mutable global
-   selection. A corrupt dataset or failed namespace worker rejects that root's
-   requests without disabling healthy roots. After restart, the first request for
-   a root readmits it and reconciles its persisted leases; no global key discovery
-   or filesystem scanning is needed.
-5. **Storage.** Reuse `toolang:<root_code>:v0:<suffix>`, store schema 5, atomic
-   namespace initialization, full-root ownership records, and collision checks.
-   Apply the selected backend consistently to members, owner/lease fencing,
-   conversations, messages, rules, cursors, statistics, staging, and events.
-   Same-name agents may coexist across roots; existing conflicts within one root
-   remain errors. Preserve existing datasets without copying or relabeling data.
-6. **Inspection and compatibility.** Root-scoped `ps` probes metadata and health
-   with its selected root. Rootless `/info` exposes process version/API metadata
-   only; rootless `/healthz` checks process/backend connectivity without selecting
-   a dataset, supporting existing Hub lifecycle probes. `hub status/start/stop`
-   retain local process-record ownership. New clients reject old servers missing
-   the root echo; new servers reject old unscoped application requests. Keep API
-   and event format version 0 because payload formats remain unchanged; deploy Hub
-   and clients together. Previously mixed data stays under its original root.
-
-## Implementation touchpoints
-
-- `setup/teaming.py`, `setup/watcher.py`, `setup/tools.py`, and `cli/common/messaging.py`:
-  carry the selected host root into human, agent, and tool connections.
-- `teaming/{schemas,config,client,agent_client}.py`: concrete root selection,
-  metadata validation, request headers, and connection/batch fencing.
-- `teaming/{api,agent_api,lifecycle}.py`: namespace registry, request-scoped
-  backend dependencies, maintenance, events, and shutdown ownership.
-- `execution/executor/conversations.py`: conversation resolution, rules loading,
-  recall, and tool preflight must use the same scoped connection as delivery.
-- `up/{server,sandbox,mounts,hub}.py`, `plugin/toolsets/convo.py`, and
-  `cli/toolang/commands/{ps,hub}.py`: host/guest propagation and process probes.
-- Existing messaging/setup/CLI tests and
-  `tests/integration/messaging/test_valkey.py`: regressions and isolated wire tests.
-  Update [Messaging](../design/messaging.md), [Hosting](../design/hosting.md), and
-  [Layout](../design/layout.md) to describe the implemented contract; generate the
-  changelog through `too aid.too update_changelog`.
-
-## Related-path audit
-
-Six affected paths share the missing client-root selection boundary:
-
-| Path | Required correction |
+| Path | Main touchpoints |
 | --- | --- |
-| Human `talk` and every `convo` operation | Send the selected root on resolution, reads, writes, rules, and membership changes. |
-| Agent lifecycle and incoming Talk | Scope registration, owner checks, leases, delivery, and cursor advancement together. |
-| Conversation tools and executor guidance | Scope tool access, target preflight, rules recall, and backend fencing together. |
-| Hub event publication and inspection | Scope staging, exports, SSE subscriptions, presence, and conversation statistics together. |
-| Visiting, roaming, and guest setup | Retain the selected host root independently of PLACE and guest filesystem paths. |
-| `ps` Hub availability | Probe the selected namespace instead of accepting another root's healthy dataset. |
+| Human `talk` / `convo` | `cli/common/messaging.py`, `teaming/{config,schemas,client}.py` |
+| Registration, leases, incoming Talk | `up/server.py`, `teaming/{api,agent_api,agent_client,lifecycle}.py` |
+| Conversation tools and rules/preflight | `plugin/toolsets/convo.py`, `execution/executor/conversations.py` |
+| Event publication, SSE, conversation statistics | Selected backend dependencies in `teaming/` |
+| Visiting, roaming, guest root propagation | `setup/{teaming,watcher,tools}.py`, `up/{server,sandbox,mounts}.py` |
+| Scoped Hub availability | `cli/toolang/commands/{ps,hub}.py`, `up/hub.py` |
 
-Local `top`, runtime registration/address discovery, execution/usage stores, and
-Talk history already use root/instance-specific paths; this audit found no shared
-Hub namespace dependency in those paths. Preserve their existing isolation.
+Local `top`, runtime discovery, execution/usage stores, and Talk history already
+use root/instance-specific paths. No changes are planned there or in `cd`.
+Update [Messaging](../design/messaging.md), [Hosting](../design/hosting.md), and
+[Layout](../design/layout.md); generate the changelog through the existing workflow.
 
-## Acceptance tests
+## Acceptance
 
-- One Hub URL and backend serve two roots with identical human and agent names:
-  both register, renew, receive/reply to `talk all`, and unregister independently;
-  stopping either agent leaves the other lease and delivery intact.
-- Repeat with different owners `human:brice` and `human:bryan`: no owner conflict
-  across roots. Conversations, rules, messages, statistics, cursors, and event/SSE
-  streams expose only their selected root, including identical conversation IDs.
-- Exercise real CLI/setup selection without mocking `settings`: explicit root
-  beats environment, environment beats default, aliases agree, and visiting/
-  roaming/guest agents share the invoking host root's human Talk dataset.
-- Brice's first successful registration creates `toolang:<brice_root_code>:v0:*`
-  with the matching full root ownership value; Bryan's existing namespace remains
-  byte-for-byte unchanged by Brice's operations.
-- Missing/malformed selectors, mismatched metadata/identity, short-code ownership
-  collisions, corrupt stores, and incompatible peers reject without cross-root
-  reads/writes or fallback. Metadata probes alone create no namespace keys.
-- Concurrent admission creates one lifecycle per root; failed admission leaks no
-  resources. Restart readmission reconciles expired leases. Namespace failure and
-  shutdown preserve other roots and cancel/close all owned tasks/connections.
-- Default offline checks pass; isolated Valkey wire tests verify the shared-Hub,
-  same-name exchange and independent presence/cursors/events end to end.
+- One Hub/backend supports two roots with same-name agents and equal or different
+  human names: registration, `talk all` replies, renewals, and shutdown remain
+  independent. Brice's root-code keys appear; Bryan's dataset stays unchanged.
+- Identical conversation IDs retain independent rules, messages, statistics,
+  cursors, presence, and event/SSE streams.
+- Real CLI/setup tests cover root precedence, canonical aliases, and host/guest
+  propagation without mocking `settings`.
+- Invalid selectors, incompatible peers, identity/ownership mismatches, collisions,
+  and corrupt stores fail without fallback or cross-root access. Metadata creates
+  no keys; concurrent/failed admission and restart/shutdown leak no resources.
+- Run default offline checks and isolated Valkey wire tests for the shared-Hub,
+  same-name exchange and independent leases/cursors/events.
 
 ## Risks and open questions
 
-Path-based namespacing isolates normal operations, not hostile clients; callers
-can deliberately select another root without authentication. Earlier mixed data
-cannot be automatically attributed to owners. Registry resources grow with roots
-admitted during a process lifetime; eviction and deployment quotas are deferred.
-
-No implementation questions remain. Human confirmation of this definition is
-required before implementation.
+Root selection provides isolation, not authentication. Previously mixed data
+cannot be attributed automatically. Registry resources grow with admitted roots;
+quotas/eviction are deferred. No open design questions remain.
