@@ -7,6 +7,8 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ## [Unreleased]
 
+## [0.4.0b3] - 2026-10-26
+
 ### Fixed
 
 - `too ls` and `too ps` show the sandbox selector before the driver, with
@@ -3357,7 +3359,8 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 - The formatter normalizes `exec` statements consistently with other flow
   statements. (#676)
 
-[Unreleased]: https://github.com/openhat-ai/toolang/compare/v0.4.0b2...HEAD
+[Unreleased]: https://github.com/openhat-ai/toolang/compare/v0.4.0b3...HEAD
+[0.4.0b3]: https://github.com/openhat-ai/toolang/compare/v0.4.0b2...v0.4.0b3
 [0.4.0b2]: https://github.com/openhat-ai/toolang/compare/v0.4.0b1...v0.4.0b2
 [0.4.0b1]: https://github.com/openhat-ai/toolang/compare/v0.4.0a11...v0.4.0b1
 [0.4.0a11]: https://github.com/openhat-ai/toolang/compare/v0.4.0a10...v0.4.0a11

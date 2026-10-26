@@ -150,8 +150,8 @@ too models                   # List available models
 too providers                # List available model providers
 
 too AGENT inspect            # Inspect agent runs
-too ps                       # Show agents and hub status
 too [AGENT] top              # Monitor active runs
+too ps                       # Show agents and hub status
 ```
 
 ## Links
