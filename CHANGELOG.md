@@ -26,6 +26,10 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   timeout errors.
   ([#973](https://github.com/openhat-ai/toolang/pull/973))
 
+- `too chat` rejects a missing resident agent with `Agent NAME not found`
+  before the session starts, instead of failing on the first message.
+  ([#974](https://github.com/openhat-ai/toolang/pull/974))
+
 ## [0.4.0b2] - 2026-10-25
 
 ### Changed
