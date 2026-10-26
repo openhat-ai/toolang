@@ -7,10 +7,9 @@ from hashlib import sha256
 import json
 import os
 from pathlib import Path
+import ssl
 import time
-from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlsplit
-from urllib.request import Request, urlopen
 from typing import TYPE_CHECKING, Literal
 
 from toolang.common.files import EditLock, atomic_write_text
@@ -32,6 +31,8 @@ from toolang.common.source import (
 from .identity import visiting_home_guard
 
 if TYPE_CHECKING:
+    import httpx
+
     from .addresses import AgentAddress
 
 AgentTargetForm = Literal["name", "shorthand", "ref"]
@@ -675,36 +676,55 @@ def _github_agent_shorthand_candidates(
 
 
 def _github_agent_ref_exists(ref: GitHubRef) -> bool:
-    request = Request(
-        github_raw_url(ref),
-        method="HEAD",
-        headers={"User-Agent": "toolang/0.1"},
-    )
+    import httpx
+
+    url = github_raw_url(ref)
     try:
-        with urlopen(request, timeout=30):
-            return True
-    except (HTTPError, URLError):
-        return False
+        response = httpx.head(
+            url,
+            headers={"User-Agent": "toolang/0.1"},
+            timeout=30,
+            follow_redirects=True,
+        )
+        if response.status_code == 404:
+            return False
+        response.raise_for_status()
+        return True
+    except httpx.HTTPError as exc:
+        raise ValueError(
+            f"could not check GitHub agent source: {_display_ref(url)} "
+            f"({_http_error_reason(exc)})"
+        ) from exc
 
 
 def _github_repo_default_branch(owner: str, repo: str) -> str:
+    import httpx
+
     api_url = (
         f"https://api.github.com/repos/{quote(owner, safe='')}/{quote(repo, safe='')}"
     )
-    request = Request(
-        api_url,
-        headers={
-            "Accept": "application/vnd.github+json",
-            "User-Agent": "toolang/0.1",
-            "X-GitHub-Api-Version": "2022-11-28",
-        },
-    )
     try:
-        with urlopen(request, timeout=30) as response:
-            data = json.loads(response.read().decode("utf-8"))
-    except (HTTPError, URLError, json.JSONDecodeError) as exc:
+        response = httpx.get(
+            api_url,
+            headers={
+                "Accept": "application/vnd.github+json",
+                "User-Agent": "toolang/0.1",
+                "X-GitHub-Api-Version": "2022-11-28",
+            },
+            timeout=30,
+            follow_redirects=True,
+        )
+        response.raise_for_status()
+        data = json.loads(response.content.decode("utf-8"))
+    except httpx.HTTPError as exc:
         raise ValueError(
-            f"could not resolve GitHub default branch: {owner}/{repo}"
+            f"could not resolve GitHub default branch: {owner}/{repo} "
+            f"({_http_error_reason(exc)})"
+        ) from exc
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            f"could not resolve GitHub default branch: {owner}/{repo} "
+            "(invalid JSON response)"
         ) from exc
     if not isinstance(data, dict) or not isinstance(data.get("default_branch"), str):
         raise ValueError(f"unexpected GitHub repository response: {owner}/{repo}")
@@ -719,12 +739,38 @@ def _require_too_path(path: str, text: str) -> None:
 
 
 def _fetch_http_text(url: str) -> str:
-    request = Request(url, headers={"User-Agent": "toolang/0.1"})
+    import httpx
+
     try:
-        with urlopen(request, timeout=30) as response:
-            return response.read().decode("utf-8")
-    except (HTTPError, URLError) as exc:
-        raise ValueError(f"could not fetch agent program: {_display_ref(url)}") from exc
+        response = httpx.get(
+            url,
+            headers={"User-Agent": "toolang/0.1"},
+            timeout=30,
+            follow_redirects=True,
+        )
+        response.raise_for_status()
+        return response.content.decode("utf-8")
+    except httpx.HTTPError as exc:
+        raise ValueError(
+            f"could not fetch agent program: {_display_ref(url)} "
+            f"({_http_error_reason(exc)})"
+        ) from exc
+
+
+def _http_error_reason(exc: httpx.HTTPError) -> str:
+    """Expose actionable categories without leaking URLs from transport errors."""
+    import httpx
+
+    if isinstance(exc, httpx.HTTPStatusError):
+        return f"HTTP {exc.response.status_code}"
+    if isinstance(exc, httpx.TimeoutException):
+        return "request timed out"
+    cause: BaseException | None = exc
+    while cause is not None:
+        if isinstance(cause, ssl.SSLCertVerificationError):
+            return "TLS certificate verification failed"
+        cause = cause.__cause__ or cause.__context__
+    return "network request failed"
 
 
 def _visiting_program_cache_fresh(program_path: Path) -> bool:
