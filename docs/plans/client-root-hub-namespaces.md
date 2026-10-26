@@ -11,6 +11,7 @@ shared conversations and `Agent owner mismatch` during registration.
 Cover the six paths below. Preserve commands, flags, configuration defaults, and
 local process ownership. Exclude authentication, cross-root messaging, migration,
 custom namespace overrides, automatic startup, and changes to `cd`.
+Implement root propagation and backend selection centrally; all six paths reuse it.
 
 ## Contract
 
@@ -22,24 +23,24 @@ custom namespace overrides, automatic startup, and changes to `cd`.
    `X-Toolang-Root` on metadata, application, and SSE requests. Validate absolute,
    normalized paths without resolving them on the Hub filesystem. Reject missing
    or invalid application selectors before storage access; never use a default.
-3. Scoped `/info` echoes root and dataset identity without creating keys or
-   participants. Clients verify the root and pin endpoint/root/identity together;
-   application/SSE requests require `X-Toolang-Backend`. Keep existing identity,
-   lease fencing, batch isolation, and uncertain-send behavior.
+3. Scoped `/info` adds the selected root to the existing metadata response without
+   creating keys or participants. Verify the echo and include root in connection
+   cache matching. Reuse existing dataset identity, `X-Toolang-Backend` checks,
+   lease fencing, batch pinning, and uncertain-send handling.
 4. Reuse `toolang:<root_code>:v0:*`, store schema 5, full-root ownership records,
    and collision checks. The selected backend owns all participant, conversation,
    lease, cursor, statistics, staging, and event operations.
-5. A Hub registry admits one backend/`HubLifecycle` per requested root, serializing
-   initialization and reconciling expired leases before use. Retain lifecycles
-   until shutdown and close partial admissions, workers, and connections. Requests
-   retain their backend directly; namespace failures cannot disable healthy roots.
-   After restart, readmit/reconcile roots on demand without global discovery.
-6. The startup root owns listener/backend settings, PID, log, and lock only.
-   Rootless `/info` returns process version/API metadata; rootless `/healthz`
-   checks process/backend connectivity. Scoped health checks validate their root.
-   Keep API/event version 0, but require root-aware peers: reject missing root
-   echoes and unscoped application requests. Upgrade clients and Hub together;
-   leave existing data under its original root.
+5. Use an app-local dictionary keyed by full root and one initialization lock.
+   Retain the startup backend/lifecycle; lazily create a backend/`HubLifecycle`
+   pair per additional root using existing implementations. Publish only after
+   initialization/reconciliation; clean up on failure and shutdown. Pass one
+   selected backend through each request/subscription. After restart, initialize
+   additional roots on demand.
+6. Preserve startup-root configuration, process ownership, and rootless
+   `/info`/`/healthz` behavior and formats; scoped probes select their root.
+   Require root-aware peers: new clients reject missing root echoes, and new
+   servers reject unscoped application requests. Keep API/event version 0; upgrade
+   Hub and clients together without migration or compatibility adapters.
 
 ## Affected paths
 
@@ -52,10 +53,8 @@ All source paths below are relative to `src/toolang/`.
 | Conversation tools and rules/preflight | `plugin/toolsets/convo.py`, `execution/executor/conversations.py` |
 | Event publication, SSE, conversation statistics | Selected backend dependencies in `teaming/` |
 | Visiting, roaming, guest root propagation | `setup/{teaming,watcher,tools}.py`, `up/{server,sandbox,mounts}.py` |
-| Scoped Hub availability | `cli/toolang/commands/{ps,hub}.py`, `up/hub.py` |
+| Scoped Hub availability | `cli/toolang/commands/ps.py`, existing Hub metadata/health routes |
 
-Local `top`, runtime discovery, execution/usage stores, and Talk history already
-use root/instance-specific paths. No changes are planned there or in `cd`.
 Update [Messaging](../design/messaging.md), [Hosting](../design/hosting.md), and
 [Layout](../design/layout.md); generate the changelog through the existing workflow.
 
@@ -68,14 +67,15 @@ Update [Messaging](../design/messaging.md), [Hosting](../design/hosting.md), and
   cursors, presence, and event/SSE streams.
 - Real CLI/setup tests cover root precedence, canonical aliases, and host/guest
   propagation without mocking `settings`.
-- Invalid selectors, incompatible peers, identity/ownership mismatches, collisions,
-  and corrupt stores fail without fallback or cross-root access. Metadata creates
-  no keys; concurrent/failed admission and restart/shutdown leak no resources.
+- Invalid/missing roots and incompatible peers fail before dataset access;
+  existing identity/ownership guards still apply. Metadata creates no keys.
+  Concurrent initialization starts one lifecycle per root; failure and shutdown
+  close owned resources. Reuse existing storage-integrity tests.
 - Run default offline checks and isolated Valkey wire tests for the shared-Hub,
   same-name exchange and independent leases/cursors/events.
 
 ## Risks and open questions
 
-Root selection provides isolation, not authentication. Previously mixed data
-cannot be attributed automatically. Registry resources grow with admitted roots;
-quotas/eviction are deferred. No open design questions remain.
+Root selection provides isolation, not authentication. Existing data remains in
+its original namespace. Backends/workers grow with roots used during a Hub
+lifetime. No open design questions remain.
