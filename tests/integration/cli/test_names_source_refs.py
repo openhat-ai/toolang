@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 from threading import Thread
 
+import httpx
 import pytest
 from typer.testing import CliRunner
 
@@ -113,9 +114,10 @@ def test_clone_explicit_name_can_replace_an_invalid_derived_default(
 def test_clone_rejects_deferred_sources_without_network_or_writes(
     tmp_path, monkeypatch, ref
 ):
-    monkeypatch.setattr(
-        sources, "urlopen", lambda *a, **k: pytest.fail("network access")
-    )
+    for method in ("get", "head"):
+        monkeypatch.setattr(
+            httpx, method, lambda *a, **k: pytest.fail("network access")
+        )
     root = tmp_path / "root"
     result = runner.invoke(app, ["--root", str(root), "clone", ref, "gus"])
     assert result.exit_code == 1, result.output

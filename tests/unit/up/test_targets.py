@@ -611,12 +611,14 @@ def test_visiting_identity_and_acquisition_keep_full_urls_while_progress_hides_c
 
 
 def test_visiting_fetch_failure_does_not_print_url_credentials(monkeypatch):
-    from urllib.error import URLError
+    import httpx
 
     def denied(*_args, **_kwargs):
-        raise URLError("denied")
+        raise httpx.ConnectError(
+            "denied: https://secret-user:secret-pass@example.com?token=secret-token"
+        )
 
-    monkeypatch.setattr(agent_sources, "urlopen", denied)
+    monkeypatch.setattr(httpx, "get", denied)
     events = []
     with pytest.raises(ValueError) as error:
         agent_sources.fetch_agent_ref(
