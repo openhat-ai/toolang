@@ -23,8 +23,9 @@ and root-scoped Hub availability checks. Preserve public commands, flags,
 configuration defaults, and local process ownership.
 
 Authentication, cross-root messaging, custom namespace overrides, data migration,
-and automatic Hub startup are outside scope. `talk enabled` does not start an
-agent; a stopped agent remains unable to respond.
+automatic Hub startup, and `cd` shell root inheritance are outside scope. `cd`
+only changes directory; it need not preserve root selection for child commands.
+`talk enabled` does not start an agent; a stopped agent cannot respond.
 
 ## Decisions
 
@@ -111,12 +112,6 @@ Six affected paths share the missing client-root selection boundary:
 Local `top`, runtime registration/address discovery, execution/usage stores, and
 Talk history already use root/instance-specific paths; this audit found no shared
 Hub namespace dependency in those paths. Preserve their existing isolation.
-
-A separate bug was reproduced in `cli/toolang/commands/cd.py`:
-`too --root PATH cd` supplies the correct working directory but does not bind
-`TOOLANG_ROOT` in the child environment, so nested commands fall back to the
-default root. Fix and regression-test this independently; it is not part of the
-Hub namespace implementation.
 
 ## Acceptance tests
 
