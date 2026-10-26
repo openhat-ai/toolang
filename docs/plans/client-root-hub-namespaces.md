@@ -85,6 +85,8 @@ agent; a stopped agent remains unable to respond.
   metadata validation, request headers, and connection/batch fencing.
 - `teaming/{api,agent_api,lifecycle}.py`: namespace registry, request-scoped
   backend dependencies, maintenance, events, and shutdown ownership.
+- `execution/executor/conversations.py`: conversation resolution, rules loading,
+  recall, and tool preflight must use the same scoped connection as delivery.
 - `up/{server,sandbox,mounts,hub}.py`, `plugin/toolsets/convo.py`, and
   `cli/toolang/commands/{ps,hub}.py`: host/guest propagation and process probes.
 - Existing messaging/setup/CLI tests and
@@ -92,6 +94,29 @@ agent; a stopped agent remains unable to respond.
   Update [Messaging](../design/messaging.md), [Hosting](../design/hosting.md), and
   [Layout](../design/layout.md) to describe the implemented contract; generate the
   changelog through `too aid.too update_changelog`.
+
+## Related-path audit
+
+Six affected paths share the missing client-root selection boundary:
+
+| Path | Required correction |
+| --- | --- |
+| Human `talk` and every `convo` operation | Send the selected root on resolution, reads, writes, rules, and membership changes. |
+| Agent lifecycle and incoming Talk | Scope registration, owner checks, leases, delivery, and cursor advancement together. |
+| Conversation tools and executor guidance | Scope tool access, target preflight, rules recall, and backend fencing together. |
+| Hub event publication and inspection | Scope staging, exports, SSE subscriptions, presence, and conversation statistics together. |
+| Visiting, roaming, and guest setup | Retain the selected host root independently of PLACE and guest filesystem paths. |
+| `ps` Hub availability | Probe the selected namespace instead of accepting another root's healthy dataset. |
+
+Local `top`, runtime registration/address discovery, execution/usage stores, and
+Talk history already use root/instance-specific paths; this audit found no shared
+Hub namespace dependency in those paths. Preserve their existing isolation.
+
+A separate bug was reproduced in `cli/toolang/commands/cd.py`:
+`too --root PATH cd` supplies the correct working directory but does not bind
+`TOOLANG_ROOT` in the child environment, so nested commands fall back to the
+default root. Fix and regression-test this independently; it is not part of the
+Hub namespace implementation.
 
 ## Acceptance tests
 
