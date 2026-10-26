@@ -15,6 +15,8 @@ from prompt_toolkit.formatted_text import fragment_list_to_text
 from prompt_toolkit.input import DummyInput
 from prompt_toolkit.keys import Keys
 from prompt_toolkit.output import DummyOutput
+from prompt_toolkit.output.color_depth import ColorDepth
+from prompt_toolkit.output.vt100 import Vt100_Output
 from rich.console import Console
 
 from toolang.cli.common.terminal_surfaces import LIGHT_TERMINAL_SURFACES
@@ -40,8 +42,9 @@ async def talk_app(
     read_only=False,
     max_width=120,
     inputbox_max_width=None,
+    output=None,
 ):
-    output = TerminalOutput()
+    output = TerminalOutput() if output is None else output
     conversation = conversation or conversation_record(
         "gc_00000001", "gc", (human, "agent:alice", "agent:bob"), name="dev"
     )
@@ -65,6 +68,24 @@ async def talk_app(
                 yield app, output
             finally:
                 await app.app.cancel_and_wait_for_background_tasks()
+
+
+def test_input_background_uses_truecolor_on_a_256_color_terminal(tmp_path):
+    stream = StringIO()
+    output = Vt100_Output(
+        stream,
+        lambda: Size(rows=30, columns=120),
+        term="xterm-256color",
+        default_color_depth=ColorDepth.DEPTH_8_BIT,
+        enable_cpr=False,
+    )
+
+    async def scenario():
+        async with talk_app(tmp_path, output=output) as (ui, _output):
+            ui.app.renderer.render(ui.app, ui.app.layout)
+            assert "\x1b[0;48;2;227;227;227m" in stream.getvalue()
+
+    asyncio.run(scenario())
 
 
 @pytest.mark.parametrize("max_width", [72, 120])

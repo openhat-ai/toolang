@@ -14,6 +14,7 @@ from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.layout import HSplit, HorizontalAlign, Layout, VSplit, Window
 from prompt_toolkit.layout.containers import ConditionalContainer
 from prompt_toolkit.layout.controls import FormattedTextControl
+from prompt_toolkit.output.color_depth import ColorDepth
 from prompt_toolkit.styles import Style
 from rich.text import Text
 
@@ -159,6 +160,7 @@ class TalkTui:
             key_bindings=keys,
             full_screen=False,
             cursor=CursorShape.BLINKING_BLOCK,
+            color_depth=ColorDepth.DEPTH_24_BIT,
             erase_when_done=True,
             mouse_support=False,
             refresh_interval=0.5,
