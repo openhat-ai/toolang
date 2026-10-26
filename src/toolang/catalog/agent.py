@@ -1,4 +1,4 @@
-"""Authored resident agent homes."""
+"""Resident agent homes."""
 
 from __future__ import annotations
 
@@ -20,14 +20,12 @@ class LocalAgents:
         return tuple(
             path.name
             for path in sorted(self.directory.iterdir())
-            if is_agent_name(path.name)
-            and path.is_dir()
-            and (path / "agent.too").is_file()
+            if is_agent_name(path.name) and path.is_dir()
         )
 
     def get(self, name: str) -> Path | None:
         home = self.path(name)
-        return home if home.is_dir() and (home / "agent.too").is_file() else None
+        return home if home.is_dir() else None
 
     def create(
         self,

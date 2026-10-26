@@ -83,6 +83,11 @@ Each resident agent lives under:
 
 - `${TOOLANG_ROOT}/agents/<agent>/`
 
+A resident agent exists when this home directory exists. Lookup and enumeration
+do not require `agent.too`; authoring and inspection can use an incomplete home.
+Creation requires an unused destination. Each operation validates its required
+files, authored content, records, or running instance separately.
+
 Visiting agents fetched by Chat, start, or serve use a stable temporary place
 derived from the selected root and Source Ref:
 

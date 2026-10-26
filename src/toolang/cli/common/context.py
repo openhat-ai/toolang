@@ -195,7 +195,8 @@ def context_layout(ctx: Context) -> AgentLayout:
 
 
 def require_runtime_agent(ctx: Context, agent: str | None) -> str:
-    selected = agent or context_agent(ctx)
+    bound_agent = context_agent(ctx)
+    selected = agent or bound_agent
     if selected:
         return selected
     show_help(ctx)

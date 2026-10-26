@@ -38,6 +38,24 @@ def test_local_agents_rejects_nested_names(tmp_path: Path) -> None:
         agents.create("team/alice", content="agent alice\n")
 
 
+def test_local_agents_uses_home_directories_as_existence(tmp_path: Path) -> None:
+    agents = LocalAgents(tmp_path / "agents")
+    empty = agents.path("empty")
+    empty.mkdir(parents=True)
+    broken = agents.create("broken", content="not valid Toolang source")
+    agents.path("file").write_text("not a directory")
+
+    assert agents.list() == ("broken", "empty")
+    assert agents.get("empty") == empty
+    assert agents.get("broken") == broken
+    assert agents.get("file") is None
+    with pytest.raises(FileExistsError, match="agent already exists"):
+        agents.create("empty", content="agic:\n  Reply directly.\n")
+    renamed = agents.rename("empty", "renamed")
+    assert renamed.is_dir()
+    assert not (renamed / "agent.too").exists()
+
+
 def test_local_agents_reports_missing_and_conflicting_mutations(tmp_path: Path) -> None:
     agents = LocalAgents(tmp_path / "agents")
 

@@ -4711,6 +4711,30 @@ def test_chore_mutations_target_visible_definitions(
         assert hidden.path.read_text() == content
 
 
+@pytest.mark.parametrize("kind,name", [("chore", "daily"), ("prompt", "notes")])
+@pytest.mark.parametrize("operation", ["new", "edit", "delete"])
+def test_authoring_requires_only_an_existing_resident_home(
+    tmp_path, monkeypatch, kind, name, operation
+):
+    layout = AgentLayout.resident(tmp_path, "alice")
+    layout.home.mkdir(parents=True)
+    path = layout.home / f"{kind}s" / f"{name}.md"
+    if operation != "new":
+        path.parent.mkdir()
+        path.write_text("Original content.\n")
+    for module in ("toolang.cli.toolang.commands.chore", "toolang.cli.caps.commands"):
+        monkeypatch.setattr(f"{module}.edit_markdown", lambda _: "Updated content.\n")
+
+    result = _invoke(tmp_path, "alice", kind, operation, name)
+
+    assert result.exit_code == 0, result.stderr
+    assert not layout.program.exists()
+    if operation == "delete":
+        assert not path.exists()
+    else:
+        assert "Updated content." in path.read_text()
+
+
 def test_chore_source_path_delete_repairs_invalid_name_without_touching_siblings(
     tmp_path,
 ):
