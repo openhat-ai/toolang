@@ -41,6 +41,7 @@ from toolang.up.types import AgentServerRef
 from toolang.cli.common.context import (
     cli_context,
     context_layout,
+    require_prefix_agent,
     load_runtime_environ,
     resolve_model_catalog_option,
     ui_base_url,
@@ -107,6 +108,7 @@ def chat_command(
     server: AgentServerRef | None = None,
 ) -> None:
     thread_id = _target_thread_id(ctx, thread) if thread is not None else None
+    require_prefix_agent(ctx)
     server_options: dict[str, Any] = {"server": server} if server is not None else {}
     _chat_interactive(
         ctx,
