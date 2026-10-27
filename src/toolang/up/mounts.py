@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from pathlib import Path
 from collections.abc import Mapping, Sequence
-import getpass
 import json
 import os
+import pwd
 from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
@@ -198,7 +198,9 @@ def prepare_guest_environment(
         CONFIG_PATCH_ENV: json.dumps(
             {
                 "origins": origins,
-                "defaults": {"root": {"teaming": {"human": getpass.getuser()}}},
+                "defaults": {
+                    "root": {"teaming": {"human": pwd.getpwuid(os.getuid()).pw_name}}
+                },
                 **overlays,
             }
         ),
