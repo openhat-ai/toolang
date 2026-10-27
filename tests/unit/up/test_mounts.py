@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 import json
+import pwd
+from types import SimpleNamespace
 
 from toolang.common.layout import AgentLayout
 from toolang.state.prepare import prepare_agent_state
@@ -23,8 +25,6 @@ from toolang.up.mounts import (
 def test_guest_environment_keeps_configuration_out_of_state(
     tmp_path, monkeypatch, resident
 ):
-    from toolang.up import mounts
-
     root = tmp_path / "root"
     place = root if resident else tmp_path / "project"
     layout = AgentLayout(
@@ -33,7 +33,11 @@ def test_guest_environment_keeps_configuration_out_of_state(
     layout.home.mkdir(parents=True)
     authored = '[teaming]\nhuman = "explicit"\nhub = "http://first"\n'
     layout.place_config.write_text(authored)
-    monkeypatch.setattr(mounts.getpass, "getuser", lambda: "host-human")
+    monkeypatch.setenv("LOGNAME", "bryan")
+    monkeypatch.setenv("USER", "host-human")
+    monkeypatch.setattr(
+        pwd, "getpwuid", lambda uid: SimpleNamespace(pw_name="host-human")
+    )
     patch = json.loads(
         prepare_guest_environment(layout, mapping={})["TOOLANG_CONFIG_PATCH"]
     )

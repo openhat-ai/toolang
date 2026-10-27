@@ -1,16 +1,46 @@
 """Client/server settings resolve independently at their own boundaries."""
 
 from pathlib import Path
+import pwd
+from types import SimpleNamespace
 
 import pytest
 
 from toolang.common.config_sources import ConfigSource
-from toolang.setup.teaming import resolve_teaming_setup
+from toolang.setup.teaming import load_teaming_root, resolve_teaming_setup
 from toolang.teaming.errors import TeamingError
 from toolang.up.config import hub_config
 
 ROOT = Path("/root/config.toml")
 HOME = Path("/root/agents/alice/config.toml")
+
+
+@pytest.mark.parametrize("boundary", ["human", "agent"])
+@pytest.mark.parametrize("configured_human", [None, "configured"])
+def test_default_human_uses_os_account_despite_inherited_login_name(
+    tmp_path, monkeypatch, boundary, configured_human
+):
+    monkeypatch.setenv("LOGNAME", "bryan")
+    monkeypatch.setenv("USER", "brice")
+    monkeypatch.setattr(pwd, "getpwuid", lambda uid: SimpleNamespace(pw_name="brice"))
+    raw: dict[str, object] = (
+        {"teaming": {"human": configured_human}} if configured_human else {}
+    )
+    root = tmp_path / "config.toml"
+    if configured_human:
+        root.write_text(f'[teaming]\nhuman = "{configured_human}"\n')
+
+    config = (
+        load_teaming_root(tmp_path)
+        if boundary == "human"
+        else resolve_teaming_setup(
+            (ConfigSource(root, raw),),
+            root=root,
+            home=tmp_path / "agents" / "alice" / "config.toml",
+        ).root
+    )
+
+    assert config.human == f"human:{configured_human or 'brice'}"
 
 
 def resolve(root=None, home=None, extra=()):

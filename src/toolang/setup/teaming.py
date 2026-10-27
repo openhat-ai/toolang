@@ -2,8 +2,9 @@
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-import getpass
+import os
 from pathlib import Path
+import pwd
 
 from toolang.common.config_sources import ConfigSource, read_config, merge_mappings
 from toolang.teaming.config import (
@@ -56,7 +57,9 @@ def resolve_teaming_setup(
     client = root_config(
         root_raw,
         source=root,
-        default_human=default_human if default_human is not None else getpass.getuser(),
+        default_human=default_human
+        if default_human is not None
+        else pwd.getpwuid(os.getuid()).pw_name,
     )
     local = home_config(home_raw, source=home)
     return TeamingSetup(client, enabled=client.enabled and local.enabled)
@@ -67,5 +70,5 @@ def load_teaming_root(root: Path) -> TeamingRootConfig:
     return root_config(
         read_config(path, include_workspaces=False),
         source=path,
-        default_human=getpass.getuser(),
+        default_human=pwd.getpwuid(os.getuid()).pw_name,
     )
