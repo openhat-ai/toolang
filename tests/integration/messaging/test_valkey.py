@@ -66,6 +66,20 @@ def test_root_namespace_isolation_on_wire(valkey):
     asyncio.run(scenario())
 
 
+def test_root_discovery_ignores_foreign_binary_key_names(valkey):
+    async def scenario():
+        async with (
+            MessagingClient(valkey, actor="human:owner") as human,
+            Valkey.from_url(valkey.url, decode_responses=True) as raw,
+        ):
+            key = b"toolang:\xffaaaaaaa:v0:root"
+            await raw.set(key, "/unrelated")
+            assert await human.backend.roots() == [valkey.root]
+            assert await raw.exists(key)
+
+    asyncio.run(scenario())
+
+
 @pytest.fixture(params=["valkey-server", "redis-server"])
 def valkey(request, tmp_path):
     executable = shutil.which(request.param)

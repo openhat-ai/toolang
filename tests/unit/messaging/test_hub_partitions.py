@@ -149,6 +149,9 @@ def test_identity_rejection_precedes_initialization_and_deleted_partitions_stay_
             keys = await raw.keys(backend.for_root("/one").keys.prefix + ":*")
             await raw.delete(*keys)
             assert (await http.get("/team", headers=headers)).status_code == 503
+            events = await http.get("/events/stream", headers=headers)
+            assert events.status_code == 503, events.text
+            assert events.json()["code"] == "storage_integrity"
             assert not await raw.keys(backend.for_root("/one").keys.prefix + ":*")
             assert (await http.get("/team", headers=two)).status_code == 200
             assert (await http.get("/healthz")).status_code == 200
@@ -235,6 +238,7 @@ def test_presence_discovery_after_restart_isolates_corrupt_roots_and_borrows_the
             await raw.set(backend.for_root("/bad").keys.schema, "broken")
             await raw.set(backend.for_root("/bad-utf8").keys.root, b"\xff")
             await raw.set("toolang:invalid:v0:root", "/mismatched")
+            await raw.set(b"toolang:\xffaaaaaaa:v0:root", "/invalid-key")
         async with hosted(server) as (_, http, backend, raw):
             # Startup reconciliation must discover persisted roots without a registry.
             for root in ("/one", "/two"):

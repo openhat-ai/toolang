@@ -214,9 +214,9 @@ def create_app(
         run: Annotated[str | None, Query()] = None,
         after: Annotated[str | None, Query()] = None,
     ) -> AsyncIterator[HubSubscription]:
+        await scope[1].initialize()
         subscription = None
         try:
-            await scope[1].initialize()
             subscription = HubSubscription(
                 scope[1].events, HubScope(agent, thread, run), after
             )

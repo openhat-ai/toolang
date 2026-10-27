@@ -12,7 +12,7 @@ class Keys:
 
     @staticmethod
     def roots_pattern() -> str:
-        return "toolang:*:v0:root"
+        return "toolang:" + "[0-9a-z]" * 8 + ":v0:root"
 
     @property
     def prefix(self) -> str:
