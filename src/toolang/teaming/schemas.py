@@ -6,6 +6,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from hashlib import sha256
 import json
+import posixpath
 import re
 from typing import Annotated, Any, Literal, cast
 import unicodedata
@@ -181,13 +182,25 @@ class ConversationRules(ProtocolModel):
         )
 
 
+def host_root(value: str) -> str:
+    """Validate a canonical host path without consulting the server filesystem."""
+    if (
+        not isinstance(value, str)
+        or not value.startswith("/")
+        or value.startswith("//")
+        or posixpath.normpath(value) != value
+        or any(ord(char) < 32 or ord(char) == 127 for char in value)
+    ):
+        raise MessagingError("Root must be an explicit canonical host path")
+    return value
+
+
 class HubInfo(BaseModel):
     """Presentation metadata supplied by the connected Hub process."""
 
     model_config = ConfigDict(extra="ignore", strict=True, frozen=True)
     version: str
     api_version: HubAPIVersion
-    identity: str = Field(min_length=1)
 
     @field_validator("version")
     @classmethod
@@ -195,6 +208,13 @@ class HubInfo(BaseModel):
         if not value or value != value.strip() or not value.isprintable():
             raise ValueError("Hub version must be a nonempty printable label")
         return value
+
+
+class HubPartitionInfo(HubInfo):
+    """Metadata for one explicitly selected Hub dataset."""
+
+    root: Annotated[str, AfterValidator(host_root)]
+    identity: str = Field(min_length=1)
 
 
 def utc_timestamp(value: str) -> str:
@@ -679,3 +699,7 @@ class HistoryEntry(BaseModel):
 class HubConnection:
     endpoint: str
     identity: str = ""
+    root: str = field(kw_only=True)
+
+    def __post_init__(self) -> None:
+        host_root(self.root)

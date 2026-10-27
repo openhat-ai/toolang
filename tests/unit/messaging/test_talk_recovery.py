@@ -34,7 +34,9 @@ pytestmark = pytest.mark.usefixtures("fixed_conversation_ids")
 def server(monkeypatch):
     server = FakeServer(server_type="valkey")
     monkeypatch.setattr(
-        conversations, "connection_for", lambda _: HubConnection("http://hub", "test")
+        conversations,
+        "connection_for",
+        lambda _: HubConnection("http://hub", "test", root="/test/toolang"),
     )
     monkeypatch.setattr(
         conversations,

@@ -135,8 +135,10 @@ events belonging to that thread.
 ## hub subscriptions
 
 An enabled agent exports its canonical stream independently of execution and
-messaging. The hub endpoint is `GET /events/stream`, with optional
+messaging. The hub endpoint is `GET /events/stream`, requiring the selected host
+root in `X-Toolang-Root` as described in [Messaging](messaging.md), with optional
 `agent=agent:alice`, and either `thread=ID` or `run=ID` when an agent is selected.
+The root remains fixed for the stream; filters and replay apply within it.
 No filter observes the team. `after` accepts only a hub cursor
 (`h1.<epoch>.<stream-id>`); local agent cursors are separate. Root subscriptions
 close after the complete tree and queued events; other scopes stay open.

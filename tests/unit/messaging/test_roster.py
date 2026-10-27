@@ -17,13 +17,14 @@ def test_registration_keeps_offline_members_and_history_without_home(tmp_path):
     async def scenario():
         (tmp_path / "agents" / "unstarted").mkdir(parents=True)
         human = client(FakeServer(server_type="valkey"), "human:owner")
+        await human.check_backend()
         app = create_app(human.config, backend=human.backend, version="test")
         async with (
             app.router.lifespan_context(app),
             AgentClient(
                 tmp_path,
                 actor="agent:alice",
-                connection=HubConnection("http://hub"),
+                connection=HubConnection("http://hub", root="/test/toolang"),
                 transport=httpx.ASGITransport(app),
             ) as alice,
         ):
@@ -45,6 +46,7 @@ def test_registration_keeps_offline_members_and_history_without_home(tmp_path):
 def test_registration_preserves_owner_and_live_lease_fencing(tmp_path):
     async def scenario():
         human = client(FakeServer(server_type="valkey"), "human:owner")
+        await human.check_backend()
         app = create_app(human.config, backend=human.backend, version="test")
         async with (
             app.router.lifespan_context(app),
@@ -52,14 +54,14 @@ def test_registration_preserves_owner_and_live_lease_fencing(tmp_path):
                 tmp_path,
                 actor="agent:alice",
                 token="first",
-                connection=HubConnection("http://hub"),
+                connection=HubConnection("http://hub", root="/test/toolang"),
                 transport=httpx.ASGITransport(app),
             ) as first,
             AgentClient(
                 tmp_path,
                 actor="agent:alice",
                 token="second",
-                connection=HubConnection("http://hub"),
+                connection=HubConnection("http://hub", root="/test/toolang"),
                 transport=httpx.ASGITransport(app),
             ) as second,
         ):

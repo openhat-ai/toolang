@@ -11,7 +11,7 @@ from urllib.parse import urlsplit, parse_qs, unquote
 from toolang.common.place_codes import root_code
 from toolang.common.urls import replace_guest_loopback
 from .errors import TeamingError
-from .schemas import HubConnection, identifier
+from .schemas import HubConnection, host_root, identifier
 
 
 DEFAULT_BACKEND_URL = "redis://localhost:6379/0"
@@ -24,12 +24,7 @@ class BackendConfig:
     root: str
 
     def __post_init__(self) -> None:
-        if (
-            not isinstance(self.root, str)
-            or not self.root
-            or not Path(self.root).is_absolute()
-        ):
-            raise TeamingError("Backend root must be an explicit canonical host path")
+        host_root(self.root)
         try:
             parsed = urlsplit(self.url)
             if parsed.scheme not in {"redis", "rediss", "valkey", "valkeys", "unix"}:
@@ -73,8 +68,8 @@ class TeamingRootConfig:
     hub: str = DEFAULT_HUB_URL
     enabled: bool = True
 
-    def connection(self, *, gateway: str | None = None) -> HubConnection:
-        return HubConnection(replace_guest_loopback(self.hub, gateway))
+    def connection(self, *, root: str, gateway: str | None = None) -> HubConnection:
+        return HubConnection(replace_guest_loopback(self.hub, gateway), root=root)
 
 
 @dataclass(frozen=True)

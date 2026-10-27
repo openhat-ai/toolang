@@ -110,10 +110,6 @@ def script_context(
     """Resolve one file and let the dynamic native command parse its tail."""
     if parent is None:
         raise TypeError("script entry requires a root context")
-    if parent.get_parameter_source("toolang_root") == ParameterSource.COMMANDLINE:
-        raise UsageError(
-            "Script invocation does not support global --root / -r", parent
-        )
     remaining = args[1:] if args[0] == "--" else args
     if not remaining:
         raise UsageError("Missing argument 'FILE'.", parent)

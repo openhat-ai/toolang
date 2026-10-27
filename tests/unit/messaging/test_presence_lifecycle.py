@@ -17,6 +17,8 @@ from toolang.teaming.presence import PresenceWorker
 def test_presence_worker_drains_batches_and_backs_off_without_busy_waiting():
     async def scenario():
         backend = Mock()
+        backend.roots = AsyncMock(return_value=["/test/toolang"])
+        backend.for_root.return_value = backend
         backend.due_presence = AsyncMock(
             side_effect=[
                 list(map(str, range(128))),
@@ -56,6 +58,8 @@ def test_worker_cancellation_propagates_through_io_and_wait(phase):
                 stopped.set()
 
         backend = Mock()
+        backend.roots = AsyncMock(return_value=["/test/toolang"])
+        backend.for_root.return_value = backend
         backend.due_presence = AsyncMock(
             side_effect=blocked if phase == "scan" else None, return_value=[]
         )
@@ -95,7 +99,7 @@ def test_lifecycle_reentry_orders_startup_and_cancels_before_closing():
             log.clear()
             async with lifecycle.lifespan(lambda: log.append("ready")):
                 assert lifecycle.ready and len(lifecycle.tasks) == 1
-                assert log[:3] == ["ping", "schema", "presence:scan"]
+                assert log[:2] == ["ping", "presence:scan"]
                 assert log[-1] == "ready"
             assert log[-2:] == ["presence:stop", "close"]
             assert all(task.done() for task in lifecycle.tasks)
@@ -104,13 +108,12 @@ def test_lifecycle_reentry_orders_startup_and_cancels_before_closing():
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("stage", ["schema", "scan", "worker", "ready"])
+@pytest.mark.parametrize("stage", ["ping", "scan", "worker", "ready"])
 def test_startup_failure_closes_resources_and_all_started_tasks(stage):
     async def scenario():
         backend = Mock()
-        backend.ping = AsyncMock()
-        backend.initialize = AsyncMock(
-            side_effect=RuntimeError("schema") if stage == "schema" else None
+        backend.ping = AsyncMock(
+            side_effect=RuntimeError("ping") if stage == "ping" else None
         )
         backend.close = AsyncMock()
         lifecycle = HubLifecycle(backend)
@@ -156,11 +159,14 @@ def test_failed_presence_worker_marks_hub_unhealthy_until_restart(monkeypatch, f
 
         monkeypatch.setattr(PresenceWorker, "run", run)
         human = client(FakeServer(server_type="valkey"), "human:owner")
+        await human.check_backend()
         app = create_app(human.config, backend=human.backend, version="0.4.0-test")
         async with (
             app.router.lifespan_context(app),
             httpx.AsyncClient(
-                transport=httpx.ASGITransport(app), base_url="http://hub"
+                headers={"X-Toolang-Root": "%2Ftest%2Ftoolang"},
+                transport=httpx.ASGITransport(app),
+                base_url="http://hub",
             ) as http,
         ):
             assert (await http.get("/healthz")).status_code == 200

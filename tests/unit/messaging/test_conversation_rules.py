@@ -33,7 +33,8 @@ def test_rules_reads_pin_backend_across_target_resolution(
     from toolang.teaming.agent_client import AgentClient
 
     connections = [
-        HubConnection(f"http://hub{index}", f"backend-{index}") for index in range(2)
+        HubConnection(f"http://hub{index}", f"backend-{index}", root="/test/toolang")
+        for index in range(2)
     ]
     current = 0
     requests = []
@@ -146,7 +147,9 @@ def test_rules_reads_use_supplied_connection(
             conversations.load_target(
                 layout,
                 "gc_00000001",
-                connection=HubConnection("http://hub:7123", CONFIG.identity),
+                connection=HubConnection(
+                    "http://hub:7123", CONFIG.identity, root="/test/toolang"
+                ),
             )
         )
         assert access.scope.backend == CONFIG.identity
@@ -155,7 +158,9 @@ def test_rules_reads_use_supplied_connection(
             conversations.load_source(
                 layout,
                 ConversationScope(CONFIG.identity, "gc_00000001"),
-                connection=HubConnection("http://hub:7123", CONFIG.identity),
+                connection=HubConnection(
+                    "http://hub:7123", CONFIG.identity, root="/test/toolang"
+                ),
             )
         )
     assert requests
@@ -300,8 +305,9 @@ def test_hub_rules_api_and_validation():
     async def scenario():
         server = FakeServer(server_type="valkey")
         human = client(server, "human:owner")
+        await human.check_backend()
         app = create_app(human.config, backend=human.backend, version="test")
-        connection = HubConnection("http://hub", CONFIG.identity)
+        connection = HubConnection("http://hub", CONFIG.identity, root="/test/toolang")
         async with (
             app.router.lifespan_context(app),
             HubClient(
@@ -335,12 +341,15 @@ def test_rules_http_documents_validation_and_conflict_responses(identity):
     async def scenario():
         server = FakeServer(server_type="valkey")
         human = client(server, "human:owner")
+        await human.check_backend()
         app = create_app(human.config, backend=human.backend, version="test")
         async with (
             app.router.lifespan_context(app),
             client(server, "agent:alice") as alice,
             httpx.AsyncClient(
-                transport=httpx.ASGITransport(app), base_url="http://hub"
+                headers={"X-Toolang-Root": "%2Ftest%2Ftoolang"},
+                transport=httpx.ASGITransport(app),
+                base_url="http://hub",
             ) as http,
         ):
             await alice.register("human:owner")

@@ -37,6 +37,7 @@ def test_default_human_uses_os_account_despite_inherited_login_name(
             (ConfigSource(root, raw),),
             root=root,
             home=tmp_path / "agents" / "alice" / "config.toml",
+            host_root=tmp_path,
         ).root
     )
 
@@ -48,6 +49,7 @@ def resolve(root=None, home=None, extra=()):
         (ConfigSource(ROOT, root or {}), ConfigSource(HOME, home or {}), *extra),
         root=ROOT,
         home=HOME,
+        host_root=ROOT.parent,
         default_human="owner",
     )
 
@@ -58,7 +60,7 @@ def test_defaults_enable_agent_teaming(home):
     assert setup.root.human == "human:owner"
     assert setup.root.hub == "http://127.0.0.1:7001"
     assert setup.enabled
-    assert setup.toolset_config(root=ROOT.parent) == {
+    assert setup.toolset_config() == {
         "root": "/root",
         "hub": "http://127.0.0.1:7001",
     }
@@ -76,9 +78,7 @@ def test_clients_ignore_server_settings_and_preserve_root_identity():
     assert not resolve(
         {"teaming": {"enabled": False}}, {"teaming": {"enabled": True}}
     ).enabled
-    assert (
-        resolve({"teaming": {"enabled": False}}).toolset_config(root=ROOT.parent) == {}
-    )
+    assert resolve({"teaming": {"enabled": False}}).toolset_config() == {}
 
 
 @pytest.mark.parametrize(

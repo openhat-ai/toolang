@@ -89,7 +89,10 @@ def test_roaming_preserves_authored_home_and_ignores_global_agent_config(tmp_pat
     materialize_roaming_program(source, layout=layout)
     assert layout.config.read_text() == authored
     teaming = resolve_teaming_setup(
-        config_sources(layout), root=layout.place_config, home=layout.config
+        config_sources(layout),
+        root=layout.place_config,
+        home=layout.config,
+        host_root=layout.host_root,
     )
     assert teaming.root.human == "human:project-owner" and not teaming.enabled
     assert prepare_agent_state(layout).workspaces == {

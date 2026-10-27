@@ -716,7 +716,7 @@ def test_cli_script_preserves_global_option_names_in_input(
 
 
 @pytest.mark.parametrize("before_source", [False, True])
-def test_cli_script_rejects_actual_global_options(
+def test_cli_script_accepts_global_root_only_before_the_source(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     before_source: bool,
@@ -724,10 +724,9 @@ def test_cli_script_rejects_actual_global_options(
 ) -> None:
     source = tmp_path / "demo.too"
     source.write_text("agic demo:\n  Reply directly.\n", encoding="utf-8")
+    invoked = []
     monkeypatch.setattr(
-        script,
-        "_run",
-        lambda *_args, **_kwargs: pytest.fail("invalid input must not run"),
+        script, "_run", lambda *_args, **_kwargs: invoked.append(True) or 0
     )
     header = (
         ["--root", str(tmp_path), str(source)]
@@ -735,11 +734,10 @@ def test_cli_script_rejects_actual_global_options(
         else [str(source), "--root", str(tmp_path)]
     )
 
-    expected_code = 2
-    expected_error = "global --root / -r" if before_source else "No such option: --root"
-    assert cli.main([*header, "agic:demo", "text"]) == expected_code
-    error = strip_ansi(capsys.readouterr().err)
-    assert expected_error in error
+    assert cli.main([*header, "agic:demo", "text"]) == (0 if before_source else 2)
+    assert invoked == ([True] if before_source else [])
+    if not before_source:
+        assert "No such option: --root" in strip_ansi(capsys.readouterr().err)
 
 
 @pytest.mark.parametrize("selector", [[], ["agic:demo"]])

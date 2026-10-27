@@ -355,7 +355,7 @@ def test_hub_configuration_error_keeps_unsent_input_and_uses_the_error_row(
     tmp_path, monkeypatch, operation
 ):
     async def scenario():
-        config = HubConnection("http://hub", "test")
+        config = HubConnection("http://hub", "test", root="/test/toolang")
         transport = httpx.MockTransport(
             lambda request: httpx.Response(
                 409, json={"code": "hub_changed", "detail": "Hub identity changed"}

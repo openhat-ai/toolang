@@ -467,10 +467,12 @@ def test_hub_filters_and_cursor_errors_have_flat_http_contract(tmp_path):
             actor="human:owner",
             backend=driver,
         )
+        await client.check_backend()
         app = create_app(client.config, backend=client.backend, version="0.4.0-test")
         async with (
             app.router.lifespan_context(app),
             httpx.AsyncClient(
+                headers={"X-Toolang-Root": "%2Ftest%2Ftoolang"},
                 transport=httpx.ASGITransport(app),
                 base_url="http://hub",
             ) as http,
@@ -1361,10 +1363,12 @@ def test_invalid_recovery_metadata_is_a_backend_error(damage):
             actor="human:owner",
             backend=driver,
         )
+        await client.check_backend()
         app = create_app(client.config, backend=client.backend, version="0.4.0-test")
         async with (
             app.router.lifespan_context(app),
             httpx.AsyncClient(
+                headers={"X-Toolang-Root": "%2Ftest%2Ftoolang"},
                 transport=httpx.ASGITransport(app, raise_app_exceptions=False),
                 base_url="http://hub",
             ) as http,

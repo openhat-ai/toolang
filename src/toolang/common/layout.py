@@ -111,6 +111,15 @@ class AgentLayout:
         if self.managed_membership is None:
             object.__setattr__(self, "managed_membership", self.placement == "resident")
 
+    @property
+    def host_root(self) -> Path:
+        """Original host root, independent of a guest's mounted root and PLACE."""
+        if self.runtime_config is not None:
+            captured = self.runtime_config.origins.get("toolang_root")
+            if captured is not None:
+                return captured
+        return self.root or self.place
+
     @classmethod
     def resident(cls, root: Path, name: str) -> AgentLayout:
         """Create a resident-agent layout under an explicit Toolang root."""

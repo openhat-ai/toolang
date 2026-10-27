@@ -90,7 +90,7 @@ def offline_rule_transport(monkeypatch):
     monkeypatch.setattr(
         conversations,
         "connection_for",
-        lambda _: HubConnection("http://hub", CONFIG.identity),
+        lambda _: HubConnection("http://hub", CONFIG.identity, root="/test/toolang"),
     )
     original = harness_with_msg
 
@@ -627,7 +627,7 @@ def test_hosted_lifespan_starts_and_stops_messaging(
     from toolang.setup.teaming import TeamingSetup
 
     core.setup.current.return_value.teaming = TeamingSetup(
-        TeamingRootConfig("human:owner"), enabled=enabled
+        TeamingRootConfig("human:owner"), enabled=enabled, host_root=str(tmp_path)
     )
     scheduler = MagicMock()
     scheduler.start, scheduler.pause, scheduler.stop = (

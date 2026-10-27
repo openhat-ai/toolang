@@ -69,7 +69,7 @@ def test_completion_suppresses_script_header_errors(
             label,
         ],
     )
-    assert ctx.command.name == "run"
+    assert ctx.command.name == (label if source == "root_option" else "run")
     assert ctx.resilient_parsing
     assert set(tmp_path.rglob("*")) == before
     output = capsys.readouterr()
@@ -836,9 +836,21 @@ def test_run_reports_a_missing_source(capsys):
 @pytest.mark.parametrize(
     "root_args", [["--root", "root"], ["-r", "root"], ["--root=root"], ["-rroot"]]
 )
-def test_run_rejects_global_root_overrides(root_args, capsys):
-    assert cli.main([*root_args, "run", _source()]) == 2
-    assert "does not support global" in capsys.readouterr().err
+@pytest.mark.parametrize("explicit", [False, True])
+def test_script_entry_accepts_global_root_overrides(
+    root_args, explicit, monkeypatch, capsys
+):
+    selected = []
+
+    def run(source, *args, **kwargs):
+        from toolang.cli.common.context import resolve_root
+
+        selected.append(resolve_root(None))
+        return 0
+
+    monkeypatch.setattr(script, "_run", run)
+    assert cli.main([*root_args, *(["run"] if explicit else []), _source()]) == 0
+    assert selected == [Path("root").resolve()]
 
 
 @pytest.mark.parametrize("target", ["alice", "demo.too"])

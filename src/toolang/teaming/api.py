@@ -2,6 +2,8 @@
 
 from collections.abc import Callable, AsyncIterator
 from contextlib import asynccontextmanager
+from dataclasses import replace
+import re
 from typing import Annotated, Any, cast
 from urllib.parse import unquote
 
@@ -29,7 +31,7 @@ from .errors import (
     ScopeUnavailable,
 )
 from .messaging import MessagingClient
-from .schemas import HUB_API_VERSION, HubInfo, target
+from .schemas import HUB_API_VERSION, HubInfo, HubPartitionInfo, target
 from .messaging_api import messaging_router
 from .lifecycle import HubLifecycle
 from .team_api import team_router
@@ -49,19 +51,43 @@ def create_app(
 ) -> FastAPI:
     """Own one backend; bind participant identities at request boundaries."""
     store = backend if backend is not None else create_backend(config)
-    info = HubInfo(
-        version=version, api_version=HUB_API_VERSION, identity=config.identity
-    )
+    info = HubInfo(version=version, api_version=HUB_API_VERSION)
 
-    async def prepare_request(
+    def selection(
+        root: Annotated[str | None, Header(alias="X-Toolang-Root")] = None,
         identity: Annotated[str | None, Header(alias="X-Toolang-Backend")] = None,
-    ) -> None:
-        if identity is not None and identity != config.identity:
+    ) -> BackendConfig | None:
+        if root is None:
+            return None
+        try:
+            if re.search(r"%(?![0-9a-fA-F]{2})", root):
+                raise ValueError("Invalid root encoding")
+            selected = replace(config, root=unquote(root, errors="strict"))
+        except (ValueError, MessagingError) as exc:
+            raise HTTPException(
+                400, {"code": "messaging_error", "detail": "Invalid Toolang root"}
+            ) from exc
+        if identity is not None and identity != selected.identity:
             raise HTTPException(
                 409, {"code": "hub_changed", "detail": "Hub identity changed"}
             )
+        return selected
+
+    Selection = Annotated[BackendConfig | None, Depends(selection)]
+
+    async def partition(
+        root: Annotated[str, Header(alias="X-Toolang-Root")],
+        identity: Annotated[str | None, Header(alias="X-Toolang-Backend")] = None,
+    ) -> tuple[BackendConfig, Backend]:
+        selected = selection(root, identity)
+        assert selected is not None
+        scoped = store.for_root(selected.root)
+        return selected, scoped
+
+    Partition = Annotated[tuple[BackendConfig, Backend], Depends(partition)]
 
     async def human_client(
+        scope: Partition,
         human: Annotated[str | None, Header(alias="X-Toolang-Human")] = None,
     ) -> MessagingClient:
         try:
@@ -75,9 +101,23 @@ def create_app(
                     "detail": "A valid human actor is required",
                 },
             ) from exc
-        client = MessagingClient(config, actor=actor, backend=store)
+        selected, scoped = scope
+        await scoped.initialize()
+        client = MessagingClient(selected, actor=actor, backend=scoped)
         await client.register_human()
         return client
+
+    async def agent_client(
+        agent: str,
+        scope: Partition,
+        lease: Annotated[
+            str, Header(alias="X-Toolang-Agent-Lease", min_length=1, max_length=128)
+        ],
+    ) -> MessagingClient:
+        target(agent, kind="agent")
+        selected, scoped = scope
+        await scoped.initialize()
+        return MessagingClient(selected, actor=agent, token=lease, backend=scoped)
 
     lifecycle = HubLifecycle(store)
 
@@ -94,7 +134,6 @@ def create_app(
         title="Toolang Hub API",
         middleware=[Middleware(cast(Any, SSESendDeadline))],
         lifespan=lifespan,
-        dependencies=[Depends(prepare_request)],
         docs_url=None,
         redoc_url=None,
         openapi_url=None,
@@ -154,18 +193,22 @@ def create_app(
         )
 
     @app.get("/info")
-    async def server_info() -> HubInfo:
-        return info
+    async def server_info(selected: Selection) -> HubInfo | HubPartitionInfo:
+        if selected is None:
+            return info
+        return HubPartitionInfo(
+            **info.model_dump(), root=selected.root, identity=selected.identity
+        )
 
     @app.get("/healthz")
     async def health() -> dict[str, bool]:
         if not lifecycle.ready or lifecycle.failed:
             raise HTTPException(503, "Hub maintenance is not ready")
         await store.ping()
-        await store.initialize()
         return {"ok": True}
 
     async def event_subscription(
+        scope: Partition,
         agent: Annotated[str | None, Query()] = None,
         thread: Annotated[str | None, Query()] = None,
         run: Annotated[str | None, Query()] = None,
@@ -173,8 +216,9 @@ def create_app(
     ) -> AsyncIterator[HubSubscription]:
         subscription = None
         try:
+            await scope[1].initialize()
             subscription = HubSubscription(
-                store.events, HubScope(agent, thread, run), after
+                scope[1].events, HubScope(agent, thread, run), after
             )
             await subscription.prepare()
         except ScopeUnavailable as exc:
@@ -242,5 +286,5 @@ def create_app(
 
     app.include_router(team_router(human_client))
     app.include_router(messaging_router(human_client, prefix="/msg"))
-    app.include_router(agent_router(config, store))
+    app.include_router(agent_router(agent_client))
     return app

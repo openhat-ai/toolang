@@ -30,7 +30,7 @@ def test_talk_member_subscription_filters_unrelated_changes_and_preserves_header
                 200, headers={"content-type": "text/event-stream"}, stream=stream
             )
 
-        connection = HubConnection("http://hub", "backend")
+        connection = HubConnection("http://hub", "backend", root="/test/toolang")
         async with HubClient(
             connection, actor="human:owner", transport=httpx.MockTransport(request)
         ) as hub:

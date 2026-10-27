@@ -1,8 +1,9 @@
 """Hub-owned agent presence and publication routes."""
 
+from collections.abc import Callable
 from typing import Annotated, Any, TypeVar
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import TypeAdapter, ValidationError
 
 from .errors import EventRecoveryRequired
@@ -10,8 +11,6 @@ from .messaging import MessagingClient
 from .messaging_api import messaging_router
 from .team_api import team_router
 from .publication import validate_publication
-from .backend import Backend
-from .config import BackendConfig
 from .records import MAX_BYTES
 from .schemas import (
     AgentRegistration,
@@ -19,7 +18,6 @@ from .schemas import (
     CommitRequest,
     Generation,
     StagingRequest,
-    target,
 )
 
 T = TypeVar("T")
@@ -48,23 +46,12 @@ async def _body(request: Request, adapter: TypeAdapter[T]) -> T:
         ) from exc
 
 
-def agent_router(config: BackendConfig, backend: Backend) -> APIRouter:
+def agent_router(get_client: Callable) -> APIRouter:
     router = APIRouter(prefix="/agents/{agent}", tags=["agents"])
-    events = backend.events
-
-    def agent_client(
-        agent: str,
-        lease: Annotated[
-            str, Header(alias="X-Toolang-Agent-Lease", min_length=1, max_length=128)
-        ],
-    ) -> MessagingClient:
-        target(agent, kind="agent")
-        return MessagingClient(config, actor=agent, token=lease, backend=backend)
-
-    Client = Annotated[MessagingClient, Depends(agent_client)]
+    Client = Annotated[MessagingClient, Depends(get_client)]
 
     async def active_client(client: Client) -> MessagingClient:
-        if await events.online_token(client.actor) != client.token:
+        if await client.backend.events.online_token(client.actor) != client.token:
             raise EventRecoveryRequired("Agent lease lost")
         return client
 
@@ -98,6 +85,7 @@ def agent_router(config: BackendConfig, backend: Backend) -> APIRouter:
 
     @router.get("/events/state")
     async def state(client: ActiveClient) -> dict[str, Any]:
+        events = client.backend.events
         await events.initialize()
         meta, origins, _ = await events.capture(client.actor)
         return {"meta": meta, "origin": origins.get(client.actor)}
@@ -108,7 +96,7 @@ def agent_router(config: BackendConfig, backend: Backend) -> APIRouter:
     ) -> dict[str, bool]:
         body = await _body(request, _STAGING)
         validate_publication(body, agent=client.actor)
-        await events.stage(
+        await client.backend.events.stage(
             {
                 **body.model_dump(),
                 "agent": client.actor,
@@ -122,7 +110,7 @@ def agent_router(config: BackendConfig, backend: Backend) -> APIRouter:
     async def commit(request: Request, client: ActiveClient) -> dict[str, str]:
         body = await _body(request, _COMMIT)
         validate_publication(body, agent=client.actor)
-        sid = await events.commit(
+        sid = await client.backend.events.commit(
             {**body.model_dump(), "agent": client.actor, "token": client.token}
         )
         await client.renew()
@@ -130,7 +118,9 @@ def agent_router(config: BackendConfig, backend: Backend) -> APIRouter:
 
     @router.delete("/events/staging/{generation}")
     async def abandon(generation: Generation, client: ActiveClient) -> dict[str, bool]:
-        await events.abandon(client.actor, generation, token=client.token)
+        await client.backend.events.abandon(
+            client.actor, generation, token=client.token
+        )
         return {"ok": True}
 
     router.include_router(team_router(active_client))

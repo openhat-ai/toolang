@@ -38,7 +38,7 @@ def connection_for(setup: AgentSetup) -> HubConnection:
     teaming = setup.teaming
     if teaming is None or not teaming.enabled:
         raise MessagingError("Teaming is disabled for this agent")
-    return teaming.root.connection(gateway=setup.envs.get("TOOLANG_HOST_GATEWAY"))
+    return teaming.connection(gateway=setup.envs.get("TOOLANG_HOST_GATEWAY"))
 
 
 async def load_source(

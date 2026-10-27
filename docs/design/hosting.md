@@ -580,5 +580,16 @@ Bare `too hub` shows help. `too hub status` inspects the managed process using
 client configuration.
 `too ps` queries the client URL for readiness and version independently of that
 process record; `too ls` does not query the hub.
+The Hub server owns one Valkey connection pool and presence worker through
+`HubLifecycle`; request/stream backend views bind a root and borrow that pool.
+HTTP clients close their own HTTP connections; Hub shutdown closes the Valkey
+pool. Presence expiry discovers existing ownership keys in SCAN batches, including
+after restart, and isolates corrupt partitions.
+
+Startup and metadata/readiness probes create no business keys. `/healthz` checks
+shared maintenance and the backend connection, returning `200 {"ok":true}` or
+503 independently of partition headers. Data access initializes only the selected
+root; a corrupt partition fails on its own data routes. `ps` combines global
+readiness with scoped `/info`; `hub status` uses unscoped version metadata.
 Successful stop removes the owned record after confirmed exit. ASGI teardown also
 cleans it; the lifetime lock and PID/creation-time comparison protect replacements.

@@ -31,11 +31,20 @@ local process records.
 
 Clients connect to the configured URL without reading Hub files or accessing
 Redis/Valkey. Existing `TOOLANG_HOST_GATEWAY` handling rewrites loopback URLs
-for guest clients. `/info` returns `{version, api_version, identity}` without
-registering participants. Clients validate metadata before application requests
-and pin its opaque dataset identity through `X-Toolang-Backend`, including SSE
-and admitted Talk batches. New connections use refreshed settings; identity
-mismatches reject old batches without replaying messages.
+for guest clients. Data requests carry the percent-encoded canonical host root
+in `X-Toolang-Root`. The Hub validates its spelling without resolving it on the
+server filesystem; guests retain the captured host root independently of mounted
+paths. One Hub serves multiple roots, including same-name agents under one or
+multiple OS accounts; the root alone selects the partition.
+
+Unscoped `/info` returns `{version, api_version}`; with a root it adds `root` and
+`identity`. Neither form creates keys. Clients require the selected root to be
+echoed and pin its opaque dataset identity through `X-Toolang-Backend`, including
+SSE and admitted Talk batches. Cached metadata distinguishes endpoint and root.
+Identity mismatches return `409 hub_changed` without replaying messages.
+Missing/invalid roots return 400 before storage access. API/event version remains
+0; upgrade Hub and clients together because unscoped business requests and
+metadata without a matching root echo are rejected.
 
 Human requests declare a percent-encoded `human:<name>` in `X-Toolang-Human`;
 missing or invalid actors fail before storage access. Agent routes derive the
@@ -51,7 +60,8 @@ corrupt initialized stores fail closed without resets, mutation, or import.
 All Hub keys use `toolang:<root_code>:v0:`, including execution events and Talk
 cursors. `root_code` reuses `R8` from
 [agent addresses](agent-addresses.md#short-codes), derived from the host-canonical
-Toolang root. Separate roots can share one backend URL without sharing data.
+Toolang root, without an OS-user component. Separate roots share a Hub and backend
+URL without sharing data; the same canonical root selects the same dataset.
 Each namespace records its full root identity; collisions and missing/corrupt
 ownership fail without adopting or modifying another dataset.
 Backend connection identity includes both the configured URL and canonical root,

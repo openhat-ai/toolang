@@ -291,11 +291,12 @@ def test_hub_api_rejects_other_root_identity_on_the_same_backend_before_mutation
         server = FakeServer(server_type="valkey")
         config = BackendConfig("redis://shared", root="/one")
         human = client(server, config)
+        await human.check_backend()
         app = create_app(human.config, backend=human.backend, version="test")
         async with app.router.lifespan_context(app):
             before = await snapshot(human.backend._client)
             connection = HubConnection(
-                "http://hub", replace(config, root="/two").identity
+                "http://hub", replace(config, root="/two").identity, root=config.root
             )
             async with HubClient(
                 connection, actor="human:owner", transport=httpx.ASGITransport(app)
@@ -316,7 +317,9 @@ def test_talk_command_uses_the_selected_roots_namespace(tmp_path, monkeypatch):
         BackendConfig("redis://shared", root=str(tmp_path / name))
         for name in ("one", "two")
     ]
-    connections = {c.root: HubConnection("http://hub", c.identity) for c in configs}
+    connections = {
+        c.root: HubConnection("http://hub", c.identity, root=c.root) for c in configs
+    }
     by_identity = {c.identity: c for c in configs}
 
     async def register():
@@ -332,6 +335,7 @@ def test_talk_command_uses_the_selected_roots_namespace(tmp_path, monkeypatch):
     @asynccontextmanager
     async def hub(connection, *, actor=None):
         human = client(server, by_identity[connection.identity])
+        await human.check_backend()
         app = create_app(human.config, backend=human.backend, version="test")
         async with app.router.lifespan_context(app):
             async with HubClient(

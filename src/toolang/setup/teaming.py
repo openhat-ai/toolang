@@ -2,10 +2,9 @@
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-import os
 from pathlib import Path
-import pwd
 
+from toolang.common.accounts import current_username
 from toolang.common.config_sources import ConfigSource, read_config, merge_mappings
 from toolang.teaming.config import (
     TeamingRootConfig,
@@ -13,21 +12,24 @@ from toolang.teaming.config import (
     home_config,
 )
 from toolang.teaming.errors import TeamingError
+from toolang.teaming.schemas import HubConnection
 
 
 @dataclass(frozen=True)
 class TeamingSetup:
     root: TeamingRootConfig
     enabled: bool
+    host_root: str
 
-    def toolset_config(
-        self, *, root: Path, gateway: str | None = None
-    ) -> dict[str, object]:
+    def connection(self, *, gateway: str | None = None) -> HubConnection:
+        return self.root.connection(root=self.host_root, gateway=gateway)
+
+    def toolset_config(self, *, gateway: str | None = None) -> dict[str, object]:
         if not self.enabled:
             return {}
         return {
-            "root": str(root),
-            "hub": self.root.connection(gateway=gateway).endpoint,
+            "root": self.host_root,
+            "hub": self.connection(gateway=gateway).endpoint,
         }
 
 
@@ -36,6 +38,7 @@ def resolve_teaming_setup(
     *,
     root: Path,
     home: Path,
+    host_root: Path,
     default_human: str | None = None,
 ) -> TeamingSetup:
     root_layers: list[Mapping[str, object]] = []
@@ -59,10 +62,12 @@ def resolve_teaming_setup(
         source=root,
         default_human=default_human
         if default_human is not None
-        else pwd.getpwuid(os.getuid()).pw_name,
+        else current_username(),
     )
     local = home_config(home_raw, source=home)
-    return TeamingSetup(client, enabled=client.enabled and local.enabled)
+    return TeamingSetup(
+        client, enabled=client.enabled and local.enabled, host_root=str(host_root)
+    )
 
 
 def load_teaming_root(root: Path) -> TeamingRootConfig:
@@ -70,5 +75,5 @@ def load_teaming_root(root: Path) -> TeamingRootConfig:
     return root_config(
         read_config(path, include_workspaces=False),
         source=path,
-        default_human=pwd.getpwuid(os.getuid()).pw_name,
+        default_human=current_username(),
     )

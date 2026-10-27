@@ -31,7 +31,7 @@ from .schemas import (
     TeamMember,
     Targets,
     HubConnection,
-    HubInfo,
+    HubPartitionInfo,
     Message,
     Resolution,
     conversation_id,
@@ -42,7 +42,7 @@ from .notifications import Changes
 
 T = TypeVar("T")
 _TEAM = TypeAdapter(list[TeamMember])
-_INFO = TypeAdapter(HubInfo)
+_INFO = TypeAdapter(HubPartitionInfo)
 _CONTACTS = TypeAdapter(list[ConversationSummary])
 _TARGETS = TypeAdapter(Targets)
 _GLOBAL_STATS = TypeAdapter(GlobalStatistics)
@@ -86,6 +86,7 @@ class HubClient:
         if (
             self._connection is not None
             and self._connection.endpoint == selected.endpoint
+            and self._connection.root == selected.root
         ):
             return self._connection
         return selected
@@ -95,7 +96,10 @@ class HubClient:
         if connection.identity:
             return connection
         try:
-            response = await self._http.get(connection.endpoint + "/info")
+            response = await self._http.get(
+                connection.endpoint + "/info",
+                headers={"X-Toolang-Root": quote(connection.root, safe="")},
+            )
             response.raise_for_status()
         except httpx.HTTPError as exc:
             raise BackendUnavailable(
@@ -103,11 +107,15 @@ class HubClient:
             ) from exc
         try:
             info = _response(_INFO, response.json())
+            if info.root != connection.root:
+                raise MessagingError("Hub root differs from the selected root")
         except (ValueError, MessagingError) as exc:
             raise MessagingError(
                 f"Incompatible Hub metadata at {connection.endpoint}"
             ) from exc
-        self._connection = HubConnection(connection.endpoint, info.identity)
+        self._connection = HubConnection(
+            connection.endpoint, info.identity, root=connection.root
+        )
         return self._connection
 
     async def __aenter__(self) -> Self:
@@ -125,7 +133,10 @@ class HubClient:
         await self._http.aclose()
 
     def _headers(self, connection: HubConnection) -> dict[str, str]:
-        headers = {"X-Toolang-Backend": connection.identity}
+        headers = {
+            "X-Toolang-Backend": connection.identity,
+            "X-Toolang-Root": quote(connection.root, safe=""),
+        }
         if self.actor.startswith("human:"):
             headers["X-Toolang-Human"] = quote(self.actor, safe="")
         if self._lease is not None:
@@ -223,7 +234,7 @@ class HubClient:
             raise MessagingError("Hub identity changed; reopen Talk")
         raise MessagingError(str(detail))
 
-    async def info(self) -> HubInfo:
+    async def info(self) -> HubPartitionInfo:
         return _response(_INFO, await self._request("GET", "/info"))
 
     async def agents(self) -> dict[str, str]:

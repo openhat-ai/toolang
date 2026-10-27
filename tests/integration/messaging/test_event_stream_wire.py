@@ -3,6 +3,7 @@
 from toolang.setup.teaming import load_teaming_root
 
 import asyncio
+from urllib.parse import quote
 import json
 import os
 import signal
@@ -78,13 +79,16 @@ def test_recovery_keeps_active_snapshot_and_live_suffix_after_slow_history(
             harness,
             AgentClient(
                 tmp_path,
-                connection=load_teaming_root(tmp_path).connection(),
+                connection=load_teaming_root(tmp_path).connection(root=str(tmp_path)),
                 actor="agent:alice",
                 token="recovery",
             ) as publisher,
             httpx.AsyncClient(
                 base_url=connection.endpoint,
-                headers={"X-Toolang-Backend": connection.identity},
+                headers={
+                    "X-Toolang-Root": quote(connection.root, safe=""),
+                    "X-Toolang-Backend": connection.identity,
+                },
                 timeout=10,
                 trust_env=False,
             ) as http,
@@ -253,13 +257,16 @@ def test_agents_reconnect_through_hub_without_direct_backend_access(valkey, tmp_
                 with pytest.raises(BackendUnavailable):
                     async with AgentClient(
                         tmp_path,
-                        connection=load_teaming_root(tmp_path).connection(),
+                        connection=load_teaming_root(tmp_path).connection(
+                            root=str(tmp_path)
+                        ),
                         actor="agent:alice",
                     ) as remote:
                         await remote.targets()
                 await asyncio.to_thread(cli, "hub", "start", "--port", str(hub_port))
                 original = hub_connection(tmp_path)
                 async with HubClient(original, actor="human:owner") as human:
+                    await human.targets()
                     for name, run in runs.items():
                         await wait_exported(name, run)
                         # Exercise the resident's active lease through the same API
@@ -267,7 +274,9 @@ def test_agents_reconnect_through_hub_without_direct_backend_access(valkey, tmp_
                         lease = await service.online_token(f"agent:{name}")
                         async with AgentClient(
                             tmp_path,
-                            connection=load_teaming_root(tmp_path).connection(),
+                            connection=load_teaming_root(tmp_path).connection(
+                                root=str(tmp_path)
+                            ),
                             actor=f"agent:{name}",
                             token=lease,
                         ) as remote:
@@ -316,7 +325,10 @@ def test_hub_event_fanout_and_recovery(valkey, running_hub, tmp_path, monkeypatc
             harness,
             httpx.AsyncClient(
                 base_url=connection.endpoint,
-                headers={"X-Toolang-Backend": connection.identity},
+                headers={
+                    "X-Toolang-Root": quote(connection.root, safe=""),
+                    "X-Toolang-Backend": connection.identity,
+                },
                 timeout=10,
                 trust_env=False,
             ) as http,
@@ -532,7 +544,10 @@ def test_resident_shutdown_drains_or_bounds_backend_outage(
                     http,
                     "GET",
                     f"{connection.endpoint}/events/stream",
-                    headers={"X-Toolang-Backend": connection.identity},
+                    headers={
+                        "X-Toolang-Root": quote(connection.root, safe=""),
+                        "X-Toolang-Backend": connection.identity,
+                    },
                     params={"agent": "agent:alice", "run": root},
                 ) as stream:
                     stream.response.raise_for_status()

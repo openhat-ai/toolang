@@ -42,7 +42,7 @@ from toolang.teaming.stream_client import HubStreamState
 from toolang.teaming.subscriptions import HubSubscription
 from toolang.driver.talk import MessagingLoop
 
-CONNECTION = HubConnection("http://hub", CONFIG.identity)
+CONNECTION = HubConnection("http://hub", CONFIG.identity, root="/test/toolang")
 
 
 def agent(app, root, actor="agent:alice", token="lease", transport=None):
@@ -58,6 +58,7 @@ def agent(app, root, actor="agent:alice", token="lease", transport=None):
 def test_agent_messaging_uses_hub_authority_and_context(tmp_path):
     async def scenario():
         human = client(FakeServer(server_type="valkey"), "human:owner")
+        await human.check_backend()
         app = create_app(human.config, backend=human.backend, version="0.4.0-test")
         async with (
             app.router.lifespan_context(app),
@@ -106,7 +107,7 @@ def test_agent_tools_without_hub_never_construct_backend(tmp_path, monkeypatch):
             lambda context: AgentClient(
                 tmp_path,
                 actor="agent:alice",
-                connection=HubConnection("http://hub"),
+                connection=HubConnection("http://hub", root="/test/toolang"),
                 transport=httpx.MockTransport(unavailable),
             ),
         )
@@ -126,6 +127,7 @@ def test_agent_connects_by_url_ignoring_process_records(tmp_path):
         (tmp_path / "hub").mkdir()
         (tmp_path / "hub" / "pid.json").write_text("invalid record")
         human = client(FakeServer(server_type="valkey"), "human:owner")
+        await human.check_backend()
         app = create_app(human.config, backend=human.backend, version="test")
         requests = []
 
@@ -138,7 +140,9 @@ def test_agent_connects_by_url_ignoring_process_records(tmp_path):
             AgentClient(
                 tmp_path,
                 actor="agent:alice",
-                connection=HubConnection("http://configured:7123"),
+                connection=HubConnection(
+                    "http://configured:7123", root="/test/toolang"
+                ),
                 transport=httpx.MockTransport(handle),
             ) as alice,
         ):
@@ -157,6 +161,7 @@ def test_agent_connects_by_url_ignoring_process_records(tmp_path):
 def test_convo_peek_exposes_current_revision_for_renaming(tmp_path, monkeypatch):
     async def scenario():
         human = client(FakeServer(server_type="valkey"), "human:owner")
+        await human.check_backend()
         app = create_app(human.config, backend=human.backend, version="0.4.0-test")
         async with (
             app.router.lifespan_context(app),
@@ -192,6 +197,7 @@ def test_convo_peek_exposes_current_revision_for_renaming(tmp_path, monkeypatch)
 def test_agent_connection_pins_batch_identity_and_refreshes_after_change(tmp_path):
     async def scenario():
         human = client(FakeServer(server_type="valkey"), "human:owner")
+        await human.check_backend()
         app = create_app(human.config, backend=human.backend, version="test")
 
         async def handle(request):
@@ -202,20 +208,21 @@ def test_agent_connection_pins_batch_identity_and_refreshes_after_change(tmp_pat
             AgentClient(
                 tmp_path,
                 actor="agent:alice",
-                connection=HubConnection("http://configured"),
+                connection=HubConnection("http://configured", root="/test/toolang"),
                 transport=httpx.MockTransport(handle),
             ) as alice,
         ):
             await alice.register("human:owner")
             with alice.session() as identity:
                 human.config = BackendConfig("redis://second", root="/test/toolang")
+                await human.check_backend()
                 app = create_app(human.config, backend=human.backend, version="test")
                 with pytest.raises(BackendUnavailable, match="identity changed"):
                     await alice.targets()
                 async with AgentClient(
                     tmp_path,
                     actor=alice.actor,
-                    connection=HubConnection("http://configured"),
+                    connection=HubConnection("http://configured", root="/test/toolang"),
                     transport=httpx.MockTransport(handle),
                 ) as pinned:
                     assert pinned.config.identity == identity
@@ -297,6 +304,7 @@ def test_talk_cursors_are_separate_after_backend_switch(tmp_path, monkeypatch):
 def test_agent_send_lost_http_ack_is_not_retried(tmp_path):
     async def scenario():
         human = client(FakeServer(server_type="valkey"), "human:owner")
+        await human.check_backend()
         app = create_app(human.config, backend=human.backend, version="0.4.0-test")
         writes = 0
 
@@ -328,6 +336,7 @@ def test_event_publication_retries_exact_http_operation_and_recovers(tmp_path):
 
     async def scenario():
         human = client(FakeServer(server_type="valkey"), "human:owner")
+        await human.check_backend()
         app = create_app(human.config, backend=human.backend, version="0.4.0-test")
         lost = False
         commits = []
@@ -416,6 +425,7 @@ def test_event_publication_retries_exact_http_operation_and_recovers(tmp_path):
 def test_agent_api_rejects_bad_identity_lease_and_publications(tmp_path):
     async def scenario():
         human = client(FakeServer(server_type="valkey"), "human:owner")
+        await human.check_backend()
         app = create_app(human.config, backend=human.backend, version="0.4.0-test")
         async with app.router.lifespan_context(app), agent(app, tmp_path) as alice:
             await alice.register("human:owner")
@@ -445,7 +455,9 @@ def test_agent_api_rejects_bad_identity_lease_and_publications(tmp_path):
                 with pytest.raises(EventRecoveryRequired):
                     await stale._request("POST", "/events/commits", json=base)
             async with httpx.AsyncClient(
-                transport=httpx.ASGITransport(app), base_url="http://hub"
+                headers={"X-Toolang-Root": "%2Ftest%2Ftoolang"},
+                transport=httpx.ASGITransport(app),
+                base_url="http://hub",
             ) as http:
                 assert (
                     await http.put("/agents/agent:alice/lease", json={})
@@ -479,6 +491,7 @@ def test_publication_rejects_incompatible_stored_versions_without_mutation(
 ):
     async def scenario():
         human = client(FakeServer(server_type="valkey"), "human:owner")
+        await human.check_backend()
         app = create_app(human.config, backend=human.backend, version="0.4.0-test")
         async with app.router.lifespan_context(app), agent(app, tmp_path) as alice:
             await alice.register("human:owner")
@@ -576,6 +589,7 @@ pytestmark = pytest.mark.usefixtures("fixed_conversation_ids")
 def test_handler_errors_do_not_trigger_other_agents(tmp_path, monkeypatch):
     async def scenario():
         human = client(FakeServer(server_type="valkey"), "human:owner")
+        await human.check_backend()
         app = create_app(human.config, backend=human.backend, version="0.4.0-test")
         async with (
             app.router.lifespan_context(app),
@@ -632,6 +646,7 @@ def test_handler_error_send_failure_is_checkpointed_without_retry(
 
     async def scenario():
         human = client(FakeServer(server_type="valkey"), "human:owner")
+        await human.check_backend()
         app = create_app(human.config, backend=human.backend, version="0.4.0-test")
         writes = []
 

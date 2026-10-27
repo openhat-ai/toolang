@@ -51,8 +51,6 @@ from toolang.teaming.client import HubClient
 
 
 def install_hub(monkeypatch, client, *, human="human:bryan", identity="test"):
-    connection = HubConnection("http://hub", identity)
-
     @asynccontextmanager
     async def hub(config, *, actor=None):
         service = client(actor=human)
@@ -65,7 +63,11 @@ def install_hub(monkeypatch, client, *, human="human:bryan", identity="test"):
 
     for module in (talk, directory):
         monkeypatch.setattr(module, "HubClient", hub)
-        monkeypatch.setattr(module, "settings", lambda root: (connection, human))
+        monkeypatch.setattr(
+            module,
+            "settings",
+            lambda root: (HubConnection("http://hub", identity, root=str(root)), human),
+        )
 
 
 def typed(name):
@@ -75,7 +77,7 @@ def typed(name):
 def test_interactive_talk_keeps_the_dataset_selected_during_resolution(
     tmp_path, monkeypatch, capsys
 ):
-    target = HubConnection("http://hub")
+    target = HubConnection("http://hub", root="/test/toolang")
     monkeypatch.setattr(talk, "settings", lambda root: (target, "human:bryan"))
     monkeypatch.setattr(talk.sys.stdin, "isatty", lambda: True)
     monkeypatch.setattr(talk.sys.stdout, "isatty", lambda: True)
@@ -85,7 +87,13 @@ def test_interactive_talk_keeps_the_dataset_selected_during_resolution(
         requests.append(request)
         if request.url.path == "/info":
             return httpx.Response(
-                200, json={"version": "test", "api_version": 0, "identity": "first"}
+                200,
+                json={
+                    "version": "test",
+                    "api_version": 0,
+                    "identity": "first",
+                    "root": "/test/toolang",
+                },
             )
         assert request.headers["X-Toolang-Backend"] == "first"
         if request.url.path.endswith("/resolve"):

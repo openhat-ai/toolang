@@ -185,11 +185,14 @@ def test_talk_cursor_hub_api_is_agent_only_and_fenced(tmp_path):
     async def scenario():
         server = FakeServer(server_type="valkey")
         async with client(server, "human:owner") as human:
+            await human.check_backend()
             app = create_app(human.config, backend=human.backend, version="0.4.0-test")
             async with (
                 agent(app, tmp_path) as alice,
                 httpx.AsyncClient(
-                    transport=httpx.ASGITransport(app), base_url="http://hub"
+                    headers={"X-Toolang-Root": "%2Ftest%2Ftoolang"},
+                    transport=httpx.ASGITransport(app),
+                    base_url="http://hub",
                 ) as http,
             ):
                 await alice.register(human.actor)

@@ -2,6 +2,7 @@
 
 from json import JSONDecodeError
 from pathlib import Path
+from urllib.parse import quote
 
 import httpx
 from pydantic import ValidationError
@@ -14,7 +15,7 @@ from toolang.cli.common.context import context_root
 from toolang.cli.common.output import echo_table, runtime_status_label
 from toolang.common.errors import ToolangError
 from toolang.setup.teaming import load_teaming_root
-from toolang.teaming.schemas import HubInfo
+from toolang.teaming.schemas import HubPartitionInfo
 from toolang.up.config import format_drivers
 from toolang.up.observation import RuntimeInventory
 from toolang.up.types import RuntimeInstanceSnapshot
@@ -51,12 +52,15 @@ def _hub_line(root: Path) -> str:
         endpoint = load_teaming_root(root).hub
         prefix = f"hub {endpoint}"
         with httpx.Client(trust_env=False, timeout=1) as client:
-            response = client.get(endpoint + "/info")
-            response.raise_for_status()
-            info = HubInfo.model_validate(response.json())
-            health = client.get(
-                endpoint + "/healthz", headers={"X-Toolang-Backend": info.identity}
+            response = client.get(
+                endpoint + "/info",
+                headers={"X-Toolang-Root": quote(str(root), safe="")},
             )
+            response.raise_for_status()
+            info = HubPartitionInfo.model_validate(response.json())
+            if info.root != str(root):
+                raise ValueError("Hub root differs from the selected root")
+            health = client.get(endpoint + "/healthz")
             if health.status_code != 200:
                 return f"{prefix}, unavailable"
             ready = health.json()
