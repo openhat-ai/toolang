@@ -30,12 +30,12 @@ Implement root propagation and backend selection centrally; all six paths reuse 
 4. Reuse `toolang:<root_code>:v0:*`, store schema 5, full-root ownership records,
    and collision checks. The selected backend owns all participant, conversation,
    lease, cursor, statistics, staging, and event operations.
-5. Use an app-local dictionary keyed by full root and one initialization lock.
-   Retain the startup backend/lifecycle; lazily create a backend/`HubLifecycle`
-   pair per additional root using existing implementations. Publish only after
-   initialization/reconciliation; clean up on failure and shutdown. Pass one
-   selected backend through each request/subscription. After restart, initialize
-   additional roots on demand.
+5. Keep one Hub lifecycle, connection pool, and presence worker. Bind each request
+   or subscription to its namespace without mutating a shared current-root field.
+   Reuse atomic namespace initialization and preserve its integrity checks per
+   namespace. For background expiry, traverse existing root ownership keys with
+   bounded SCAN and apply the existing expiry logic within each namespace; isolate
+   namespace errors and preserve cancellation. No per-root lifecycle map is needed.
 6. Preserve startup-root configuration, process ownership, and rootless
    `/info`/`/healthz` behavior and formats; scoped probes select their root.
    Require root-aware peers: new clients reject missing root echoes, and new
@@ -69,13 +69,15 @@ Update [Messaging](../design/messaging.md), [Hosting](../design/hosting.md), and
   propagation without mocking `settings`.
 - Invalid/missing roots and incompatible peers fail before dataset access;
   existing identity/ownership guards still apply. Metadata creates no keys.
-  Concurrent initialization starts one lifecycle per root; failure and shutdown
-  close owned resources. Reuse existing storage-integrity tests.
+  Concurrent requests keep namespace selection independent. Background expiry
+  covers both roots after startup/restart; shutdown closes shared resources.
+  Reuse existing storage-integrity tests.
 - Run default offline checks and isolated Valkey wire tests for the shared-Hub,
   same-name exchange and independent leases/cursors/events.
 
 ## Risks and open questions
 
 Root selection provides isolation, not authentication. Existing data remains in
-its original namespace. Backends/workers grow with roots used during a Hub
-lifetime. No open design questions remain.
+its original namespace. Background expiry work scales with stored namespaces.
+The separate inherited-login identity bug is addressed in
+[#983](https://github.com/openhat-ai/toolang/pull/983). No open questions remain.
