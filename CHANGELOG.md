@@ -7,6 +7,12 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ## [Unreleased]
 
+### Changed
+
+- `too ps` names the client Hub's URL with `available, VERSION`, `unavailable`,
+  or `error, REASON`; `too hub status` adds the server address to its running
+  state.
+
 ### Fixed
 
 - Default humans resolve from the process UID's OS account rather than an
