@@ -14,7 +14,7 @@ from .errors import BackendUnavailable, MessagingError
 from .lease import host_token
 from .schemas import HubConnection, Message, TalkCursor, conversation_id, target
 
-_CONNECTIONS: ContextVar[dict[Path, HubConnection]] = ContextVar(
+_CONNECTIONS: ContextVar[dict[str, HubConnection]] = ContextVar(
     "agent_hub_connections", default={}
 )
 
@@ -42,7 +42,8 @@ class AgentClient(HubClient):
 
     @property
     def config(self) -> HubConnection:
-        return _CONNECTIONS.get().get(self.root) or super().config
+        selected = super().config
+        return _CONNECTIONS.get().get(selected.root) or selected
 
     @contextmanager
     def session(self) -> Iterator[str]:
@@ -51,7 +52,7 @@ class AgentClient(HubClient):
         connection = self.config
         if not connection.identity:
             raise BackendUnavailable("Hub connection is not ready")
-        token = _CONNECTIONS.set({**_CONNECTIONS.get(), self.root: connection})
+        token = _CONNECTIONS.set({**_CONNECTIONS.get(), connection.root: connection})
         try:
             yield connection.identity
         finally:

@@ -112,9 +112,15 @@ def test_banner_removes_terminal_controls_and_keeps_literal_text_and_styles():
             "version": "0.4.0-hub",
             "api_version": 0,
             "identity": "dataset",
+            "root": "/test/toolang",
             "future": True,
         },
-        {"version": "unknown", "api_version": 0, "identity": "dataset"},
+        {
+            "version": "unknown",
+            "api_version": 0,
+            "identity": "dataset",
+            "root": "/test/toolang",
+        },
         {},
         {"version": ""},
         {"version": None},
@@ -134,7 +140,7 @@ def test_hub_version_accepts_additive_fields_and_handles_invalid_metadata(payloa
             return httpx.Response(200, json=payload)
 
         async with HubClient(
-            HubConnection("http://hub", "dataset"),
+            HubConnection("http://hub", "dataset", root="/test/toolang"),
             actor="human:bryan",
             transport=httpx.MockTransport(respond),
         ) as client:
@@ -162,7 +168,7 @@ def test_unavailable_hub_metadata_is_presentation_only(failure):
             return httpx.Response(failure, json={"detail": "unavailable"})
 
         async with HubClient(
-            HubConnection("http://hub", "dataset"),
+            HubConnection("http://hub", "dataset", root="/test/toolang"),
             actor="human:bryan",
             transport=httpx.MockTransport(respond),
         ) as client:

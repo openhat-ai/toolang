@@ -4,6 +4,7 @@ from toolang.setup.teaming import load_teaming_root
 
 import asyncio
 import json
+from urllib.parse import quote
 
 import httpx
 from httpx_sse import aconnect_sse
@@ -50,19 +51,22 @@ def test_team_sse_closes_on_expired_or_replaced_agent_lease(
         async with (
             AgentClient(
                 tmp_path,
-                connection=load_teaming_root(tmp_path).connection(),
+                connection=load_teaming_root(tmp_path).connection(root=str(tmp_path)),
                 actor="agent:alice",
                 token="old",
             ) as alice,
             AgentClient(
                 tmp_path,
-                connection=load_teaming_root(tmp_path).connection(),
+                connection=load_teaming_root(tmp_path).connection(root=str(tmp_path)),
                 actor="agent:alice",
                 token="new",
             ) as replacement,
             Valkey.from_url(valkey.url, decode_responses=True) as raw,
             httpx.AsyncClient(
-                base_url=connection.endpoint, timeout=5, trust_env=False
+                base_url=connection.endpoint,
+                timeout=5,
+                trust_env=False,
+                headers={"X-Toolang-Root": quote(connection.root, safe="")},
             ) as http,
         ):
             await alice.register("human:owner")

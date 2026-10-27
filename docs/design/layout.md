@@ -23,6 +23,9 @@ Overrides:
 - `too --root PATH`
 - `TOOLANG_ROOT`
 
+This precedence also applies to scripts and `cd`. The canonical host root supplies
+the R8 code for Hub keys; OS usernames and guest mount paths do not enter that code.
+
 Current root layout:
 
 ```text
@@ -75,6 +78,8 @@ The private `pid.json` contains only `pid`, `created`, `host`, `port`, and
 `status` (`starting` or `running`). It describes the local process and is removed
 after stop; agent clients use `[teaming]` in their PLACE root layer. Human and backend
 identity are absent from this record.
+The process may serve many client roots; its launch root only locates these
+management files and server configuration.
 
 
 ## Agent Home

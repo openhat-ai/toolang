@@ -3,6 +3,7 @@
 from toolang.setup.teaming import load_teaming_root
 
 import asyncio
+from urllib.parse import quote
 from contextlib import asynccontextmanager, suppress
 import json
 import subprocess
@@ -32,7 +33,7 @@ pytestmark = pytest.mark.live_valkey
 @asynccontextmanager
 async def active_agent(root, actor, owner):
     async with AgentClient(
-        root, connection=load_teaming_root(root).connection(), actor=actor
+        root, connection=load_teaming_root(root).connection(root=str(root)), actor=actor
     ) as client:
         await client.register(owner)
 
@@ -242,13 +243,14 @@ def test_presence_expires_naturally_and_gc_names_remain_nonunique(
             HubClient(connection, actor="human:owner") as human,
             AgentClient(
                 tmp_path,
-                connection=load_teaming_root(tmp_path).connection(),
+                connection=load_teaming_root(tmp_path).connection(root=str(tmp_path)),
                 actor="agent:alice",
             ) as alice,
             Valkey.from_url(valkey.url, decode_responses=True) as raw,
             httpx.AsyncClient(
                 base_url=connection.endpoint,
                 headers={
+                    "X-Toolang-Root": quote(connection.root, safe=""),
                     "X-Toolang-Backend": connection.identity,
                     "X-Toolang-Human": "human%3Aowner",
                 },

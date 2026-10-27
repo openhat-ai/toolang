@@ -73,8 +73,8 @@ before selector conversion or source preparation.
 names, remote refs, and placements.
 
 Global options, including `--root`/`-r`, precede the command or AGENT.
-`TOOLANG_ROOT` supplies the default Toolang root. Source-local scripts do not
-accept an explicit global root override.
+Root precedence is `--root`/`-r`, `TOOLANG_ROOT`, then `~/.toolang`, including
+implicit/explicit script entry and both `cd` argument orders.
 
 ## Help vocabulary
 

@@ -51,7 +51,9 @@ def server(monkeypatch):
         lambda root, actor, **_: make_client(server, actor),
     )
     monkeypatch.setattr(
-        conversations, "connection_for", lambda _: HubConnection("http://hub", "test")
+        conversations,
+        "connection_for",
+        lambda _: HubConnection("http://hub", "test", root="/test/toolang"),
     )
     return server
 

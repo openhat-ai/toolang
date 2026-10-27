@@ -1,6 +1,7 @@
 """Opt-in wire and terminal checks; never touch the user's Valkey or tmux."""
 
 import asyncio
+from contextlib import AsyncExitStack
 from dataclasses import replace
 import json
 from pathlib import Path
@@ -28,7 +29,7 @@ from toolang.teaming.client import HubClient
 from toolang.teaming.config import BackendConfig
 from toolang.teaming.errors import MessagingError, StorageIntegrityError
 from valkey.asyncio import Valkey
-from toolang.teaming.schemas import Message, HubConnection, HubInfo
+from toolang.teaming.schemas import Message, HubConnection, HubPartitionInfo
 from toolang.up.hub import HubProcess
 
 pytestmark = pytest.mark.live_valkey
@@ -61,6 +62,20 @@ def test_root_namespace_isolation_on_wire(valkey):
                 await one.create_conversation("must not write")
             assert {key: await raw.dump(key) for key in await raw.keys("*")} == before
             assert await two.backend.online("agent:alice")
+
+    asyncio.run(scenario())
+
+
+def test_root_discovery_ignores_foreign_binary_key_names(valkey):
+    async def scenario():
+        async with (
+            MessagingClient(valkey, actor="human:owner") as human,
+            Valkey.from_url(valkey.url, decode_responses=True) as raw,
+        ):
+            key = b"toolang:\xffaaaaaaa:v0:root"
+            await raw.set(key, "/unrelated")
+            assert await human.backend.roots() == [valkey.root]
+            assert await raw.exists(key)
 
     asyncio.run(scenario())
 
@@ -160,12 +175,16 @@ def test_standard_backend_registration_streams_and_expiry(valkey):
 
 
 def hub_connection(root):
+    from urllib.parse import quote
+
     endpoint = load_teaming_root(root).hub
     with httpx.Client(trust_env=False, timeout=5) as http:
-        response = http.get(endpoint + "/info")
+        response = http.get(
+            endpoint + "/info", headers={"X-Toolang-Root": quote(str(root), safe="")}
+        )
         response.raise_for_status()
-    info = HubInfo.model_validate(response.json())
-    return HubConnection(endpoint, info.identity)
+    info = HubPartitionInfo.model_validate(response.json())
+    return HubConnection(endpoint, info.identity, root=str(root))
 
 
 @pytest.fixture
@@ -216,6 +235,125 @@ def test_hub_fails_closed_after_backend_data_loss(valkey, running_hub, tmp_path)
 
     asyncio.run(scenario())
     assert running_hub.current() == original
+
+
+def test_one_hub_keeps_cli_tools_and_executor_conversations_in_the_client_root(
+    valkey, running_hub, tmp_path
+):
+    from toolang.base.types.tool import ToolContext
+    from toolang.common.layout import AgentLayout
+    from toolang.execution.executor import conversations
+    from toolang.plugin.toolsets.convo import ConvoToolset
+
+    endpoint = load_teaming_root(tmp_path).hub
+    roots = [tmp_path / "one", tmp_path / "two"]
+    for root in roots:
+        root.mkdir()
+        (root / "config.toml").write_text(
+            f'[teaming]\nhuman = "owner"\nhub = "{endpoint}"\n'
+        )
+
+    async def scenario():
+        for root in roots:
+            connection = load_teaming_root(root).connection(root=str(root))
+            async with (
+                AgentClient(root, connection=connection, actor="agent:alice") as agent,
+                HubClient(connection, actor="human:owner") as human,
+            ):
+                await agent.register("human:owner")
+                system = next(
+                    row["conversation"]
+                    for row in await human.contacts()
+                    if row["name"] == "all"
+                )
+                result = await asyncio.to_thread(
+                    subprocess.run,
+                    [
+                        sys.executable,
+                        "-m",
+                        "toolang.cli.toolang.main",
+                        "--root",
+                        str(root),
+                        "talk",
+                        "all",
+                        root.name,
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+                assert result.returncode == 0, result.stderr
+                assert [
+                    Message.decode(data["data"]).body
+                    for _, data in await agent.read(system)
+                ] == [root.name]
+                await agent.send(system, body="reply " + root.name)
+                await human.set_rules(system, root.name + " rules", revision="0")
+                layout = AgentLayout.resident(root, "alice")
+                access = await conversations.load_target(
+                    layout, system, connection=connection
+                )
+                assert access.document.content == root.name + " rules"
+                toolset = ConvoToolset({"root": str(root), "hub": endpoint})
+                rules = await toolset.tools()["get_rules"].invoke(
+                    {"target": system}, ToolContext(layout.home, root)
+                )
+                assert rules.error is None
+                assert rules.output["content"] == root.name + " rules"
+                assert [
+                    Message.decode(data["data"]).body
+                    for _, data in await human.read(system)
+                ] == [root.name, "reply " + root.name]
+        from httpx_sse import aconnect_sse
+        from urllib.parse import quote
+
+        async with AsyncExitStack() as stack:
+            http = await stack.enter_async_context(
+                httpx.AsyncClient(base_url=endpoint, timeout=10, trust_env=False)
+            )
+            humans, feeds = [], []
+            for root in roots:
+                human = await stack.enter_async_context(
+                    HubClient(
+                        load_teaming_root(root).connection(root=str(root)),
+                        actor="human:owner",
+                    )
+                )
+                stream = await stack.enter_async_context(
+                    aconnect_sse(
+                        http,
+                        "GET",
+                        "/team/events",
+                        headers={
+                            "X-Toolang-Root": quote(str(root), safe=""),
+                            "X-Toolang-Human": "human%3Aowner",
+                            "X-Toolang-Backend": human.config.identity,
+                        },
+                    )
+                )
+                stream.response.raise_for_status()
+                events = stream.aiter_sse()
+                assert (await anext(events)).event == "checkpoint"
+                humans.append(human)
+                feeds.append(events)
+            created = await asyncio.gather(
+                *(
+                    human.create_conversation(root.name)
+                    for human, root in zip(humans, roots)
+                )
+            )
+            async with asyncio.timeout(10):
+                for events, conversation in zip(feeds, created):
+                    event = await anext(events)
+                    assert event.event == "change"
+                    assert json.loads(event.data)["conversation"] == conversation.id
+        async with Valkey.from_url(valkey.url, decode_responses=True) as raw:
+            for root in roots:
+                config = replace(valkey, root=str(root))
+                assert await raw.get(Keys(config.root_code).root) == str(root)
+            assert not await raw.exists(Keys(valkey.root_code).root)
+
+    asyncio.run(scenario())
 
 
 def test_hub_cli_lifecycle_with_separate_client_root(valkey, tmp_path, monkeypatch):
@@ -274,7 +412,7 @@ def test_hub_cli_lifecycle_with_separate_client_root(valkey, tmp_path, monkeypat
         assert run(server, "hub", "start").returncode != 0
 
         async def exchange():
-            connection = load_teaming_root(client).connection()
+            connection = load_teaming_root(client).connection(root=str(client))
             async with HubClient(connection, actor="human:owner") as human:
                 assert not any(
                     row["member"].startswith("agent:") for row in await human.team()
@@ -321,7 +459,8 @@ def test_hub_cli_lifecycle_with_separate_client_root(valkey, tmp_path, monkeypat
 
         async def verify():
             async with HubClient(
-                load_teaming_root(client).connection(), actor="human:owner"
+                load_teaming_root(client).connection(root=str(client)),
+                actor="human:owner",
             ) as human:
                 assert len(await human.history(direct)) == 3
 

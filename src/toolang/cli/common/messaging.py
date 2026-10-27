@@ -23,4 +23,4 @@ def settings(root: Path) -> tuple[HubConnection, str]:
     config = load_teaming_root(root)
     if not config.enabled:
         raise TeamingError("Teaming is disabled for this root")
-    return config.connection(), config.human
+    return config.connection(root=str(root)), config.human

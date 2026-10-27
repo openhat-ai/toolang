@@ -1150,7 +1150,7 @@ execution = setup.workspace_roots(state.workspaces)
 for path in execution.values():
     (path / 'handoff-probe.txt').write_text('shared workspace')
 catalog = resolve_model_catalog_selection(layout, environ=env)
-teaming = resolve_teaming_setup(config_sources(layout), root=layout.place_config, home=layout.config)
+teaming = resolve_teaming_setup(config_sources(layout), root=layout.place_config, home=layout.config, host_root=layout.host_root)
 named_env = layout.place / sys.argv[2]
 assert apply_environment_file(named_env, os.environ) == env
 for path in (layout.place_config, catalog.path, env_file, named_env):

@@ -203,7 +203,8 @@ class RuntimeConfig:
                 for key, value in _object(data.get("origins", {})).items()
             }
             if any(
-                key not in _SCOPES | _FILE_ORIGINS and not Path(key).is_absolute()
+                key not in _SCOPES | _FILE_ORIGINS | {"toolang_root"}
+                and not Path(key).is_absolute()
                 for key in origins
             ):
                 raise ValueError

@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+from copy import copy
 import json
+import logging
 import random
 from datetime import UTC, datetime
 from typing import Any
@@ -14,6 +16,7 @@ from valkey.asyncio.retry import Retry
 from valkey.backoff import NoBackoff
 from valkey.exceptions import ConnectionError, TimeoutError, ValkeyError
 
+from toolang.common.place_codes import root_code
 from ...config import BackendConfig
 from ...errors import (
     BackendUnavailable,
@@ -41,11 +44,14 @@ from ...schemas import (
     target,
     TalkCursor,
     rules_revision,
+    host_root,
 )
 from . import scripts
 from .lua import ROOT_GUARD, TEAM_GUARD
 from .events import ValkeyEvents
 from ...types import SNAPSHOT_RETRIES, STORAGE_BATCH_SIZE
+
+logger = logging.getLogger(__name__)
 
 
 class _SnapshotChanged(Exception):
@@ -67,7 +73,9 @@ class ValkeyBackend:
     def __init__(self, config: BackendConfig, *, client: Valkey | None = None):
         self.keys = Keys(config.root_code)
         self._root = config.root
-        self._initialized = False
+        self._initialized_roots: set[str] = set()
+        self._owns_client = True
+        self._roots_cursor = 0
         self.events = ValkeyEvents(self)
         try:
             self._client = (
@@ -86,6 +94,8 @@ class ValkeyBackend:
             raise TeamingError("Invalid hub.backend.url") from exc
 
     async def close(self) -> None:
+        if not self._owns_client:
+            return
         try:
             await self._client.aclose()
         except ValkeyError as exc:
@@ -94,17 +104,55 @@ class ValkeyBackend:
     async def ping(self) -> None:
         await self._call("PING")
 
-    async def _call(self, command: str, *args: Any) -> Any:
+    def for_root(self, root: str) -> ValkeyBackend:
+        """Borrow the connection with immutable namespace bindings for one request."""
+        view = copy(self)
+        view._root = host_root(root)
+        view.keys = Keys(root_code(root))
+        view.events = ValkeyEvents(view)
+        view._owns_client = False
+        return view
+
+    async def roots(self) -> list[str]:
+        """Discover one SCAN batch of existing ownership records, without writes."""
+        cursor, keys = await self._call(
+            "SCAN",
+            self._roots_cursor,
+            "MATCH",
+            Keys.roots_pattern(),
+            "COUNT",
+            STORAGE_BATCH_SIZE,
+            guard=False,
+        )
+        self._roots_cursor = int(cursor)
+        roots = []
+        for key in keys:
+            try:
+                root = host_root(await self._call("GET", key, guard=False))
+                if Keys(root_code(root)).root != key:
+                    raise StorageIntegrityError("Toolang root ownership mismatch")
+            except BackendUnavailable:
+                raise
+            except MessagingError:
+                logger.warning("Skipping invalid Hub ownership record: %s", key)
+                continue
+            self._initialized_roots.add(root)
+            roots.append(root)
+        return roots
+
+    async def _call(self, command: str, *args: Any, guard: bool = True) -> Any:
         caller = asyncio.current_task()
         cancelling = caller.cancelling() if caller is not None else 0
         try:
-            if command.upper() not in {"PING", "EVAL"}:
+            if guard and command.upper() not in {"PING", "EVAL"}:
                 await self._client.execute_command(
                     "EVAL", ROOT_GUARD, 1, self.keys.root, self._root
                 )
             result = await self._client.execute_command(command, *args)
         except (ConnectionError, TimeoutError) as exc:
             raise BackendUnavailable("Teaming backend is unavailable") from exc
+        except UnicodeError as exc:
+            raise StorageIntegrityError("Invalid UTF-8 in teaming data") from exc
         except ValkeyError as exc:
             if "snapshot_changed" in str(exc):
                 raise _SnapshotChanged from exc
@@ -190,10 +238,10 @@ class ValkeyBackend:
                     }
                 ),
                 self.keys.prefix,
-                int(self._initialized),
+                int(self._root in self._initialized_roots),
             ],
         )
-        self._initialized = True
+        self._initialized_roots.add(self._root)
         await self._operation(scripts.READ, {})
 
     async def _snapshot(self, op: dict) -> dict:

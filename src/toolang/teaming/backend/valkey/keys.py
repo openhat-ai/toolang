@@ -10,6 +10,10 @@ from ...schemas import conversation_id, target
 class Keys:
     root_code: str
 
+    @staticmethod
+    def roots_pattern() -> str:
+        return "toolang:" + "[0-9a-z]" * 8 + ":v0:root"
+
     @property
     def prefix(self) -> str:
         return f"toolang:{self.root_code}:v0"

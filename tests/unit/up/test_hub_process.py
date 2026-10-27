@@ -181,6 +181,7 @@ import toolang.teaming.api as api
 class OfflineBackend:
     events = object()
     async def ping(self): pass
+    async def roots(self): return []
     async def initialize(self): pass
     async def due_presence(self): return []
     async def close(self): pass

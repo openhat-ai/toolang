@@ -164,11 +164,12 @@ def test_color_snapshot_is_revalidated_if_an_existing_color_changes(monkeypatch)
 def test_existing_team_route_exposes_colors_without_leases_or_new_routes():
     async def scenario():
         human = client(FakeServer(server_type="valkey"), "human:owner")
+        await human.check_backend()
         app = create_app(human.config, backend=human.backend, version="test")
         async with (
             app.router.lifespan_context(app),
             HubClient(
-                HubConnection("http://hub", CONFIG.identity),
+                HubConnection("http://hub", CONFIG.identity, root="/test/toolang"),
                 actor=human.actor,
                 transport=httpx.ASGITransport(app),
             ) as hub,

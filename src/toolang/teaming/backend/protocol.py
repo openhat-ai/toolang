@@ -1,7 +1,7 @@
 """Driver-independent storage interfaces used by teaming services.
 
-The backend owns one connection lifecycle, including execution-event storage.
-Implementations
+The Hub owns the shared connection lifecycle, including execution-event storage;
+root-bound backend views borrow it. Implementations
 normalize driver replies and enforce atomic lease/membership checks on writes.
 No keys, commands, scripts, or concrete driver types belong in these interfaces.
 """
@@ -43,6 +43,14 @@ class Backend(Protocol):
     def events(self) -> EventBackend: ...
 
     # Lifetime
+
+    def for_root(self, root: str) -> Backend:
+        """Bind one root without transferring ownership of the shared connection."""
+        ...
+
+    async def roots(self) -> list[str]:
+        """Read one bounded batch of existing partition ownership records."""
+        ...
 
     async def close(self) -> None: ...
 

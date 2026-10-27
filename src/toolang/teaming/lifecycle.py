@@ -39,7 +39,6 @@ class HubLifecycle:
         self.tasks = []
         try:
             await self.backend.ping()
-            await self.backend.initialize()
             await self.presence.reconcile_once()
             self.tasks.append(
                 asyncio.create_task(self.presence.run(), name="hub-presence")

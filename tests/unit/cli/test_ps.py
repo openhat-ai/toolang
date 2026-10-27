@@ -354,9 +354,10 @@ def test_ps_probes_only_configured_hub(tmp_path, monkeypatch, capsys, mode, expe
                     "version": "server",
                     "api_version": 0,
                     "identity": "dataset",
+                    "root": str(tmp_path),
                 },
             )
-        assert request.headers["X-Toolang-Backend"] == "dataset"
+        assert "X-Toolang-Backend" not in request.headers
         if mode == "health_json":
             return httpx.Response(200, text="bad json")
         body = {

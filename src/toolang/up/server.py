@@ -650,12 +650,12 @@ def _serve_workload(
                         teaming = current_setup().teaming
                         if teaming is None or not teaming.enabled:
                             raise MessagingError("Teaming is disabled for this agent")
-                        return teaming.root.connection(
+                        return teaming.connection(
                             gateway=environ.get("TOOLANG_HOST_GATEWAY")
                         )
 
                     hub_client = AgentClient(
-                        spec.toolang_root or spec.layout.root or spec.layout.place,
+                        Path(messaging_setup.host_root),
                         actor=f"agent:{spec.layout.name}",
                         connection=current_hub_connection,
                     )

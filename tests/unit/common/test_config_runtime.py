@@ -45,7 +45,10 @@ def test_runtime_defaults_do_not_freeze_explicit_configuration(tmp_path):
 
     def teaming():
         return resolve_teaming_setup(
-            config_sources(layout), root=layout.place_config, home=layout.config
+            config_sources(layout),
+            root=layout.place_config,
+            home=layout.config,
+            host_root=layout.host_root,
         )
 
     assert teaming().root.human == "human:host-owner"
@@ -57,6 +60,33 @@ def test_runtime_defaults_do_not_freeze_explicit_configuration(tmp_path):
     assert teaming().root.hub == "http://new-host:7001"
     layout.place_config.write_text("")
     assert teaming().root.human == "human:host-owner"
+
+
+def test_guest_teaming_keeps_host_root_separate_from_mounted_root_and_place(tmp_path):
+    from toolang.up.mounts import prepare_guest_environment
+
+    host = AgentLayout(
+        tmp_path / "project", "alice", "roaming", root=tmp_path / "selected-root"
+    )
+    patch = prepare_guest_environment(host, mapping={})["TOOLANG_CONFIG_PATCH"]
+    guest = AgentLayout(
+        Path("/guest/project"),
+        "alice",
+        "roaming",
+        root=Path("/guest/toolang"),
+        runtime_config=RuntimeConfig.parse(patch),
+    )
+    assert guest.host_root == host.root
+    assert guest.host_root != guest.root and guest.host_root != guest.place
+    teaming = resolve_teaming_setup(
+        (),
+        root=guest.place_config,
+        home=guest.config,
+        host_root=guest.host_root,
+        default_human="host-owner",
+    )
+    assert teaming.connection().root == str(host.root)
+    assert teaming.toolset_config()["root"] == str(host.root)
 
 
 def test_workspace_patch_cannot_restore_revoked_or_rebound_grants():

@@ -212,9 +212,9 @@ class SetupWatcher:
             inputs.sources,
             root=self.layout.place_config,
             home=self.layout.config,
+            host_root=self.layout.host_root,
         )
         toolset_configs["convo"] = teaming.toolset_config(
-            root=self.layout.root or self.layout.place,
             gateway=inputs.envs.get("TOOLANG_HOST_GATEWAY"),
         )
         catalog_path = resolve_model_catalog_path(

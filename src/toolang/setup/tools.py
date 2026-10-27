@@ -39,9 +39,9 @@ async def load_tool_setup(
             sources,
             root=layout.place_config,
             home=layout.config,
+            host_root=layout.host_root,
         )
         toolsets["convo"] = teaming.toolset_config(
-            root=layout.root or layout.place,
             gateway=os.environ.get("TOOLANG_HOST_GATEWAY"),
         )
         allowed = resolve_tool_allow(configs)

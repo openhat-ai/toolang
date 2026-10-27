@@ -6,7 +6,6 @@ from pathlib import Path
 from collections.abc import Mapping, Sequence
 import json
 import os
-import pwd
 from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
@@ -14,6 +13,7 @@ if TYPE_CHECKING:
 
 from toolang.base.types.sandbox import SandboxMount
 from toolang.catalog.types import CAP_DIRECTORY_NAMES
+from toolang.common.accounts import current_username
 from toolang.common.layout import (
     AgentLayout,
     IMPLICIT_WORKSPACE_NAME,
@@ -153,7 +153,11 @@ def prepare_guest_environment(
     catalog: ModelCatalogSelection | None = None,
 ) -> dict[str, str]:
     """Capture source origins and execution corrections without rewriting sources."""
-    origins = {"root": str(layout.place_config), "home": str(layout.config)}
+    origins = {
+        "root": str(layout.place_config),
+        "home": str(layout.config),
+        "toolang_root": str(layout.host_root),
+    }
     if catalog is not None and catalog.scope in {"root", "home"}:
         origins[f"{catalog.scope}/catalog.json"] = str(catalog.path)
     overlays: dict[str, object] = {}
@@ -198,9 +202,7 @@ def prepare_guest_environment(
         CONFIG_PATCH_ENV: json.dumps(
             {
                 "origins": origins,
-                "defaults": {
-                    "root": {"teaming": {"human": pwd.getpwuid(os.getuid()).pw_name}}
-                },
+                "defaults": {"root": {"teaming": {"human": current_username()}}},
                 **overlays,
             }
         ),

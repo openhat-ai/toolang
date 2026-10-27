@@ -17,6 +17,8 @@ def test_hub_uses_injected_contracts_for_lifespan_messages_and_events():
     async def scenario():
         backend = create_autospec(Backend, instance=True, spec_set=True)
         backend.events = create_autospec(EventBackend, instance=True, spec_set=True)
+        backend.roots.return_value = []
+        backend.for_root.return_value = backend
         backend.due_presence.return_value = []
         backend.participants.return_value = {"agent:alice": {"owner": "human:owner"}}
         backend.events.online_token.return_value = "lease"
@@ -39,11 +41,14 @@ def test_hub_uses_injected_contracts_for_lifespan_messages_and_events():
             actor="human:owner",
             backend=backend,
         )
+        await client.check_backend()
         app = create_app(client.config, backend=client.backend, version="0.4.0-test")
         async with (
             app.router.lifespan_context(app),
             httpx.AsyncClient(
-                transport=httpx.ASGITransport(app), base_url="http://hub"
+                headers={"X-Toolang-Root": "%2Ftest%2Ftoolang"},
+                transport=httpx.ASGITransport(app),
+                base_url="http://hub",
             ) as http,
         ):
             assert (await http.get("/healthz")).status_code == 200

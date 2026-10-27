@@ -40,10 +40,14 @@ class ConvoToolset:
 
     def __init__(self, config: Mapping[str, Any]):
         self.root = Path(config["root"]) if config else None
-        self.hub = HubConnection(str(config.get("hub", DEFAULT_HUB_URL)))
+        self.hub = (
+            HubConnection(str(config.get("hub", DEFAULT_HUB_URL)), root=str(self.root))
+            if self.root is not None
+            else None
+        )
 
     def connection(self, context: ToolContext) -> AgentClient:
-        if self.root is None:
+        if self.root is None or self.hub is None:
             raise MessagingError("Teaming is disabled for this agent")
         return AgentClient(
             self.root, actor=f"agent:{context.home.name}", connection=self.hub
