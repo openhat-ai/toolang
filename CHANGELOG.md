@@ -7,7 +7,22 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ## [Unreleased]
 
+### Added
+
+- Global `--root`/`-r` is accepted before implicit or explicit script entry,
+  using the same root precedence as `cd` and other commands.
+  ([#985](https://github.com/openhat-ai/toolang/pull/985))
+
 ### Changed
+
+- **Breaking:** Upgrade Hub and clients together: business APIs require
+  percent-encoded `X-Toolang-Root`, and Python `HubConnection` requires `root=`.
+  ([#985](https://github.com/openhat-ai/toolang/pull/985))
+
+- One Hub serves same-name agents and conversations from independent canonical
+  Toolang roots, selected by client root across Talk/convo, tools, executor
+  guidance, lifecycle events, and guests.
+  ([#985](https://github.com/openhat-ai/toolang/pull/985))
 
 - `too ps` names the client Hub's URL with `available, VERSION`, `unavailable`,
   or `error, REASON`; `too hub status` adds the server address to its running
