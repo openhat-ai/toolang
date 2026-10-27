@@ -81,7 +81,8 @@ def test_hub_status_uses_record_and_keeps_up_when_version_unavailable(
     version = "server" if metadata == "valid" else "unknown"
     endpoint = f"[{host}]:9999" if ":" in host else f"{host}:9999"
     assert (
-        capsys.readouterr().out == f"hub running: {version}, {endpoint}, {record.pid}\n"
+        capsys.readouterr().out
+        == f"hub {endpoint} running {version}, pid={record.pid}\n"
     )
     assert len(requests) == 1
 
@@ -114,18 +115,18 @@ def test_hub_status_ignores_malformed_root_configuration(tmp_path, monkeypatch, 
     )
     assert cli.main(["--root", str(tmp_path), "hub", "status"]) == 0
     assert capsys.readouterr().out == (
-        f"hub running: server, 127.0.0.1:9999, {record.pid}\n"
+        f"hub 127.0.0.1:9999 running server, pid={record.pid}\n"
     )
 
 
 @pytest.mark.parametrize(
     "local,expected",
     [
-        ("absent", "hub not running"),
-        ("starting", "hub not running"),
-        ("stale", "hub not running"),
-        ("corrupt", "hub unknown:"),
-        ("denied", "hub unknown:"),
+        ("absent", "hub 127.0.0.1:7001 not running"),
+        ("starting", "hub 127.0.0.1:9999 not running"),
+        ("stale", "hub 127.0.0.1:7001 not running"),
+        ("corrupt", "hub 127.0.0.1:7001 error, "),
+        ("denied", "hub 127.0.0.1:7001 error, "),
     ],
 )
 def test_hub_status_distinguishes_down_and_unverifiable(
@@ -256,5 +257,60 @@ def test_root_api_settings_rejected_and_convo_list_requires_running_hub(
     output = capsys.readouterr().out
     assert output.splitlines() == [
         "0 agents",
-        "hub not running",
+        "hub http://127.0.0.1:7001, unavailable",
     ]
+
+
+@pytest.mark.parametrize("host", ["127.0.0.2", "0.0.0.0", "::"])
+@pytest.mark.parametrize("local", ["absent", "corrupt"])
+def test_hub_status_without_record_uses_server_config(
+    tmp_path, monkeypatch, capsys, host, local
+):
+    (tmp_path / "config.toml").write_text(
+        f'[hub]\nhost = "{host}"\nport = 8123\n'
+        '[teaming]\nhub = "http://client.example:7777"\n'
+    )
+    monkeypatch.setenv("TOOLANG_HUB_PORT", "bad")
+    process = hub.HubProcess(tmp_path)
+    if local == "corrupt":
+        process.path.parent.mkdir()
+        process.path.write_text("invalid")
+    monkeypatch.setattr(
+        hub.httpx, "Client", lambda **_: pytest.fail("missing record must not probe")
+    )
+
+    assert cli.main(["--root", str(tmp_path), "hub", "status"]) == 0
+
+    address = f"[{host}]:8123" if ":" in host else f"{host}:8123"
+    line = capsys.readouterr().out.strip()
+    if local == "absent":
+        assert line == f"hub {address} not running"
+    else:
+        assert (
+            line == f"hub {address} error, Invalid Hub process record: {process.path}"
+        )
+
+
+@pytest.mark.parametrize("local", ["absent", "corrupt"])
+@pytest.mark.parametrize(
+    "config", ["bad {{{", '[hub]\nport = "bad"\n', '[hub.backend]\nurl = "bad"\n']
+)
+def test_hub_status_omits_unknown_address_with_malformed_config(
+    tmp_path, monkeypatch, capsys, local, config
+):
+    (tmp_path / "config.toml").write_text(config)
+    process = hub.HubProcess(tmp_path)
+    if local == "corrupt":
+        process.path.parent.mkdir()
+        process.path.write_text("invalid")
+    monkeypatch.setattr(
+        hub.httpx, "Client", lambda **_: pytest.fail("missing record must not probe")
+    )
+
+    assert cli.main(["--root", str(tmp_path), "hub", "status"]) == 0
+
+    line = capsys.readouterr().out.strip()
+    if local == "absent":
+        assert line == "hub not running"
+    else:
+        assert line == f"hub error, Invalid Hub process record: {process.path}"

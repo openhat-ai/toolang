@@ -46,8 +46,10 @@ def _show(root: Path, *, residents_only: bool) -> None:
 
 
 def _hub_line(root: Path) -> str:
+    prefix = "hub"
     try:
         endpoint = load_teaming_root(root).hub
+        prefix = f"hub {endpoint}"
         with httpx.Client(trust_env=False, timeout=1) as client:
             response = client.get(endpoint + "/info")
             response.raise_for_status()
@@ -56,23 +58,23 @@ def _hub_line(root: Path) -> str:
                 endpoint + "/healthz", headers={"X-Toolang-Backend": info.identity}
             )
             if health.status_code != 200:
-                return "hub not running"
+                return f"{prefix}, unavailable"
             ready = health.json()
             if (
                 not isinstance(ready, dict)
                 or ready.keys() != {"ok"}
                 or not isinstance(ready["ok"], bool)
             ):
-                raise ValueError("invalid hub readiness response")
+                raise ValueError("invalid response")
             if not ready["ok"]:
-                return "hub not running"
-        return f"hub running, {info.version.strip() or 'unknown'}, {endpoint}"
+                return f"{prefix}, unavailable"
+        return f"{prefix}, available, {info.version.strip() or 'unknown'}"
     except httpx.HTTPError:
-        return "hub not running"
+        return f"{prefix}, unavailable"
     except (JSONDecodeError, ValidationError):
-        return "hub unknown: invalid hub response"
+        return f"{prefix}, error, invalid response"
     except (OSError, RuntimeError, ValueError, ToolangError) as exc:
-        return f"hub unknown: {' '.join(str(exc).split())}"
+        return f"{prefix}, error, {' '.join(str(exc).split())}"
 
 
 def _safe_text(console: Console, value: str) -> str:

@@ -4,6 +4,7 @@ import httpx
 import psutil
 
 import os
+from pathlib import Path
 import sys
 from typing import Annotated
 
@@ -16,9 +17,11 @@ from toolang.cli.common.output import runtime_status_label
 from toolang.cli.common.terminal_session import prepare_terminal
 from toolang.cli.common.help import CliCommand, CliGroup, MetadataCommand, show_help
 from toolang.common.config_sources import read_config
+from toolang.common.errors import ToolangError
 from toolang.teaming.schemas import HubInfo
 from toolang.up.config import resolve_port_override, hub_config
 from toolang.up.hub import HubProcess, serve as serve_hub
+from toolang.up.records import HubRecord
 
 PortOption = Annotated[
     int | None,
@@ -125,15 +128,35 @@ def stop(
     typer.echo("Hub stopped")
 
 
+def _status_prefix(root: Path, record: HubRecord | None = None) -> str:
+    if record is None:
+        path = root / "config.toml"
+        try:
+            config = hub_config(
+                read_config(path, include_workspaces=False),
+                source=path,
+                root=str(root.resolve()),
+            )
+        except (OSError, ValueError, ToolangError):
+            return "hub"
+        host, port = config.host, config.port
+    else:
+        host, port = record.host, record.port
+    host = f"[{host}]" if ":" in host else host
+    return f"hub {host}:{port}"
+
+
 def status(ctx: typer.Context) -> None:
     """Show hub status"""
+    root = context_root(ctx)
     try:
-        record = HubProcess(context_root(ctx)).current()
+        record = HubProcess(root).current()
     except (ValueError, OSError, psutil.Error) as exc:
-        typer.echo(f"hub unknown: {' '.join(str(exc).split())}")
+        typer.echo(f"{_status_prefix(root)} error, {' '.join(str(exc).split())}")
         return
+    prefix = _status_prefix(root, record)
     if record is None or runtime_status_label(record.status) == "down":
-        typer.echo("hub not running")
+        typer.echo(f"{prefix} not running")
         return
     version = "unknown"
     try:
@@ -144,5 +167,4 @@ def status(ctx: typer.Context) -> None:
             version = info.version.strip() or "unknown"
     except (httpx.HTTPError, ValueError):
         pass
-    host = f"[{record.host}]" if ":" in record.host else record.host
-    typer.echo(f"hub running: {version}, {host}:{record.port}, {record.pid}")
+    typer.echo(f"{prefix} running {version}, pid={record.pid}")
