@@ -4,30 +4,18 @@ Status: proposed API contract for [client-root namespaces](client-root-hub-names
 
 ## Shared rules
 
-The current 48 method/path combinations remain unchanged. Today every data route
-uses the Hub startup root, `S`; afterward it uses the client-selected host root,
-`R`. Business bodies, query parameters, responses, and actor permissions stay the
-same, except for the metadata changes below.
+Keep all 48 method/path combinations and business payloads/permissions. Current
+routes use the Hub startup root `S`; scoped routes will use client-selected `R`.
 
-- Data routes require `X-Toolang-Root`: the percent-encoded canonical host root.
-  Reuse its existing R8 key prefix and full-path ownership checks. Missing or
-  invalid roots return 400 before storage access; never fall back to `S`.
-- Scoped `/info` returns `root` and that partition's `identity`. Clients verify
-  the root echo and carry the identity in the existing `X-Toolang-Backend` header.
-  Existing identity checks compare against `R`, returning 409 `hub_changed` on
-  mismatch. Unscoped service probes do not validate a partition identity.
-- Human routes retain `X-Toolang-Human`; agent routes retain
-  `X-Toolang-Agent-Lease`. Owners, leases, membership, and permissions are resolved
-  within `R`; identical participant/conversation IDs can exist in different roots.
-- Bind backend selection once per request/SSE subscription. Resume context and
-  caches include root/identity; switching roots resets that context and never
-  replays uncertain sends. Keep existing cursor formats and recovery behavior.
-- Startup and service probes create no business keys. A valid scoped business
-  request initializes `R` as needed through the existing atomic initialization.
-  Metadata alone neither initializes a partition nor registers a human.
-- Keep API/event version 0 with explicit root-aware metadata validation; upgrade
-  Hub and clients together. Old servers without the root echo and old unscoped
-  business clients fail closed. Existing datasets stay under their original root.
+- Data routes require percent-encoded `X-Toolang-Root` (the canonical host root).
+  Missing/invalid roots return 400 before storage access, without fallback.
+- Existing `X-Toolang-Backend` checks compare against `identity(R)` and return
+  409 `hub_changed` on mismatch. Clients require scoped `/info` to echo `R`.
+- Preserve human/agent headers and lease/owner checks within `R`. Bind request,
+  SSE, and resume/cache context to root/identity; retain cursor formats and
+  uncertain-send handling.
+- Keep API/event version 0; upgrade Hub and clients together. Reject old servers
+  without a root echo and old unscoped business clients.
 
 ## Service and execution-event APIs: 3 operations
 
@@ -93,19 +81,9 @@ lease checks; other operations require that agent's active lease in `R`.
 | DELETE | `A/events/staging/{generation}` | Abandons staging data in `S`. | Abandons only the matching data in `R`. |
 | POST | `A/events/commits` | Commits events/projections and renews the lease in `S`. | Commit, projection updates, and renewal all use `R`. |
 
-## Acceptance
-
-Verify the inventory covers all 48 operations and every data operation retains
-its selected backend throughout execution.
-Two roots with identical IDs must retain independent leases, conversations,
-messages, rules, statistics, Talk cursors, staging, and both SSE feeds. Global
-probes and scoped metadata must leave an empty backend unchanged; a fresh scoped
-business request must initialize only its selected namespace. Missing roots,
-identity mismatches, and old peers must not fall back to another partition.
-
-`hub start/status/stop` remain local process commands, not HTTP APIs. Namespace
-selection supplies data isolation; it adds no authentication or process-control
-authority.
+Acceptance and implementation boundaries are defined in the
+[parent plan](client-root-hub-namespaces.md). `hub start/status/stop` remain local
+process commands, not HTTP APIs.
 
 Sources: [service routes](../../src/toolang/teaming/api.py),
 [team routes](../../src/toolang/teaming/team_api.py),
