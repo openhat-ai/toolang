@@ -9,9 +9,11 @@ import socket
 import subprocess
 import sys
 import threading
+from urllib.parse import quote
 
 import httpx
 import pytest
+from valkey.asyncio import Valkey
 
 from tests.integration.messaging.test_valkey import (
     running_hub as running_hub,
@@ -22,15 +24,15 @@ from tests.integration.up.test_docker_sandbox_lifecycle import (
     docker_wheel_dir as docker_wheel_dir,
 )
 from toolang.common.accounts import current_username
+from toolang.common.place_codes import root_code
+from toolang.teaming.backend.valkey.keys import Keys
 from toolang.teaming.client import HubClient
-from toolang.teaming.schemas import HubConnection, Message
+from toolang.teaming.schemas import HubConnection, Message, stream_id
 
 pytestmark = pytest.mark.live_valkey
 
 
 class _ReplyModel(_LocalModelHandler):
-    replied: set[tuple[str, str]] = set()
-
     def _write_json(self, payload):
         if isinstance(payload, dict) and "model_info" in payload:
             payload["model_info"]["test.context_length"] = 131072
@@ -60,9 +62,14 @@ class _ReplyModel(_LocalModelHandler):
             for message in reversed(batch["conversations"][0]["messages"])
             if message["sender"] != batch["agent"]
         )
-        key = (incoming["id"], incoming["body"])
-        if key not in self.replied:
-            self.replied.add(key)
+        # Each request carries its own continuation state, independently of roots.
+        replied = any(
+            call["function"]["name"] == "convo__write"
+            and json.loads(call["function"]["arguments"])["reply_to"] == incoming["id"]
+            for message in messages
+            for call in message.get("tool_calls") or []
+        )
+        if not replied:
             delta = {
                 "role": "assistant",
                 "tool_calls": [
@@ -302,34 +309,45 @@ def test_cli_same_name_agents_reply_in_their_root_and_recover_independently(
             *(["--dev", str(dev)] if index == 1 and dev else []),
         )
 
-    async def exchange(index, marker, *, direct=False, environment=False):
+    async def await_reply(index, marker, *, direct=False):
         root = roots[index]
         connection = HubConnection(endpoint, root=str(root))
-        async with HubClient(connection, actor=owner) as client:
-            await asyncio.to_thread(
-                cli,
-                root,
-                "talk",
-                "alice" if direct else "all",
-                marker,
-                environment=environment,
-            )
+        async with (
+            HubClient(connection, actor=owner) as client,
+            Valkey.from_url(valkey.url, decode_responses=True) as raw,
+        ):
             conversation = (
                 await client.resolve(
                     "agent:alice" if direct else "all",
                     kind=None if direct else "system",
                 )
             ).conversation
+            cursor_key = Keys(root_code(str(root))).talk_key("agent:alice")
             async with asyncio.timeout(40):
                 while True:
-                    messages = [
-                        Message.decode(data["data"])
-                        for _, data in await client.read(conversation)
+                    entries = [
+                        (sid, Message.decode(data["data"]))
+                        for sid, data in await client.read(conversation)
                     ]
+                    messages = [message for _, message in entries]
                     assert not any(message.handler_error for message in messages), [
                         message.body for message in messages
                     ]
-                    if any(message.body == "reply:" + marker for message in messages):
+                    source_sid, source = next(
+                        (sid, message)
+                        for sid, message in entries
+                        if message.body == marker
+                    )
+                    replies = [
+                        message
+                        for message in messages
+                        if message.in_reply_to == source.id
+                    ]
+                    cursor = await raw.hget(cursor_key, conversation) or "0-0"
+                    if replies and stream_id(cursor) >= stream_id(source_sid):
+                        assert [message.body for message in replies] == [
+                            "reply:" + marker
+                        ]
                         break
                     await asyncio.sleep(0.1)
             assert all(
@@ -338,7 +356,19 @@ def test_cli_same_name_agents_reply_in_their_root_and_recover_independently(
             )
             return conversation
 
+    async def exchange(index, marker, *, direct=False, environment=False):
+        await asyncio.to_thread(
+            cli,
+            roots[index],
+            "talk",
+            "alice" if direct else "all",
+            marker,
+            environment=environment,
+        )
+        return await await_reply(index, marker, direct=direct)
+
     async def scenario():
+        systems = []
         async with asyncio.timeout(40):
             for root in roots:
                 async with HubClient(
@@ -350,6 +380,27 @@ def test_cli_same_name_agents_reply_in_their_root_and_recover_independently(
                     ):
                         await asyncio.sleep(0.1)
                     assert await client.agents() == {"agent:alice": owner}
+                    systems.append(
+                        (await client.resolve("all", kind="system")).conversation
+                    )
+        # Message IDs and content can coincide across roots, just like agent names.
+        message = Message.create(owner, "identical input")
+        async with httpx.AsyncClient(trust_env=False) as http:
+            for root, conversation in zip(roots, systems):
+                response = await http.post(
+                    endpoint + "/msg/messages",
+                    headers={
+                        "X-Toolang-Root": quote(str(root), safe=""),
+                        "X-Toolang-Human": quote(owner, safe=""),
+                    },
+                    json={
+                        "id": message.id,
+                        "target": conversation,
+                        "body": message.body,
+                    },
+                )
+                response.raise_for_status()
+        await asyncio.gather(*(await_reply(index, message.body) for index in range(2)))
         await asyncio.gather(
             exchange(0, "one:first"), exchange(1, "two:first", environment=True)
         )
