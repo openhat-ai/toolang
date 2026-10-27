@@ -328,10 +328,15 @@ its anchor and the visible suffix. All Thread kinds use the same branch state ch
 and [Chat](chat.md) owns session snapshots and queue behavior.
 
 The hub runs independently of an agent; bare `too hub` shows service help and
-`too hub status` prints `hub running: VERSION, HOST:PORT, PID`, `hub not running`,
-or `hub unknown: REASON`. Version lookup failure does not change its process state.
-The `ps` hub line is `hub running, VERSION, URL`, with the same unavailable and
-unknown forms. Lifecycle commands retain their existing flags.
+`too hub status` prints `hub HOST:PORT running VERSION, pid=PID`,
+`hub HOST:PORT not running`, or `hub HOST:PORT error, REASON`. The address comes
+from the live process record, falling back to the `[hub]` configuration when no
+live record is available; it is omitted if that configuration cannot be read.
+Version lookup failure does not change the process state.
+The `ps` hub line reports the configured client URL as
+`hub URL, available, VERSION`, `hub URL, unavailable`, or `hub URL, error, REASON`.
+Invalid responses use `invalid response`; configuration errors omit the unresolved
+URL. Lifecycle commands retain their existing flags.
 [Messaging](messaging.md) owns Talk/Convo and shared rules. [Top](top.md) owns
 current and recent observation.
 ## Terminal titles and pane marks

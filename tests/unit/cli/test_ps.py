@@ -36,7 +36,9 @@ def inventory(tmp_path, *instances, complete=True, diagnostics=()):
     )
 
 
-def render(snapshot, *, hub="hub not running", width=120, terminal=False):
+def render(
+    snapshot, *, hub="hub http://127.0.0.1:7001, unavailable", width=120, terminal=False
+):
     stream = io.StringIO()
     ps.render_snapshot(
         snapshot,
@@ -112,7 +114,7 @@ def test_mixed_inventory_labels_drivers_ports_and_footer(tmp_path, alice):
             for source in data.sources
         ),
     )
-    text = render(data, hub="hub running, test, http://hub.example:7001")
+    text = render(data, hub="hub http://hub.example:7001, available, test")
     assert text.splitlines()[0].split() == [
         "AGENT",
         "STATUS",
@@ -141,7 +143,7 @@ def test_mixed_inventory_labels_drivers_ports_and_footer(tmp_path, alice):
     ]
     assert text.splitlines()[-2:] == [
         "5 agents, - running, 3 resident, 1 visiting, 1 roaming, partial",
-        "hub running, test, http://hub.example:7001",
+        "hub http://hub.example:7001, available, test",
     ]
     assert data.snapshot.instances[0].state == "unknown"
     assert data.snapshot.instances[2].state == "stopped"
@@ -173,7 +175,9 @@ def test_listings_show_observed_sandbox(
         ),
     )
     monkeypatch.setattr(ps.RuntimeWatcher, "refresh", lambda _: data)
-    monkeypatch.setattr(ps, "_hub_line", lambda _: "hub not running")
+    monkeypatch.setattr(
+        ps, "_hub_line", lambda _: "hub http://127.0.0.1:7001, unavailable"
+    )
 
     assert cli.main(["--root", str(tmp_path), command]) == 0
 
@@ -225,7 +229,7 @@ def test_missing_port_and_partial_diagnostics_remain_visible(tmp_path, alice):
 
 def test_empty_lists_keep_their_own_summary(tmp_path):
     data = inventory(tmp_path)
-    assert render(data) == "0 agents\nhub not running\n"
+    assert render(data) == "0 agents\nhub http://127.0.0.1:7001, unavailable\n"
     assert render(data, hub=None) == "0 agents\n"
 
 
@@ -258,7 +262,7 @@ def test_ascii_stream_escapes_unicode_names(tmp_path, alice):
     stream = AsciiStream()
     ps.render_snapshot(
         inventory(tmp_path, replace(alice, diagnostic="/tmp/助手")),
-        hub_line="hub not running",
+        hub_line="hub http://127.0.0.1:7001, unavailable",
         console=Console(file=stream, width=80, color_system=None),
     )
     stream.getvalue().encode("ascii")
@@ -289,7 +293,9 @@ def test_ls_filters_nonresidents_before_probing(tmp_path, monkeypatch, capsys):
     source = tmp_path / "worker.too"
     source.write_text("flow main():\n  pass\n")
     roaming = allocate_roaming(source, toolang_root=tmp_path, register=False)
-    monkeypatch.setattr(ps, "_hub_line", lambda _: "hub not running")
+    monkeypatch.setattr(
+        ps, "_hub_line", lambda _: "hub http://127.0.0.1:7001, unavailable"
+    )
     with (
         ForegroundWorkload(resident, toolang_root=tmp_path, drivers=frozenset()),
         ForegroundWorkload(roaming, toolang_root=tmp_path, drivers=frozenset()),
@@ -314,15 +320,15 @@ def test_ls_filters_nonresidents_before_probing(tmp_path, monkeypatch, capsys):
 @pytest.mark.parametrize(
     "mode,expected",
     [
-        ("healthy", "hub running, server, http://hub.example:7123"),
-        ("offline", "hub not running"),
-        ("unready", "hub not running"),
-        ("health_false", "hub not running"),
-        ("health_number", "hub unknown: invalid hub readiness response"),
-        ("health_extra", "hub unknown: invalid hub readiness response"),
-        ("health_json", "hub unknown: invalid hub response"),
-        ("metadata", "hub unknown: invalid hub response"),
-        ("invalid_json", "hub unknown: invalid hub response"),
+        ("healthy", "hub http://hub.example:7123, available, server"),
+        ("offline", "hub http://hub.example:7123, unavailable"),
+        ("unready", "hub http://hub.example:7123, unavailable"),
+        ("health_false", "hub http://hub.example:7123, unavailable"),
+        ("health_number", "hub http://hub.example:7123, error, invalid response"),
+        ("health_extra", "hub http://hub.example:7123, error, invalid response"),
+        ("health_json", "hub http://hub.example:7123, error, invalid response"),
+        ("metadata", "hub http://hub.example:7123, error, invalid response"),
+        ("invalid_json", "hub http://hub.example:7123, error, invalid response"),
     ],
 )
 def test_ps_probes_only_configured_hub(tmp_path, monkeypatch, capsys, mode, expected):
@@ -390,7 +396,7 @@ def test_invalid_client_settings_keep_agent_listing(tmp_path, capsys):
     assert cli.main(["--root", str(tmp_path), "ps"]) == 0
     text = capsys.readouterr().out
     assert "alice" in text and "1 agent, 0 running, 1 resident" in text
-    assert text.splitlines()[-1].startswith("hub unknown:")
+    assert text.splitlines()[-1].startswith("hub, error, ")
 
 
 @pytest.mark.parametrize("command", ["ls", "ps"])
@@ -403,7 +409,7 @@ def test_malformed_root_configuration_keeps_agent_listing(tmp_path, capsys, comm
     text = capsys.readouterr().out
     assert "alice" in text and "1 agent, 1 running, 1 resident" in text
     if command == "ps":
-        assert text.splitlines()[-1].startswith("hub unknown:")
+        assert text.splitlines()[-1].startswith("hub, error, ")
     else:
         assert text.splitlines()[-1] == "1 agent, 1 running, 1 resident"
         assert "hub" not in text
@@ -416,12 +422,14 @@ def test_listing_failure_keeps_unknown_count_and_diagnostic(
         raise OSError("registry unreadable")
 
     monkeypatch.setattr(ps.RuntimeWatcher, "refresh", unreadable)
-    monkeypatch.setattr(ps, "_hub_line", lambda _: "hub not running")
+    monkeypatch.setattr(
+        ps, "_hub_line", lambda _: "hub http://127.0.0.1:7001, unavailable"
+    )
     assert cli.main(["--root", str(tmp_path), "ps"]) == 0
     lines = capsys.readouterr().out.splitlines()
     assert lines == [
         "0 agents, - running, partial",
-        "hub not running",
+        "hub http://127.0.0.1:7001, unavailable",
         "partial: agent discovery: registry unreadable",
     ]
 
