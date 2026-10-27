@@ -7,6 +7,17 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ## [Unreleased]
 
+### Fixed
+
+- Default humans resolve from the process UID's OS account rather than an
+  inherited `LOGNAME`, so agent registration uses the right identity; explicit
+  `teaming.human` settings still apply.
+  ([#983](https://github.com/openhat-ai/toolang/pull/983))
+
+- `too talk` input backgrounds keep their 24-bit color instead of quantizing to
+  256 colors, matching `too chat`.
+  ([#981](https://github.com/openhat-ai/toolang/pull/981))
+
 ## [0.4.0b3] - 2026-10-26
 
 ### Fixed
