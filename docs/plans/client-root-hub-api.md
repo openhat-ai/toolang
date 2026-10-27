@@ -9,11 +9,13 @@ routes use the Hub startup root `S`; scoped routes will use client-selected `R`.
 
 - Data routes require percent-encoded `X-Toolang-Root` (the canonical host root).
   Missing/invalid roots return 400 before storage access, without fallback.
+  Callers canonicalize; the Hub validates the decoded absolute path spelling
+  without resolving it against the Hub filesystem.
 - Existing `X-Toolang-Backend` checks compare against `identity(R)` and return
   409 `hub_changed` on mismatch. Clients require scoped `/info` to echo `R`.
-- Preserve human/agent headers and lease/owner checks within `R`. Bind request,
-  SSE, and resume/cache context to root/identity; retain cursor formats and
-  uncertain-send handling.
+- Preserve human/agent headers and lease/owner checks within `R`. Bind connections,
+  cached metadata, SSE, and resume context to endpoint/root/identity; retain cursor
+  formats and uncertain-send handling.
 - Keep API/event version 0; upgrade Hub and clients together. Reject old servers
   without a root echo and old unscoped business clients.
 
