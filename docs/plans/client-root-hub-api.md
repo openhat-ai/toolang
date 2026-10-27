@@ -95,7 +95,8 @@ lease checks; other operations require that agent's active lease in `R`.
 
 ## Acceptance
 
-Verify all 48 routes resolve the same scoped backend throughout their operation.
+Verify the inventory covers all 48 operations and every data operation retains
+its selected backend throughout execution.
 Two roots with identical IDs must retain independent leases, conversations,
 messages, rules, statistics, Talk cursors, staging, and both SSE feeds. Global
 probes and scoped metadata must leave an empty backend unchanged; a fresh scoped
