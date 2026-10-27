@@ -15,10 +15,14 @@ Implement root propagation and backend selection centrally; all six paths reuse 
 
 ## Contract
 
-1. Resolve `--root` > `TOOLANG_ROOT` > `~/.toolang` at CLI/setup boundaries.
+1. Resolve the root at CLI/setup boundaries using existing command contracts:
+   `--root` where supported, then `TOOLANG_ROOT`, then `~/.toolang`.
    Canonicalize the host root there and carry it through visiting, roaming, and
    guest launches independently of HOME, PLACE, and mounted paths. Equal canonical
-   paths share a dataset, including across machines; different roots do not.
+   roots identify the same dataset across OS accounts/machines, subject to existing
+   permissions and local ownership checks. The OS account supplies defaults and
+   permissions, not another namespace dimension. Script entry keeps its existing
+   rejection of global `--root`; use `TOOLANG_ROOT` there.
 2. Add the concrete root to `HubConnection` and carry it through HTTP/SSE using
    the [API contract and complete before/after inventory](client-root-hub-api.md).
    Validate paths lexically on the Hub, without resolving its local filesystem.
@@ -56,9 +60,10 @@ Update [Messaging](../design/messaging.md), [Hosting](../design/hosting.md), and
 
 ## Acceptance
 
-- One Hub/backend supports two roots with same-name agents and equal or different
-  human names: registration, `talk all` replies, renewals, and shutdown remain
-  independent. Brice's root-code keys appear; Bryan's dataset stays unchanged.
+- One Hub/backend supports two roots from the same or different OS accounts,
+  with same-name agents and equal or different human names: registration,
+  `talk all` replies, renewals, and shutdown remain independent. Brice's root-code
+  keys appear; Bryan's dataset stays unchanged.
 - Identical conversation IDs retain independent rules, messages, statistics,
   cursors, presence, and event/SSE streams.
 - Real CLI/setup tests cover root precedence, canonical aliases, and host/guest
