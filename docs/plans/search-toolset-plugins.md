@@ -13,9 +13,10 @@ tavily = "tavily_toolang:create_toolset"
 
 ## Decisions
 
-- Provider packages such as `tavily-toolang` and `serpapi-toolang` expose
-  independent names, for example `tavily/search` and `serpapi/search`.
-  These are proposed packages, not existing implementations.
+- Each provider is an independently built, installed, and released package:
+  `tavily-toolang`, `serpapi-toolang`, or `xai-toolang`, exposing names such as
+  `tavily/search`. These proposed packages depend on Toolang; Toolang core does
+  not bundle or depend on them. Separate repositories are not required.
 - Each plugin owns its parameters, result content, configuration, credentials,
   and errors. Configuration uses its own `[plugin.toolset.NAME]` table.
 - Installed tools are exposed and callable under existing allow/disallow and
