@@ -356,6 +356,15 @@ def test_configuration_uses_credential_references(factory):
         factory({"timeout": float("inf")})
 
 
+@pytest.mark.parametrize("factory", [create_tavily, create_serpapi])
+@pytest.mark.parametrize(
+    "timeout", [None, [], {}, pytest.param(10**1000, id="overflow")]
+)
+def test_invalid_timeout_configuration_reports_a_value_error(factory, timeout):
+    with pytest.raises(ValueError, match="timeout must be a positive finite number"):
+        factory({"timeout": timeout})
+
+
 def test_tavily_result_limit_is_validated_before_request(monkeypatch, context):
     def no_network(**kwargs):
         pytest.fail("invalid result limits must not contact Tavily")

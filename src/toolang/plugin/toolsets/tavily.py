@@ -122,7 +122,10 @@ def create_toolset(config: Mapping[str, Any]) -> Toolset:
     raw_timeout = config.get("timeout", 15)
     if isinstance(raw_timeout, bool):
         raise ValueError("timeout must be a positive finite number")
-    timeout = float(raw_timeout)
+    try:
+        timeout = float(raw_timeout)
+    except (TypeError, ValueError, OverflowError):
+        raise ValueError("timeout must be a positive finite number") from None
     if not math.isfinite(timeout) or timeout <= 0:
         raise ValueError("timeout must be a positive finite number")
     key_name = config.get("api_key_env", "TAVILY_API_KEY")

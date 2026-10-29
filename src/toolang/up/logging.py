@@ -27,6 +27,7 @@ DEFAULT_LOG_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 DEFAULT_LOG_FORMAT = "%(asctime)s %(levelprefix)s [%(name)s] %(message)s"
 DEFAULT_ACCESS_LOG_FORMAT = '%(asctime)s %(levelprefix)s [%(name)s] %(client_addr)s - "%(request_line)s" %(status_code)s'
 _TELEGRAM_BOT_URL_PATTERN = re.compile(r"(https://api\.telegram\.org/bot)[^/]+")
+_API_KEY_QUERY_PATTERN = re.compile(r"([?&]api_key=)[^&\s#'\"<>]+", re.IGNORECASE)
 LogMode = Literal["run", "start", "script"]
 LogDestination = Literal["stderr", "agent_log", "run_log", "none"]
 
@@ -47,7 +48,7 @@ class HttpxLogFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
         if not record.name.startswith(("httpx", "httpcore")):
             return True
-        record.msg = _redact_telegram_bot_url(str(record.msg))
+        record.msg = _redact_httpx_text(str(record.msg))
         if isinstance(record.args, tuple):
             record.args = tuple(_redact_httpx_arg(item) for item in record.args)
         elif isinstance(record.args, dict):
@@ -270,13 +271,14 @@ def configure_logging_plan(plan: LoggingPlan) -> None:
 
 
 def _redact_httpx_arg(value: object) -> object:
-    if isinstance(value, str):
-        return _redact_telegram_bot_url(value)
-    return value
+    text = str(value)
+    redacted = _redact_httpx_text(text)
+    return redacted if redacted != text else value
 
 
-def _redact_telegram_bot_url(text: str) -> str:
-    return _TELEGRAM_BOT_URL_PATTERN.sub(r"\1<redacted>", text)
+def _redact_httpx_text(text: str) -> str:
+    text = _TELEGRAM_BOT_URL_PATTERN.sub(r"\1<redacted>", text)
+    return _API_KEY_QUERY_PATTERN.sub(r"\1<redacted>", text)
 
 
 def _logger_level_name(target: str, spec: LogSpec, *, default: int) -> str:

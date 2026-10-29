@@ -6,6 +6,9 @@ import re
 import sys
 from typing import cast
 
+import httpx
+import pytest
+
 import toolang.up.logging as up_logging
 from toolang.up.logging import (
     DEFAULT_AGENT_LOG_SPEC,
@@ -55,6 +58,49 @@ def test_httpx_log_filter_redacts_telegram_token_and_demotes_to_debug() -> None:
         record.getMessage()
         == 'HTTP Request: POST https://api.telegram.org/bot<redacted>/getUpdates "HTTP/1.1 200 OK"'
     )
+
+
+@pytest.mark.parametrize(
+    "message,arguments",
+    [
+        (
+            "HTTP Request: GET %s",
+            (
+                httpx.URL(
+                    "https://serpapi.com/search.json?q=python&api_key=private-token"
+                ),
+            ),
+        ),
+        (
+            "Request target: b'/search.json?api_key=private-token&q=python'",
+            (),
+        ),
+        (
+            "HTTP Request: GET %(url)s",
+            (
+                {
+                    "url": "https://serpapi.com/search.json?api_key=private-token&q=python"
+                },
+            ),
+        ),
+    ],
+)
+def test_http_debug_logs_redact_search_credentials(message, arguments) -> None:
+    record = logging.LogRecord(
+        name="httpx",
+        level=logging.DEBUG,
+        pathname=__file__,
+        lineno=1,
+        msg=message,
+        args=arguments,
+        exc_info=None,
+    )
+
+    assert HttpxLogFilter().filter(record)
+    rendered = record.getMessage()
+    assert "private-token" not in rendered
+    assert "api_key=<redacted>" in rendered
+    assert "q=python" in rendered
 
 
 def test_build_uvicorn_log_config_registers_httpx_filter_and_keeps_http_debug_off_by_default() -> (
