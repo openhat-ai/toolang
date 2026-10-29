@@ -460,7 +460,7 @@ def test_roaming_queries_do_not_select_legacy_unnumbered_homes(
     if command[0] == "inspect":
         assert "no retained instance" in output.err
     elif command[0] == "info":
-        assert "already belongs to" in output.out
+        assert "already belongs to" in " ".join(output.out.split())
     assert layout.program.read_bytes() == before
     assert layout.program.resolve() == original
 

@@ -504,3 +504,47 @@ def test_retained_selection_does_not_recreate_a_missing_source_guard(tmp_path):
     )
     assert not guard.exists()
     assert layout.runtime_status.read_bytes() == before
+
+
+def test_retained_inventory_waits_for_complete_instance_identity(tmp_path, monkeypatch):
+    from contextlib import contextmanager
+    from threading import Event
+
+    from toolang.common import files
+    from toolang.up import allocation
+
+    source = tmp_path / "aid.too"
+    root = tmp_path / "root"
+    publishing, release, reader_waiting = Event(), Event(), Event()
+    initialize = allocation.initialize_instance
+    acquire = files.file_write_lock
+
+    def pending_identity(path, **kwargs):
+        path.parent.mkdir(parents=True)
+        publishing.set()
+        assert release.wait(5)
+        return initialize(path, **kwargs)
+
+    @contextmanager
+    def observed_lock(path, **kwargs):
+        if path.name == "launch.lock" and kwargs.get("create") is False:
+            kwargs["on_wait"] = reader_waiting.set
+        with acquire(path, **kwargs):
+            yield
+
+    monkeypatch.setattr(allocation, "initialize_instance", pending_identity)
+    monkeypatch.setattr(files, "file_write_lock", observed_lock)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        writer = pool.submit(
+            allocate_roaming, source, toolang_root=root, register=False
+        )
+        assert publishing.wait(5)
+        reader = pool.submit(allocation.retained_roaming, source, toolang_root=root)
+        try:
+            if not reader_waiting.wait(1):
+                reader.result(timeout=1)
+                pytest.fail("inventory did not wait for publication")
+        finally:
+            release.set()
+        layout = writer.result(timeout=5)
+        assert reader.result(timeout=5) == (layout,)
