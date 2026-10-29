@@ -17,6 +17,11 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   Tavily access and `SERPAPI_API_KEY` required only at invocation.
   ([#987](https://github.com/openhat-ai/toolang/pull/987))
 
+- Roaming launches share one `DIR/.toolang` agent root, reusing preparation,
+  source projections, State layers, catalogs, workspaces, and prepared
+  Programs across instances and Toolang roots.
+  ([#990](https://github.com/openhat-ai/toolang/pull/990))
+
 ### Changed
 
 - **Breaking:** Upgrade Hub and clients together: business APIs require
@@ -29,8 +34,8 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   ([#985](https://github.com/openhat-ai/toolang/pull/985))
 
 - `too ps` shows the client Hub's URL with `available, VERSION`, `unavailable`,
-  or `error, REASON`; `too hub status` prints
-  `hub HOST:PORT running VERSION, pid=PID`, `not running`, or `error, REASON`.
+  or `error, REASON`; `too hub status` prints `hub HOST:PORT` plus
+  `running VERSION, pid=PID`, `not running`, or `error, REASON`.
   ([#984](https://github.com/openhat-ai/toolang/pull/984))
 
 - **Breaking:** The DDGS `web` toolset is no longer registered. Call
@@ -38,6 +43,20 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   and `domains` with `include_domains`, and remove `preferred_backend` and
   `plugin.toolset.web` settings.
   ([#987](https://github.com/openhat-ai/toolang/pull/987))
+
+- **Breaking:** Roaming `lab` workspaces move to
+  `DIR/.toolang/workspaces/NAME/lab` and are shared across instances and
+  Toolang roots; per-`P19` labs stay untouched, so copy needed files manually.
+  ([#990](https://github.com/openhat-ai/toolang/pull/990))
+
+- **Breaking:** Same-directory roaming source files whose names normalize to one
+  agent name must be renamed, because they now share a single `DIR/.toolang`
+  agent root.
+  ([#990](https://github.com/openhat-ai/toolang/pull/990))
+
+- Roaming instances keep separate runtime status, records, history, logs, and
+  ownership, while `too AGENT info` and `too AGENT cd` use the shared home.
+  ([#990](https://github.com/openhat-ai/toolang/pull/990))
 
 ### Fixed
 
