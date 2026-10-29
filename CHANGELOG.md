@@ -29,8 +29,8 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   ([#985](https://github.com/openhat-ai/toolang/pull/985))
 
 - `too ps` shows the client Hub's URL with `available, VERSION`, `unavailable`,
-  or `error, REASON`; `too hub status` prints `hub HOST:PORT running VERSION,
-  pid=PID`, `not running`, or `error, REASON`.
+  or `error, REASON`; `too hub status` prints
+  `hub HOST:PORT running VERSION, pid=PID`, `not running`, or `error, REASON`.
   ([#984](https://github.com/openhat-ai/toolang/pull/984))
 
 - **Breaking:** The DDGS `web` toolset is no longer registered. Call
@@ -50,7 +50,15 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   256 colors, matching `too chat`.
   ([#981](https://github.com/openhat-ai/toolang/pull/981))
 
+- Invalid search timeout settings report a configuration error instead of an
+  uncaught traceback.
+  ([#987](https://github.com/openhat-ai/toolang/pull/987))
+
 ### Security
+
+- Search HTTP debug logs redact credential query parameters, including
+  SerpAPI's `api_key`.
+  ([#987](https://github.com/openhat-ai/toolang/pull/987))
 
 - Update Authlib to 1.9.1 and dnspython to 2.9.0, clearing eight known
   vulnerabilities in these runtime dependencies.
