@@ -60,7 +60,8 @@ Current built-in tools are:
 
 - `fs`
 - `shell`
-- `web`
+- `tavily`
+- `serpapi`
 - `service`
 - `state`
 - `convo`
@@ -96,7 +97,31 @@ sandbox is restarted with that binding.
 
 ## Web Search
 
-`web` returns structured search results for model use.
+`tavily/search(query, max_results=5, include_domains=None)` performs a basic
+Tavily search and returns its native JSON response. With no `TAVILY_API_KEY`,
+it uses Tavily's rate-limited [keyless tier](https://docs.tavily.com/documentation/keyless);
+a supplied key uses the account's credentials.
+`max_results` accepts 1–20. Generated answers and raw page content are disabled.
+
+`serpapi/search(q, gl=None, hl=None)` queries Google's web results through
+SerpAPI and returns its native JSON response. It requires `SERPAPI_API_KEY`
+when invoked. `gl` and `hl` select country and interface language.
+
+Both toolsets are registered regardless of credentials or service availability;
+normal allow policy controls exposure. They make no availability probes and
+report request failures through ordinary tool results. Each owns its API and
+never falls back to another provider.
+
+Optional `[plugin.toolset.tavily]` and `[plugin.toolset.serpapi]` tables accept
+`timeout` (positive seconds, default 15) and `api_key_env` (the credential variable
+name). Literal `api_key` configuration is rejected. Credentials come from the
+[selected workload environment](setup.md#environments).
+
+The DDGS-backed `web` toolset is no longer registered. Migrate calls and allow
+selectors from `web/search` to `tavily/search`, replacing `top_k` with
+`max_results` and `domains` with `include_domains`, or use the SerpAPI API above.
+Remove `preferred_backend` and old `[plugin.toolset.web]` configuration.
+The old implementation remains in source but is not loaded as a built-in.
 
 
 ## Service
