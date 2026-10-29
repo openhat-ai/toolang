@@ -73,6 +73,10 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   uncaught traceback.
   ([#987](https://github.com/openhat-ai/toolang/pull/987))
 
+- Roaming instance discovery waits for complete instance publication, so a
+  starting instance is not rejected as corrupt.
+  ([#990](https://github.com/openhat-ai/toolang/pull/990))
+
 ### Security
 
 - Search HTTP debug logs redact credential query parameters, including
