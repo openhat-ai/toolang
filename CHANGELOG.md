@@ -13,6 +13,10 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   using the same root precedence as `cd` and other commands.
   ([#985](https://github.com/openhat-ai/toolang/pull/985))
 
+- `tavily/search` and `serpapi/search` add web search toolsets, with keyless
+  Tavily access and `SERPAPI_API_KEY` required only at invocation.
+  ([#987](https://github.com/openhat-ai/toolang/pull/987))
+
 ### Changed
 
 - **Breaking:** Upgrade Hub and clients together: business APIs require
@@ -24,9 +28,16 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   guidance, lifecycle events, and guests.
   ([#985](https://github.com/openhat-ai/toolang/pull/985))
 
-- `too ps` names the client Hub's URL with `available, VERSION`, `unavailable`,
-  or `error, REASON`; `too hub status` adds the server address to its running
-  state.
+- `too ps` shows the client Hub's URL with `available, VERSION`, `unavailable`,
+  or `error, REASON`; `too hub status` prints
+  `hub HOST:PORT running VERSION, pid=PID`, `not running`, or `error, REASON`.
+  ([#984](https://github.com/openhat-ai/toolang/pull/984))
+
+- **Breaking:** The DDGS `web` toolset is no longer registered. Call
+  `tavily/search` instead of `web/search`, replace `top_k` with `max_results`
+  and `domains` with `include_domains`, and remove `preferred_backend` and
+  `plugin.toolset.web` settings.
+  ([#987](https://github.com/openhat-ai/toolang/pull/987))
 
 ### Fixed
 
@@ -38,6 +49,20 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 - `too talk` input backgrounds keep their 24-bit color instead of quantizing to
   256 colors, matching `too chat`.
   ([#981](https://github.com/openhat-ai/toolang/pull/981))
+
+- Invalid search timeout settings report a configuration error instead of an
+  uncaught traceback.
+  ([#987](https://github.com/openhat-ai/toolang/pull/987))
+
+### Security
+
+- Search HTTP debug logs redact credential query parameters, including
+  SerpAPI's `api_key`.
+  ([#987](https://github.com/openhat-ai/toolang/pull/987))
+
+- Update Authlib to 1.9.1 and dnspython to 2.9.0, clearing eight known
+  vulnerabilities in these runtime dependencies.
+  ([#987](https://github.com/openhat-ai/toolang/pull/987))
 
 ## [0.4.0b3] - 2026-10-26
 

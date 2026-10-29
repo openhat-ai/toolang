@@ -102,7 +102,8 @@ def _patch_tool_entry_points(monkeypatch) -> None:
         create_toolset as create_service_use_tool,
     )
     from toolang.plugin.toolsets.shell import create_toolset as create_shell_tool
-    from toolang.plugin.toolsets.web import create_toolset as create_web_tool
+    from toolang.plugin.toolsets.tavily import create_toolset as create_tavily_tool
+    from toolang.plugin.toolsets.serpapi import create_toolset as create_serpapi_tool
     from toolang.execution.tools.state import create_toolset as create_me_tool
     from toolang.execution.tools.runtime import create_toolset as create_toolang_tool
     from toolang.base.examples.tools import create_working_tree_toolset
@@ -115,7 +116,8 @@ def _patch_tool_entry_points(monkeypatch) -> None:
         _FakeEntryPoint("math_add", create_math_add_toolset),
         _FakeEntryPoint("service", create_service_use_tool, distribution="toolang"),
         _FakeEntryPoint("shell", create_shell_tool, distribution="toolang"),
-        _FakeEntryPoint("web", create_web_tool, distribution="toolang"),
+        _FakeEntryPoint("tavily", create_tavily_tool, distribution="toolang"),
+        _FakeEntryPoint("serpapi", create_serpapi_tool, distribution="toolang"),
         _FakeEntryPoint("working_tree", create_working_tree_toolset),
     ]
     monkeypatch.setattr(
@@ -132,10 +134,11 @@ def test_toolsets_load_from_entry_points(monkeypatch) -> None:
         "fs",
         "math_add",
         "runtime",
+        "serpapi",
         "service",
         "shell",
         "state",
-        "web",
+        "tavily",
         "working_tree",
     ]
 
@@ -196,7 +199,8 @@ def test_load_tools_uses_encoded_model_names(monkeypatch) -> None:
         "fs__stat",
         "fs__mkdir",
         "fs__remove",
-        "web__search",
+        "tavily__search",
+        "serpapi__search",
         "shell__execute",
         "service__start_bridge",
         "service__stop_bridge",

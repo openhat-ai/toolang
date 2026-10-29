@@ -16,7 +16,8 @@ from toolang.plugin.toolsets.loading import load_tools
     [
         ("fs__read", None),
         ("shell__execute", None),
-        ("web__search", None),
+        ("tavily__search", None),
+        ("serpapi__search", None),
         ("service__init", "services"),
         ("history__read_runs", "history"),
         ("runtime__pick", "runtime"),

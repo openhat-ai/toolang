@@ -87,8 +87,14 @@ CATALOG = [
     ),
     ("shell/execute", {"command": "ls"}, ("", "Running:", "Ran:"), "“ls”"),
     (
-        "web/search",
+        "tavily/search",
         {"query": "python"},
+        ("search:", "Searching:", "Searched:"),
+        "“python”",
+    ),
+    (
+        "serpapi/search",
+        {"q": "python"},
         ("search:", "Searching:", "Searched:"),
         "“python”",
     ),
@@ -303,7 +309,7 @@ def tools():
 
 
 def test_catalog_covers_every_registered_leaf_and_no_old_aliases(tools):
-    assert len(CATALOG) == len(tools) == 53
+    assert len(CATALOG) == len(tools) == 54
     assert {ref.replace("/", "__") for ref, *_ in CATALOG} == set(tools)
     assert not any(name.startswith(("me__", "msg__", "_toolang__")) for name in tools)
 
