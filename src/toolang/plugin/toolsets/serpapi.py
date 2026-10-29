@@ -24,7 +24,7 @@ class SerpAPIToolset:
     timeout: float = 15
     api_key: str | None = field(default=None, repr=False)
     name: str = "serpapi"
-    description: str | None = "Query Google search through SerpAPI."
+    description: str | None = "Search Google web results through SerpAPI."
     _tools: dict[str, Tool] = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -32,8 +32,12 @@ class SerpAPIToolset:
             name="search",
             summary=_summary,
             description=(
-                "Query Google's organic results through SerpAPI and return its "
-                "native JSON response. Requires a SerpAPI API key when invoked."
+                "Search Google web results through SerpAPI. q accepts search terms "
+                "and Google operators such as site: and intitle:. Returns native "
+                "JSON that may include organic_results, answer_box, and "
+                "knowledge_graph. gl selects the country code (e.g. us); "
+                "hl selects Google's language code (e.g. en). "
+                "Requires a configured SerpAPI API key."
             ),
         )
         async def search(

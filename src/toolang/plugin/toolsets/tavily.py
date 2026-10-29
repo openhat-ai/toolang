@@ -24,7 +24,7 @@ class TavilyToolset:
     timeout: float = 15
     api_key: str | None = field(default=None, repr=False)
     name: str = "tavily"
-    description: str | None = "Search the web with Tavily."
+    description: str | None = "Find web sources and content excerpts with Tavily."
     _tools: dict[str, Tool] = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -32,8 +32,11 @@ class TavilyToolset:
             name="search",
             summary=_summary,
             description=(
-                "Search using Tavily and return its native JSON response. "
-                "Works without an API key using Tavily's keyless tier."
+                "Find current web information with Tavily basic search. "
+                "Returns JSON results with titles, URLs, content excerpts, and "
+                "relevance scores. max_results accepts 1-20 (default 5); "
+                "include_domains restricts results to the listed domains. "
+                "Works without an API key using rate-limited keyless access."
             ),
         )
         async def search(
