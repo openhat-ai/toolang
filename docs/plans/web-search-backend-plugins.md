@@ -1,4 +1,4 @@
-# Pluggable web search backends
+# Pluggable search adapters
 
 Status: Proposed; awaiting confirmation of the complete definition.
 Feature definition only; do not implement.
@@ -27,14 +27,14 @@ persistent caches, distributed rotation state, and a pricing catalog.
 web/search(query, backends=...)
   WebToolset                  Schema, validation, deadlines, output
     SearchRouter              Selection, rotation, fallback
-      WebSearchBackend        Provider execution contract
+      SearchAdapter        Provider execution contract
         ddgs                  Bundled, last resort
         tavily                tavily-toolang distribution
         serpapi               serpapi-toolang distribution
         other installed plugins
 ```
 
-`WebSearchBackend.search()` corresponds to `ModelAdapter.invoke()`, not
+`SearchAdapter.search()` corresponds to `ModelAdapter.invoke()`, not
 `ModelCatalog.snapshot()`: it executes a request. Discovering installed entry
 points and checking local requirements supplies the small inventory needed
 here; do not introduce a second catalog protocol or reuse the model catalog.
@@ -54,15 +54,15 @@ network requests.
 
 ## Installation and configuration
 
-Use `toolang.web_search_backend` entry points and the existing factory pattern.
+Use `toolang.search_adapter` entry points and the existing factory pattern.
 For example, the Tavily distribution registers:
 
 ```toml
-[project.entry-points."toolang.web_search_backend"]
-tavily = "tavily_toolang:create_backend"
+[project.entry-points."toolang.search_adapter"]
+tavily = "tavily_toolang:create_search_adapter"
 ```
 
-`create_backend(config)` accepts an empty mapping. Installed, locally available
+`create_search_adapter(config)` accepts an empty mapping. Installed, locally available
 backends participate automatically; no activation list is required. A key-only
 backend without credentials reports unavailable and does not break other
 backends. Installation must be into the environment running Toolang.
@@ -89,10 +89,55 @@ Unadmitted plugins are not imported or instantiated. Installation order never
 chooses a winner. Include backend entry-point provenance in setup revisions.
 
 Each plugin owns its credential conventions. Supplying the expected environment
-variable is enough for a key-only plugin; no TOML is required. Credential-ready
+variable to the selected workload is enough for a key-only plugin; no TOML is
+required. Credential-ready
 paid plugins can enter the automatic pool. Missing paid credentials do not block
 keyless plugins. Do not obtain accounts/keys automatically or put secret values
 in configuration, diagnostics, or logs.
+
+## Credential readiness and request outcomes
+
+Replace a boolean `is_available()` with a structured, generation-local
+`SearchReadiness` snapshot. Its fields are `state` (`ready`,
+`missing_credentials`, or `missing_configuration`), `auth_mode` (`none`,
+`keyless`, or `api_key`), `credential_present`, `missing_env` (names only),
+and an optional safe `reason`. `ready` means locally eligible to attempt a
+request; it does not certify the credential or remote service.
+
+The adapter factory checks its configured/default credential variable for a
+nonblank value in the [selected workload environment](../design/setup.md#environments),
+then captures the snapshot and concrete authentication values. Core does not
+scan arbitrary `*_API_KEY` names. Plugins do not independently read dotenv files,
+keychains, or another process's environment.
+
+| Local inputs | Readiness |
+| --- | --- |
+| Tavily auto, no key | ready, keyless, credential_present=false |
+| Tavily auto, nonblank key | ready, api_key, credential_present=true |
+| SerpAPI, absent/blank key | missing_credentials; missing_env=[SERPAPI_API_KEY] |
+| Instance-based adapter, no instance URL | missing_configuration |
+
+Auto selection skips locally unready entries and records the safe reason.
+Explicitly pinning one returns that reason without network access. Invalid
+configuration types/values and broken plugin contracts remain configuration
+errors rather than ordinary unready states.
+
+Setup, listing, and selection never probe authentication, quota, or remote health.
+The actual search supplies evidence. Classify its documented response, not just
+HTTP status: 403 can be an IP/access gate; 429 can be quota exhaustion. Record
+the outcome in `attempts` and apply the defined routing policy. Do not silently
+replace an invalid key with anonymous access within an adapter.
+
+Tool parameter descriptions summarize local readiness/auth mode and safe missing
+requirements so the model can choose; structured attempts report call outcomes.
+No additional generic tool-readiness framework or remote health cache is added.
+
+The caller's shell and the agent may see different variables. Current agent
+fallback picks at most one credential; adding search names to that list would
+not supply both model and search keys. Keyed users must admit variables through
+the existing environment mechanism, normally names in the selected agent file.
+Preserve that policy and its startup snapshot: restart to apply key changes.
+Keyless paths require no environment edits.
 
 ## Model-facing selection and routing
 
@@ -143,11 +188,10 @@ workers from [the existing plan](web-search-backend-configuration.md).
 
 ## Backend contract and output
 
-Expose `WebSearchBackend` in `base/protocols/web.py` with `name`,
-`is_available() -> bool`, `preferred_backends: tuple[str, ...]`, and
-`async search(request, *, on_attempt) -> WebSearchResponse`. Availability checks
-only local requirements, not remote health. Use immutable records in
-`base/types/web.py`:
+Expose `SearchAdapter` in `base/protocols/search.py` with `name`,
+`readiness: SearchReadiness`, `preferred_backends: tuple[str, ...]`, and
+`async search(request, *, on_attempt) -> SearchResponse`. Use immutable records
+in `base/types/search.py`:
 
 - Request: validated query, limit, normalized domains, optional adapter-local
   preference, and granted timeout.
@@ -159,7 +203,7 @@ only local requirements, not remote health. Use immutable records in
 `on_attempt` records completed attempts synchronously so completed diagnostics
 survive cancellation. DDGS reports its current attempt in cancellation cleanup.
 Supply a provider-level error/timeout attempt if an adapter reports none.
-`WebSearchBackendError` in `base/errors.py` classifies expected failures as
+`SearchAdapterError` in `base/errors.py` classifies expected failures as
 `auth`, `quota`, `rate_limited`, `timeout`, or `unavailable`.
 
 Preserve query/domains/results/status/backend/attempts in output and add the
@@ -231,7 +275,7 @@ turning the registry into a model or pricing catalog.
 
 ## Acceptance and touchpoints
 
-- `base/protocols/web.py`, `base/types/web.py`, `base/errors.py`: shared contract.
+- `base/protocols/search.py`, `base/types/search.py`, `base/errors.py`: shared contract.
 - `plugin/web/` and `plugin/toolsets/web.py`: factories, discovery, selection,
   routing, DDGS implementation, and stable host interface.
 - Core `pyproject.toml`: bundled DDGS entry point; keep dependencies unchanged.
@@ -243,6 +287,9 @@ turning the registry into a model or pricing catalog.
   choices, collisions, local availability, concurrent rotation, fallback,
   DDGS-only and DDGS-last behavior, deadlines/cancellation, normalized outputs,
   config isolation, legacy compatibility, auth mapping, and secret-safe errors.
+  Readiness checks cover absent/blank/present keys, keyless selection, environment
+  admission, captured inputs, no network probes, and distinction between a ready
+  credential and real auth/quota/network failures.
   A configured single-provider pool must leave unrelated factories untouched;
   a per-call pin must contact only its selected service.
 - Preserve DDGS regressions; add deterministic HTTP fixtures. Run repository
