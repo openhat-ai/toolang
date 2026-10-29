@@ -118,7 +118,7 @@ def load_chore_files(layout: AgentLayout) -> tuple[Chore, ...]:
     return tuple(
         file_chore(item, agent_name=layout.name)
         for item in AuthoredChores(
-            layout.home, agent_name=layout.name, lock_path=layout.home_edit_lock
+            layout.agent_home, agent_name=layout.name, lock_path=layout.home_edit_lock
         ).list()
     )
 
@@ -162,7 +162,7 @@ def _inspect_chore_sources(layout: AgentLayout) -> tuple[Chore, ...]:
             agent_name=layout.name,
         )
         for path, content, error in AuthoredChores(
-            layout.home, agent_name=layout.name, lock_path=layout.home_edit_lock
+            layout.agent_home, agent_name=layout.name, lock_path=layout.home_edit_lock
         ).sources()
         if error is not None and path.stem not in accepted_names
     )

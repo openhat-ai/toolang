@@ -8,8 +8,10 @@
 | Term | Meaning |
 | --- | --- |
 | root | Selected Toolang root path, defaulting to `~/.toolang`; owns configuration, resident agents, active registrations, and hub discovery. |
-| place | Internal name for the agent root path; contains configuration, prepared data, and agent homes. |
-| home | `PLACE/agents/NAME`; owns one agent's Threads, Runs, and history. |
+| agent root | Shared root-scope inputs, prepared State, agent definitions, and workspaces. |
+| runtime root | Root of instance-owned runtime data; the legacy internal field is `place`. |
+| agent home | `AGENT_ROOT/agents/NAME`; owns source/configuration and home/agent State. |
+| runtime directory | `RUNTIME_ROOT/agents/NAME/.runtime`; owns status, Threads, Runs, history, and logs. |
 | placement | How an agent is placed: resident, visiting, or roaming. |
 | `root_code` | Code identifying the selected canonical ROOT. |
 | `place_code` | Short code selecting a visiting or roaming place; resident places need none. |
@@ -17,24 +19,22 @@
 | location | Where a runtime executes: host or guest; independent of placement. |
 | `launch_id` | Private runtime-generation fence; changes independently of the home/address. |
 
-`ROOT`, `PLACE`, `HOME`, and `DIR` are paths; codes are directory-safe strings.
-User-facing wording uses Toolang root, agent root, and agent home. Global
-`--root`/`TOOLANG_ROOT` selects the Toolang root. Docker's `root` setting and
-agent prompt environment `root` denote the agent root. Internal bindings use
-`root` for the Toolang root and `place` for the agent root.
+`ROOT` selects the Toolang root through `--root`/`TOOLANG_ROOT`. Placement
+resolves shared agent paths and independent runtime paths. Existing persisted
+`place/home` identity fields retain runtime root/home paths; `HOME` in runtime
+records and address-selection rules below identifies that retained runtime home.
 
-For every placement, `HOME = PLACE/agents/NAME`:
+| Placement | Agent root | Runtime root | Named address |
+| --- | --- | --- | --- |
+| Resident | `ROOT` | `ROOT` | `NAME` |
+| Visiting | `/tmp/toolang/<R8>/<P10>` | `/tmp/toolang/<R8>/<P10>` | `NAME@<P10>` |
+| Roaming | `DIR/.toolang` | `DIR/.toolang/<R8>/<P19>` | `NAME@<P19>` |
 
-| Placement | PLACE | Named address |
-| --- | --- | --- |
-| Resident | `ROOT` | `NAME` |
-| Visiting | `/tmp/toolang/ROOT_CODE/PLACE_CODE` | `NAME@<P10>` |
-| Roaming | `DIR/.toolang/ROOT_CODE/PLACE_CODE` | `NAME@<P19>` |
-
-The table describes host storage; [guest placement](layout.md#agent-placement)
-maps place/home paths into the container.
-`DIR` is the canonical source file's parent. Resident lookup uses its fixed path
-without allocating a place code.
+`DIR` is the canonical Program's parent. Agent home is `AGENT_ROOT/agents/NAME`;
+lab is `AGENT_ROOT/workspaces/NAME/lab`. Roaming shares these paths across
+instances and selected Toolang roots. R8/P19 continue isolating runtime records
+and ownership. [Guest placement](layout.md#agent-placement) maps both roots into
+the guest while preserving host identities.
 
 ## Short codes
 
@@ -186,7 +186,7 @@ and Thread locks govern concurrency; one home has at most one executor owner.
 Roaming scripts and rerun instead claim the HOME exclusively from preparation
 through cleanup: preparing, running, closing or unverifiable ownership fails
 immediately. Each invocation has a new launch identity, current grants and startup
-settings; history and lab remain. Different HOMEs may run concurrently on host/guest.
+settings; history remains in its P19, while lab and prepared State are shared. Different HOMEs may run concurrently on host/guest.
 Roaming Chat, including `fork/rewind --chat`, is rejected before mutation.
 
 `start/serve/stop` cover resident/visiting only. Roaming foreground shutdown belongs

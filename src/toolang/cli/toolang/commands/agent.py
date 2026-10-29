@@ -189,14 +189,14 @@ def info_agent(
     message = runtime_value(status.message)
     if status_value == "unknown" and message != "-":
         status_value = f"{status_value}: {message}"
-    home = shorten_home_path(layout.home)
+    home = shorten_home_path(layout.agent_home)
     address = cli_context(ctx).address
     if (
         layout.placement == "roaming"
         and (address is None or address.source is not None)
         and not Path(agent).expanduser().is_absolute()
     ):
-        home = relpath(layout.home)
+        home = relpath(layout.agent_home)
     rows = [
         ("Home", home),
         *resources,

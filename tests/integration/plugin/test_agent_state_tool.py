@@ -873,7 +873,7 @@ def test_roaming_main_preserves_canonical_link_and_source_mode(tmp_path, source_
     source.chmod(0o755)
     layout = materialize_roaming_program(source, toolang_root=tmp_path)
     context = StateToolContext(
-        home=layout.home,
+        home=layout.agent_home,
         room=layout.tool_room("state"),
         layout=layout,
         sync_state=StateWatcher(layout).sync,

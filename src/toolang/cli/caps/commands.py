@@ -184,7 +184,7 @@ def list_caps(
     selected = user_call(
         query_cap_views,
         entries if all_ else allowed,
-        place=layout.place,
+        place=layout.agent_root,
         agent_name=agent_name,
         queries=query,
         allowed=_allowed_cap_keys(allowed),
@@ -194,7 +194,7 @@ def list_caps(
         ("cap", "description", "location", "tags"),
         heading="CAP",
         json_=json_,
-        root=layout.place,
+        root=layout.agent_root,
     )
     if not json_:
         echo_collection_summary(
@@ -244,7 +244,7 @@ def _make_cap_list_command(kind: CapKind, title: str) -> Callable[..., None]:
         )
         dataset = cap_collection(
             entries if all_ else allowed,
-            place=layout.place,
+            place=layout.agent_root,
             agent_name=agent_name,
             kind=kind,
             allowed=_allowed_cap_keys(allowed),
@@ -255,7 +255,7 @@ def _make_cap_list_command(kind: CapKind, title: str) -> Callable[..., None]:
             ("cap", "description", "location", "tags"),
             heading="CAP",
             json_=json_,
-            root=layout.place,
+            root=layout.agent_root,
         )
         if not json_:
             echo_collection_summary(len(selected), kind)
@@ -488,7 +488,7 @@ def _cap_entries(
     from toolang.state.prepare import inspect_agent_caps, inspect_root_caps
     from ..common.progress import make_cli_progress
 
-    if not include_agent and not layout.place.exists():
+    if not include_agent and not layout.agent_root.exists():
         return layout, (), ()
     progress = make_cli_progress(preparation=True)
     try:

@@ -222,6 +222,7 @@ class GuestStartupSandbox(FakeSandbox):
 def _launch_spec(tmp_path: Path) -> sandbox.LaunchSpec:
     layout = AgentLayout.resident(tmp_path, "alice")
     layout.home.mkdir(parents=True)
+    layout.agent_home.mkdir(parents=True, exist_ok=True)
     return sandbox.LaunchSpec(
         serve=ServeSpec(
             layout=layout,
@@ -240,6 +241,7 @@ def test_resolve_selection_uses_explicit_home_root_host_precedence(
 ) -> None:
     layout = AgentLayout.resident(tmp_path, "alice")
     layout.home.mkdir(parents=True)
+    layout.agent_home.mkdir(parents=True, exist_ok=True)
 
     assert sandbox.resolve_selection(layout) == "host"
 
@@ -344,6 +346,7 @@ def test_agent_removal_releases_control_state_through_the_sandbox(
     )
     layout = AgentLayout.resident(tmp_path, "alice")
     layout.home.mkdir(parents=True)
+    layout.agent_home.mkdir(parents=True, exist_ok=True)
     layout.lab.mkdir(parents=True)
     (layout.lab / "keep.txt").write_text("workspace content")
     SandboxState(
@@ -513,6 +516,7 @@ def test_sandbox_status_reports_plugin_recovery_failure(
 ) -> None:
     layout = AgentLayout.resident(tmp_path, "alice")
     layout.home.mkdir(parents=True)
+    layout.agent_home.mkdir(parents=True, exist_ok=True)
     SandboxState(
         sandbox="missing",
         ref=SandboxRef("workload-1", "http://localhost:8123"),
@@ -628,6 +632,9 @@ def test_guest_roaming_mounts_the_shared_project_edit_guard(monkeypatch, tmp_pat
         root=tmp_path / "global",
     )
     layout.home.mkdir(parents=True)
+    layout.agent_home.mkdir(parents=True, exist_ok=True)
+    (layout.runtime_root / ".state").mkdir()
+    (layout.home / ".state").mkdir()
     spec = _launch_spec(tmp_path / "global")
     spec = replace(spec, serve=replace(spec.serve, layout=layout))
     asyncio.run(sandbox.launch(spec))
@@ -641,6 +648,22 @@ def test_guest_roaming_mounts_the_shared_project_edit_guard(monkeypatch, tmp_pat
     assert guard.is_file()
     guest_place = Path("/runtime")
     assert SandboxMount(guard, guest_place / ".state/root/edit.lock") in request.mounts
+    assert (
+        SandboxMount(
+            layout.runtime_root / ".state",
+            guest_place / ".legacy/.state",
+            read_only=True,
+        )
+        in request.mounts
+    )
+    assert (
+        SandboxMount(
+            layout.home / ".state",
+            guest_place / ".legacy/agents/aid/.state",
+            read_only=True,
+        )
+        in request.mounts
+    )
     position = request.command.index("--source-edit-lock")
     assert request.command[position + 1] == str(guest_place / ".state/root/edit.lock")
     registry = tmp_path / "global" / ".runtime" / "active" / layout.address
@@ -697,6 +720,7 @@ def test_mount_layout_preserves_root_place_and_home_scopes(
             layout.program.chmod(0o600)
     else:
         layout.home.mkdir(parents=True, exist_ok=True)
+        layout.agent_home.mkdir(parents=True, exist_ok=True)
     if placement == "roaming":
         if source_workspace:
             layout.config.write_text(f'[workspaces]\nproject = "{source.parent}"\n')
@@ -723,7 +747,15 @@ def test_mount_layout_preserves_root_place_and_home_scopes(
         assert request.hosted_root == guest_root
         assert request.hosted_place == guest_place
         assert request.hosted_home == guest_place / "agents/alice"
-        host_lab = layout.place / "workspaces/alice/lab"
+        if placement == "roaming":
+            assert (
+                SandboxMount(layout.agent_home, request.hosted_home) in request.mounts
+            )
+            assert (
+                SandboxMount(layout.runtime, request.hosted_home / ".runtime")
+                in request.mounts
+            )
+        host_lab = layout.agent_root / "workspaces/alice/lab"
         guest_lab = guest_place / "workspaces/alice/lab"
         assert layout.lab == host_lab
         assert host_lab.is_dir()

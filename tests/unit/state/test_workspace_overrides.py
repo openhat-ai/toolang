@@ -30,6 +30,7 @@ def test_root_workspace_overrides_are_scoped_captured_and_reloadable(
         source_ref=ref if placement == "visiting" else None,
     )
     layout.home.mkdir(parents=True)
+    layout.agent_home.mkdir(parents=True, exist_ok=True)
     layout.program.write_text("flow:\n  pass\n")
     layout.config.write_text('[workspaces]\nrepo = "./old"\nnotes = "./notes"\n')
     key = {"resident": "check", "visiting": ref, "roaming": str(source)}[placement]
@@ -38,8 +39,8 @@ def test_root_workspace_overrides_are_scoped_captured_and_reloadable(
 
     before = prepare_agent_state(layout)
     assert dict(before.workspaces) == {
-        "repo": str(tmp_path / "external"),
-        "notes": str(layout.home / "notes"),
+        "repo": str(config.parent.parent / "external"),
+        "notes": str(layout.agent_home / "notes"),
     }
     assert load_agent_state(layout, before.revision).workspaces == before.workspaces
 
@@ -61,12 +62,14 @@ def test_root_workspace_overrides_are_scoped_captured_and_reloadable(
     watcher = StateWatcher(layout, initial_state=before)
     after = asyncio.run(watcher.refresh())
     assert after.revision != before.revision
-    assert after.workspaces["repo"] == str(tmp_path / "replacement")
-    assert before.workspaces["repo"] == str(tmp_path / "external")
+    assert after.workspaces["repo"] == str(config.parent.parent / "replacement")
+    assert before.workspaces["repo"] == str(config.parent.parent / "external")
     assert load_agent_state(layout, before.revision).workspaces == before.workspaces
 
     config.write_text(tomlkit.dumps({"workspaces": {"another": {"repo": "../other"}}}))
-    assert prepare_agent_state(layout).workspaces["repo"] == str(layout.home / "old")
+    assert prepare_agent_state(layout).workspaces["repo"] == str(
+        layout.agent_home / "old"
+    )
 
     # Reusing a name from a different source must not inherit that source's grant.
     if placement != "resident":
@@ -76,16 +79,21 @@ def test_root_workspace_overrides_are_scoped_captured_and_reloadable(
             else replace(layout, source_ref="gh:other/check")
         )
         config.write_text(tomlkit.dumps({"workspaces": {key: {"repo": "../external"}}}))
-        assert prepare_agent_state(peer).workspaces["repo"] == str(layout.home / "old")
+        assert prepare_agent_state(peer).workspaces["repo"] == str(
+            layout.agent_home / "old"
+        )
 
 
 def test_root_workspace_override_validates_effective_duplicate_sources(tmp_path):
     layout = AgentLayout.resident(tmp_path, "check")
     layout.home.mkdir(parents=True)
+    layout.agent_home.mkdir(parents=True, exist_ok=True)
     layout.program.write_text("flow:\n  pass\n")
     layout.config.write_text('[workspaces]\nrepo = "./repo"\n')
     layout.place_config.write_text(
-        tomlkit.dumps({"workspaces": {"check": {"other": str(layout.home / "repo")}}})
+        tomlkit.dumps(
+            {"workspaces": {"check": {"other": str(layout.agent_home / "repo")}}}
+        )
     )
     with pytest.raises(ValueError, match="workspace path already configured"):
         prepare_agent_state(layout)

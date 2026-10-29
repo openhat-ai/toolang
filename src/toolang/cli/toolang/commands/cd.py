@@ -27,7 +27,7 @@ def cd(
     agent = context_agent(ctx)
     _require_interactive_terminal(sys.stdin, sys.stdout)
     layout = prepare_agent(ctx) if agent else None
-    directory = layout.home if layout else context_root(ctx)
+    directory = layout.agent_home if layout else context_root(ctx)
     executable = os.environ.get("SHELL", "/bin/sh")
     destination = f"{layout.name}'s home" if layout else "the Toolang root"
     try:

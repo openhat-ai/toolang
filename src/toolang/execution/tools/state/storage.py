@@ -53,7 +53,7 @@ def classify(key: str) -> HomeFile:
 class HomeFiles:
     def __init__(self, layout: AgentLayout) -> None:
         self.layout = layout
-        self.home = layout.home
+        self.home = layout.agent_home
         self._names: dict[Path, set[str]] = {}
         self._lock = EditLock(layout.home_edit_lock)
 
@@ -77,10 +77,14 @@ class HomeFiles:
                 # Reconstructing a filename loses whitespace normalized by it.
                 if (
                     source.suffix == ".too"
+                    and (
+                        self.layout.source_path is None
+                        or source == self.layout.source_path.resolve()
+                    )
                     and AgentLayout.roaming(
                         source, place_code=self.layout.place_code, root=self.layout.root
-                    ).home
-                    == self.layout.home
+                    ).agent_home
+                    == self.layout.agent_home
                 ):
                     target = source
             except RuntimeError as exc:

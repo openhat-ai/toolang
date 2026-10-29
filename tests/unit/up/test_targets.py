@@ -403,7 +403,7 @@ def test_visiting_aliases_share_a_root_and_normalized_name(tmp_path, prefix):
     assert layout.name == "daily_report_v2"
 
 
-def test_normalized_source_names_have_independent_homes(
+def test_normalized_source_name_collision_preserves_existing_source(
     tmp_path,
 ):
     first = tmp_path / "daily-report.too"
@@ -414,9 +414,8 @@ def test_normalized_source_names_have_independent_homes(
     marker = layout.home / "keep.txt"
     marker.write_text("history")
     before = {path.relative_to(layout.home) for path in layout.home.rglob("*")}
-    second = agent_sources.materialize_roaming_program(other, toolang_root=tmp_path)
-    assert second.home != layout.home and second.name == layout.name
-    assert second.program.resolve() == other
+    with pytest.raises(FileExistsError, match="already belongs to"):
+        agent_sources.materialize_roaming_program(other, toolang_root=tmp_path)
     assert layout.program.resolve() == first
     assert marker.read_text() == "history"
     assert {path.relative_to(layout.home) for path in layout.home.rglob("*")} == before
@@ -456,10 +455,12 @@ def test_roaming_queries_do_not_select_legacy_unnumbered_homes(
     layout.program.symlink_to(original)
     before = layout.program.read_bytes()
     result = cli.main([str(other), *command])
-    assert result == (1 if command[0] == "inspect" else 0)
+    assert result == (0 if command[0] == "workspace" else 1)
     output = capsys.readouterr()
     if command[0] == "inspect":
         assert "no retained instance" in output.err
+    elif command[0] == "info":
+        assert "already belongs to" in output.out
     assert layout.program.read_bytes() == before
     assert layout.program.resolve() == original
 

@@ -116,6 +116,7 @@ class StateWatcher:
         self._checked_root_source: SourceManifest | None = None
         self._checked_home_source: SourceManifest | None = None
         self._checked_layer_revisions: tuple[str | None, str | None] | None = None
+        self._checked_agent_revision: str | None = None
         if (
             initial_state is not None
             and initial_state.allow_overrides == self._allow_overrides
@@ -126,7 +127,7 @@ class StateWatcher:
         else:
             try:
                 state = load_agent_state(layout)
-            except (FileNotFoundError, KeyError, TypeError, ValueError):
+            except (OSError, KeyError, TypeError, ValueError):
                 pass
             else:
                 if (
@@ -277,9 +278,9 @@ class StateWatcher:
         """Run the sole candidate check and publication path."""
 
         try:
-            root_observation = observe_root_source(self.layout.place)
+            root_observation = observe_root_source(self.layout.agent_root)
             home_observation = observe_home_source(
-                self.layout.place,
+                self.layout.agent_root,
                 self.layout.name,
                 root_config=self.layout.root_config,
                 workspace_key=self.layout.config_key,
@@ -383,6 +384,10 @@ class StateWatcher:
             candidate.home_revision,
         )
         self._failure = None
+        try:
+            self._checked_agent_revision = load_current_agent_revision(self.layout)
+        except (OSError, TypeError, ValueError):
+            self._checked_agent_revision = None
         return StateRefresh(self._state)
 
     def _reject_check(self, exc: Exception) -> StateRefresh:
@@ -411,17 +416,17 @@ class StateWatcher:
                 await self._request_check(requested=True)
             logger.debug(
                 "watch.started place=%s agent=%s interval_ms=%s debounce_ms=%s",
-                self.layout.place,
+                self.layout.agent_root,
                 self.layout.name,
                 int(interval_ms),
                 int(debounce_ms),
             )
             timeout_ms = max(int(interval_ms), 50)
             async for changes in awatch(
-                self.layout.place,
+                self.layout.agent_root,
                 *(
                     ()
-                    if self.layout.root_config.is_relative_to(self.layout.place)
+                    if self.layout.root_config.is_relative_to(self.layout.agent_root)
                     or not self.layout.root_config.parent.is_dir()
                     else (self.layout.root_config.parent,)
                 ),
@@ -437,7 +442,7 @@ class StateWatcher:
                     if kind in _RELEVANT_CHANGES
                     and (
                         source_path_scope(
-                            self.layout.place,
+                            self.layout.agent_root,
                             self.layout.name,
                             Path(path),
                         )
@@ -454,7 +459,7 @@ class StateWatcher:
                     if path == self.layout.root_config:
                         invalidated_home.add(ROOT_WORKSPACE_SOURCE)
                     source = source_path_scope(
-                        self.layout.place,
+                        self.layout.agent_root,
                         self.layout.name,
                         path,
                     )
@@ -507,7 +512,8 @@ class StateWatcher:
                 not self._sources_reusable(state)
                 or bool(self._checked_root_source and self._checked_root_source.issues)
                 or bool(self._checked_home_source and self._checked_home_source.issues)
-                or load_current_agent_revision(self.layout) != state.revision
+                or load_current_agent_revision(self.layout)
+                != self._checked_agent_revision
                 or _current_layer_revisions(self.layout)
                 != self._checked_layer_revisions
                 or root_observation != self._checked_root_observation
@@ -529,7 +535,8 @@ class StateWatcher:
             return (
                 self._checked_home_observation is None
                 or not self._sources_reusable(state)
-                or load_current_agent_revision(self.layout) != state.revision
+                or load_current_agent_revision(self.layout)
+                != self._checked_agent_revision
                 or _current_layer_revisions(self.layout)
                 != self._checked_layer_revisions
                 or root_source != self._checked_root_source
@@ -556,6 +563,7 @@ class StateWatcher:
         """Load portable manifests without reconstructing the supplied State."""
 
         try:
+            self._checked_agent_revision = load_current_agent_revision(self.layout)
             root_source = load_layer_source(
                 self.layout,
                 "root",
@@ -566,7 +574,7 @@ class StateWatcher:
                 "home",
                 state.home_revision,
             )
-        except (FileNotFoundError, KeyError, TypeError, ValueError):
+        except (OSError, KeyError, TypeError, ValueError):
             return
         if not isinstance(root_source, SourceManifest) or not isinstance(
             home_source, SourceManifest

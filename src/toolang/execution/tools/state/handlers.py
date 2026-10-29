@@ -104,7 +104,7 @@ def _storage(context: StateToolContext) -> HomeFiles:
         home.is_symlink()
         or home.parent.is_symlink()
         or not home.is_dir()
-        or home.resolve() != context.layout.home.resolve()
+        or home.resolve() != context.layout.agent_home.resolve()
         or home.parent.name != "agents"
     ):
         raise UnsafeAuthoringPathError("state requires the current agent's own home")

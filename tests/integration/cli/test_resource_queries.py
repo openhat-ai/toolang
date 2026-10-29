@@ -272,7 +272,7 @@ def test_roaming_cap_location_uses_selected_layout_root(tmp_path, monkeypatch, c
     layout = materialize_roaming_program(
         source, toolang_root=tmp_path / "unrelated-root"
     )
-    skill = layout.place / "skills" / "reviewer" / "SKILL.md"
+    skill = layout.agent_root / "skills" / "reviewer" / "SKILL.md"
     skill.parent.mkdir(parents=True)
     skill.write_text("---\nname: reviewer\ndescription: Review changes\n---\nReview.\n")
     monkeypatch.setenv("TOOLANG_ROOT", str(tmp_path / "unrelated-root"))

@@ -660,6 +660,10 @@ def serve(
         source_path=source_path,
         source_ref=source_ref,
         source_edit_lock=source_edit_lock,
+        agent_root_path=(place or context_root(ctx)) if location == "guest" else None,
+        legacy_agent_root_path=(place or context_root(ctx)) / ".legacy"
+        if location == "guest"
+        else None,
         project_inputs=source_policy == "project",
         managed_membership=membership == "managed",
     )

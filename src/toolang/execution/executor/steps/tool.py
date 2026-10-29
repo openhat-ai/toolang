@@ -936,7 +936,7 @@ def _tool_context(
     if not isinstance(plugin_name, str) or not plugin_name:
         raise ToolangError(f"unknown toolset plugin for tool: {tool.name}")
     args = (
-        layout.home,
+        layout.agent_home,
         layout.tool_room(plugin_name),
         workspaces or {},
         cwd,

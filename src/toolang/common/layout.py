@@ -76,6 +76,8 @@ class AgentLayout:
     program_acquisition: AcquiredSource | None = field(
         default=None, compare=False, repr=False
     )
+    agent_root_path: Path | None = field(default=None, compare=False)
+    legacy_agent_root_path: Path | None = field(default=None, compare=False)
 
     def __post_init__(self) -> None:
         place = self.place.expanduser().resolve()
@@ -183,8 +185,31 @@ class AgentLayout:
         return self.place / "agents" / self.name
 
     @property
+    def runtime_root(self) -> Path:
+        """Root of this retained runtime instance, independent of shared inputs."""
+        return self.place
+
+    @property
+    def agent_root(self) -> Path:
+        """Root of shared authored inputs, prepared State, and workspaces."""
+        if self.agent_root_path is not None:
+            return self.agent_root_path.expanduser().resolve()
+        if self.placement == "roaming" and self.source_path is not None:
+            return self.source_path.parent / ".toolang"
+        return self.place
+
+    @property
+    def agent_home(self) -> Path:
+        return self.agent_root / "agents" / self.name
+
+    @property
+    def legacy_agent_root(self) -> Path:
+        """Read-only historical State location for this bound runtime instance."""
+        return self.legacy_agent_root_path or self.runtime_root
+
+    @property
     def workspaces(self) -> Path:
-        return agent_workspaces_path(self.place, self.name)
+        return agent_workspaces_path(self.agent_root, self.name)
 
     @property
     def lab(self) -> Path:
@@ -192,7 +217,7 @@ class AgentLayout:
 
     @property
     def place_config(self) -> Path:
-        return self.place / "config.toml"
+        return self.agent_root / "config.toml"
 
     @property
     def root_config(self) -> Path:
@@ -213,11 +238,11 @@ class AgentLayout:
 
     @property
     def program(self) -> Path:
-        return self.home / "agent.too"
+        return self.agent_home / "agent.too"
 
     @property
     def config(self) -> Path:
-        return self.home / "config.toml"
+        return self.agent_home / "config.toml"
 
     @property
     def env(self) -> Path:
@@ -225,15 +250,15 @@ class AgentLayout:
 
     @property
     def place_state(self) -> Path:
-        return self.place / ".state" / "root"
+        return self.agent_root / ".state" / "root"
 
     @property
     def home_state(self) -> Path:
-        return self.home / ".state" / "home"
+        return self.agent_home / ".state" / "home"
 
     @property
     def agent_state(self) -> Path:
-        return self.home / ".state" / "agent"
+        return self.agent_home / ".state" / "agent"
 
     @property
     def place_edit_lock(self) -> Path:
@@ -247,7 +272,7 @@ class AgentLayout:
 
     @property
     def home_edit_lock(self) -> Path:
-        return home_edit_lock_path(self.home)
+        return home_edit_lock_path(self.agent_home)
 
     @property
     def place_runtime(self) -> Path:

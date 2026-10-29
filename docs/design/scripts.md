@@ -37,19 +37,24 @@ then the bundled catalog. Within a layer, `plugin.model_catalog.models_dev.path`
 precedes `toolang.catalog.json`. A project file named `catalog.json` is ignored.
 Resident agents retain their root/home `catalog.json` convention.
 
-Each bare source execution creates `<srcdir>/.toolang/<root_code>/<place_code>/`; agent home is
-`<place>/agents/<agent>`. Status, stores, State, logs, and tool rooms are
-isolated. Published places survive exit/failure; runtime cleanup never deletes them.
+Each bare execution creates a runtime root at
+`<srcdir>/.toolang/<root_code>/<place_code>/`; instance records/control live in
+`agents/<agent>/.runtime` below it. Status, stores, logs, and tool rooms are
+isolated. Shared agent root is `<srcdir>/.toolang`, with source/configuration,
+Setup inputs, State, and lab reused across instances and selected Toolang roots.
+Agent home is `<srcdir>/.toolang/agents/<agent>`. Published runtime roots survive
+exit/failure; runtime cleanup never deletes them.
 The root-code directory identifies the selected root; its `root.json` retains
 the full root path. `file.too@CODE` reuses an exact HOME; `file.too@` requires the
 latest existing HOME. Bare `info` selects the latest or prepares one without a
 Run. See [agent addresses](agent-addresses.md#binding-and-execution) for selection
-and record binding. Legacy unnumbered `.toolang/agents/NAME` directories are
-preserved but never selected or created.
+and record binding. Shared `.toolang/agents/NAME` directories hold definitions, not runtime history.
+Legacy unnumbered `.runtime` data is preserved without adoption; current runtime
+selection still requires a retained P19.
 
 One script, including CLI rerun, may own a HOME at a time. Different HOMEs may run
 on host and Docker concurrently; a verified stopped HOME may switch environments
-on its next invocation. Reuse preserves history/lab and resolves current inputs
+on its next invocation. Reuse preserves history and resolves current inputs
 and grants, rather than retaining temporary options from the previous invocation.
 HOMEs share their canonical source; they are not source checkouts. Roaming has
 no Chat or standalone hosting commands.

@@ -4226,9 +4226,9 @@ def test_roaming_agent_info_uses_the_source_layout(
     assert result == 0
     assert captured["title"] == "DEMO"
     rows = cast(dict[str, str], captured["rows"])
-    assert shortened == [selected.home]
+    assert shortened == [selected.agent_home]
     assert rows["Home"] == (
-        str(selected.home.relative_to(tmp_path)) if relative else "compact home"
+        str(selected.agent_home.relative_to(tmp_path)) if relative else "compact home"
     )
     assert "Caps" in rows
 

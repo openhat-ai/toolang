@@ -269,15 +269,20 @@ def materialize_roaming_program(
 
 def _link_roaming_program(layout: AgentLayout, source: Path) -> None:
     """Atomically claim the normalized home without replacing another source."""
-    layout.home.mkdir(parents=True, exist_ok=True)
+    for directory in (layout.agent_root, layout.agent_home.parent, layout.agent_home):
+        if directory.is_symlink():
+            raise ValueError(
+                f"shared agent directory must not be a symlink: {directory}"
+            )
+        directory.mkdir(parents=True, exist_ok=True)
     try:
-        layout.program.symlink_to(os.path.relpath(source, start=layout.home))
+        layout.program.symlink_to(os.path.relpath(source, start=layout.agent_home))
     except FileExistsError:
         if layout.program.is_symlink():
             if layout.program.resolve() == source:
                 return
             raise FileExistsError(
-                f"agent home {layout.home} already belongs to {layout.program.resolve()}"
+                f"agent home {layout.agent_home} already belongs to {layout.program.resolve()}"
             ) from None
         raise FileExistsError(
             f"cannot replace authored file: {layout.program}"
@@ -293,7 +298,7 @@ def _sync_roaming_project(layout: AgentLayout, source: Path) -> None:
         source_catalog,
     )
 
-    place = layout.place
+    place = layout.agent_root
     root_lock = EditLock(layout.place_edit_lock)
 
     def capture():
@@ -301,7 +306,7 @@ def _sync_roaming_project(layout: AgentLayout, source: Path) -> None:
         return sources, source_catalog(sources, roaming=True, validate=False)
 
     sources, catalog = root_lock.read(capture)
-    projected = project_sources(sources, source=source, catalog=catalog)
+    projected = project_sources(sources, directory=source.parent, catalog=catalog)
     target = place / "config.toml"
     catalog_target = place / "catalog.json"
     lock = EditLock(layout.place_state / "edit.lock")
@@ -326,7 +331,7 @@ def _sync_roaming_project(layout: AgentLayout, source: Path) -> None:
             if not owned():
                 return
             previous = read_config(old_config)
-            old_catalog = layout.home / "catalog.json"
+            old_catalog = layout.agent_home / "catalog.json"
             known_catalogs = {source.with_name("toolang.catalog.json").resolve()}
             for value in (previous.get("__toolang_catalog__"), catalog):
                 if isinstance(value, str | Path):
@@ -338,6 +343,7 @@ def _sync_roaming_project(layout: AgentLayout, source: Path) -> None:
     def needs_update() -> bool:
         previous_catalog = None
         previous_source = None
+        previous_directory = None
         if (
             target.is_file()
             and not target.is_symlink()
@@ -346,6 +352,7 @@ def _sync_roaming_project(layout: AgentLayout, source: Path) -> None:
             previous = read_config(target)
             previous_catalog = previous.get("__toolang_catalog__")
             previous_source = previous.get("__toolang_source__")
+            previous_directory = previous.get("__toolang_project_dir__")
         for path in (target, catalog_target):
             if path.is_symlink():
                 # Relative generated links remain owned when the project moves,
@@ -353,10 +360,16 @@ def _sync_roaming_project(layout: AgentLayout, source: Path) -> None:
                 if (
                     path == catalog_target
                     and isinstance(previous_catalog, str)
-                    and isinstance(previous_source, str)
+                    and (
+                        isinstance(previous_directory, str)
+                        or isinstance(previous_source, str)
+                    )
                 ):
-                    old_source = Path(previous_source)
-                    old_home = AgentLayout.roaming(old_source).place
+                    old_home = (
+                        Path(previous_directory) / ".toolang"
+                        if isinstance(previous_directory, str)
+                        else AgentLayout.roaming(Path(str(previous_source))).agent_root
+                    )
                     if os.readlink(path) == os.path.relpath(
                         previous_catalog, start=old_home
                     ):
@@ -425,7 +438,7 @@ def _sync_roaming_project(layout: AgentLayout, source: Path) -> None:
             retire_previous_projection()
             return
         sources, catalog = current_sources, current_catalog
-        projected = project_sources(sources, source=source, catalog=catalog)
+        projected = project_sources(sources, directory=source.parent, catalog=catalog)
     raise RuntimeError("project sources changed repeatedly while projecting")
 
 
@@ -571,7 +584,7 @@ def _prepare_visiting_source(
     progress: ProgressSink | None,
     toolang_root: Path,
 ) -> AgentLayout:
-    from toolang.state.prepare import parse_visiting_agent
+    from toolang.state.source import parse_agent_source
 
     captured = _cached_visiting_source(layout)
     if (
@@ -580,7 +593,7 @@ def _prepare_visiting_source(
         and _visiting_program_cache_fresh(layout.program)
     ):
         layout = replace(layout, program_acquisition=captured)
-        parse_visiting_agent(
+        parse_agent_source(
             layout,
             ref=_display_ref(target.text),
             progress=progress,
@@ -600,7 +613,7 @@ def _prepare_visiting_source(
         progress=progress,
         progress_id=progress_id,
     )
-    parse_visiting_agent(
+    parse_agent_source(
         layout,
         ref=_display_ref(resolved_ref.render()),
         source=source_text,

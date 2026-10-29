@@ -27,14 +27,16 @@ project configuration grants no access. Home State retains a receipt of only
 the selected root workspace policy, so unrelated root Setup edits do not change it.
 Source discovery and process directories are distinct from execution workdir.
 
-Setup adds the implicit `lab` workspace at `PLACE/workspaces/<agent>/lab`,
+Setup adds the implicit `lab` workspace at `AGENT_ROOT/workspaces/<agent>/lab`,
 before configured grants. It is runtime-owned and cannot be replaced by a
 configured or temporary grant. Configured and invocation grants retain stable
 names and order; conflicting bindings reject instead of silently rebinding a name.
 Inferred names normalize directory basenames to kebab case. Explicit names use
 the validated workspace-name grammar.
 
-Host and guest use the same place-relative lab path. Removing an agent preserves
+Roaming uses `SOURCE_DIR/.toolang` as agent root, so its lab is shared across
+P19s and selected Toolang roots. Concurrent instances may write the same files.
+Host and guest preserve the lab identity through the captured mount binding. Removing an agent preserves
 its lab and contents.
 
 The caller may select workdir without adding access. Without an invocation

@@ -5,14 +5,12 @@ This document defines the current local filesystem layout.
 
 ## Root, place, and home
 
-`TOOLANG_ROOT` selects the root for configuration, resident agents, hub files,
-and runtime discovery. The internal path name PLACE denotes the agent root;
-see [agent addresses](agent-addresses.md#vocabulary) for public wording.
-A home is always `PLACE/agents/NAME`. Root, place, and home are paths. For resident agents,
-`PLACE = ROOT`; visiting and roaming places are grouped by a short root code.
-
-Authored scopes keep the labels `root` and `home`: root-scope inputs come from
-PLACE, and home-scope inputs come from HOME.
+`TOOLANG_ROOT` selects the Toolang root for policy, resident agents, Hub, and
+runtime discovery. Placement resolves an agent root for shared inputs/State and
+a runtime root for instance data. Agent home is `AGENT_ROOT/agents/NAME`;
+runtime data is `RUNTIME_ROOT/agents/NAME/.runtime`. The legacy internal `place`
+and `home` fields retain runtime paths. Authored root/home scopes use agent root
+and agent home. See [agent addresses](agent-addresses.md#vocabulary).
 
 Default root:
 
@@ -109,8 +107,8 @@ Previous layouts and registry directories remain untouched and are not searched.
 Temporary directory cleanup can remove its state and remembered settings. The cached
 remote `agent.too` is refetched after one hour. Its source-owned
 `agent.source.json` cache receipt records the acquired ref and byte digest;
-State captures the same Program and provenance. Distinct roaming homes have
-independent State and history. Host scripts serve the shared Agent API beside
+State captures the same Program and provenance. Roaming instances share State, Setup inputs, and lab under `DIR/.toolang`,
+including across selected Toolang roots; runtime records/history remain independent. Host scripts serve the shared Agent API beside
 their foreground workload on one event loop.
 Visiting idle shutdown stops its server and automatic Docker container, preserving
 this place and its history. Host control/stage files can be cleaned by the next
@@ -135,7 +133,7 @@ Key paths:
 | `psyches/`, `skills/`, `services/`, `prompts/` | Agent-local cap definitions |
 | `chores/` | Current chore definitions |
 | `.state/` | Immutable Agent State revisions |
-| `.runtime/` | Live runtime state |
+| `RUNTIME_ROOT/agents/NAME/.runtime/` | Instance runtime state |
 
 
 ## Agent Placement
@@ -144,19 +142,37 @@ Key paths:
 `G` is the configured Docker root (default `/root/.toolang`), and `DIR` is the
 canonical roaming source directory. `R8`, `P10`, and `P19` denote complete codes.
 
-| Placement | Host ROOT | Host PLACE | Guest ROOT = PLACE |
+| Placement | Host agent root | Host runtime root | Guest root |
 | --- | --- | --- | --- |
 | Resident | `R` | `R` | `G` |
-| Visiting | `R` | `/tmp/toolang/<R8>/<P10>` | `G` |
-| Roaming | `R` | `DIR/.toolang/<R8>/<P19>` | `G` |
+| Visiting | `/tmp/toolang/<R8>/<P10>` | `/tmp/toolang/<R8>/<P10>` | `G` |
+| Roaming | `DIR/.toolang` | `DIR/.toolang/<R8>/<P19>` | `G` |
 
-Each Docker guest hosts one agent. In both environments, HOME is
-`PLACE/agents/NAME` and lab is `PLACE/workspaces/NAME/lab`. Other host workspaces
+Each Docker guest hosts one agent. Agent home is `AGENT_ROOT/agents/NAME` and
+lab is `AGENT_ROOT/workspaces/NAME/lab`; guest shared and runtime roots both map
+to `G`, with the selected instance `.runtime` mounted separately. Other host workspaces
 may live anywhere; their guest targets are `G/workspaces/NAME/WORKSPACE`.
 Roaming HOME does not depend on exposing its source directory. The guest retains
 the original placement and full address even though its physical ROOT and PLACE
 coincide. [Hosting](hosting.md#docker-filesystem) defines the mounts.
 
+
+Roaming shared paths retain the ordinary State layout:
+
+```text
+DIR/.toolang/
+  config.toml
+  .state/root/v24/
+  agents/NAME/agent.too               # Link to the canonical local Program
+  agents/NAME/.state/home/v24/
+  agents/NAME/.state/agent/v24/
+  workspaces/NAME/lab/
+  R8/P19/agents/NAME/.runtime/        # Independent instance records/control
+```
+
+Old per-P19 State and lab directories are preserved without migration. Exact
+history loads may read that bound instance's current-format legacy State when
+missing from shared State. New runs use the shared lab; old labs are not merged.
 
 ## Setup Data
 

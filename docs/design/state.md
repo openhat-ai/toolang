@@ -27,8 +27,8 @@ creation times.
 
 State has two persistent layers and one composition:
 
-- the `root` layer contains configuration and capabilities from PLACE;
-- the `home` layer contains configuration from HOME, agent and runnable modules,
+- the `root` layer contains configuration and capabilities from agent root;
+- the `home` layer contains configuration from agent home, agent and runnable modules,
   home and module-local capabilities, and Markdown chore terms; and
 - the `agent` composition identifies one exact root/home revision pair.
 
@@ -106,6 +106,14 @@ Unversioned caches and other formats' stores are ignored without migration,
 fallback, or deletion. A missing current-format store is rebuilt from authored
 inputs; exact historical loads search only the running format's store. State
 isolation does not change runtime, API, or database compatibility rules.
+
+For roaming, substitute `DIR/.toolang` for PLACE and
+`DIR/.toolang/agents/NAME` for agent home in the State paths above. State sources
+and watchers use those shared roots; runtime identity/storage remains below
+`DIR/.toolang/R8/P19`. Each State scope keeps its own `current`; no State pointer
+is added to `.runtime`. Roaming agent `current` publishes authored State;
+invocation overrides and temporary grants are captured in separate exact Run
+revisions. Changing another instance's bindings does not change accepted Runs.
 
 ## Canonical Documents and Revisions
 

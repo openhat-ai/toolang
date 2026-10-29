@@ -317,8 +317,8 @@ staging directory is cleaned manually.
 ## Docker filesystem
 
 [Layout](layout.md#agent-placement) defines host and guest ROOT, PLACE, and HOME.
-Let `R` be host ROOT, `P` host PLACE, `H` host HOME, `G` guest ROOT = PLACE, and
-`A` the complete address. `G` defaults to `/root/.toolang`; guest HOME is always
+Let `R` be host Toolang root, `P` host agent root, `H` host agent home,
+`G` guest root, and `A` the complete address. `G` defaults to `/root/.toolang`; guest HOME is always
 `G/agents/NAME`, including roaming without a source-directory grant.
 
 | Host source | Guest target | Access |
@@ -331,7 +331,11 @@ Let `R` be host ROOT, `P` host PLACE, `H` host HOME, `G` guest ROOT = PLACE, and
 | `P/catalog.json`, when automatically selected | `G/catalog.json` | Read-only |
 | Generated `active/guest.env` | Selected guest root dotenv policy path | Read-only; mode `0600` |
 
-Lab is an ordinary separate mount from `P/workspaces/NAME/lab`. All workspace
+Current-format legacy State is mounted read-only below `G/.legacy` when present
+for the selected roaming instance; historical reads do not migrate it.
+Roaming mounts the selected instance runtime directory over
+`G/agents/NAME/.runtime`, separately from shared agent home. Lab is an ordinary
+separate mount from `P/workspaces/NAME/lab`. All workspace
 names are unique before mounting; nested and alias sources retain distinct named
 targets. Authored-input overlays cannot make a workspace grant read-only.
 

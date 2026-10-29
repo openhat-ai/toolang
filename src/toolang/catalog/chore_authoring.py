@@ -21,7 +21,7 @@ def allocate_authored_chore_name(
     """Allocate a filename when the caller did not supply a declaration name."""
     RunStore(layout.run_store).close()
     effective = catalog or AuthoredChores(
-        layout.home,
+        layout.agent_home,
         lock_path=layout.home_edit_lock,
         agent_name=layout.name,
     )
@@ -51,7 +51,7 @@ def create_chore(layout: AgentLayout, definition: ChoreFile) -> ChoreFile:
     """Create a home definition only when it can become effective."""
     _require_resident(layout)
     catalog = AuthoredChores(
-        layout.home,
+        layout.agent_home,
         lock_path=layout.home_edit_lock,
         agent_name=layout.name,
     )
@@ -86,7 +86,7 @@ def _editable_chore(layout: AgentLayout, reference: str) -> ChoreFile:
     )
     if chore is None:
         catalog = AuthoredChores(
-            layout.home,
+            layout.agent_home,
             lock_path=layout.home_edit_lock,
             agent_name=layout.name,
         )
@@ -97,12 +97,12 @@ def _editable_chore(layout: AgentLayout, reference: str) -> ChoreFile:
         raise CatalogConflictError(
             f"chore source is invalid at {path}; replace the complete file with state__update"
         )
-    if chore.line is not None or chore.path.parent != layout.home / "chores":
+    if chore.line is not None or chore.path.parent != layout.agent_home / "chores":
         raise CatalogConflictError(
             f"chore {chore.name} is defined at {chore.location}; edit that source"
         )
     entry = AuthoredChores(
-        layout.home,
+        layout.agent_home,
         lock_path=layout.home_edit_lock,
         agent_name=layout.name,
     ).get(chore.name)
@@ -133,7 +133,7 @@ def _editable_chore_path(layout: AgentLayout, reference: str) -> Path:
             f"chore {visible.name} is defined at {visible.location}; edit that source"
         )
     return AuthoredChores(
-        layout.home,
+        layout.agent_home,
         lock_path=layout.home_edit_lock,
         agent_name=layout.name,
     ).raw_path(reference)

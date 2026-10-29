@@ -238,7 +238,7 @@ def _profile_environment(
 ) -> dict[str, object]:
     return {
         "sandbox": _runtime_sandbox_spec(runtime_state),
-        "home": str(core.layout.home),
+        "home": str(core.layout.agent_home),
         "endpoint": _runtime_endpoint(runtime_state),
     }
 

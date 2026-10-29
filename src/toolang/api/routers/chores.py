@@ -174,7 +174,7 @@ def _inspection(core: AgentCore) -> ChoreInspection:
             None,
             "",
             None,
-            core.layout.home / file.key,
+            core.layout.agent_home / file.key,
             source_error=file.message,
             agent_name=core.layout.name,
         )

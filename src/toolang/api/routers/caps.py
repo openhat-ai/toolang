@@ -224,7 +224,7 @@ def caps_summary(
     try:
         selected = query_cap_views(
             entries,
-            place=core.layout.place,
+            place=core.layout.agent_root,
             agent_name=core.layout.name,
             queries=query,
         )
@@ -287,7 +287,7 @@ def cap_list(
             item.record
             for item in cap_collection(
                 entries,
-                place=core.layout.place,
+                place=core.layout.agent_root,
                 agent_name=core.layout.name,
                 kind=kind,
             ).query(query)

@@ -183,7 +183,7 @@ class _ToolRuntime(ToolRuntime):
             raise RuntimeError("Agic runtime execution is unavailable")
         captured = self.state.prepared.run
         context = ToolContext(
-            home=self.state.layout.home,
+            home=self.state.layout.agent_home,
             room=self.state.layout.tool_room("runtime"),
             workspaces=self.state.prepared.run.setup.workspace_roots(
                 captured.workspaces

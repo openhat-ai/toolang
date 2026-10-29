@@ -37,17 +37,17 @@ def test_shared_workspaces_are_ignored_before_path_resolution(tmp_path, placemen
         expected = str(source.parent)
     else:
         layout = AgentLayout(tmp_path, "helper", placement)
-        layout.home.mkdir(parents=True)
+        layout.agent_home.mkdir(parents=True)
         layout.program.write_text("flow run():\n  pass\n")
         layout.place_config.write_text(shared)
         layout.config.write_text('[workspaces]\nrepo = "."\n')
-        expected = str(layout.home)
+        expected = str(layout.agent_home)
 
     sources = config_sources(layout)
     assert "workspaces" not in sources[0].config
     assert prepare_agent_state(layout).workspaces == {"repo": expected}
     # Guest snapshots must obey the same ownership rule as host loading.
-    mounts = prepare_source_mounts(layout.place, layout.name, tmp_path / "guest")
+    mounts = prepare_source_mounts(layout.agent_root, layout.name, tmp_path / "guest")
     root_mount = next(
         m
         for m in mounts
@@ -104,7 +104,7 @@ def test_nearest_companion_beats_outer_catalog_path(tmp_path):
     layout = materialize_roaming_program(source, toolang_root=tmp_path)
     assert resolve_model_catalog_path(layout) == nearest
     assert source_catalog(config_sources(layout), roaming=True) == nearest
-    assert (layout.place / "catalog.json").resolve() == nearest
+    assert (layout.agent_root / "catalog.json").resolve() == nearest
     nearest.unlink()
     materialize_roaming_program(source, toolang_root=tmp_path)
     assert resolve_model_catalog_path(layout) == outer
@@ -331,7 +331,7 @@ def test_relocated_project_can_clear_its_owned_catalog_link(tmp_path):
     shutil.copytree(original, copied, symlinks=True)
     (copied / "toolang.catalog.json").unlink()
     layout = materialize_roaming_program(copied / "aid.too", toolang_root=tmp_path)
-    assert not (layout.place / "catalog.json").is_symlink()
+    assert not (layout.agent_root / "catalog.json").is_symlink()
     assert (original / "toolang.catalog.json").is_file()
 
 
@@ -358,6 +358,6 @@ def test_roaming_dangling_home_catalog_does_not_fall_back_to_project(tmp_path):
     source.write_text("flow run():\n  pass\n")
     (tmp_path / "toolang.catalog.json").write_text("{}")
     layout = materialize_roaming_program(source, toolang_root=tmp_path / "global")
-    (layout.home / "catalog.json").symlink_to(tmp_path / "missing.json")
+    (layout.agent_home / "catalog.json").symlink_to(tmp_path / "missing.json")
     with pytest.raises(ValueError, match="model catalog is not a file"):
         resolve_model_catalog_path(layout)

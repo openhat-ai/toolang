@@ -323,6 +323,7 @@ def _persist_agent_revision(
     allow_overrides: Mapping[str, tuple[str, ...]] | None = None,
     workspace_additions: Mapping[str, str] | None = None,
     publish: bool = True,
+    previous_revision: str | None = None,
 ) -> str:
     document = agent_layers_document(
         root_revision=root_revision,
@@ -332,7 +333,7 @@ def _persist_agent_revision(
         workspace_additions=workspace_additions,
     )
     try:
-        current = load_current_agent_revision(layout)
+        current = previous_revision or load_current_agent_revision(layout)
         previous = _load_object(
             agent_revision_dir(layout, current) / _LAYERS_FILE, label=_LAYERS_FILE
         )

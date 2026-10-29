@@ -111,10 +111,16 @@ def _request_mounts(request: SandboxRequest) -> tuple[SandboxMount, ...]:
         if mount.hosted_path != request.hosted_home
         and mount.hosted_path.is_relative_to(request.hosted_home)
     )
-    outer = tuple(mount for mount in request.mounts if mount not in nested_home)
+    home = next(
+        (mount for mount in request.mounts if mount.hosted_path == request.hosted_home),
+        SandboxMount(request.local_home, request.hosted_home),
+    )
+    outer = tuple(
+        mount for mount in request.mounts if mount not in nested_home and mount != home
+    )
     return (
         *outer,
-        SandboxMount(request.local_home, request.hosted_home),
+        home,
         *nested_home,
     )
 

@@ -367,12 +367,36 @@ async def _launch_locked(
         workspace_mapping: dict[str, tuple[str, str]] = {}
         if not on_host:
             source_mounts = prepare_source_mounts(
-                layout.place, layout.name, hosted_place
+                layout.agent_root, layout.name, hosted_place
             )
+            if layout.agent_home != layout.home:
+                source_mounts = (
+                    *source_mounts,
+                    SandboxMount(layout.agent_home, hosted_home),
+                    SandboxMount(layout.runtime, hosted_home / ".runtime"),
+                )
+                source_mounts += tuple(
+                    SandboxMount(local, target, read_only=True)
+                    for local, target in (
+                        (
+                            layout.runtime_root / ".state",
+                            hosted_place / ".legacy" / ".state",
+                        ),
+                        (
+                            layout.home / ".state",
+                            hosted_place
+                            / ".legacy"
+                            / "agents"
+                            / layout.name
+                            / ".state",
+                        ),
+                    )
+                    if local.is_dir() and not local.is_symlink()
+                )
         state = await asyncio.to_thread(prepare_launch_state, spec, progress=progress)
         if not on_host:
             workspace_mounts, workspace_mapping = prepare_workspace_mounts(
-                layout.home,
+                layout.agent_home,
                 agent_workspaces_path(hosted_place, layout.name),
                 workspaces=state.workspaces,
             )

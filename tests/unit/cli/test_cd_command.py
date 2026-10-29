@@ -47,7 +47,7 @@ def _context(root: Path, agent: str | None = "alice") -> Any:
             if agent == "visiting"
             else AgentLayout.roaming(root / "alice.too")
         )
-        layout.home.mkdir(parents=True, exist_ok=True)
+        layout.agent_home.mkdir(parents=True, exist_ok=True)
         return SimpleNamespace(obj=CliContext(root=root, agent="alice", layout=layout))
     return SimpleNamespace(obj=CliContext(root=root, agent=agent))
 
@@ -110,7 +110,7 @@ def test_cd_announces_destination_once_before_launching(
         output = capsys.readouterr()
         assert output.out == expected
         assert output.err == ""
-        assert kwargs["cwd"] == (layout.home if layout else root_path)
+        assert kwargs["cwd"] == (layout.agent_home if layout else root_path)
         return subprocess.CompletedProcess(args, 0)
 
     monkeypatch.setattr(cd_command.subprocess, "run", run)
@@ -172,7 +172,7 @@ def test_cd_path_display_failure_preserves_shell_launch(
     resident_home = _create_agent(tmp_path)
     context = _context(tmp_path, agent)
     directory = (
-        context.obj.layout.home
+        context.obj.layout.agent_home
         if context.obj.layout
         else resident_home
         if agent
@@ -337,7 +337,7 @@ def test_cd_falls_back_to_sh_when_shell_is_unset(
     resident_home = _create_agent(tmp_path)
     context = _context(tmp_path, agent)
     home = (
-        context.obj.layout.home
+        context.obj.layout.agent_home
         if context.obj.layout is not None
         else resident_home
         if agent
@@ -499,7 +499,7 @@ def test_cd_prepares_nonresident_home_and_reuses_it(
     for args, kwargs in calls:
         assert args == ["/custom/shell", "-i"]
         assert kwargs == {
-            "cwd": layout.home,
+            "cwd": layout.agent_home,
             "check": False,
             "env": {
                 "PATH": "/usr/bin:/bin",

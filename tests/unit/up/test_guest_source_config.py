@@ -21,13 +21,13 @@ from toolang.up.source import materialize_roaming_program
 
 def test_guest_mounts_original_configuration_bytes(tmp_path):
     layout = AgentLayout.resident(tmp_path / "host", "alice")
-    layout.home.mkdir(parents=True)
+    layout.agent_home.mkdir(parents=True)
     layout.place_config.write_text(
         '# Preserve this source\n[workspaces.alice]\nrepo = "."\n'
     )
     layout.config.write_text('[workspaces]\nhome = "."\n')
     guest = Path("/guest")
-    mounts = prepare_source_mounts(layout.place, layout.name, guest)
+    mounts = prepare_source_mounts(layout.agent_root, layout.name, guest)
     root = next(m for m in mounts if m.hosted_path == guest / "config.toml")
     assert root.local_path == layout.place_config
     assert root.read_only
@@ -63,11 +63,11 @@ def test_roaming_relocates_only_owned_legacy_home_inputs(tmp_path, legacy_link):
         layout.config.write_text(
             project_sources(script_sources(source), source=source, catalog=catalog)
         )
-    (layout.home / "catalog.json").symlink_to(catalog)
+    (layout.agent_home / "catalog.json").symlink_to(catalog)
     materialize_roaming_program(source, layout=layout)
     assert layout.place_config.is_file()
     assert not layout.config.exists() and not layout.config.is_symlink()
-    assert not (layout.home / "catalog.json").exists()
+    assert not (layout.agent_home / "catalog.json").exists()
     assert config.read_text() == '[workspaces]\nrepo = "."\n'
 
 
@@ -96,7 +96,7 @@ def test_roaming_preserves_authored_home_and_ignores_global_agent_config(tmp_pat
     )
     assert teaming.root.human == "human:project-owner" and not teaming.enabled
     assert prepare_agent_state(layout).workspaces == {
-        "notes": str(layout.home),
+        "notes": str(layout.agent_home),
         "repo": str(tmp_path),
     }
 

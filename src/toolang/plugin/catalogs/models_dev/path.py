@@ -67,8 +67,8 @@ def resolve_model_catalog_selection(
         # Host selection already decided which files to mount. Authored origins
         # remain host identities and must never be opened in the guest.
         candidates = (
-            *(((layout.home / "catalog.json", "home"),) if include_agent else ()),
-            (layout.place / "catalog.json", "root"),
+            *(((layout.agent_home / "catalog.json", "home"),) if include_agent else ()),
+            (layout.agent_root / "catalog.json", "root"),
         )
         for path, scope in candidates:
             if f"{scope}/catalog.json" not in layout.runtime_config.origins:

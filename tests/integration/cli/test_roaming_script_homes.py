@@ -28,7 +28,9 @@ def test_info_prepares_one_root_scoped_home_and_explicit_run_reuses_it(source_ho
     assert original is not None and original["workload"]["status"] == "stopped"
     assert not home.run_store.exists()
     assert not list((root / ".runtime" / "active").glob("*/info.json"))
-    assert not (source.parent / ".toolang" / "agents").exists()
+    assert home.agent_home == source.parent / ".toolang" / "agents" / home.name
+    assert home.agent_home.is_dir()
+    assert home.agent_home != home.home
     assert main(["info", f"{source}@"]) == 0
     assert retained_roaming(source, toolang_root=root) == (home,)
     for operand in (f"{source}@", f"{source}@{home.place_code}"):

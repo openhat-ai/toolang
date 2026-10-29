@@ -1492,7 +1492,7 @@ def test_visiting_agent_parses_once_before_parallel_dependencies(tmp_path, monke
     monkeypatch.setattr(Program, "from_source", parse)
     monkeypatch.setattr(cap_source, "_fetch_github_file", fetch)
     events = []
-    state_prepare.parse_visiting_agent(
+    state_prepare.parse_agent_source(
         layout, ref="https://example.test/agent.too", progress=events.append
     )
     state = prepare_agent_state(layout, progress=events.append)
