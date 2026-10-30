@@ -8,6 +8,7 @@ import subprocess
 import sys
 import time
 
+import httpx
 import pytest
 from typer._click.exceptions import ClickException
 
@@ -224,6 +225,32 @@ def test_failed_chat_initialization_releases_its_owned_server(project, monkeypat
     layout = select_roaming(source, toolang_root=root)
     _released(layout)
     assert _runs(layout) == []
+
+
+def test_failed_profile_check_releases_the_new_runtime(project, monkeypatch):
+    from toolang.cli.common import agent_server
+    from toolang.up.instance import SandboxState
+    from toolang.up.sandbox import load_state_sandbox, release_stopped
+    import asyncio
+
+    root, source = project
+
+    def fail(_server):
+        raise httpx.ConnectError("profile unavailable")
+
+    monkeypatch.setattr(agent_server, "_retain_server", fail)
+    try:
+        assert main(["--root", str(root), str(source), "chat"]) == 1
+        layout = select_roaming(source, toolang_root=root)
+        assert SandboxState.load(layout.runtime_status) is None
+        _released(layout)
+    finally:
+        layout = select_roaming(source, toolang_root=root)
+        state = SandboxState.load(layout.runtime_status)
+        if state is not None:
+            implementation = load_state_sandbox(layout, state)
+            asyncio.run(implementation.stop(state.ref, force=True))
+            asyncio.run(release_stopped(layout))
 
 
 def test_chat_starts_its_finalization_deadline_before_closing_the_client(

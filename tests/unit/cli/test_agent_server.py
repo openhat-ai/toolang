@@ -1163,6 +1163,59 @@ def test_agent_server_cleans_up_a_launched_guest_with_invalid_identity(
     assert cleaned[0][:2] == (layout, handle)
 
 
+@pytest.mark.parametrize(
+    "new_runtime,failure",
+    [
+        (False, httpx.ConnectError),
+        (True, httpx.ConnectError),
+        (True, agent_server.ServerClosingError),
+    ],
+)
+def test_failed_profile_check_cleans_up_only_a_new_runtime(
+    tmp_path, monkeypatch, new_runtime, failure
+):
+    from toolang.up.closing import ClosingDeadline
+
+    layout = AgentLayout.resident(tmp_path, "alice")
+    server = AgentServerRef("host", "http://localhost:7001")
+    handle = agent_server.sandbox_runtime.SandboxHandle(
+        cast(Any, None),
+        SandboxState("host", SandboxRef("process-1", server.endpoint)),
+    )
+    prepared = []
+
+    def prepare(*_args, **_kwargs):
+        assert not prepared, (
+            "failed foreground acquisition must not restart its runtime"
+        )
+        prepared.append(True)
+        return handle if new_runtime else server
+
+    monkeypatch.setattr(agent_server, "_prepare_agent_server", prepare)
+    monkeypatch.setattr(agent_server, "_server_reference", lambda *_args: server)
+
+    def fail(_server):
+        raise failure("profile unavailable")
+
+    cleaned = []
+    closing = ClosingDeadline(enabled=False)
+
+    async def stop(_layout, selected, **_kwargs):
+        assert closing.reason == "runtime acquisition failed"
+        cleaned.append(selected)
+
+    monkeypatch.setattr(agent_server, "_retain_server", fail)
+    monkeypatch.setattr(agent_server.sandbox_runtime, "stop_handle", stop)
+    with pytest.raises(
+        agent_server.AgentServerAcquisitionError, match="profile unavailable"
+    ):
+        with agent_server.acquire_agent_server(
+            layout, sandbox="host", closing=closing, show_progress=False
+        ):
+            pytest.fail("profile failure must not yield a server")
+    assert cleaned == ([handle] if new_runtime else [])
+
+
 def test_inactive_launch_wraps_environment_errors(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
