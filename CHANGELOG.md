@@ -19,7 +19,7 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 - Roaming launches share one `DIR/.toolang` agent root, reusing preparation,
   source projections, State layers, catalogs, workspaces, and prepared
-  Programs across instances and Toolang roots.
+  Programs across processes, host and guest launches, and Toolang roots.
   ([#990](https://github.com/openhat-ai/toolang/pull/990))
 
 ### Changed
@@ -75,6 +75,10 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 - Roaming instance discovery waits for complete instance publication, so a
   starting instance is not rejected as corrupt.
+  ([#990](https://github.com/openhat-ai/toolang/pull/990))
+
+- Roaming programs with CRLF sources reuse their prepared parse like LF
+  sources, so repeated launches skip source preparation.
   ([#990](https://github.com/openhat-ai/toolang/pull/990))
 
 ### Security
