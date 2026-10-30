@@ -27,6 +27,10 @@ Startup fetch hardlinks roaming's nearest project TOML and selected catalog into
 root config, retaining original paths for relative references. Visiting retains
 its remote Program cache. Fetch is separate from State/Setup watching; environment
 selection remains a startup snapshot.
+Setup shallow-watches the candidate catalog's parent directory, including nested
+paths selected by TOML or environment. Missing directories use their nearest
+existing ancestor; subscriptions advance as directories appear, including after
+a rejected refresh. Periodic probing remains independent.
 
 ## Environments
 

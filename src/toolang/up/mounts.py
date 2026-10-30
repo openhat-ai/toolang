@@ -182,6 +182,7 @@ def prepare_guest_environment(
         **{key: str(value) for key, value in context.origins.items()},
         "root": str(context.origin("root", layout.place_config)),
         "home": str(layout.config),
+        "agent_root": str(layout.agent_root),
         "toolang_root": str(layout.host_root),
     }
     if catalog is not None and catalog.scope in {"root", "home"}:

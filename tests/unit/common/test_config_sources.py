@@ -22,6 +22,40 @@ from toolang.up.source import materialize_roaming_program
 from toolang.up.mounts import prepare_place_mounts
 
 
+@pytest.mark.parametrize("scope", ["root", "home"])
+def test_declared_local_catalog_keeps_directory_ownership_in_the_guest(tmp_path, scope):
+    from dataclasses import replace
+
+    from toolang.common.config_runtime import CONFIG_PATCH_ENV, RuntimeConfig
+    from toolang.plugin.catalogs.models_dev.path import resolve_model_catalog_selection
+    from toolang.up.mounts import prepare_guest_environment
+
+    host = AgentLayout.resident(tmp_path / "host", "alice")
+    guest = AgentLayout.resident(tmp_path / "guest", "alice")
+    config = host.root_config if scope == "root" else host.config
+    guest_config = guest.root_config if scope == "root" else guest.config
+    for path in (config, guest_config):
+        (path.parent / "nested").mkdir(parents=True)
+        for name in ("one", "two"):
+            (path.parent / f"nested/{name}.json").write_text("{}")
+    host.agent_home.mkdir(parents=True, exist_ok=True)
+    for name in ("one", "two"):
+        contents = f'[plugin.model_catalog.models_dev]\npath = "nested/{name}.json"\n'
+        config.write_text(contents)
+        guest_config.write_text(contents)
+        selected = resolve_model_catalog_selection(host)
+        assert selected.scope == scope
+        if name == "one":
+            environment = prepare_guest_environment(host, mapping={}, catalog=selected)
+            guest = replace(
+                guest,
+                runtime_config=RuntimeConfig.parse(environment[CONFIG_PATCH_ENV]),
+            )
+        observed = resolve_model_catalog_selection(guest)
+        assert observed.scope == scope
+        assert observed.path == guest_config.parent / f"nested/{name}.json"
+
+
 @pytest.mark.parametrize("declared", [False, True])
 def test_removed_roaming_catalog_obeys_local_selection_without_refetch(
     tmp_path, declared

@@ -212,6 +212,19 @@ class AgentLayout:
     def agent_home(self) -> Path:
         return self.agent_root / "agents" / self.name
 
+    def local_source_path(self, path: Path) -> Path:
+        """Map a captured host source path into this process's agent root."""
+        if path.is_relative_to(self.agent_root):
+            return path
+        origin = (
+            self.runtime_config.origins.get("agent_root")
+            if self.runtime_config is not None
+            else None
+        )
+        if origin is not None and path.is_relative_to(origin):
+            return self.agent_root / path.relative_to(origin)
+        return path
+
     @property
     def workspaces(self) -> Path:
         return agent_workspaces_path(self.agent_root, self.name)

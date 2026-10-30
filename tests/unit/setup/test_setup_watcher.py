@@ -134,6 +134,127 @@ def test_current_requires_initial_refresh(tmp_path: Path) -> None:
         watcher.current()
 
 
+@pytest.mark.parametrize("selection", ["config", "environment"])
+def test_selected_nested_catalog_is_watched_without_waiting_for_periodic_refresh(
+    tmp_path, monkeypatch, selection
+):
+    from toolang.common import watching
+    from toolang.plugin.catalogs.models_dev.path import MODEL_CATALOG_ENV
+
+    baseline, _ = _watcher(monkeypatch, tmp_path)
+    layout = baseline.layout
+    catalog = layout.agent_home / "nested/models.json"
+    catalog.parent.mkdir(parents=True)
+    _write_catalog(catalog, ("one",))
+    envs = {"TEST_API_KEY": "synthetic"}
+    if selection == "config":
+        layout.config.write_text(
+            '[plugin.model_catalog.models_dev]\npath = "nested/models.json"\n'
+        )
+    else:
+        envs[MODEL_CATALOG_ENV] = str(catalog)
+    watcher = SetupWatcher(layout, environ=envs, validate_defaults=False)
+    native = watching.awatch
+
+    async def scenario():
+        registered = asyncio.Event()
+        changed = asyncio.Event()
+        stop = asyncio.Event()
+
+        async def observe(*paths, **kwargs):
+            assert kwargs["recursive"] is False
+            if catalog.parent in paths:
+                registered.set()
+            async for batch in native(*paths, **kwargs):
+                yield batch
+
+        monkeypatch.setattr(watching, "awatch", observe)
+
+        async def monitor():
+            async for setup in watcher.updates(stop_signal=stop, interval_ms=60_000):
+                if {model.ref for model in setup.models()} == {"test/changed"}:
+                    changed.set()
+
+        await watcher.refresh()
+        task = asyncio.create_task(monitor())
+        try:
+            async with asyncio.timeout(10):
+                await registered.wait()
+                replacement = catalog.with_suffix(".replacement")
+                _write_catalog(replacement, ("changed",))
+                replacement.replace(catalog)
+                await changed.wait()
+        finally:
+            stop.set()
+            await task
+
+    asyncio.run(scenario())
+
+
+def test_missing_catalog_candidate_keeps_watching_directory_and_file_creation(
+    tmp_path, monkeypatch
+):
+    from toolang.common import watching
+    from toolang.common.files import atomic_write_text
+
+    baseline, _ = _watcher(monkeypatch, tmp_path)
+    layout = baseline.layout
+    layout.agent_home.mkdir(parents=True)
+    catalog = layout.agent_home / "future/nested/models.json"
+    watcher = SetupWatcher(layout, environ={"TEST_API_KEY": "synthetic"})
+    native = watching.awatch
+
+    async def scenario():
+        started = asyncio.Event()
+        registered = asyncio.Event()
+        rejected = asyncio.Event()
+        changed = asyncio.Event()
+        stop = asyncio.Event()
+
+        async def observe(*paths, **kwargs):
+            started.set()
+            if catalog.parent in paths:
+                registered.set()
+            async for batch in native(*paths, **kwargs):
+                yield batch
+
+        refresh = watcher.refresh
+
+        async def check(**kwargs):
+            setup = await refresh(**kwargs)
+            if watcher.diagnostics():
+                rejected.set()
+            return setup
+
+        monkeypatch.setattr(watching, "awatch", observe)
+        monkeypatch.setattr(watcher, "refresh", check)
+
+        async def monitor():
+            async for setup in watcher.updates(stop_signal=stop, interval_ms=60_000):
+                if {model.ref for model in setup.models()} == {"test/created"}:
+                    changed.set()
+
+        await watcher.refresh()
+        task = asyncio.create_task(monitor())
+        try:
+            async with asyncio.timeout(10):
+                await started.wait()
+                atomic_write_text(
+                    layout.config,
+                    '[plugin.model_catalog.models_dev]\npath = "future/nested/models.json"\n',
+                )
+                await rejected.wait()
+                catalog.parent.mkdir(parents=True)
+                await registered.wait()
+                _write_catalog(catalog, ("created",))
+                await changed.wait()
+        finally:
+            stop.set()
+            await task
+
+    asyncio.run(scenario())
+
+
 def test_initial_refresh_and_lazy_loading_report_progress_only_when_requested(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

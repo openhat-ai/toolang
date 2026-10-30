@@ -53,16 +53,19 @@ def resolve_model_catalog_selection(
     environ: Mapping[str, str] | None = None,
     include_agent: bool = True,
     sources: Sequence[ConfigSource] | None = None,
+    validate: bool = True,
 ) -> ModelCatalogSelection:
-    """Choose explicit/environment, nearest authored, then packaged inputs."""
+    """Choose inputs; optional validation also permits watching missing candidates."""
     if explicit is not None:
         path = explicit.expanduser().resolve(strict=False)
-        _require_catalog_candidate(path, label="explicit model catalog")
+        if validate:
+            _require_catalog_candidate(path, label="explicit model catalog")
         return ModelCatalogSelection(path, "custom")
     configured = str((environ or {}).get(MODEL_CATALOG_ENV, "")).strip()
     if configured:
         path = Path(configured).expanduser().resolve(strict=False)
-        _require_catalog_candidate(path, label=MODEL_CATALOG_ENV)
+        if validate:
+            _require_catalog_candidate(path, label=MODEL_CATALOG_ENV)
         return ModelCatalogSelection(path, "custom")
     origins = (
         config_origins(layout).origins if layout.root_source_receipt.is_file() else {}
@@ -85,18 +88,30 @@ def resolve_model_catalog_selection(
             and "root/catalog.json" in origins
             and (local.exists() or local.is_symlink() or declared)
         ):
-            _require_catalog_candidate(local, label="placement model catalog")
+            if validate:
+                _require_catalog_candidate(local, label="placement model catalog")
             return ModelCatalogSelection(local, scope)
         config_path = layout.config if scope == "home" else layout.root_config
         selected = source_catalog(
-            (ConfigSource(config_path, source.config, source.scope),), roaming=False
+            (ConfigSource(config_path, source.config, source.scope),),
+            roaming=False,
+            validate=False,
         )
         if selected is not None:
+            selected = layout.local_source_path(selected).resolve(strict=False)
+            if validate and not selected.is_file():
+                raise ValueError(f"model catalog is not a file: {selected}")
+            owned = selected.is_relative_to(
+                layout.root_config.parent
+            ) or selected.is_relative_to(layout.agent_home)
             return ModelCatalogSelection(
-                selected.resolve(strict=False),
-                "custom" if declared else scope,
+                selected,
+                "custom" if declared and not owned else scope,
             )
-    _require_catalog_candidate(PACKAGED_MODEL_CATALOG, label="packaged model catalog")
+    if validate:
+        _require_catalog_candidate(
+            PACKAGED_MODEL_CATALOG, label="packaged model catalog"
+        )
     return ModelCatalogSelection(
         PACKAGED_MODEL_CATALOG.resolve(strict=False), "packaged"
     )

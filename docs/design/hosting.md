@@ -344,7 +344,9 @@ distinct named targets.
 Host and guest read the same agent-root/home source bytes and share prepared State.
 Runtime corrections travel through `guest.env` to the selected root dotenv file
 as `TOOLANG_CONFIG_PATCH`. Source origins keep relative paths and symlink targets
-in the host's canonical path view. Source parsers receive only `ConfigOrigins`;
+in the host's canonical path view. The captured host agent root lets the layout
+map local catalog paths into guest directories without changing State identities.
+Source parsers receive only `ConfigOrigins`;
 `RuntimeConfig` holds deeply immutable execution defaults, patches, and bindings,
 and derives fresh Setup views. Human fallbacks fill missing values, so explicit
 `[teaming]` edits remain effective.
@@ -358,13 +360,12 @@ A common `--launch-schema` check rejects incompatible startup contracts before
 State writes. `guest.sh` bootstraps and executes arguments without rewriting options.
 [Workspaces](workspaces.md) owns grant selection and captured-mount checks.
 
-The guest uses its own packaged catalog without a mount or override. Automatic
-agent-root and agent-home catalogs retain their owning scope. Independently selected
-catalogs, including an explicit selection of the default file, mount read-only
-at `GR/.inputs/catalog.json`; only these need `TOOLANG_MODEL_CATALOG`.
-Automatic root/home catalog selection follows the mounted directories, including
-file creation and removal. Explicit catalog selection and workspace mounts remain
-fixed for the launch; changing them requires restart.
+The guest uses its own packaged catalog without a mount or override. Catalogs
+inside root config or agent home retain their owning scope, including TOML path
+declarations, and follow directory-mounted file replacement and configuration
+changes. External TOML catalogs and CLI/environment overrides mount read-only at
+`GR/.inputs/catalog.json`; only these need `TOOLANG_MODEL_CATALOG` and remain
+fixed for the launch. Changing workspace mounts also requires restart.
 
 Assembly is split between [mount preparation](../../src/toolang/up/mounts.py),
 the [launch boundary](../../src/toolang/up/sandbox.py), and the

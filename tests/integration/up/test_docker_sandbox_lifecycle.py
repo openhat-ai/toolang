@@ -2958,8 +2958,14 @@ def test_guest_source_validation_preserves_usable_inputs(
 
 @pytest.mark.parametrize("placement", ["resident", "visiting", "roaming"])
 @pytest.mark.parametrize("location", ["host", "docker"])
+@pytest.mark.parametrize("declared_home_catalog", [False, True])
 def test_live_placement_watches_sources_catalogs_and_external_pointers(
-    tmp_path, docker_wheel_dir, local_model_port, placement, location
+    tmp_path,
+    docker_wheel_dir,
+    local_model_port,
+    placement,
+    location,
+    declared_home_catalog,
 ):
     from toolang.cli.common.agent_server import acquire_agent_server
     from toolang.common.environment import agent_environment_paths
@@ -3012,6 +3018,11 @@ def test_live_placement_watches_sources_catalogs_and_external_pointers(
             "[teaming]\nenabled = false\n"
         )
         layout.root_catalog.write_text(empty_catalog)
+        if declared_home_catalog:
+            layout.config.write_text(
+                '[plugin.model_catalog.models_dev]\npath = "catalog.json"\n'
+            )
+            (layout.agent_home / "catalog.json").write_text(empty_catalog)
         initial = prepare_agent_state(layout)
         _write_local_model_env(root / ".env", local_model_port)
         agent_environment_paths(root, layout)[0].write_text(
@@ -3062,7 +3073,12 @@ def test_live_placement_watches_sources_catalogs_and_external_pointers(
             atomic_write_text(layout.program, "flow changed():\n  pass\n")
             wait_items("flows", "name", {"changed", "extra"})
 
-            for catalog in (layout.root_catalog, layout.agent_home / "catalog.json"):
+            catalogs = (
+                (layout.agent_home / "catalog.json",)
+                if declared_home_catalog
+                else (layout.root_catalog, layout.agent_home / "catalog.json")
+            )
+            for catalog in catalogs:
                 original = catalog.read_text() if catalog.exists() else None
                 for name in ("one", "two"):
                     atomic_write_text(
@@ -3099,10 +3115,26 @@ def test_live_placement_watches_sources_catalogs_and_external_pointers(
                         "ref",
                         {f"placement-probe/{name}"},
                     )
+                last_contents = catalog.read_text()
                 catalog.unlink()
-                wait_items("models?query=placement-probe/*", "ref", set())
+                if not declared_home_catalog:
+                    wait_items("models?query=placement-probe/*", "ref", set())
                 if original is not None:
                     atomic_write_text(catalog, original)
+                    wait_items("models?query=placement-probe/*", "ref", set())
+                if declared_home_catalog:
+                    nested = layout.agent_home / "nested/models.json"
+                    nested.parent.mkdir()
+                    atomic_write_text(nested, last_contents)
+                    atomic_write_text(
+                        layout.config,
+                        '[plugin.model_catalog.models_dev]\npath = "nested/models.json"\n',
+                    )
+                    wait_items(
+                        "models?query=placement-probe/*", "ref", {"placement-probe/two"}
+                    )
+                    atomic_write_text(nested, empty_catalog)
+                    wait_items("models?query=placement-probe/*", "ref", set())
 
             for pointer in (
                 layer_current_path(layout, "root"),

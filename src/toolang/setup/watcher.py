@@ -29,7 +29,7 @@ from toolang.plugin.catalogs.models_dev.catalog import (
     ModelCatalogSource,
     ModelsDevModelCatalog,
 )
-from toolang.plugin.catalogs.models_dev.path import resolve_model_catalog_path
+from toolang.plugin.catalogs.models_dev.path import resolve_model_catalog_selection
 from toolang.plugin.models.config import validate_models_config
 from .tools import capture_toolset_loader, materialize_tools
 from toolang.setup.routes import RouteAdapter, resolve_catalog_providers
@@ -123,6 +123,7 @@ class SetupWatcher:
             else load_place_setup_envs(layout)
         )
         self._model_catalog_override = model_catalog
+        self._model_catalog_path: Path | None = None
         self._allow_overrides = dict(allow_overrides or {})
         self._default_overrides = dict(default_overrides or {})
         self._limit_overrides = dict(limit_overrides or {})
@@ -218,13 +219,25 @@ class SetupWatcher:
         toolset_configs["convo"] = teaming.toolset_config(
             gateway=inputs.envs.get("TOOLANG_HOST_GATEWAY"),
         )
-        catalog_path = resolve_model_catalog_path(
+        catalog = resolve_model_catalog_selection(
             self.layout,
             explicit=self._model_catalog_override,
             environ=inputs.envs,
             include_agent=self._agent_context,
             sources=inputs.sources,
+            validate=False,
         )
+        catalog_path = catalog.path
+        self._model_catalog_path = catalog_path if catalog.scope != "packaged" else None
+        if not catalog_path.is_file():
+            # Retain the missing candidate, then report its original selection error.
+            resolve_model_catalog_selection(
+                self.layout,
+                explicit=self._model_catalog_override,
+                environ=inputs.envs,
+                include_agent=self._agent_context,
+                sources=inputs.sources,
+            )
         catalog_configs = self._runtime_catalog_configs(
             configs, inputs.envs, catalog_path=catalog_path
         )
@@ -424,8 +437,11 @@ class SetupWatcher:
                 self.layout.agent_home,
                 self.layout.root_config.parent,
             }
-            if self._model_catalog_override is not None:
-                paths.add(self._model_catalog_override.parent)
+            if self._model_catalog_path is not None:
+                parent = self._model_catalog_path.parent
+                while not parent.is_dir():
+                    parent = parent.parent
+                paths.add(parent)
             return tuple(sorted(path for path in paths if path.is_dir()))
 
         async for _ in directory_changes(

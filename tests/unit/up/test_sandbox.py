@@ -1512,7 +1512,10 @@ def test_guest_launch_snapshots_workspace_mounts_and_unavailable_roots(
     assert handle.state.sandbox == "fake:value:with:colons"
 
 
-@pytest.mark.parametrize("catalog_kind", ["packaged", "root", "custom", "home"])
+@pytest.mark.parametrize(
+    "catalog_kind",
+    ["packaged", "root", "custom", "home", "declared-root", "declared-home"],
+)
 def test_guest_catalog_launch_preserves_selection_provenance(
     tmp_path, monkeypatch, catalog_kind
 ):
@@ -1531,11 +1534,18 @@ def test_guest_catalog_launch_preserves_selection_provenance(
 
     monkeypatch.setattr(sandbox, "_wait_ready", ready)
     spec = _launch_spec(tmp_path)
-    if catalog_kind in {"root", "custom"}:
+    if catalog_kind in {"root", "custom", "declared-root"}:
         catalog = root_file(spec.serve.layout.agent_root, "catalog.json")
         catalog.write_text("{}")
-    elif catalog_kind == "home":
+    elif catalog_kind in {"home", "declared-home"}:
         (spec.serve.layout.home / "catalog.json").write_text("{}")
+    if catalog_kind.startswith("declared-"):
+        config = (
+            spec.serve.layout.root_config
+            if catalog_kind == "declared-root"
+            else spec.serve.layout.config
+        )
+        config.write_text('[plugin.model_catalog.models_dev]\npath = "catalog.json"\n')
     if catalog_kind == "custom":
         spec = replace(spec, environ={MODEL_CATALOG_ENV: str(catalog)})
     asyncio.run(sandbox.launch(spec))
