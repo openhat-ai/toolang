@@ -390,10 +390,10 @@ async def _launch_locked(
         catalog = None
         if not on_host:
             catalog = resolve_model_catalog_selection(layout, environ=spec.environ)
-            if catalog.scope == "custom":
-                catalog_mounts, guest_catalog = prepare_catalog_mount(
-                    catalog.path, hosted_place
-                )
+            catalog_mounts, guest_catalog = prepare_catalog_mount(
+                catalog, hosted_place, source_mounts
+            )
+            if guest_catalog is not None:
                 catalog_env[MODEL_CATALOG_ENV] = str(guest_catalog)
         guest_environment = (
             prepare_guest_environment(

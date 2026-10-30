@@ -1568,6 +1568,47 @@ def test_guest_catalog_launch_preserves_selection_provenance(
     )
 
 
+def test_guest_catalog_hidden_by_runtime_mount_uses_its_selected_host_file(
+    tmp_path, monkeypatch
+):
+    from toolang.plugin.catalogs.models_dev.path import MODEL_CATALOG_ENV
+    from toolang.up.source import materialize_roaming_program
+
+    source = tmp_path / "alice.too"
+    source.write_text("flow work():\n  pass\n")
+    layout = materialize_roaming_program(source, toolang_root=tmp_path / "root")
+    catalog = layout.agent_home / ".runtime/models.json"
+    catalog.parent.mkdir()
+    catalog.write_text('{"providers": [], "models": []}')
+    layout.config.write_text(
+        '[plugin.model_catalog.models_dev]\npath = ".runtime/models.json"\n'
+    )
+    implementation = FakeSandbox()
+    monkeypatch.setattr(
+        sandbox, "create_sandbox", lambda *_args, **_kwargs: implementation
+    )
+
+    async def ready(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(sandbox, "_wait_ready", ready)
+    spec = _launch_spec(tmp_path / "root")
+    spec = replace(spec, serve=replace(spec.serve, layout=layout))
+    try:
+        asyncio.run(sandbox.launch(spec))
+        prepared = implementation.calls[0]
+        assert isinstance(prepared, tuple)
+        request = cast(SandboxRequest, prepared[2])
+        assert layout.runtime != catalog.parent
+        assert request.envs.get(MODEL_CATALOG_ENV) == "/runtime/.inputs/catalog.json"
+        assert (
+            SandboxMount(catalog, Path("/runtime/.inputs/catalog.json"), read_only=True)
+            in request.mounts
+        )
+    finally:
+        asyncio.run(sandbox.stop(layout, force=True))
+
+
 def test_guest_argv_preserves_cli_workspace_order_and_state_identity(
     tmp_path, monkeypatch
 ):

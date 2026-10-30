@@ -1006,6 +1006,7 @@ Path('/root/.toolang/agents/alice/home-stays-writable').write_text('ok')
         ("roaming", "root"),
         ("roaming", "home"),
         ("roaming", "config"),
+        ("roaming", "shadowed-home"),
         ("visiting", "packaged"),
     ],
 )
@@ -1096,6 +1097,14 @@ def test_guest_source_handoff_preserves_layers_catalogs_and_environment(
         (layout.agent_home / "catalog.json").write_text(
             '{"providers": [], "models": []}'
         )
+    elif catalog_kind == "shadowed-home":
+        hidden = layout.agent_home / ".runtime/models.json"
+        hidden.parent.mkdir()
+        hidden.write_text('{"providers": [], "models": []}')
+        with layout.config.open("a") as config:
+            config.write(
+                '[plugin.model_catalog.models_dev]\npath = ".runtime/models.json"\n'
+            )
     _write_local_model_env(root / ".env", local_model_port)
     policy = agent_environment_paths(root, layout)[0]
     policy.write_text(
@@ -1232,6 +1241,7 @@ print(json.dumps({'revision': state.revision, 'workspaces': dict(state.workspace
                     "option",
                     "explicit-root",
                     "explicit-packaged",
+                    "shadowed-home",
                 }
             ) and not (placement == "roaming" and catalog_kind == "config"):
                 assert observed["catalog_scope"] == "custom"

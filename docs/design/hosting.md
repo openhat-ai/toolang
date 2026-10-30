@@ -366,6 +366,8 @@ declarations, and follow directory-mounted file replacement and configuration
 changes. External TOML catalogs and CLI/environment overrides mount read-only at
 `GR/.inputs/catalog.json`; only these need `TOOLANG_MODEL_CATALOG` and remain
 fixed for the launch. Changing workspace mounts also requires restart.
+A catalog hidden by a nested runtime mount uses the same read-only file binding
+as an external catalog; scope alone does not determine mount coverage.
 
 Assembly is split between [mount preparation](../../src/toolang/up/mounts.py),
 the [launch boundary](../../src/toolang/up/sandbox.py), and the

@@ -321,19 +321,29 @@ def test_workspace_mounts_keep_captured_state_when_source_changes(tmp_path):
 
 @pytest.mark.parametrize("scope", ["root", "place", "home"])
 def test_custom_catalog_uses_fixed_read_only_target_even_when_covered(tmp_path, scope):
+    from toolang.plugin.catalogs.models_dev.path import ModelCatalogSelection
+
     directory = tmp_path / scope
     directory.mkdir()
     catalog = directory / "catalog.json"
     catalog.write_text("{}")
-    additional, target = prepare_catalog_mount(catalog, Path("/guest/place"))
+    additional, target = prepare_catalog_mount(
+        ModelCatalogSelection(catalog, "custom"), Path("/guest/place")
+    )
+    assert target is not None
     assert target == Path("/guest/place/.inputs/catalog.json")
     assert additional == (SandboxMount(catalog, target, read_only=True),)
 
 
 def test_external_catalog_preserves_its_filename_and_is_read_only(tmp_path):
+    from toolang.plugin.catalogs.models_dev.path import ModelCatalogSelection
+
     catalog = tmp_path / "custom-models.json"
     catalog.write_text("{}")
-    mounts, target = prepare_catalog_mount(catalog, Path("/guest/place"))
+    mounts, target = prepare_catalog_mount(
+        ModelCatalogSelection(catalog, "custom"), Path("/guest/place")
+    )
+    assert target is not None
     assert target == Path("/guest/place/.inputs/catalog.json")
     assert mounts == (SandboxMount(catalog, target, read_only=True),)
 

@@ -31,11 +31,40 @@ from toolang.common.config_runtime import CONFIG_PATCH_ENV
 
 
 def prepare_catalog_mount(
-    path: Path, hosted_place: Path
-) -> tuple[tuple[SandboxMount, ...], Path]:
-    """Keep selected catalogs in their owning scope, mapping external files once."""
+    catalog: ModelCatalogSelection,
+    hosted_place: Path,
+    mounts: Sequence[SandboxMount] = (),
+) -> tuple[tuple[SandboxMount, ...], Path | None]:
+    """Use a directory only when the final guest view exposes the selected file."""
+    if catalog.scope == "packaged":
+        return (), None
+    path = catalog.path.resolve()
+    if catalog.scope != "custom":
+        directories = tuple(mount for mount in mounts if mount.local_path.is_dir())
+        for mount in directories:
+            if not path.is_relative_to(mount.local_path):
+                continue
+            hosted = mount.hosted_path / path.relative_to(mount.local_path)
+            exposed = _mounted_directory_path(hosted, directories)
+            if exposed is not None and exposed.resolve() == path:
+                return (), None
     target = hosted_place / ".inputs" / "catalog.json"
-    return (SandboxMount(path.resolve(), target, read_only=True),), target
+    return (SandboxMount(path, target, read_only=True),), target
+
+
+def _mounted_directory_path(
+    hosted: Path, mounts: Sequence[SandboxMount]
+) -> Path | None:
+    owner = max(
+        (mount for mount in mounts if hosted.is_relative_to(mount.hosted_path)),
+        key=lambda mount: len(mount.hosted_path.parts),
+        default=None,
+    )
+    return (
+        owner.local_path / hosted.relative_to(owner.hosted_path)
+        if owner is not None
+        else None
+    )
 
 
 def prepare_place_mounts(
@@ -89,26 +118,7 @@ def validate_source_mounts(
     catalog: ModelCatalogSelection | None = None,
 ) -> None:
     """Reject source links whose targets would disappear in the guest view."""
-    directory_mounts = sorted(
-        (mount for mount in mounts if mount.local_path.is_dir()),
-        key=lambda mount: len(mount.hosted_path.parts),
-        reverse=True,
-    )
-
-    def mounted_path(hosted: Path) -> Path | None:
-        mount = next(
-            (
-                mount
-                for mount in directory_mounts
-                if hosted.is_relative_to(mount.hosted_path)
-            ),
-            None,
-        )
-        return (
-            mount.local_path / hosted.relative_to(mount.hosted_path)
-            if mount is not None
-            else None
-        )
+    directory_mounts = tuple(mount for mount in mounts if mount.local_path.is_dir())
 
     def resolve_guest(hosted: Path) -> Path | None:
         pending = deque(hosted.parts[1:])
@@ -120,7 +130,7 @@ def validate_source_mounts(
                 current = current.parent
                 continue
             candidate = current / part
-            local = mounted_path(candidate)
+            local = _mounted_directory_path(candidate, directory_mounts)
             # Bind mounts expose a directory, even when its host name is a link.
             anchor = any(candidate == mount.hosted_path for mount in directory_mounts)
             if local is not None and not anchor and local.is_symlink():
@@ -135,7 +145,7 @@ def validate_source_mounts(
                 )
             else:
                 current = candidate
-        return mounted_path(current)
+        return _mounted_directory_path(current, directory_mounts)
 
     sources = (
         *observe_root_source(layout.agent_root).files,
