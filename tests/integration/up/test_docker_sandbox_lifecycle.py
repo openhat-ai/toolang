@@ -2390,12 +2390,13 @@ def _clean_script(process, home):
 )
 @pytest.mark.parametrize("wait_kind", ["model", "shell"])
 def test_docker_script_owner_loss_finalizes_records(
-    tmp_path, docker_wheel_dir, interruption, wait_kind
+    tmp_path, docker_wheel_dir, interruption, wait_kind, monkeypatch
 ):
     from toolang.execution.store import RunStore
+    from toolang.plugin.sandboxes.docker import _cli as docker_cli
     from toolang.plugin.sandboxes.docker._cli import (
         docker_container_running,
-        docker_reference_running,
+        docker_reference_states,
     )
     from toolang.up.instance import read_instance
     import psutil
@@ -2457,13 +2458,27 @@ def test_docker_script_owner_loss_finalizes_records(
                 clients[0].kill()
             else:
                 worker.kill()
+            inspect_attempts = 0
+            original_docker = docker_cli._docker
+
+            def inspect_with_transient_timeout(*args, **kwargs):
+                nonlocal inspect_attempts
+                if args[0] == "inspect":
+                    inspect_attempts += 1
+                    if inspect_attempts == 1:
+                        raise subprocess.TimeoutExpired(("docker", *args), 2.0)
+                return original_docker(*args, **kwargs)
+
+            monkeypatch.setattr(docker_cli, "_docker", inspect_with_transient_timeout)
             end = before + 13
-            while time.monotonic() < end and docker_reference_running(state.ref):
+            while time.monotonic() < end:
+                if docker_reference_states((state.ref,)) == (False,):
+                    break
                 time.sleep(0.05)
-            assert not docker_reference_running(state.ref), (
-                "guest outlived the owner deadline"
-            )
+            else:
+                pytest.fail("guest outlived the owner deadline")
             assert time.monotonic() - before < 13
+            assert inspect_attempts >= 2
             stdout, stderr = worker.communicate(timeout=15)
             if interruption == "sigint":
                 assert worker.returncode == 130, (stdout, stderr)
@@ -2775,7 +2790,7 @@ def test_owner_eof_stops_a_guest_whose_primary_process_cannot_handle_signals(
     tmp_path, docker_wheel_dir
 ):
     from toolang.up.allocation import retained_roaming
-    from toolang.plugin.sandboxes.docker._cli import docker_reference_running
+    from toolang.plugin.sandboxes.docker._cli import docker_reference_states
     from toolang.up.instance import read_instance
 
     source = tmp_path / "frozen.too"
@@ -2817,11 +2832,12 @@ def test_owner_eof_stops_a_guest_whose_primary_process_cannot_handle_signals(
             worker.kill()
             worker.communicate(timeout=5)
             deadline = started + 13
-            while time.monotonic() < deadline and docker_reference_running(state.ref):
+            while time.monotonic() < deadline:
+                if docker_reference_states((state.ref,)) == (False,):
+                    break
                 time.sleep(0.05)
-            assert not docker_reference_running(state.ref), (
-                "unresponsive guest outlived its owner deadline"
-            )
+            else:
+                pytest.fail("unresponsive guest outlived its owner deadline")
             assert time.monotonic() - started >= 8, (
                 "fault never reached forced finalization"
             )
