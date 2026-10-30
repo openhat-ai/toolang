@@ -321,7 +321,8 @@ revision available; startup fails only when neither a valid candidate nor a
 loadable new-format published State exists.
 
 All placements watch their resolved agent root/home with the same rules;
-startup fetching belongs to source acquisition, outside the watcher. Native
+State owns source and pointer subscriptions; layout supplies resolved paths.
+Startup fetching belongs to source acquisition, outside the watcher. Native
 subscriptions use `recursive=False` and enumerate only authored capability
 directories, root `config/`, agent home, `runnables/`, `chores/`, and the parents
 of root/home/agent State `current` pointers. Watching existing parents catches

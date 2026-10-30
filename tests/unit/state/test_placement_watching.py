@@ -9,10 +9,36 @@ import pytest
 from toolang.common import watching
 from toolang.common.layout import AgentLayout
 from toolang.state import watcher as watcher_module
-from toolang.state.cache import agent_current_path, layer_current_path
+from toolang.state.cache import (
+    AGENT_STATE_FORMAT,
+    agent_current_path,
+    layer_current_path,
+)
 from toolang.state.prepare import prepare_agent_state, load_agent_state
 from toolang.state.watcher import StateWatcher
 from toolang.up.source import materialize_roaming_program
+
+
+def test_state_watch_directories_exclude_generated_trees(tmp_path: Path):
+    layout = AgentLayout.resident(tmp_path, "a")
+    layout.agent_home.mkdir(parents=True)
+    nested = layout.agent_home / "skills/pdf/references"
+    nested.mkdir(parents=True)
+    version = f"v{AGENT_STATE_FORMAT}"
+    revisions = layout.agent_state / version / "revs"
+    for directory in (
+        layout.runtime / "logs/noisy",
+        layout.lab / "nested",
+        revisions / "revision/source",
+    ):
+        directory.mkdir(parents=True)
+    watched = watcher_module._watch_directories(layout)
+    assert nested in watched
+    assert layout.agent_home in watched
+    assert layout.agent_state / version in watched
+    assert all(not path.is_relative_to(layout.runtime) for path in watched)
+    assert all(not path.is_relative_to(layout.workspaces) for path in watched)
+    assert all(not path.is_relative_to(revisions) for path in watched)
 
 
 @pytest.mark.parametrize("placement", ["resident", "visiting", "roaming"])

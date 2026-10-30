@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from pathlib import Path
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 
 from toolang.common.layout import AgentLayout
@@ -27,6 +27,17 @@ class ModelCatalogSelection:
 
     path: Path
     scope: Literal["packaged", "root", "home", "custom"]
+    _not_found_label: str | None = field(
+        default=None, repr=False, compare=False, kw_only=True
+    )
+
+    def require_file(self) -> None:
+        """Validate this captured choice without resolving source inputs again."""
+        if self.path.is_file():
+            return
+        if self._not_found_label is None:
+            raise ValueError(f"model catalog is not a file: {self.path}")
+        raise FileNotFoundError(f"{self._not_found_label} not found: {self.path}")
 
 
 def resolve_model_catalog_path(
@@ -56,17 +67,35 @@ def resolve_model_catalog_selection(
     validate: bool = True,
 ) -> ModelCatalogSelection:
     """Choose inputs; optional validation also permits watching missing candidates."""
+    selected = _select_model_catalog(
+        layout,
+        explicit=explicit,
+        environ=environ,
+        include_agent=include_agent,
+        sources=sources,
+    )
+    if validate:
+        selected.require_file()
+    return selected
+
+
+def _select_model_catalog(
+    layout: AgentLayout,
+    *,
+    explicit: Path | None,
+    environ: Mapping[str, str] | None,
+    include_agent: bool,
+    sources: Sequence[ConfigSource] | None,
+) -> ModelCatalogSelection:
     if explicit is not None:
         path = explicit.expanduser().resolve(strict=False)
-        if validate:
-            _require_catalog_candidate(path, label="explicit model catalog")
-        return ModelCatalogSelection(path, "custom")
+        return ModelCatalogSelection(
+            path, "custom", _not_found_label="explicit model catalog"
+        )
     configured = str((environ or {}).get(MODEL_CATALOG_ENV, "")).strip()
     if configured:
         path = Path(configured).expanduser().resolve(strict=False)
-        if validate:
-            _require_catalog_candidate(path, label=MODEL_CATALOG_ENV)
-        return ModelCatalogSelection(path, "custom")
+        return ModelCatalogSelection(path, "custom", _not_found_label=MODEL_CATALOG_ENV)
     origins = (
         config_origins(layout).origins if layout.root_source_receipt.is_file() else {}
     )
@@ -88,9 +117,9 @@ def resolve_model_catalog_selection(
             and "root/catalog.json" in origins
             and (local.exists() or local.is_symlink() or declared)
         ):
-            if validate:
-                _require_catalog_candidate(local, label="placement model catalog")
-            return ModelCatalogSelection(local, scope)
+            return ModelCatalogSelection(
+                local, scope, _not_found_label="placement model catalog"
+            )
         config_path = layout.config if scope == "home" else layout.root_config
         selected = source_catalog(
             (ConfigSource(config_path, source.config, source.scope),),
@@ -99,8 +128,6 @@ def resolve_model_catalog_selection(
         )
         if selected is not None:
             selected = layout.local_source_path(selected).resolve(strict=False)
-            if validate and not selected.is_file():
-                raise ValueError(f"model catalog is not a file: {selected}")
             owned = selected.is_relative_to(
                 layout.root_config.parent
             ) or selected.is_relative_to(layout.agent_home)
@@ -108,15 +135,8 @@ def resolve_model_catalog_selection(
                 selected,
                 "custom" if declared and not owned else scope,
             )
-    if validate:
-        _require_catalog_candidate(
-            PACKAGED_MODEL_CATALOG, label="packaged model catalog"
-        )
     return ModelCatalogSelection(
-        PACKAGED_MODEL_CATALOG.resolve(strict=False), "packaged"
+        PACKAGED_MODEL_CATALOG.resolve(strict=False),
+        "packaged",
+        _not_found_label="packaged model catalog",
     )
-
-
-def _require_catalog_candidate(path: Path, *, label: str) -> None:
-    if not path.is_file():
-        raise FileNotFoundError(f"{label} not found: {path}")

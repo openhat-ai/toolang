@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-import os
 import re
 from typing import Literal
 
@@ -252,26 +251,6 @@ class AgentLayout:
     @property
     def source_receipt(self) -> Path:
         return self.agent_home / "source.json"
-
-    def watch_directories(self, state_format: int) -> tuple[Path, ...]:
-        """Enumerate only authored directories and State pointer ancestors."""
-        directories = {self.agent_root, self.agent_home, self.root_config.parent}
-        for anchor in (self.place_state, self.home_state, self.agent_state):
-            directories.update((anchor.parent, anchor, anchor / f"v{state_format}"))
-        for base in (self.agent_root, self.agent_home):
-            for name in ("psyches", "skills", "services", "prompts"):
-                source = base / name
-                if source.is_dir() and not source.is_symlink():
-                    directories.update(
-                        Path(parent)
-                        for parent, _, _ in os.walk(source, followlinks=False)
-                    )
-        directories.update(self.agent_home / name for name in ("runnables", "chores"))
-        return tuple(
-            sorted(
-                path for path in directories if path.is_dir() and not path.is_symlink()
-            )
-        )
 
     @property
     def config_key(self) -> str | None:

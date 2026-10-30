@@ -229,15 +229,7 @@ class SetupWatcher:
         )
         catalog_path = catalog.path
         self._model_catalog_path = catalog_path if catalog.scope != "packaged" else None
-        if not catalog_path.is_file():
-            # Retain the missing candidate, then report its original selection error.
-            resolve_model_catalog_selection(
-                self.layout,
-                explicit=self._model_catalog_override,
-                environ=inputs.envs,
-                include_agent=self._agent_context,
-                sources=inputs.sources,
-            )
+        catalog.require_file()
         catalog_configs = self._runtime_catalog_configs(
             configs, inputs.envs, catalog_path=catalog_path
         )

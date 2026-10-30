@@ -5,7 +5,6 @@ import subprocess
 
 import pytest
 
-from toolang.common.layout import AgentLayout
 from toolang.common.config_sources import config_sources
 from toolang.up.source import materialize_roaming_program
 
@@ -65,28 +64,6 @@ def test_roaming_relinks_replaced_source_only_on_startup(tmp_path: Path, index: 
     materialize_roaming_program(sources[0], layout=layout)
     assert target.samefile(source)
     assert target.read_bytes() == before + b"\n"
-
-
-def test_layout_watch_directories_exclude_generated_trees(tmp_path: Path):
-    layout = AgentLayout.resident(tmp_path, "a")
-    layout.agent_home.mkdir(parents=True)
-    nested = layout.agent_home / "skills/pdf/references"
-    nested.mkdir(parents=True)
-    for directory in (
-        layout.runtime / "logs/noisy",
-        layout.lab / "nested",
-        layout.agent_state / "v24/revs/revision/source",
-    ):
-        directory.mkdir(parents=True)
-    watched = layout.watch_directories(24)
-    assert nested in watched
-    assert layout.agent_home in watched
-    assert layout.agent_state / "v24" in watched
-    assert all(not path.is_relative_to(layout.runtime) for path in watched)
-    assert all(not path.is_relative_to(layout.workspaces) for path in watched)
-    assert all(
-        not path.is_relative_to(layout.agent_state / "v24/revs") for path in watched
-    )
 
 
 def test_empty_nearest_toml_stops_ancestor_inheritance(tmp_path: Path):

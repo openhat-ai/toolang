@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from toolang.catalog import source as source_owner
+from toolang.catalog.types import CAP_DIRECTORY_NAMES
 
 import asyncio
 from collections import deque
 from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass
 import logging
+import os
 from pathlib import Path
 from weakref import WeakValueDictionary
 
@@ -43,6 +45,24 @@ from .source import (
 DEFAULT_INTERVAL_MS = 1_000.0
 DEFAULT_DEBOUNCE_MS = 500.0
 logger = logging.getLogger(__name__)
+
+
+def _watch_directories(layout: AgentLayout) -> tuple[Path, ...]:
+    """Enumerate State source directories and current-format pointer ancestors."""
+    directories = {layout.agent_root, layout.agent_home, layout.root_config.parent}
+    for anchor in (layout.place_state, layout.home_state, layout.agent_state):
+        directories.update((anchor.parent, anchor, anchor / f"v{AGENT_STATE_FORMAT}"))
+    for base in (layout.agent_root, layout.agent_home):
+        for name in CAP_DIRECTORY_NAMES:
+            source = base / name
+            if source.is_dir() and not source.is_symlink():
+                directories.update(
+                    Path(parent) for parent, _, _ in os.walk(source, followlinks=False)
+                )
+    directories.update(layout.agent_home / name for name in ("runnables", "chores"))
+    return tuple(
+        sorted(path for path in directories if path.is_dir() and not path.is_symlink())
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -425,7 +445,7 @@ class StateWatcher:
                 int(debounce_ms),
             )
             async for paths in directory_changes(
-                lambda: self.layout.watch_directories(AGENT_STATE_FORMAT),
+                lambda: _watch_directories(self.layout),
                 stop_signal=stop_signal,
                 interval_ms=interval_ms,
                 debounce_ms=debounce_ms,
