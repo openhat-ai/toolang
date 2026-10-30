@@ -219,16 +219,15 @@ def rewind_command(
 ) -> None:
     """Rewind one idle thread before a terminal anchor run."""
 
-    if chat and context_layout(ctx).placement == "roaming":
-        raise ClickException("Chat is not supported for roaming HOMEs")
-
     with open_execution(ctx, required=True, record=point) as resources:
         if resources is None:  # pragma: no cover
             raise RuntimeError("execution resources were not opened")
         history = RunHistory(resources.store)
         thread_id, run_id = _anchor(history, point)
     handled, _edited = _offline_edit(
-        ctx, lambda manager: manager.rewind(thread_id=thread_id, run_id=run_id)
+        ctx,
+        lambda manager: manager.rewind(thread_id=thread_id, run_id=run_id),
+        require_stopped=chat and context_layout(ctx).placement == "roaming",
     )
     if handled:
         typer.echo(f"rewound {thread_id} before {run_id}")
@@ -272,16 +271,15 @@ def fork_command(
 ) -> None:
     """Fork one thread through a terminal anchor run."""
 
-    if chat and context_layout(ctx).placement == "roaming":
-        raise ClickException("Chat is not supported for roaming HOMEs")
-
     with open_execution(ctx, required=True, record=point) as resources:
         if resources is None:  # pragma: no cover
             raise RuntimeError("execution resources were not opened")
         history = RunHistory(resources.store)
         thread_id, run_id = _anchor(history, point)
     handled, edited = _offline_edit(
-        ctx, lambda manager: manager.fork(thread_id=thread_id, run_id=run_id)
+        ctx,
+        lambda manager: manager.fork(thread_id=thread_id, run_id=run_id),
+        require_stopped=chat and context_layout(ctx).placement == "roaming",
     )
     if handled:
         typer.echo(f"forked {edited} through {run_id}")
@@ -564,7 +562,7 @@ def _display_status(value: object) -> str:
     return str(value or "")
 
 
-def _offline_edit(ctx: typer.Context, edit):
+def _offline_edit(ctx: typer.Context, edit, *, require_stopped: bool = False):
     from toolang.up import process, sandbox as runtime
     from toolang.up.instance import read_instance, process_alive
     from toolang.execution.store import RunStore
@@ -574,6 +572,8 @@ def _offline_edit(ctx: typer.Context, edit):
     layout = context_layout(ctx)
     status = process.AgentProcess(layout).status(ui_base_url="", check_health=False)
     if status is not None and status.status == "running":
+        if require_stopped:
+            raise ClickException(f"HOME is busy: {layout.home}")
         return False, None
     with runtime.management_lock(layout):
         entry = read_instance(layout.runtime_status)
@@ -587,6 +587,17 @@ def _offline_edit(ctx: typer.Context, edit):
             and entry["launch_id"] != cli_context(ctx).launch_id
         ):
             raise ClickException("selected execution owner was replaced")
+        script_owner = entry["control"].get("script_owner")
+        if (
+            require_stopped
+            and script_owner is not None
+            and (
+                not isinstance(script_owner, dict)
+                or process_alive(script_owner.get("pid"), script_owner.get("created"))
+                is not False
+            )
+        ):
+            raise ClickException(f"HOME is busy: {layout.home}")
         report = entry["workload"]
         if (
             report.get("pid") is not None

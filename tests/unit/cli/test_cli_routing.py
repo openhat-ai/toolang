@@ -755,18 +755,6 @@ def test_cli_script_rejects_inbox_option(
     assert "No such option: --inbox" in strip_ansi(capsys.readouterr().err)
 
 
-def test_cli_rejects_roaming_chat_before_acquiring_a_runtime(tmp_path, monkeypatch):
-    source = tmp_path / "demo.too"
-    source.write_text("agic chat:\n  Reply directly.\n")
-    monkeypatch.setattr(
-        chat_commands,
-        "acquire_agent_server",
-        lambda *_args, **_kwargs: pytest.fail("roaming Chat acquired a runtime"),
-    )
-    assert cli.main([str(source), "chat"]) == 2
-    assert not (tmp_path / ".toolang").exists()
-
-
 @pytest.mark.parametrize("agent_first", [False, True])
 def test_cli_routes_chat_development_artifact_to_the_exact_layout(
     tmp_path: Path,

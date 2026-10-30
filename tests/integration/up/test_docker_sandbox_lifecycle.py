@@ -2385,6 +2385,99 @@ def _clean_script(process, home):
         asyncio.run(implementation.release(state.ref))
 
 
+@pytest.mark.parametrize("sandbox", ["host", "docker"])
+@pytest.mark.parametrize("ending", ["exit", "kill"])
+def test_roaming_chat_owns_and_finalizes_active_work(
+    tmp_path, docker_wheel_dir, sandbox, ending
+):
+    from toolang.execution.store import RunStore
+    from toolang.plugin.sandboxes.docker._cli import docker_reference_running
+    from toolang.up.instance import process_alive, read_instance
+
+    root = tmp_path / "selected root"
+    root.mkdir()
+    (root / "config.toml").write_text("[teaming]\nenabled = false\n")
+    source = tmp_path / "chat.too"
+    source.write_text(
+        "agic chat(_: Part[]) -> Text:\n  context = none\n  recall = none\n  user: WAIT.\n"
+    )
+    scenario = _ScriptScenario(source, "model")
+    args = [
+        sys.executable,
+        "-m",
+        "toolang.cli.toolang",
+        "--root",
+        str(root),
+        str(source),
+        "chat",
+        "--sandbox",
+        sandbox,
+        "--default",
+        f"model={_MODEL}",
+    ]
+    if sandbox == "docker":
+        args.extend(["--dev", str(docker_wheel_dir)])
+    home = None
+    with _script_model(scenario), (tmp_path / "chat.log").open("w+") as log:
+        worker = subprocess.Popen(
+            args, stdin=subprocess.PIPE, stdout=log, stderr=log, text=True
+        )
+        try:
+            assert worker.stdin is not None
+            worker.stdin.write("hello\n")
+            worker.stdin.flush()
+            home, state = _wait_script_home(source, root, worker)
+            end = time.monotonic() + 180
+            while not scenario.entered.wait(0.05):
+                assert time.monotonic() < end and worker.poll() is None, (
+                    tmp_path / "chat.log"
+                ).read_text()
+            active_entry = read_instance(home.runtime_status)
+            assert active_entry is not None
+            workload = active_entry["workload"]
+            if ending == "kill":
+                worker.kill()
+            else:
+                scenario.resume.set()
+                worker.stdin.write("/exit\n")
+                worker.stdin.flush()
+            worker.wait(timeout=20)
+            assert worker.returncode == (0 if ending == "exit" else -signal.SIGKILL)
+            end = time.monotonic() + 13
+            while True:
+                entry = read_instance(home.runtime_status)
+                running = (
+                    docker_reference_running(state.ref)
+                    if sandbox == "docker"
+                    else process_alive(
+                        workload["pid"],
+                        workload["process_created"],
+                    )
+                )
+                if running is False:
+                    break
+                assert time.monotonic() < end, (tmp_path / "chat.log").read_text()
+                time.sleep(0.05)
+            # A killed controller leaves host-owned staging for the next observer.
+            from toolang.up.watcher import runtime_status
+            from toolang.up.sandbox import release_stopped
+
+            runtime_status(home, cache=False)
+            asyncio.run(release_stopped(home))
+            entry = read_instance(home.runtime_status)
+            assert entry is not None and entry["workload"]["status"] == "stopped"
+            with closing(RunStore(home.run_store, read_only=True)) as store:
+                (run,) = store.list_runs()
+                assert run.status == ("succeeded" if ending == "exit" else "canceled")
+                assert all(
+                    step.status not in {"pending", "running"}
+                    for step in store.list_steps(run_id=run.id)
+                )
+            assert not list((root / ".runtime" / "active").glob("*/info.json"))
+        finally:
+            _clean_script(worker, home)
+
+
 @pytest.mark.parametrize(
     "interruption", ["sigint", "owner-kill", "client-kill", "bootstrap-kill"]
 )

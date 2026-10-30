@@ -157,13 +157,13 @@ An owned instance's `info` observes status and available saved resource metadata
 projecting inputs, rebinding grants or renewing ownership.
 
 An explicit address fixes root/place/home/store throughout rerun, fork and rewind,
-and resident/visiting Chat. New Runs, Threads, or runtime generations stay there. A Thread/Run
+and Chat. New Runs, Threads, or runtime generations stay there. A Thread/Run
 reference also binds its owning home: for a roaming source, search only that
 source's retained places under the current Toolang root. One match binds; no match
 fails; multiple matches require an address. Explicit address/record mismatches
 fail. Preserve imported-history control restrictions.
 
-Bare `-t` selects the latest Thread in the selected resident/visiting home. Missing Threads/history never cause
+Bare `-t` selects the latest Thread in the selected runtime instance. Missing Threads/history never cause
 fallback to an older home. Source/default changes cannot override record binding.
 
 Lookup fixes storage. Runtime operations separately validate owner liveness,
@@ -183,12 +183,14 @@ Preserve placement lifetimes: resident persistent, visiting automatic, roaming
 foreground. Attachments do not gain shutdown ownership. Existing Run admission
 and Thread locks govern concurrency; one home has at most one executor owner.
 
-Roaming scripts and rerun instead claim the runtime instance exclusively from preparation
+Roaming Script, Chat, and rerun instead claim the runtime instance exclusively from preparation
 through cleanup: preparing, running, closing or unverifiable ownership fails
 immediately. Each invocation has a new launch identity, current grants and startup
 settings; history remains in its P19, while lab and prepared State are shared.
 Different instances may run concurrently on host/guest.
-Roaming Chat, including `fork/rewind --chat`, is rejected before mutation.
+Bare roaming Chat allocates a new P19; explicit addresses and `-t` select retained
+instances through the same lookup rules. `fork/rewind --chat` requires a stopped
+instance and continues its resulting Thread without allocating another P19.
 
 `start/serve/stop` cover resident/visiting only. Roaming foreground shutdown belongs
 to its owner through Ctrl-C/signals/kill. `steer/cancel` control a live Run, including

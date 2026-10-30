@@ -132,13 +132,14 @@ requests a file or `-` for stdout. Quiet mode suppresses preparation/execution
 progress. Non-TTY progress is plain append-only text. [Execution presentation](execution-presentation.md)
 owns rendering and [Scripts](scripts.md) owns temporary grants and path origins.
 
-Each bare roaming script launch creates a fresh HOME; `file.too@CODE` and
-`file.too@` require an existing exact or latest HOME. One script owns that HOME
-through cleanup; a busy or unverifiable owner fails immediately. Roaming does
-not support `chat`, `serve`, `start`, or `stop`. Host scripts expose the shared Agent API
-on the workload's event loop; guest workloads
-use existing sandbox serving. Resources close when the owning foreground caller
-exits. [Hosting](hosting.md) owns startup compatibility and recovery.
+Each bare roaming Script or Chat launch creates a fresh runtime instance.
+`file.too@CODE` and `file.too@` require an existing exact or latest instance.
+One foreground caller owns it through cleanup; a busy or unverifiable owner
+fails immediately. Roaming Chat enables the chat driver and closes its runtime
+on exit. Roaming does not support `serve`, `start`, or `stop`. Host scripts expose
+the shared Agent API on the workload's event loop; guest workloads use existing
+sandbox serving. Resources close when the owning foreground caller exits.
+[Hosting](hosting.md) owns startup compatibility and recovery.
 
 ### Instance selection
 
@@ -164,8 +165,10 @@ resource commands reject instance operands. There is no `--instance`/`-i` option
 - A command pins its root/identity/generation once; controls attach only to that
   live owner. Offline fork/rewind edit history under verified stopped ownership.
 - Instance and Thread/Run selection bind the home for rerun, fork and rewind.
-  Multiple matching homes require an explicit instance. Resident/visiting Chat
-  attaches under compatibility checks; roaming rerun requires exclusive ownership.
+  Multiple matching homes require an explicit instance. Chat `-t` follows the same
+  binding; bare `-t` uses the latest recorded Thread in the selected instance.
+  Resident/visiting Chat attaches under compatibility checks; roaming Chat/rerun
+  requires exclusive ownership.
 
 [agent addresses](agent-addresses.md) defines identity, layout, and ownership.
 
@@ -312,8 +315,9 @@ inspects the stored edge.
 
 Chat and rerun acquire a compatible server in the bound home and use its API.
 Fork/rewind use guarded offline transactions when stopped, or the live owner's
-API; `--chat` continues in resident/visiting homes and is rejected for roaming
-before editing history. Historical inspection stays offline.
+API. `--chat` opens the resulting Thread in the same instance; roaming requires
+a stopped instance and rejects a busy owner before editing. A later Chat startup
+failure preserves the committed edit. Historical inspection stays offline.
 Steer and cancel support all placements and attach to a healthy live owner without
 starting a replacement; invocation guards prevent delayed requests from reaching
 a different Run incarnation.

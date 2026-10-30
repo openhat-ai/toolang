@@ -38,6 +38,7 @@ from toolang.execution.types import (
 )
 from toolang.cli.common.execution_progress.formatting import output_parts
 from toolang.up.types import AgentServerRef
+from toolang.up.closing import ClosingDeadline
 from toolang.cli.common.context import (
     cli_context,
     context_layout,
@@ -144,6 +145,11 @@ def _chat_interactive(
     server: AgentServerRef | None = None,
 ) -> None:
     server_options: dict[str, Any] = {"server": server} if server is not None else {}
+    initial_update, clear_runnable = _chat_session_override(
+        allow_options=allow_options,
+        default_options=default_options,
+        limit_options=limit_options,
+    )
     with _chat_runtime(
         ctx,
         model_catalog=model_catalog,
@@ -156,11 +162,6 @@ def _chat_interactive(
         **server_options,
     ) as client:
         setting = client.initial_setting()
-        initial_update, clear_runnable = _chat_session_override(
-            allow_options=allow_options,
-            default_options=default_options,
-            limit_options=limit_options,
-        )
         if not initial_update.empty:
             setting = client.apply_setting(setting, initial_update)
         if clear_runnable:
@@ -202,12 +203,9 @@ def _chat_runtime(
     from toolang.up.config import parse_drivers
 
     drivers = user_call(parse_drivers, driver) if driver is not None else None
+    if drivers is not None and "chat" not in drivers:
+        raise ClickException("chat driver is required; include it in --enable")
     layout = context_layout(ctx)
-    bound_options: dict[str, Any] = (
-        {"bound": True, "expected_launch_id": cli_context(ctx).launch_id}
-        if cli_context(ctx).instance_selected
-        else {}
-    )
     workspaces = user_call(
         resolve_workspaces,
         layout,
@@ -218,50 +216,103 @@ def _chat_runtime(
     compact_override = user_call(resolve_compact_override, {}, compact_model)
     remote: RemoteChatSession | None = None
     try:
-        server_context = (
-            nullcontext(server)
-            if server is not None
-            else acquire_agent_server(
-                layout,
-                drivers=drivers,
-                required_driver="chat",
-                sandbox=sandbox,
-                dev=dev,
-                model_catalog=resolve_model_catalog_option(model_catalog),
-                ui_base_url=ui_base_url(),
-                compact_override=compact_override,
-                **bound_options,
-                **(
-                    {"workspace_additions": workspaces.additions}
-                    if workspaces.additions
-                    else {}
-                ),
+        with _chat_invocation(ctx) as closing:
+            layout = context_layout(ctx)
+            bound_options: dict[str, Any] = (
+                {"closing": closing}
+                if closing is not None
+                else {"bound": True, "expected_launch_id": cli_context(ctx).launch_id}
+                if cli_context(ctx).instance_selected
+                else {}
             )
-        )
-        with server_context as server:
-            if server is None:
-                raise AgentServerAcquisitionError("agent acquisition requires a server")
-            try:
-                session_options: dict[str, Any] = (
-                    {"server": server} if server.launch_id is not None else {}
+            server_context = (
+                nullcontext(server)
+                if server is not None
+                else acquire_agent_server(
+                    layout,
+                    drivers=frozenset({"chat"})
+                    if closing is not None and drivers is None
+                    else drivers,
+                    required_driver="chat",
+                    sandbox=sandbox,
+                    dev=dev,
+                    model_catalog=resolve_model_catalog_option(model_catalog),
+                    ui_base_url=ui_base_url(),
+                    compact_override=compact_override,
+                    **bound_options,
+                    **(
+                        {"workspace_additions": workspaces.additions}
+                        if workspaces.additions
+                        else {}
+                    ),
                 )
-                remote = RemoteChatSession(
-                    server.endpoint,
-                    expected_sandbox=server.sandbox,
-                    **session_options,
-                    **({"workdir": workspaces.workdir} if workspaces.workdir else {}),
-                )
-            except (RemoteChatError, ValueError) as exc:
-                raise ClickException(str(exc)) from exc
-            try:
-                yield remote
-            finally:
-                remote.close()
+            )
+            with server_context as server:
+                try:
+                    if server is None:
+                        raise AgentServerAcquisitionError(
+                            "agent acquisition requires a server"
+                        )
+                    session_options: dict[str, Any] = (
+                        {"server": server} if server.launch_id is not None else {}
+                    )
+                    try:
+                        remote = RemoteChatSession(
+                            server.endpoint,
+                            expected_sandbox=server.sandbox,
+                            **session_options,
+                            **(
+                                {"workdir": workspaces.workdir}
+                                if workspaces.workdir
+                                else {}
+                            ),
+                        )
+                    except (RemoteChatError, ValueError) as exc:
+                        raise ClickException(str(exc)) from exc
+                    yield remote
+                finally:
+                    try:
+                        if closing is not None:
+                            closing.begin("Chat ended")
+                    finally:
+                        if remote is not None:
+                            remote.close()
     except ServerLeaseLostError as exc:
         accepted = remote.last_accepted_run_id if remote is not None else None
         message = f"{exc}; inspect accepted run {accepted}" if accepted else str(exc)
         raise ClickException(message) from exc
     except AgentServerAcquisitionError as exc:
+        raise ClickException(str(exc)) from exc
+
+
+@contextmanager
+def _chat_invocation(ctx: typer.Context) -> Iterator[ClosingDeadline | None]:
+    """Own a roaming instance from source preparation through Chat shutdown."""
+    layout = context_layout(ctx)
+    if layout.placement != "roaming":
+        yield None
+        return
+    from toolang.up.allocation import allocate_roaming
+    from toolang.up.instance import read_instance
+    from toolang.up.invocation import script_invocation
+    from toolang.up.source import materialize_roaming_program
+
+    state = cli_context(ctx)
+    try:
+        source = layout.source_path
+        if source is None or not source.is_file():
+            raise FileNotFoundError(f"agent program not found: {source}")
+        if layout.place_code is None:
+            layout = allocate_roaming(source, toolang_root=state.root, register=False)
+        state.layout = layout
+        with script_invocation(layout, expected_launch_id=state.launch_id) as closing:
+            materialize_roaming_program(source, layout=layout)
+            entry = read_instance(layout.runtime_status)
+            assert entry is not None
+            state.launch_id = entry["launch_id"]
+            state.prepared = state.instance_selected = True
+            yield closing
+    except (OSError, RuntimeError, ToolangError, ValueError) as exc:
         raise ClickException(str(exc)) from exc
 
 

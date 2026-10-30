@@ -1098,7 +1098,7 @@ def test_chat_runtime_forwards_dev_when_acquiring_a_guest(
     tmp_path: Path,
     monkeypatch: Any,
 ) -> None:
-    layout = AgentLayout.roaming(tmp_path / "alice.too")
+    layout = AgentLayout.resident(tmp_path, "alice")
     development = tmp_path / "dist"
     opened = False
 
@@ -1143,7 +1143,7 @@ def test_chat_runtime_exits_acquisition_context_after_initialization_failure(
     tmp_path: Path,
     monkeypatch: Any,
 ) -> None:
-    layout = AgentLayout.roaming(tmp_path / "alice.too")
+    layout = AgentLayout.resident(tmp_path, "alice")
     exited = False
 
     @contextmanager

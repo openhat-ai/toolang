@@ -464,6 +464,9 @@ def _serve_workload(
     initialized_core: AgentCore | None = None
     core_closed = False
     failure: str | None = None
+    shutdown_signal = threading.Event()
+    owner_stop = threading.Event()
+    owner_thread: threading.Thread | None = None
     from .closing import OWNER_CHANNEL_REASON
 
     shutdown_reason: str | None = None
@@ -476,7 +479,7 @@ def _serve_workload(
         failure = message if failure is None else f"{failure}; {message}"
         logger.error("Could not access foreground shutdown status: %s", exc)
 
-    def begin_closing() -> None:
+    def begin_closing(reason: str | None = None) -> None:
         nonlocal shutdown_reason
         if shutdown_reason is not None:
             return
@@ -491,7 +494,7 @@ def _serve_workload(
         except (OSError, ValueError) as exc:
             status_failed(exc)
             previous = {}
-        shutdown_reason = (
+        shutdown_reason = reason or (
             OWNER_CHANNEL_REASON
             if marker and Path(marker).is_file()
             else previous.get("shutdown_reason", "server interrupted")
@@ -536,6 +539,30 @@ def _serve_workload(
                 raise
 
     try:
+        if location == "host" and spec.lifetime == "foreground":
+            from .instance import process_alive, read_instance
+
+            owner = (
+                (read_instance(spec.layout.runtime_status) or {})
+                .get("control", {})
+                .get("script_owner")
+            )
+            if isinstance(owner, dict):
+
+                def watch_owner() -> None:
+                    while not owner_stop.wait(0.1):
+                        if (
+                            process_alive(owner.get("pid"), owner.get("created"))
+                            is False
+                        ):
+                            try:
+                                begin_closing("foreground owner exited")
+                            finally:
+                                shutdown_signal.set()
+                            return
+
+                owner_thread = threading.Thread(target=watch_owner, daemon=True)
+                owner_thread.start()
         _restore_termination_signal_defaults()
         runtime_log_spec = _runtime_log_spec_value(spec.log_spec, environ)
         configure_logging(spec=runtime_log_spec, environ=environ)
@@ -595,7 +622,6 @@ def _serve_workload(
             current_state(),
             ceiling=ceiling,
         )
-        shutdown_signal = threading.Event()
 
         @asynccontextmanager
         async def lifespan(app: FastAPI):
@@ -770,6 +796,9 @@ def _serve_workload(
             failure = failure or str(exc) or type(exc).__name__
         raise
     finally:
+        owner_stop.set()
+        if owner_thread is not None:
+            owner_thread.join()
         try:
             try:
                 if spec.lifetime == "foreground":
