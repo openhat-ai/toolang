@@ -90,6 +90,8 @@ from toolang.driver.chore.store import ChoreStore
 from toolang.base.protocols.tool import Tool
 from toolang.common.layout import place_edit_lock_path
 
+from tests.support.layout import root_file
+
 runner = CliRunner()
 
 
@@ -3495,6 +3497,7 @@ def test_tools_uses_selected_scope_and_effective_allow(
     _create_agent(root)
     _create_agent(root, "default")
     layout = AgentLayout.resident(root, "alice")
+    layout.place_config.parent.mkdir(parents=True, exist_ok=True)
     layout.place_config.write_text(
         '[allow]\ntools = ["shell/echo"]\n'
         '[plugin.toolset.shell]\nchoice = "root"\nshared = true\n'
@@ -3527,7 +3530,7 @@ def test_tools_all_bypasses_empty_allow_for_inspection(
 ) -> None:
     root = tmp_path / "toolang"
     root.mkdir()
-    (root / "config.toml").write_text("[allow]\ntools = []\nmodels = []\n")
+    (root_file(root, "config.toml")).write_text("[allow]\ntools = []\nmodels = []\n")
 
     result = _invoke(root, "tools", *(("--all",) if all_ else ()))
 
@@ -3577,7 +3580,7 @@ def test_tools_status_column_distinguishes_allow_without_internal_badges(
 ) -> None:
     root = tmp_path / "toolang"
     root.mkdir()
-    (root / "config.toml").write_text('[allow]\ntools = ["shell/echo"]\n')
+    (root_file(root, "config.toml")).write_text('[allow]\ntools = ["shell/echo"]\n')
 
     result = _invoke(root, "tools", *(("--all",) if all_ else ()))
 
@@ -3623,7 +3626,9 @@ def test_cap_lists_apply_scope_allow_and_display_status(
     _create_agent(tmp_path)
     _create_agent(tmp_path, "default")
     layout = AgentLayout.resident(tmp_path, "alice")
-    (tmp_path / "config.toml").write_text(f'[allow]\n{kind}s = ["{kind}/shared_cap"]\n')
+    (root_file(tmp_path, "config.toml")).write_text(
+        f'[allow]\n{kind}s = ["{kind}/shared_cap"]\n'
+    )
     layout.config.write_text(f'[allow]\n{kind}s = ["{kind}/private_cap"]\n')
     AgentLayout.resident(tmp_path, "default").config.write_text("invalid TOML [")
     for directory, name in (
@@ -3678,7 +3683,7 @@ def test_root_cap_inspection_uses_resolved_metadata_and_shared_cache(
     prepared: bool,
     all_: bool,
 ) -> None:
-    (tmp_path / "config.toml").write_text(
+    (root_file(tmp_path, "config.toml")).write_text(
         "[prompts]\n"
         'rewrite = { ref = "github://acme/caps/prompts/rewrite.md@main" }\n'
         'other = { ref = "github://acme/caps/prompts/other.md@main" }\n'
@@ -3734,7 +3739,7 @@ def test_root_caps_reports_unresolvable_remote_metadata(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
 
-    (tmp_path / "config.toml").write_text(
+    (root_file(tmp_path, "config.toml")).write_text(
         '[prompts]\nmissing = { ref = "github://acme/caps/missing.md@main" }\n'
     )
 
@@ -3887,8 +3892,8 @@ def test_plugin_inventory_commands_list_entry_points_and_handle_empty_groups(
 
     root = tmp_path / "toolang"
     root.mkdir()
-    (root / "config.toml").write_text("invalid TOML [")
-    (root / "catalog.json").write_text("invalid JSON")
+    (root_file(root, "config.toml")).write_text("invalid TOML [")
+    (root_file(root, "catalog.json")).write_text("invalid JSON")
     requested: list[str] = []
 
     def reject_load(*args, **kwargs):
@@ -4130,7 +4135,7 @@ def test_agent_info_reports_only_state_published_caps(
     prompts.mkdir()
     (prompts / "one.md").write_text("One.\n", encoding="utf-8")
     (prompts / "two.md").write_text("Two.\n", encoding="utf-8")
-    (root / "config.toml").write_text(
+    (root_file(root, "config.toml")).write_text(
         '[allow]\nprompts = ["prompt/one"]\n',
         encoding="utf-8",
     )
@@ -4226,9 +4231,9 @@ def test_roaming_agent_info_uses_the_source_layout(
     assert result == 0
     assert captured["title"] == "DEMO"
     rows = cast(dict[str, str], captured["rows"])
-    assert shortened == [selected.home]
+    assert shortened == [selected.agent_home]
     assert rows["Home"] == (
-        str(selected.home.relative_to(tmp_path)) if relative else "compact home"
+        str(selected.agent_home.relative_to(tmp_path)) if relative else "compact home"
     )
     assert "Caps" in rows
 
@@ -4569,7 +4574,7 @@ def test_resource_json_human_and_external_tq_select_identical_records(
     from tq.cli import main as tq_main
     from toolang.catalog.cap import AuthoredCaps, CapFile
 
-    (tmp_path / "config.toml").write_text(
+    (root_file(tmp_path, "config.toml")).write_text(
         '[allow]\ntools = ["shell/echo"]\nskills = ["skill/reviewer"]\n'
     )
     for name in ("reviewer", "blocked"):
@@ -4626,6 +4631,7 @@ def test_tool_setup_matches_full_setup_and_captures_only_tool_inputs(
 
     layout = AgentLayout.resident(tmp_path, "alice")
     layout.home.mkdir(parents=True)
+    layout.place_config.parent.mkdir(parents=True, exist_ok=True)
     layout.place_config.write_text(
         '[allow]\ntools = ["shell/*"]\n[plugin.toolset.shell]\nvalue = "root"\n'
     )
@@ -4635,6 +4641,7 @@ def test_tool_setup_matches_full_setup_and_captures_only_tool_inputs(
     full = asyncio.run(load_setup(layout, agent_context=agent_context))
     narrow = asyncio.run(load_tool_setup(layout, agent_context=agent_context))
     # Access after mutation: both generations must retain their captured inputs.
+    layout.place_config.parent.mkdir(parents=True, exist_ok=True)
     layout.place_config.write_text('[allow]\ntools = ["none"]\n')
     layout.config.write_text("")
     assert tuple(narrow.tools(all=True)) == tuple(full.tools(all=True))
@@ -4647,6 +4654,7 @@ def test_tool_setup_matches_full_setup_and_captures_only_tool_inputs(
     assert newer.revision != narrow.revision
     assert tuple(newer.tools().user) == ()
     # Invalid model semantics and catalogs are irrelevant to the same tool view.
+    layout.place_config.parent.mkdir(parents=True, exist_ok=True)
     layout.place_config.write_text(
         '[allow]\ntools = ["none"]\nmodels = 7\n[model]\nref = []\n'
     )

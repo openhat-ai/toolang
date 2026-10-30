@@ -7,7 +7,6 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 import errno
-from hashlib import sha256
 import logging
 import os
 from pathlib import Path
@@ -19,7 +18,7 @@ from dotenv.parser import parse_stream
 
 from .config_sources import read_config
 from .flatname import encode_flatname
-from .layout import AgentLayout
+from .layout import AgentLayout, root_config_path
 
 DEFAULT_KEEP = (
     "COLORTERM",
@@ -227,7 +226,7 @@ def resolve_root_environment(
 ) -> ResolvedEnvironment:
     root = root.expanduser().resolve()
     policy = EnvironmentPolicy.from_config(
-        read_config(root / "config.toml"), root / "config.toml"
+        read_config(root_config_path(root)), root_config_path(root)
     )
     source = root / ".env"
     if _exists(source):
@@ -239,39 +238,16 @@ def resolve_root_environment(
     return ResolvedEnvironment(root, policy, values, source=source)
 
 
-def agent_environment_paths(
-    root: Path,
-    layout: AgentLayout,
-) -> tuple[Path, ...]:
-    """Return policy files in precedence order for one source identity."""
-
-    if layout.placement == "resident":
-        return (root / f".{layout.name}.env", layout.env)
-    if layout.placement == "roaming" and layout.source_path is not None:
-        source_path = layout.source_path.resolve()
-        return (
-            _source_environment_path(root, str(source_path)),
-            source_path.parent / ".toolang.env",
-        )
-    if layout.placement == "visiting" and layout.source_ref is not None:
-        return (_source_environment_path(root, layout.source_ref),)
-    return ()
-
-
-def _source_environment_path(root: Path, source: str) -> Path:
-    name = f".{encode_flatname(source)}.env"
-    # Keep policy filenames usable on both supported hosts and Linux guests.
-    if len(name) > 255:  # FN Encoding produces ASCII only.
-        digest = sha256(source.encode("utf-8", errors="surrogatepass")).hexdigest()
-        name = f".source-{digest}.env"
-    return root / name
+def agent_environment_paths(layout: AgentLayout) -> tuple[Path, Path]:
+    """Return the same named-root and home bindings for every placement."""
+    return (layout.agent_root / f".{layout.name}.env", layout.agent_home / ".env")
 
 
 def resolve_agent_environment(
     root: ResolvedEnvironment,
     layout: AgentLayout,
 ) -> ResolvedEnvironment:
-    candidates = agent_environment_paths(root.root, layout)
+    candidates = agent_environment_paths(layout)
     source = next((path for path in candidates if _exists(path)), None)
     values = {
         name: root.values[name] for name in root.policy.keep if name in root.values

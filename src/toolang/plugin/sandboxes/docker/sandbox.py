@@ -5,7 +5,8 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Mapping
 from contextlib import suppress
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from hashlib import sha256
 import os
 import json
 from pathlib import Path
@@ -29,9 +30,14 @@ from toolang.base.types.sandbox import (
 )
 from toolang.common.progress import emit_progress
 from toolang.common.environment import RUNTIME_ENV_NAMES
+from toolang.common.config_runtime import parse_source_metadata
 from toolang.common.place_codes import root_code
-from toolang.plugin.catalogs.models_dev.path import MODEL_CATALOG_ENV
+from toolang.plugin.catalogs.models_dev.path import (
+    MODEL_CATALOG_ENV,
+    ModelCatalogSelection,
+)
 from toolang.up.records import RuntimeReference
+from toolang.up.mounts import prepare_catalog_mount
 from toolang.common.files import atomic_write_text
 from toolang.common.version import base_toolang_version
 
@@ -111,10 +117,16 @@ def _request_mounts(request: SandboxRequest) -> tuple[SandboxMount, ...]:
         if mount.hosted_path != request.hosted_home
         and mount.hosted_path.is_relative_to(request.hosted_home)
     )
-    outer = tuple(mount for mount in request.mounts if mount not in nested_home)
+    home = next(
+        (mount for mount in request.mounts if mount.hosted_path == request.hosted_home),
+        SandboxMount(request.local_home, request.hosted_home),
+    )
+    outer = tuple(
+        mount for mount in request.mounts if mount not in nested_home and mount != home
+    )
     return (
         *outer,
-        SandboxMount(request.local_home, request.hosted_home),
+        home,
         *nested_home,
     )
 
@@ -157,24 +169,29 @@ def _hosted_model_catalog_mounts(
                 raise ValueError(
                     f"model catalog is not a regular file: {captured.local_path}"
                 )
-            if captured.read_only:
-                continue
-            local_path = captured.local_path.resolve(strict=True)
+            continue
         else:
             local_path = Path(raw_path).expanduser().resolve(strict=True)
         if not local_path.is_file():
             raise ValueError(f"model catalog is not a regular file: {local_path}")
-        hosted_path = request.hosted_place / ".inputs" / "catalog.json"
-        mount = SandboxMount(local_path, hosted_path, read_only=True)
+        additional, hosted_path = prepare_catalog_mount(
+            ModelCatalogSelection(local_path, "custom"),
+            request.hosted_place,
+            _request_mounts(request),
+        )
+        assert hosted_path is not None
+        section[MODEL_CATALOG_ENV] = str(hosted_path)
         existing = tuple(
             item for item in request.mounts if item.hosted_path == hosted_path
         )
-        if any(
+        if hosted_path == request.hosted_place / ".inputs/catalog.json" and any(
             not item.read_only or item.local_path.resolve() != local_path
             for item in existing
         ):
             raise ValueError("model catalog target conflicts with an existing mount")
-        section[MODEL_CATALOG_ENV] = str(hosted_path)
+        if not additional:
+            continue
+        mount = additional[0]
         if not existing:
             mounts[(local_path, hosted_path)] = mount
     return tuple(mounts.values())
@@ -340,9 +357,8 @@ class DockerSandbox:
             hosted_dev_artifact = runtime_dir / staged.name
         guest_env_path = active_dir / "guest.env"
         hosted_env_path = (
-            request.environment_path
-            or self._runtime_place / f".{request.agent_name}.env"
-        )
+            request.hosted_root or self._runtime_place
+        ) / f".{request.agent_name}.env"
         write_guest_env(
             guest_env_path,
             dotenv_envs=dotenv_envs,
@@ -358,6 +374,35 @@ class DockerSandbox:
             ),
             SandboxMount(active_dir, runtime_dir, read_only=True),
         ]
+        for index, mount in enumerate(mounts):
+            if (
+                not mount.read_only
+                or mount.local_path == guest_env_path
+                or not mount.local_path.is_file()
+            ):
+                continue
+            # Pin the host directory entry as well as the mounted inode. Docker
+            # Desktop can lose a file bind when its host entry is replaced.
+            key = sha256(str(mount.hosted_path).encode()).hexdigest()[:16]
+            path = active_dir / "inputs" / key / mount.local_path.name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            os.link(mount.local_path.resolve(strict=True), path)
+            mounts[index] = replace(mount, local_path=path)
+        if request.source_metadata:
+            launch = request.source_metadata
+            parse_source_metadata(launch)
+            target = hosted_env_path.parent / "source.json"
+            original = next(
+                (mount.local_path for mount in mounts if mount.hosted_path == target),
+                None,
+            )
+            receipt = json.loads(original.read_bytes()) if original is not None else {}
+            receipt["launch"] = launch
+            path = active_dir / "source.json"
+            atomic_write_text(path, json.dumps(receipt))
+            path.chmod(0o600)
+            mounts = [mount for mount in mounts if mount.hosted_path != target]
+            mounts.append(SandboxMount(path, target, read_only=True))
         package_source = (
             str(hosted_dev_artifact)
             if hosted_dev_artifact is not None
@@ -366,8 +411,6 @@ class DockerSandbox:
         command = list(request.command)
         if "--sandbox" in command:
             command[command.index("--sandbox") + 1] = f"{self.name}:{image}"
-        if "_serve" in command:
-            command.extend(["--environment-file", str(runtime_dir / "guest.env")])
         return SandboxPlan(
             sandbox=f"{self.name}:{image}",
             command=(

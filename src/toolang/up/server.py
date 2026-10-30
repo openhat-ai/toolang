@@ -32,7 +32,7 @@ from toolang.base.types.policy import AgentCeiling
 from toolang.common.config import resolve_ui_base_url
 from toolang.common.env_logger import PY_LOG_ENV_VAR
 from toolang.common.layout import AgentLayout
-from toolang.common.config_runtime import LAUNCH_SCHEMA, WorkspaceBinding
+from toolang.common.config_runtime import LAUNCH_SCHEMA
 from toolang.execution.executor.resources import validate_agent_ceiling
 from toolang.plugin.sandboxes.host import HOST_SANDBOX_DESCRIPTION_ENV
 from toolang.setup import AgentSetup
@@ -190,8 +190,10 @@ def build_serve_argv(
     sandbox: str = "host",
     location: str = "host",
     source_edit_lock: Path | None = None,
+    source_path: Path | None = None,
     registry_directory: Path | None = None,
-    workspace_bindings: Mapping[str, WorkspaceBinding] | None = None,
+    workspace_additions: Mapping[str, str] | None = None,
+    workdir: str | None = None,
 ) -> tuple[str, ...]:
     """Build explicit argv for the hidden AgentServer entrypoint."""
 
@@ -245,7 +247,7 @@ def build_serve_argv(
         command.extend(
             [
                 "--source-path",
-                str(spec.layout.source_path),
+                str(source_path or spec.layout.source_path),
                 "--source-edit-lock",
                 str(source_edit_lock or spec.layout.place_edit_lock),
             ]
@@ -254,23 +256,13 @@ def build_serve_argv(
         command.extend(["--source-ref", spec.layout.source_ref])
     if spec.launch_id is not None:
         command.extend(["--launch-id", spec.launch_id])
-    bindings = (
-        workspace_bindings
-        if workspace_bindings is not None
-        else {
-            name: WorkspaceBinding(Path(source), Path(source), True)
-            for name, source in spec.workspace_additions.items()
-        }
-    )
-    if bindings:
-        command.extend(
-            [
-                "--workspace-bindings",
-                json.dumps({name: value.to_data() for name, value in bindings.items()}),
-            ]
-        )
-    if spec.workdir is not None:
-        command.extend(["--initial-workdir", spec.workdir])
+    for name, source in (
+        spec.workspace_additions if workspace_additions is None else workspace_additions
+    ).items():
+        command.extend(["--workspace", f"{name}={source}"])
+    selected_workdir = spec.workdir if workdir is None else workdir
+    if selected_workdir is not None:
+        command.extend(["--workdir", selected_workdir])
     for name, selectors in spec.ceiling_overrides.items():
         command.extend(["--allow", f"{name}={_format_allow(selectors)}"])
     for name, value in spec.default_overrides.items():

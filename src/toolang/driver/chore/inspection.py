@@ -70,7 +70,7 @@ class ChoreInspection:
             if current is None or run.created_at > current.created_at:
                 latest_runs[str(run.thread)] = run
         return cls(
-            home=layout.home,
+            home=layout.agent_home,
             definitions=inspect_chore_sources(layout)
             if definitions is None
             else definitions,

@@ -1080,10 +1080,8 @@ def test_guest_tool_paths_use_captured_mount_not_state_host_source(tmp_path):
             harness.setup.environment,
             sandbox="docker:test",
             container=True,
-            workspace_mounts={
-                "lab": (lab_root, guest_lab),
-                "repo": (host, guest),
-            },
+            workspace_sources={"repo": str(host)},
+            workspace_paths={"repo": guest},
             workspace_location="guest",
         ),
     )

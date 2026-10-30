@@ -606,15 +606,8 @@ def serve(
     registry_status: Annotated[
         Path | None, typer.Option("--registry-status", hidden=True)
     ] = None,
-    workspace_bindings: Annotated[
-        str, typer.Option("--workspace-bindings", hidden=True)
-    ] = "{}",
-    environment_file: Annotated[
-        Path | None, typer.Option("--environment-file", hidden=True)
-    ] = None,
-    initial_workdir: Annotated[
-        str | None, typer.Option("--initial-workdir", hidden=True)
-    ] = None,
+    workspace_options: WorkspaceOptions = None,
+    workdir: WorkdirOption = None,
 ) -> None:
     """Run the internal AgentServer entrypoint."""
 
@@ -660,28 +653,15 @@ def serve(
         source_path=source_path,
         source_ref=source_ref,
         source_edit_lock=source_edit_lock,
+        agent_root_path=(place or context_root(ctx)) if location == "guest" else None,
         project_inputs=source_policy == "project",
         managed_membership=membership == "managed",
     )
     environ = dict(os.environ)
     environ["TOOLANG_ROOT"] = str(context_root(ctx))
     environ["TOOLANG_SANDBOX"] = sandbox
-    if environment_file is not None:
-        from toolang.common.environment import apply_environment_file
-
-        if location != "guest":
-            raise ClickException("an explicit workload environment requires a guest")
-        grants = user_call(apply_environment_file, environment_file, environ)
-        selected = ResolvedEnvironment(
-            context_root(ctx),
-            EnvironmentPolicy(),
-            environ,
-            identity=environment_identity(layout),
-            source=environment_file,
-            guest_values=grants,
-        )
-    elif location == "host" and host_launch:
-        # The controller already resolved and reduced this exec environment.
+    if location == "host" and host_launch:
+        # The controller has already captured this host invocation's environment.
         selected = ResolvedEnvironment(
             context_root(ctx),
             EnvironmentPolicy(),
@@ -689,23 +669,29 @@ def serve(
             identity=environment_identity(layout),
         )
     else:
-        # Guests load their generated root file; standalone hosts apply policy.
         selected = user_call(load_runtime_environment, layout, base_environ=environ)
     from toolang.common.config_runtime import (
         CONFIG_PATCH_ENV,
-        RuntimeConfig,
-        parse_workspace_bindings,
+        bind_runtime_config,
     )
 
-    bindings = user_call(parse_workspace_bindings, workspace_bindings)
-    if location == "host" and any(
-        binding.source != binding.path for binding in bindings.values()
-    ):
-        raise ClickException("host workspace bindings must preserve source paths")
+    workspaces = user_call(
+        resolve_workspaces,
+        layout,
+        procdir=Path.cwd(),
+        paths=workspace_options or (),
+        workdir=workdir,
+    )
+    controls_config = selected.values.get(
+        CONFIG_PATCH_ENV, environ.get(CONFIG_PATCH_ENV)
+    )
+    layout = user_call(
+        bind_runtime_config, layout, environ={**environ, **selected.values}
+    )
     controls = {
         name: value for name, value in environ.items() if name in RUNTIME_ENV_NAMES
     }
-    environ = dict(selected.values) if location == "host" else environ
+    environ = dict(selected.values)
     environ.update(selected.guest_values)
     for name in RUNTIME_ENV_NAMES:
         environ.pop(name, None)
@@ -720,12 +706,8 @@ def serve(
         )
     if model_catalog := resolve_model_catalog_option(model_catalog):
         environ[MODEL_CATALOG_ENV] = str(model_catalog)
-    layout = replace(
-        layout,
-        runtime_config=user_call(
-            RuntimeConfig.parse, environ.get(CONFIG_PATCH_ENV), workspaces=bindings
-        ),
-    )
+    if controls_config is not None:
+        environ[CONFIG_PATCH_ENV] = controls_config
     environment = replace(selected, values=environ)
     with environment_scope(environment):
         cors_origins = None
@@ -757,12 +739,8 @@ def serve(
             log_spec=log_spec,
             cors_allowed_origins=cors_origins,
             ui_base_url=ui_base_url,
-            workspace_additions={
-                name: str(binding.source)
-                for name, binding in bindings.items()
-                if binding.temporary
-            },
-            workdir=initial_workdir,
+            workspace_additions=workspaces.additions,
+            workdir=workspaces.workdir,
         )
         spec = replace(
             spec, registry_directory=registry_directory, registry_status=registry_status

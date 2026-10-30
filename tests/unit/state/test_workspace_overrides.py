@@ -30,62 +30,85 @@ def test_root_workspace_overrides_are_scoped_captured_and_reloadable(
         source_ref=ref if placement == "visiting" else None,
     )
     layout.home.mkdir(parents=True)
+    layout.agent_home.mkdir(parents=True, exist_ok=True)
     layout.program.write_text("flow:\n  pass\n")
     layout.config.write_text('[workspaces]\nrepo = "./old"\nnotes = "./notes"\n')
-    key = {"resident": "check", "visiting": ref, "roaming": str(source)}[placement]
+    key = layout.config_key
+
+    def grants(values):
+        return {"workspaces": values if layout.project_inputs else {key: values}}
+
     config = layout.place_config
-    config.write_text(tomlkit.dumps({"workspaces": {key: {"repo": "../external"}}}))
+    config.parent.mkdir(parents=True, exist_ok=True)
+    config.write_text(tomlkit.dumps(grants({"repo": "../external"})))
 
     before = prepare_agent_state(layout)
     assert dict(before.workspaces) == {
-        "repo": str(tmp_path / "external"),
-        "notes": str(layout.home / "notes"),
+        "repo": str(config.parent.parent / "external"),
+        "notes": str(layout.agent_home / "notes"),
     }
     assert load_agent_state(layout, before.revision).workspaces == before.workspaces
 
     # Other agents' grants and Setup fields do not change this home's policy snapshot.
+    config.parent.mkdir(parents=True, exist_ok=True)
     config.write_text(
         tomlkit.dumps(
             {
                 "model": {"ref": "test/other"},
-                "workspaces": {
-                    key: {"repo": "../external"},
-                    "peer": {"repo": "../peer"},
-                },
+                "workspaces": grants({"repo": "../external"})["workspaces"]
+                if layout.project_inputs
+                else {key: {"repo": "../external"}, "peer": {"repo": "../peer"}},
             }
         )
     )
     assert prepare_agent_state(layout).home_revision == before.home_revision
 
-    config.write_text(tomlkit.dumps({"workspaces": {key: {"repo": "../replacement"}}}))
+    config.parent.mkdir(parents=True, exist_ok=True)
+    config.write_text(tomlkit.dumps(grants({"repo": "../replacement"})))
     watcher = StateWatcher(layout, initial_state=before)
     after = asyncio.run(watcher.refresh())
     assert after.revision != before.revision
-    assert after.workspaces["repo"] == str(tmp_path / "replacement")
-    assert before.workspaces["repo"] == str(tmp_path / "external")
+    assert after.workspaces["repo"] == str(config.parent.parent / "replacement")
+    assert before.workspaces["repo"] == str(config.parent.parent / "external")
     assert load_agent_state(layout, before.revision).workspaces == before.workspaces
 
-    config.write_text(tomlkit.dumps({"workspaces": {"another": {"repo": "../other"}}}))
-    assert prepare_agent_state(layout).workspaces["repo"] == str(layout.home / "old")
+    config.parent.mkdir(parents=True, exist_ok=True)
+    config.write_text(
+        tomlkit.dumps(
+            grants({})
+            if layout.project_inputs
+            else {"workspaces": {"another": {"repo": "../other"}}}
+        )
+    )
+    assert prepare_agent_state(layout).workspaces["repo"] == str(
+        layout.agent_home / "old"
+    )
 
     # Reusing a name from a different source must not inherit that source's grant.
-    if placement != "resident":
+    if placement == "visiting":
         peer = (
             replace(layout, source_path=source.with_name("other.too"))
             if placement == "roaming"
             else replace(layout, source_ref="gh:other/check")
         )
-        config.write_text(tomlkit.dumps({"workspaces": {key: {"repo": "../external"}}}))
-        assert prepare_agent_state(peer).workspaces["repo"] == str(layout.home / "old")
+        config.parent.mkdir(parents=True, exist_ok=True)
+        config.write_text(tomlkit.dumps(grants({"repo": "../external"})))
+        assert prepare_agent_state(peer).workspaces["repo"] == str(
+            layout.agent_home / "old"
+        )
 
 
 def test_root_workspace_override_validates_effective_duplicate_sources(tmp_path):
     layout = AgentLayout.resident(tmp_path, "check")
     layout.home.mkdir(parents=True)
+    layout.agent_home.mkdir(parents=True, exist_ok=True)
     layout.program.write_text("flow:\n  pass\n")
     layout.config.write_text('[workspaces]\nrepo = "./repo"\n')
+    layout.place_config.parent.mkdir(parents=True, exist_ok=True)
     layout.place_config.write_text(
-        tomlkit.dumps({"workspaces": {"check": {"other": str(layout.home / "repo")}}})
+        tomlkit.dumps(
+            {"workspaces": {"check": {"other": str(layout.agent_home / "repo")}}}
+        )
     )
     with pytest.raises(ValueError, match="workspace path already configured"):
         prepare_agent_state(layout)
@@ -99,6 +122,7 @@ def test_workspace_management_lists_root_grants_and_preserves_root_ownership(tmp
     repo = tmp_path / "repo"
     repo.mkdir()
     config = tmp_path / "config.toml"
+    config.parent.mkdir(parents=True, exist_ok=True)
     config.write_text('[workspaces.check]\nrepo = "./repo"\n')
     configured = ConfiguredWorkspaces(
         home / "config.toml",
@@ -129,6 +153,7 @@ def test_workspace_inspection_resolves_only_the_selected_root_policy(
         document["plugin"] = {"model_catalog": {"models_dev": {"path": "\x00"}}}
     else:
         policies["peer"] = "\x00"
+    config.parent.mkdir(parents=True, exist_ok=True)
     config.write_text(tomlkit.dumps(document))
     configured = ConfiguredWorkspaces(
         home / "config.toml",

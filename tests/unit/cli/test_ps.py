@@ -16,6 +16,8 @@ from toolang.up.observation import RuntimeInventory, RuntimeSource
 from toolang.up.types import AgentStatus, RuntimeInstance, RuntimeInstanceSnapshot
 from toolang.up.workload import ForegroundWorkload
 
+from tests.support.layout import root_file
+
 
 def inventory(tmp_path, *instances, complete=True, diagnostics=()):
     return RuntimeInventory(
@@ -270,7 +272,9 @@ def test_ascii_stream_escapes_unicode_names(tmp_path, alice):
 
 
 def test_ls_skips_hub_settings_and_network(tmp_path, monkeypatch, capsys):
-    (tmp_path / "config.toml").write_text('[hub]\nport = "bad"\n[teaming]\nhub = 42\n')
+    (root_file(tmp_path, "config.toml")).write_text(
+        '[hub]\nport = "bad"\n[teaming]\nhub = 42\n'
+    )
     layout = AgentLayout.resident(tmp_path, "alice")
     layout.home.mkdir(parents=True)
     monkeypatch.setattr(
@@ -332,7 +336,7 @@ def test_ls_filters_nonresidents_before_probing(tmp_path, monkeypatch, capsys):
     ],
 )
 def test_ps_probes_only_configured_hub(tmp_path, monkeypatch, capsys, mode, expected):
-    (tmp_path / "config.toml").write_text(
+    (root_file(tmp_path, "config.toml")).write_text(
         '[teaming]\nhub = "http://hub.example:7123"\n'
     )
     requests = []
@@ -392,7 +396,7 @@ def test_no_resident_filter_option(command, tmp_path, capsys):
 
 
 def test_invalid_client_settings_keep_agent_listing(tmp_path, capsys):
-    (tmp_path / "config.toml").write_text("[teaming]\nhub = 42\n")
+    (root_file(tmp_path, "config.toml")).write_text("[teaming]\nhub = 42\n")
     AgentLayout.resident(tmp_path, "alice").home.mkdir(parents=True)
     assert cli.main(["--root", str(tmp_path), "ps"]) == 0
     text = capsys.readouterr().out
@@ -402,7 +406,7 @@ def test_invalid_client_settings_keep_agent_listing(tmp_path, capsys):
 
 @pytest.mark.parametrize("command", ["ls", "ps"])
 def test_malformed_root_configuration_keeps_agent_listing(tmp_path, capsys, command):
-    (tmp_path / "config.toml").write_text("[teaming\n")
+    (root_file(tmp_path, "config.toml")).write_text("[teaming\n")
     layout = AgentLayout.resident(tmp_path, "alice")
     layout.home.mkdir(parents=True)
     with ForegroundWorkload(layout, toolang_root=tmp_path, drivers=frozenset()):

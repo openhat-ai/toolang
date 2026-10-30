@@ -48,6 +48,11 @@ def derive_agent_name(stem: str) -> str:
     return validate_agent_name(name)
 
 
+def root_config_path(root: Path) -> Path:
+    """Return root-owned configuration, separate from private dotenv files."""
+    return root / "config.toml"
+
+
 def agent_workspaces_path(place: Path, name: str) -> Path:
     """Return the workspace namespace owned by one agent in a place."""
     return place / "workspaces" / name
@@ -55,7 +60,11 @@ def agent_workspaces_path(place: Path, name: str) -> Path:
 
 @dataclass(frozen=True, slots=True)
 class AgentLayout:
-    """Immutable paths for one agent under its resolved place."""
+    """Placement-resolved shared agent paths and instance runtime paths.
+
+    ``place`` and ``home`` identify the runtime root and its agent directory;
+    authored inputs, State, and workspaces use ``agent_root``/``agent_home``.
+    """
 
     place: Path
     name: str
@@ -76,6 +85,7 @@ class AgentLayout:
     program_acquisition: AcquiredSource | None = field(
         default=None, compare=False, repr=False
     )
+    agent_root_path: Path | None = field(default=None, compare=False)
 
     def __post_init__(self) -> None:
         place = self.place.expanduser().resolve()
@@ -114,10 +124,11 @@ class AgentLayout:
     @property
     def host_root(self) -> Path:
         """Original host root, independent of a guest's mounted root and PLACE."""
-        if self.runtime_config is not None:
-            captured = self.runtime_config.origins.get("toolang_root")
-            if captured is not None:
-                return captured
+        from .config_sources import config_origins
+
+        captured = config_origins(self).origins.get("toolang_root")
+        if captured is not None:
+            return captured
         return self.root or self.place
 
     @classmethod
@@ -180,11 +191,41 @@ class AgentLayout:
 
     @property
     def home(self) -> Path:
+        """Agent directory below the runtime root; owns this instance's .runtime."""
         return self.place / "agents" / self.name
 
     @property
+    def runtime_root(self) -> Path:
+        """Root of this retained runtime instance, independent of shared inputs."""
+        return self.place
+
+    @property
+    def agent_root(self) -> Path:
+        """Root of shared authored inputs, prepared State, and workspaces."""
+        if self.agent_root_path is not None:
+            return self.agent_root_path.expanduser().resolve()
+        if self.placement == "roaming" and self.source_path is not None:
+            return self.source_path.parent / ".toolang"
+        return self.place
+
+    @property
+    def agent_home(self) -> Path:
+        return self.agent_root / "agents" / self.name
+
+    def local_source_path(self, path: Path) -> Path:
+        """Map a captured host source path into this process's agent root."""
+        if path.is_relative_to(self.agent_root):
+            return path
+        from .config_sources import config_origins
+
+        origin = config_origins(self).origins.get("agent_root")
+        if origin is not None and path.is_relative_to(origin):
+            return self.agent_root / path.relative_to(origin)
+        return path
+
+    @property
     def workspaces(self) -> Path:
-        return agent_workspaces_path(self.place, self.name)
+        return agent_workspaces_path(self.agent_root, self.name)
 
     @property
     def lab(self) -> Path:
@@ -192,19 +233,31 @@ class AgentLayout:
 
     @property
     def place_config(self) -> Path:
-        return self.place / "config.toml"
+        return root_config_path(self.agent_root)
 
     @property
     def root_config(self) -> Path:
         return self.place_config
 
     @property
+    def root_catalog(self) -> Path:
+        return self.agent_root / "catalog.json"
+
+    @property
+    def root_source_receipt(self) -> Path:
+        return self.root_config.parent / "source.json"
+
+    @property
+    def source_receipt(self) -> Path:
+        return self.agent_home / "source.json"
+
+    @property
     def config_key(self) -> str | None:
         """Stable identity for agent-specific root configuration."""
         if self.placement == "resident":
             return self.name
-        if self.placement == "roaming":
-            return str(self.source_path) if self.source_path is not None else None
+        if self.project_inputs:
+            return ""
         return self.source_ref
 
     @property
@@ -213,27 +266,27 @@ class AgentLayout:
 
     @property
     def program(self) -> Path:
-        return self.home / "agent.too"
+        return self.agent_home / "agent.too"
 
     @property
     def config(self) -> Path:
-        return self.home / "config.toml"
+        return self.agent_home / "config.toml"
 
     @property
     def env(self) -> Path:
-        return self.home / ".env"
+        return self.agent_home / ".env"
 
     @property
     def place_state(self) -> Path:
-        return self.place / ".state" / "root"
+        return self.agent_root / ".state" / "root"
 
     @property
     def home_state(self) -> Path:
-        return self.home / ".state" / "home"
+        return self.agent_home / ".state" / "home"
 
     @property
     def agent_state(self) -> Path:
-        return self.home / ".state" / "agent"
+        return self.agent_home / ".state" / "agent"
 
     @property
     def place_edit_lock(self) -> Path:
@@ -247,7 +300,7 @@ class AgentLayout:
 
     @property
     def home_edit_lock(self) -> Path:
-        return home_edit_lock_path(self.home)
+        return home_edit_lock_path(self.agent_home)
 
     @property
     def place_runtime(self) -> Path:

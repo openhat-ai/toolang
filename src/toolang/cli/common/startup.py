@@ -6,6 +6,7 @@ from pathlib import Path
 
 from toolang.base.types.model import ModelOverride
 from toolang.common.layout import AgentLayout
+from toolang.common.config_runtime import CONFIG_PATCH_ENV, bind_runtime_config
 from toolang.plugin.catalogs.models_dev.path import MODEL_CATALOG_ENV
 from toolang.common.config import resolve_ui_base_url
 from toolang.setup.config import load_setup_config
@@ -97,6 +98,9 @@ def resolve_runtime_launch(
     """Use the same environment, policy, logging, and launch resolution sequence."""
     environ = dict(environ)
     settings = startup_environ({**(settings_environ or {}), **environ})
+    layout = bind_runtime_config(layout, environ=settings)
+    if (raw := settings.get(CONFIG_PATCH_ENV)) is not None:
+        environ[CONFIG_PATCH_ENV] = raw
     if model_catalog is None and (configured := settings.get(MODEL_CATALOG_ENV)):
         model_catalog = Path(configured)
     model_catalog = resolve_model_catalog_option(model_catalog)

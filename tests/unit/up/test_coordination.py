@@ -196,6 +196,33 @@ with runtime_lock(status):
     assert entry is not None and entry["workload"]["writer"] == "preserved"
 
 
+def test_registration_retries_directory_removal_after_mkdir_collision(
+    tmp_path, monkeypatch
+):
+    import errno
+    from pathlib import Path
+    from toolang.up.registry import registration_directory
+
+    layout = AgentLayout.resident(tmp_path, "alice")
+    directory = registration_directory(layout, toolang_root=tmp_path)
+    original = Path.mkdir
+    removed = False
+
+    def mkdir(path, *args, **kwargs):
+        nonlocal removed
+        if path == directory and not removed:
+            removed = True
+            original(path, *args, **kwargs)
+            path.rmdir()
+            # Another registration cleans up between mkdir's EEXIST and is_dir.
+            raise FileExistsError(errno.EEXIST, "directory was removed", str(path))
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "mkdir", mkdir)
+    with registration_lock(tmp_path, layout):
+        assert removed and directory.is_dir()
+
+
 def test_old_process_cleanup_preserves_a_replacement_registration(tmp_path):
     layout = AgentLayout.resident(tmp_path, "alice")
     code = """

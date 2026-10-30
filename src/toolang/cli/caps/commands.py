@@ -16,7 +16,12 @@ from toolang.cli.common.parameters import TextType
 from toolang.cli.common.editor import edit_markdown
 from ...catalog import templates
 from ...catalog.errors import CatalogConflictError
-from ...common.layout import AgentLayout, home_edit_lock_path, place_edit_lock_path
+from ...common.layout import (
+    AgentLayout,
+    home_edit_lock_path,
+    place_edit_lock_path,
+    root_config_path,
+)
 from toolang.catalog import source as cap_source
 from toolang.catalog import cap as cap_store
 from toolang.catalog import config as cap_config
@@ -184,7 +189,7 @@ def list_caps(
     selected = user_call(
         query_cap_views,
         entries if all_ else allowed,
-        place=layout.place,
+        place=layout.agent_root,
         agent_name=agent_name,
         queries=query,
         allowed=_allowed_cap_keys(allowed),
@@ -194,7 +199,7 @@ def list_caps(
         ("cap", "description", "location", "tags"),
         heading="CAP",
         json_=json_,
-        root=layout.place,
+        root=layout.agent_root,
     )
     if not json_:
         echo_collection_summary(
@@ -244,7 +249,7 @@ def _make_cap_list_command(kind: CapKind, title: str) -> Callable[..., None]:
         )
         dataset = cap_collection(
             entries if all_ else allowed,
-            place=layout.place,
+            place=layout.agent_root,
             agent_name=agent_name,
             kind=kind,
             allowed=_allowed_cap_keys(allowed),
@@ -255,7 +260,7 @@ def _make_cap_list_command(kind: CapKind, title: str) -> Callable[..., None]:
             ("cap", "description", "location", "tags"),
             heading="CAP",
             json_=json_,
-            root=layout.place,
+            root=layout.agent_root,
         )
         if not json_:
             echo_collection_summary(len(selected), kind)
@@ -488,7 +493,7 @@ def _cap_entries(
     from toolang.state.prepare import inspect_agent_caps, inspect_root_caps
     from ..common.progress import make_cli_progress
 
-    if not include_agent and not layout.place.exists():
+    if not include_agent and not layout.agent_root.exists():
         return layout, (), ()
     progress = make_cli_progress(preparation=True)
     try:
@@ -550,7 +555,9 @@ def _configured_caps(
     scope: MutableScope,
 ) -> cap_config.ConfiguredCaps:
     return cap_config.ConfiguredCaps(
-        _cap_directory(toolang_root, agent_name, scope) / "config.toml",
+        root_config_path(toolang_root)
+        if scope == "root"
+        else _cap_directory(toolang_root, agent_name, scope) / "config.toml",
         lock_path=_cap_edit_lock(toolang_root, agent_name, scope),
     )
 

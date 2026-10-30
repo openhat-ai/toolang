@@ -14,6 +14,8 @@ from toolang.base.protocols.model import ModelAdapter, ModelCatalog
 from toolang.base.types.model import ModelCatalogSnapshot, ModelOverride
 from toolang.base.types.policy import AgentCeiling, RunDefaults, RunLimits
 from toolang.common.layout import AgentLayout
+from toolang.common.config_runtime import bind_runtime_config
+from toolang.common.watching import directory_changes
 from toolang.common.progress import ProgressSink
 from .progress import setup_progress
 from .teaming import TeamingSetup, resolve_teaming_setup
@@ -28,7 +30,7 @@ from toolang.plugin.catalogs.models_dev.catalog import (
     ModelCatalogSource,
     ModelsDevModelCatalog,
 )
-from toolang.plugin.catalogs.models_dev.path import resolve_model_catalog_path
+from toolang.plugin.catalogs.models_dev.path import resolve_model_catalog_selection
 from toolang.plugin.models.config import validate_models_config
 from .tools import capture_toolset_loader, materialize_tools
 from toolang.setup.routes import RouteAdapter, resolve_catalog_providers
@@ -121,7 +123,9 @@ class SetupWatcher:
             if agent_context
             else load_place_setup_envs(layout)
         )
+        self.layout = bind_runtime_config(layout, environ=self._environ)
         self._model_catalog_override = model_catalog
+        self._model_catalog_path: Path | None = None
         self._allow_overrides = dict(allow_overrides or {})
         self._default_overrides = dict(default_overrides or {})
         self._limit_overrides = dict(limit_overrides or {})
@@ -142,6 +146,7 @@ class SetupWatcher:
             for item in plugin_provenance(group=group)
         )
         self._setup: AgentSetup | None = None
+        self._environment: AgentEnvironment | None = None
         self._diagnostics: tuple[SetupDiagnostic, ...] = ()
         self._refresh_lock = asyncio.Lock()
 
@@ -217,13 +222,17 @@ class SetupWatcher:
         toolset_configs["convo"] = teaming.toolset_config(
             gateway=inputs.envs.get("TOOLANG_HOST_GATEWAY"),
         )
-        catalog_path = resolve_model_catalog_path(
+        catalog = resolve_model_catalog_selection(
             self.layout,
             explicit=self._model_catalog_override,
             environ=inputs.envs,
             include_agent=self._agent_context,
             sources=inputs.sources,
+            validate=False,
         )
+        catalog_path = catalog.path
+        self._model_catalog_path = catalog_path if catalog.scope != "packaged" else None
+        catalog.require_file()
         catalog_configs = self._runtime_catalog_configs(
             configs, inputs.envs, catalog_path=catalog_path
         )
@@ -290,8 +299,13 @@ class SetupWatcher:
             for name, source_revision, snapshot in load.additional
             for provider_id in snapshot.providers
         )
+        if self._environment is None:
+            self._environment = AgentEnvironment.capture(
+                self.layout, sandbox=self._sandbox, environ=inputs.envs
+            )
         setup = _build_setup(
             layout=self.layout,
+            environment=self._environment,
             sandbox=self._sandbox,
             revision=revision,
             load=load,
@@ -416,14 +430,23 @@ class SetupWatcher:
 
         if self._setup is None:
             await self.refresh()
-        interval_sec = max(interval_ms, 50.0) / 1_000
-        while not stop_signal.is_set():
-            try:
-                await asyncio.wait_for(stop_signal.wait(), timeout=interval_sec)
-            except TimeoutError:
-                pass
-            if stop_signal.is_set():
-                break
+
+        def directories() -> tuple[Path, ...]:
+            paths = {
+                self.layout.agent_root,
+                self.layout.agent_home,
+                self.layout.root_config.parent,
+            }
+            if self._model_catalog_path is not None:
+                parent = self._model_catalog_path.parent
+                while not parent.is_dir():
+                    parent = parent.parent
+                paths.add(parent)
+            return tuple(sorted(path for path in paths if path.is_dir()))
+
+        async for _ in directory_changes(
+            directories, stop_signal=stop_signal, interval_ms=interval_ms
+        ):
             previous = self.current()
             current = await self.refresh()
             if current is not previous:
@@ -456,6 +479,7 @@ def _resolve_catalog(
 def _build_setup(
     *,
     layout: AgentLayout,
+    environment: AgentEnvironment,
     sandbox: str,
     revision: str,
     load: _CatalogLoad,
@@ -536,7 +560,7 @@ def _build_setup(
         layout=layout,
         envs=captured_envs,
         revision=revision,
-        environment=AgentEnvironment.capture(layout, sandbox=sandbox, environ=envs),
+        environment=environment,
         defaults=defaults,
         limits=limits,
         compact=compact,

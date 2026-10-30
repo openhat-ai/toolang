@@ -41,13 +41,13 @@ class AgentEnvironment:
     place: Path
     home: Path
     working_directory: Path
-    workspace_mounts: Mapping[str, tuple[Path, Path]] = field(default_factory=dict)
+    workspace_sources: Mapping[str, str] = field(default_factory=dict)
+    workspace_paths: Mapping[str, Path] = field(default_factory=dict)
     workspace_location: Literal["host", "guest"] = "host"
 
     def __post_init__(self) -> None:
-        object.__setattr__(
-            self, "workspace_mounts", MappingProxyType(dict(self.workspace_mounts))
-        )
+        for name in ("workspace_sources", "workspace_paths"):
+            object.__setattr__(self, name, MappingProxyType(dict(getattr(self, name))))
 
     @classmethod
     def capture(
@@ -69,24 +69,24 @@ class AgentEnvironment:
         )
         if location not in {"host", "guest"}:
             raise ValueError("invalid sandbox workspace location")
-        mounts = {
-            name: (binding.source, binding.path)
-            for name, binding in (
-                layout.runtime_config.workspaces.items()
-                if layout.runtime_config
-                else ()
-            )
-        }
+        from toolang.setup.config import load_workspace_sources
+        from toolang.common.config_runtime import RuntimeConfig
+
+        paths = (layout.runtime_config or RuntimeConfig()).workspace_paths(
+            layout.config_key, directory=layout.agent_home
+        )
+        sources = load_workspace_sources(layout) if paths else {}
         return cls(
             sandbox=sandbox,
             system=platform.system(),
             release=platform.release(),
             machine=platform.machine(),
             container=sandbox.partition(":")[0] == "docker",
-            place=layout.place,
-            home=layout.home,
+            place=layout.agent_root,
+            home=layout.agent_home,
             working_directory=Path.cwd().resolve(),
-            workspace_mounts=mounts,
+            workspace_sources=sources,
+            workspace_paths=paths,
             workspace_location=cast(Literal["host", "guest"], location),
         )
 
@@ -268,13 +268,6 @@ class AgentSetup:
     def workspace_grants(self, grants: Mapping[str, str]) -> dict[str, str]:
         """Add the implicit lab grant before configured workspaces; first name wins."""
         scratch_source = str(self.layout.lab)
-        if (
-            self.environment is not None
-            and self.environment.workspace_location == "guest"
-        ):
-            captured = self.environment.workspace_mounts.get(IMPLICIT_WORKSPACE_NAME)
-            if captured is not None:
-                scratch_source = str(captured[0])
         result = {IMPLICIT_WORKSPACE_NAME: scratch_source}
         for name, source in grants.items():
             if name == IMPLICIT_WORKSPACE_NAME:
@@ -285,13 +278,23 @@ class AgentSetup:
     def workspace_roots(self, grants: Mapping[str, str]) -> dict[str, Path]:
         """Intersect ordered workspace grants with mounts captured by hosting."""
         ordered = self.workspace_grants(grants)
-        if self.environment is None or self.environment.workspace_location == "host":
-            return {name: Path(source) for name, source in ordered.items()}
         result = {}
         for name, source in ordered.items():
-            mounted = self.environment.workspace_mounts.get(name)
-            if mounted is not None and mounted[0] == Path(source):
-                result[name] = mounted[1]
+            if (
+                self.environment is not None
+                and name in self.environment.workspace_paths
+            ):
+                if self.environment.workspace_sources.get(name) != source:
+                    continue
+                result[name] = self.environment.workspace_paths[name]
+            elif (
+                self.environment is not None
+                and self.environment.workspace_location == "guest"
+                and Path(source) != self.layout.workspaces / name
+            ):
+                continue
+            else:
+                result[name] = Path(source)
         return result
 
     def models(self, *, progress: ProgressSink | None = None) -> tuple[Model, ...]:

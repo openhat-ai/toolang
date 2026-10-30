@@ -56,7 +56,7 @@ def test_info_observes_an_active_launch_without_project_preparation(
         def fail(*args):
             raise ValueError("invalid project configuration")
 
-        monkeypatch.setattr(agent_sources, "_sync_roaming_project", fail)
+        monkeypatch.setattr(agent_sources, "materialize_roaming_program", fail)
         assert main(["info", str(source)]) == 0
         text = capsys.readouterr().out
         assert "Home:" in text and "Status: up" in text and "runtime-owned HOME" in text

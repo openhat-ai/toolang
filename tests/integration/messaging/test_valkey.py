@@ -32,6 +32,8 @@ from valkey.asyncio import Valkey
 from toolang.teaming.schemas import Message, HubConnection, HubPartitionInfo
 from toolang.up.hub import HubProcess
 
+from tests.support.layout import root_file
+
 pytestmark = pytest.mark.live_valkey
 
 
@@ -192,7 +194,7 @@ def running_hub(valkey, tmp_path):
     with socket.socket() as listener:
         listener.bind(("127.0.0.1", 0))
         port = listener.getsockname()[1]
-    (tmp_path / "config.toml").write_text(
+    (root_file(tmp_path, "config.toml")).write_text(
         f'[teaming]\nhuman = "owner"\nhub = "http://127.0.0.1:{port}"\n[hub.backend]\nurl = "{valkey.url}"\n'
     )
     hub = HubProcess(tmp_path)
@@ -249,7 +251,7 @@ def test_one_hub_keeps_cli_tools_and_executor_conversations_in_the_client_root(
     roots = [tmp_path / "one", tmp_path / "two"]
     for root in roots:
         root.mkdir()
-        (root / "config.toml").write_text(
+        (root_file(root, "config.toml")).write_text(
             f'[teaming]\nhuman = "owner"\nhub = "{endpoint}"\n'
         )
 
@@ -379,10 +381,10 @@ def test_hub_cli_lifecycle_with_separate_client_root(valkey, tmp_path, monkeypat
             timeout=30,
         )
 
-    (server / "config.toml").write_text(
+    (root_file(server, "config.toml")).write_text(
         f'[hub]\nhost = "127.0.0.1"\nport = {port}\n[hub.backend]\nurl = "{valkey.url}"\n'
     )
-    (client / "config.toml").write_text(
+    (root_file(client, "config.toml")).write_text(
         f'[teaming]\nhuman = "owner"\nhub = "http://127.0.0.1:{port}"\n'
     )
     unstarted = client / "agents" / "unstarted"

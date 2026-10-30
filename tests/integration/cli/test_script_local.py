@@ -6,7 +6,6 @@ from io import StringIO
 from pathlib import Path
 
 import pytest
-from watchfiles import Change
 
 from toolang.up import source as agent_sources
 from toolang.up.allocation import select_roaming
@@ -493,17 +492,17 @@ flow parent() -> Text:
     async def setup(_watcher, *, progress=None):
         return harness.setup
 
-    async def changes(_root, *, stop_event, **_kwargs):
+    async def changes(_directories, *, stop_signal, **_kwargs):
         await gate.wait_until_entered()
         program = harness.setup.layout.program
         program.write_text(source.replace("Old child.", "New child."))
-        yield {(Change.modified, str(program))}
+        yield {program}
         gate.release()
-        await stop_event.wait()
+        await stop_signal.wait()
         stopped.set()
 
     monkeypatch.setattr("toolang.setup.SetupWatcher.refresh", setup)
-    monkeypatch.setattr("toolang.state.watcher.awatch", changes)
+    monkeypatch.setattr("toolang.state.watcher.directory_changes", changes)
 
     async def scenario():
         return await asyncio.wait_for(

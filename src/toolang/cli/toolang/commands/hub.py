@@ -18,6 +18,7 @@ from toolang.cli.common.terminal_session import prepare_terminal
 from toolang.cli.common.help import CliCommand, CliGroup, MetadataCommand, show_help
 from toolang.common.config_sources import read_config
 from toolang.common.errors import ToolangError
+from toolang.common.layout import root_config_path
 from toolang.teaming.schemas import HubInfo
 from toolang.up.config import resolve_port_override, hub_config
 from toolang.up.hub import HubProcess, serve as serve_hub
@@ -65,7 +66,7 @@ def _help(ctx: typer.Context) -> None:
 
 def _settings(ctx: typer.Context, port: int | None):
     root = context_root(ctx)
-    path = root / "config.toml"
+    path = root_config_path(root)
     config = user_call(
         hub_config,
         user_call(read_config, path, include_workspaces=False),
@@ -130,7 +131,7 @@ def stop(
 
 def _status_prefix(root: Path, record: HubRecord | None = None) -> str:
     if record is None:
-        path = root / "config.toml"
+        path = root_config_path(root)
         try:
             config = hub_config(
                 read_config(path, include_workspaces=False),

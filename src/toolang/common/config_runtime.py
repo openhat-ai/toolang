@@ -1,32 +1,28 @@
-"""Explicit launch-time configuration views and workspace bindings."""
+"""Runtime configuration overrides and authored source identities."""
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from dataclasses import dataclass, field
+from collections.abc import Mapping, Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
+from dataclasses import dataclass, field, replace
 import json
 import math
 import os
 from pathlib import Path
 import re
 from types import MappingProxyType
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 from .immutable import freeze_mapping, mutable_data
+
+if TYPE_CHECKING:
+    from .layout import AgentLayout
 
 CONFIG_PATCH_ENV = "TOOLANG_CONFIG_PATCH"
 LAUNCH_SCHEMA = 2
 _SCOPES = {"root", "home"}
-_FILE_ORIGINS = {"root/catalog.json", "home/catalog.json"}
-_STATE_FIELDS = {
-    "psyches",
-    "skills",
-    "services",
-    "prompts",
-    "allow",
-    "chores",
-    "runnables",
-}
+_FILE_ORIGINS = {"root/catalog.json", "home/catalog.json", "program"}
 
 
 def _absolute(value: object) -> Path:
@@ -40,51 +36,6 @@ def _absolute(value: object) -> Path:
     if os.path.normpath(value) != value:
         raise ValueError("invalid launch source path")
     return Path(value)
-
-
-@dataclass(frozen=True, slots=True)
-class WorkspaceBinding:
-    """Keep authorization identity separate from the mounted execution root."""
-
-    source: Path
-    path: Path
-    temporary: bool = False
-
-    def to_data(self) -> dict[str, object]:
-        return {
-            "source": str(self.source),
-            "path": str(self.path),
-            "temporary": self.temporary,
-        }
-
-
-def parse_workspace_bindings(raw: str) -> dict[str, WorkspaceBinding]:
-    """Validate the common host/guest argv contract without exposing values."""
-    try:
-        values = json.loads(raw)
-        if not isinstance(values, dict):
-            raise ValueError
-        result = {}
-        for name, value in values.items():
-            if (
-                not isinstance(name, str)
-                or not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", name)
-                or not isinstance(value, dict)
-            ):
-                raise ValueError
-            if (
-                set(value) != {"source", "path", "temporary"}
-                or type(value["temporary"]) is not bool
-            ):
-                raise ValueError
-            if name == "lab" and value["temporary"]:
-                raise ValueError
-            result[name] = WorkspaceBinding(
-                _absolute(value["source"]), _absolute(value["path"]), value["temporary"]
-            )
-        return result
-    except (ValueError, TypeError):
-        raise ValueError("invalid workspace bindings startup input") from None
 
 
 def _object(value: object) -> dict[str, object]:
@@ -122,26 +73,17 @@ def _merge(
     return result
 
 
-def _validate_workspace_targets(
-    patch: object, bindings: Mapping[str, WorkspaceBinding]
-) -> None:
-    for name, value in _object(patch).items():
-        if isinstance(value, dict):
-            _validate_workspace_targets(value, bindings)
-        else:
-            binding = bindings.get(name)
-            if binding is None or value != str(binding.path):
-                raise ValueError
-
-
 @dataclass(frozen=True, slots=True)
 class ConfigOrigins:
     """Source identities and path resolution, without execution configuration."""
 
     origins: Mapping[str, Path] = field(default_factory=dict)
+    captured: bool = True
+    snapshots: Mapping[str, str | None] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "origins", MappingProxyType(dict(self.origins)))
+        object.__setattr__(self, "snapshots", MappingProxyType(dict(self.snapshots)))
 
     def origin(self, scope: str, path: Path) -> Path:
         return self.origins.get(scope, path)
@@ -154,7 +96,7 @@ class ConfigOrigins:
         captured = self.origins.get(reference)
         if captured is not None:
             return captured
-        if self.origins:
+        if self.origins and self.captured:
             if value.startswith("~"):
                 raise ValueError("uncaptured source path requires a new launch")
             return Path(reference)
@@ -166,100 +108,133 @@ class ConfigOrigins:
 
 @dataclass(frozen=True, slots=True)
 class RuntimeConfig:
-    """Immutable execution corrections with a separate source parsing context."""
+    """A process-local config.toml-shaped override, shared by every command."""
 
-    origins: Mapping[str, Path] = field(default_factory=dict)
-    defaults: Mapping[str, Mapping[str, object]] = field(
-        default_factory=dict, repr=False
-    )
-    overlays: Mapping[str, Mapping[str, object]] = field(
-        default_factory=dict, repr=False
-    )
-    workspaces: Mapping[str, WorkspaceBinding] = field(default_factory=dict)
+    values: Mapping[str, object] = field(default_factory=dict, repr=False)
 
     def __post_init__(self) -> None:
-        for name in ("origins", "workspaces"):
-            object.__setattr__(self, name, MappingProxyType(dict(getattr(self, name))))
-        for name in ("defaults", "overlays"):
-            object.__setattr__(self, name, freeze_mapping(getattr(self, name)))
-
-    @property
-    def source_context(self) -> ConfigOrigins:
-        return ConfigOrigins(self.origins)
+        object.__setattr__(self, "values", freeze_mapping(self.values))
 
     @classmethod
-    def parse(
-        cls,
-        raw: str | None,
-        *,
-        workspaces: Mapping[str, WorkspaceBinding] | None = None,
-    ) -> RuntimeConfig:
+    def parse(cls, raw: str | None) -> RuntimeConfig:
         try:
-            data = _object(json.loads(raw)) if raw is not None else {}
-            if set(data) - {"origins", "defaults", "root", "home"}:
+            values = _object(json.loads(raw)) if raw is not None else {}
+            if set(values) & {"origins", "defaults", "snapshots", "root", "home"}:
                 raise ValueError
-            origins = {
-                key: _absolute(value)
-                for key, value in _object(data.get("origins", {})).items()
-            }
-            if any(
-                key not in _SCOPES | _FILE_ORIGINS | {"toolang_root"}
-                and not Path(key).is_absolute()
-                for key in origins
-            ):
-                raise ValueError
-            defaults = _object(data.get("defaults", {}))
-            if set(defaults) - _SCOPES:
-                raise ValueError
-            overlays = {scope: data[scope] for scope in _SCOPES if scope in data}
-            for scopes in (defaults, overlays):
-                for scope in scopes:
-                    values = _object(scopes[scope])
-                    _validate_values(values)
-                    if set(values) & _STATE_FIELDS or any(
-                        key.startswith("__toolang_") for key in values
-                    ):
-                        raise ValueError
-            for values in defaults.values():
-                if "workspaces" in _object(values):
-                    raise ValueError
-            for values in overlays.values():
-                if "workspaces" in _object(values):
-                    _validate_workspace_targets(
-                        _object(values)["workspaces"], workspaces or {}
-                    )
-            return cls(
-                origins,
-                cast(dict[str, dict[str, object]], defaults),
-                cast(dict[str, dict[str, object]], overlays),
-                workspaces or {},
-            )
+            _validate_values(values)
+            runtime = cls(values)
+            _workspace_values(runtime.values.get("workspaces", {}), None)
+            return runtime
         except (ValueError, TypeError):
             raise ValueError("invalid runtime configuration patch") from None
 
-    def apply(self, scope: str, config: Mapping[str, object]) -> dict[str, object]:
-        """Derive a fresh view; never restore a revoked workspace from a patch."""
-        result = _merge(self.defaults.get(scope, {}), config)
-        overlay = mutable_data(self.overlays.get(scope, {}))
-        if "workspaces" in overlay:
-            overlay["workspaces"] = self._workspace_overlay(
-                result.get("workspaces", {}), overlay["workspaces"]
-            )
-        return _merge(result, overlay)
+    def apply(self, config: Mapping[str, object]) -> dict[str, object]:
+        return _merge(config, self.values)
 
-    def _workspace_overlay(self, original: object, patch: object) -> dict[str, object]:
-        source = _object(original)
-        result: dict[str, object] = {}
-        for name, target in _object(patch).items():
-            if isinstance(target, dict):
-                result[name] = self._workspace_overlay(source.get(name, {}), target)
-                continue
-            binding = self.workspaces.get(name)
-            if binding is None or source.get(name) != str(binding.source):
-                continue
-            if target != str(binding.path):
-                raise ValueError(
-                    "runtime workspace correction conflicts with captured binding"
-                )
-            result[name] = target
-        return result
+    def workspace_paths(self, key: str | None, *, directory: Path) -> dict[str, Path]:
+        values = _workspace_values(self.values.get("workspaces", {}), key)
+        return {
+            name: (
+                Path(value).expanduser()
+                if Path(value).expanduser().is_absolute()
+                else directory / Path(value).expanduser()
+            ).resolve()
+            for name, value in values.items()
+            if name != "lab"
+        }
+
+
+def _workspace_values(value: object, key: str | None) -> Mapping[str, str]:
+    if not isinstance(value, Mapping):
+        raise ValueError("workspaces config must be a table")
+    values = cast(Mapping[str, object], value)
+    keyed = any(isinstance(item, Mapping) for item in values.values())
+    tables = values.values() if keyed else (values,)
+    for table in tables:
+        if not isinstance(table, Mapping):
+            raise ValueError("invalid runtime workspace path")
+        for name, path in table.items():
+            if (
+                not isinstance(name, str)
+                or re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", name) is None
+                or not isinstance(path, str)
+                or not path
+            ):
+                raise ValueError("invalid runtime workspace path")
+    selected = (values.get(key, {}) if key is not None else {}) if keyed else values
+    return cast(Mapping[str, str], selected)
+
+
+def parse_source_metadata(data: object) -> ConfigOrigins:
+    """Validate source identity independently of runtime configuration values."""
+    try:
+        values = _object(data)
+        if set(values) - {"origins", "snapshots", "human", "state_revision"}:
+            raise ValueError
+        origins = {
+            key: _absolute(value)
+            for key, value in _object(values.get("origins", {})).items()
+        }
+        if any(
+            key not in _SCOPES | _FILE_ORIGINS | {"toolang_root", "agent_root"}
+            and not Path(key).is_absolute()
+            for key in origins
+        ):
+            raise ValueError
+        snapshots = _object(values.get("snapshots", {}))
+        if set(snapshots) - {"config.toml"} or any(
+            value is not None
+            and (
+                not isinstance(value, str)
+                or re.fullmatch(r"[a-f0-9]{64}", value) is None
+            )
+            for value in snapshots.values()
+        ):
+            raise ValueError
+        if "human" in values and not isinstance(values["human"], str):
+            raise ValueError
+        if "state_revision" in values and (
+            not isinstance(values["state_revision"], str)
+            or re.fullmatch(r"[a-f0-9]{64}", values["state_revision"]) is None
+        ):
+            raise ValueError
+        return ConfigOrigins(origins, snapshots=cast(dict[str, str | None], snapshots))
+    except (TypeError, ValueError):
+        raise ValueError("invalid launch source metadata") from None
+
+
+_CURRENT: ContextVar[RuntimeConfig | None] = ContextVar(
+    "toolang_runtime_config", default=None
+)
+
+
+def resolve_runtime_config(
+    environ: Mapping[str, str] | None = None,
+) -> RuntimeConfig | None:
+    """Parse an explicit environment snapshot, or reuse the command's config."""
+    return (
+        RuntimeConfig.parse(environ.get(CONFIG_PATCH_ENV))
+        if environ is not None
+        else _CURRENT.get()
+    )
+
+
+def bind_runtime_config(
+    layout: AgentLayout, *, environ: Mapping[str, str] | None = None
+) -> AgentLayout:
+    """Keep an explicit layout config; otherwise capture one at the boundary."""
+    if layout.runtime_config is not None:
+        return layout
+    runtime = resolve_runtime_config(
+        environ if environ is not None and CONFIG_PATCH_ENV in environ else None
+    )
+    return replace(layout, runtime_config=runtime) if runtime is not None else layout
+
+
+@contextmanager
+def runtime_config_scope(config: RuntimeConfig) -> Iterator[None]:
+    token = _CURRENT.set(config)
+    try:
+        yield
+    finally:
+        _CURRENT.reset(token)

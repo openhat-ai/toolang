@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from toolang.cli.common.context import load_runtime_environ
 from toolang.common.layout import AgentLayout
 
@@ -79,6 +81,70 @@ def test_setup_captures_environment_before_cross_thread_refresh(tmp_path):
         assert worker.submit(watcher._load_inputs).result().envs == {"TOKEN": "startup"}
 
 
+def test_command_config_is_shared_by_layout_setup_and_cli_readers(tmp_path):
+    import json
+    from typer._click import Context
+    from typer.core import TyperCommand
+    from toolang.cli.common.context import (
+        CliContext,
+        command_environment,
+        context_layout,
+    )
+    from toolang.cli.config import load_config
+    from toolang.common.config_runtime import CONFIG_PATCH_ENV
+    from toolang.setup.watcher import SetupWatcher
+
+    layout = AgentLayout.resident(tmp_path, "alice")
+    layout.agent_home.mkdir(parents=True)
+    layout.config.write_text("[limit]\ntokens=100\n")
+    state = CliContext(
+        root=tmp_path,
+        layout=layout,
+        shell_environment={CONFIG_PATCH_ENV: json.dumps({"limit": {"tokens": 200}})},
+    )
+    context = Context(TyperCommand("serve"), obj=state, info_name="serve")
+    with command_environment(context):
+        selected = context_layout(context)
+        watcher = SetupWatcher(selected)
+        assert context_layout(context).runtime_config is selected.runtime_config
+        assert watcher.layout is selected
+        assert load_config(layout.config)["limit"] == {"tokens": 200}
+        assert watcher._load_inputs().configs[-1]["limit"] == {"tokens": 200}
+    assert load_config(layout.config)["limit"] == {"tokens": 100}
+
+
+def test_nested_command_config_does_not_inherit_another_roots_patch(tmp_path):
+    import json
+    from typer._click import Context
+    from typer.core import TyperCommand
+    from toolang.cli.common.context import CliContext, command_environment
+    from toolang.cli.config import load_config
+    from toolang.common.config_runtime import CONFIG_PATCH_ENV
+
+    config = tmp_path / "config.toml"
+    config.write_text("[limit]\ntokens=100\n")
+    outer = Context(
+        TyperCommand("outer"),
+        obj=CliContext(
+            root=tmp_path,
+            shell_environment={
+                CONFIG_PATCH_ENV: json.dumps({"limit": {"tokens": 200}})
+            },
+        ),
+        info_name="outer",
+    )
+    inner = Context(
+        TyperCommand("inner"),
+        obj=CliContext(root=tmp_path / "other", shell_environment={}),
+        info_name="inner",
+    )
+    with command_environment(outer):
+        assert load_config(config)["limit"] == {"tokens": 200}
+        with command_environment(inner):
+            assert load_config(config)["limit"] == {"tokens": 100}
+        assert load_config(config)["limit"] == {"tokens": 200}
+
+
 def test_launch_parses_controller_settings_without_widening_workload(
     tmp_path, monkeypatch
 ):
@@ -121,3 +187,30 @@ def test_launch_parses_controller_settings_without_widening_workload(
         "https://other.example",
     )
     assert captured["ui_base_url"] == "https://ui.example"
+
+
+@pytest.mark.parametrize("placement", ["resident", "visiting", "roaming"])
+@pytest.mark.parametrize("settings_only", [False, True])
+def test_launch_resolves_config_patch_without_an_active_command_context(
+    tmp_path, placement, settings_only
+):
+    import json
+    from toolang.cli.common.startup import resolve_runtime_launch
+    from toolang.common.config_runtime import CONFIG_PATCH_ENV
+
+    patch = {"workspaces": {"repo": str(tmp_path / "corrected")}}
+    controls = {CONFIG_PATCH_ENV: json.dumps(patch)}
+    spec = resolve_runtime_launch(
+        AgentLayout(tmp_path, "alice", placement),
+        toolang_root=tmp_path,
+        environ={} if settings_only else controls,
+        settings_environ=controls if settings_only else {},
+        sandbox="host",
+        port=8123,
+        dev=None,
+        lifetime="persistent",
+        background=True,
+    )
+    assert spec.serve.layout.runtime_config is not None
+    assert spec.serve.layout.runtime_config.apply({}) == patch
+    assert spec.environ[CONFIG_PATCH_ENV] == controls[CONFIG_PATCH_ENV]

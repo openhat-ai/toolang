@@ -78,10 +78,15 @@ from toolang.plugin.adapters.responses import encode_message, response_payload
 from toolang.lang.ast import AgicDecl, Message as AstMessage, Parameter, Program, Span
 from toolang.lang.input import CallInput, RunnableInput
 
+from tests.support.layout import root_file
+
 
 def load_config_layers(root: Path, agent_name: str) -> tuple[dict[str, object], ...]:
     layers: list[dict[str, object]] = []
-    for path in (root / "config.toml", root / "agents" / agent_name / "config.toml"):
+    for path in (
+        root_file(root, "config.toml"),
+        root / "agents" / agent_name / "config.toml",
+    ):
         if path.is_file():
             layers.append(tomllib.loads(path.read_text(encoding="utf-8")))
     return tuple(layers)

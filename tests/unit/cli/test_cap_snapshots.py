@@ -54,6 +54,7 @@ def test_remove_unresolvable_configured_cap(tmp_path, monkeypatch, capsys, scope
     layout.home.mkdir(parents=True)
     layout.program.write_text(templates.load_template("agent").raw_text)
     config = layout.place_config if scope == "root" else layout.config
+    config.parent.mkdir(parents=True, exist_ok=True)
     config.write_text('[prompts]\nrewrite = { ref = "gh:acme/rewrite" }\n')
 
     def unavailable(*args, **kwargs):
@@ -114,6 +115,7 @@ def test_root_add_does_not_resolve_unrelated_configured_caps(
     from toolang.cli.toolang.main import main
 
     config = tmp_path / "config.toml"
+    config.parent.mkdir(parents=True, exist_ok=True)
     config.write_text('[prompts]\nstale = { ref = "gh:acme/stale" }\n')
     monkeypatch.setattr(cap_source, "_github_repo_default_branch", lambda *_: "main")
     monkeypatch.setattr(

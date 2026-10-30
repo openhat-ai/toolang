@@ -19,6 +19,8 @@ from toolang.state.source import (
     scan_source,
 )
 
+from tests.support.layout import root_file
+
 
 def test_source_manifest_captures_nested_content(tmp_path: Path) -> None:
     source = tmp_path / "source"
@@ -174,7 +176,7 @@ def test_config_snapshot_checks_for_concurrent_change(
 ) -> None:
     root = tmp_path / "toolang"
     root.mkdir()
-    config = root / "config.toml"
+    config = root_file(root, "config.toml")
     config.write_text("[model]\nref = 'one'\n", encoding="utf-8")
 
     read_bytes = Path.read_bytes

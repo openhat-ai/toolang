@@ -26,6 +26,8 @@ from toolang.up import sandbox as sandbox_runtime
 from toolang.up import server as agent_server
 from toolang.up.server import ServeSpec
 
+from tests.support.layout import root_file
+
 runner = CliRunner()
 
 
@@ -294,10 +296,13 @@ def test_serve_uses_process_sandbox_instead_of_dotenv(
 
 
 @pytest.mark.parametrize("missing", [False, True])
-def test_guest_requires_the_explicit_launch_environment(tmp_path, monkeypatch, missing):
+def test_guest_uses_the_standard_named_or_home_environment(
+    tmp_path, monkeypatch, missing
+):
     root = tmp_path / "toolang"
     _create_agent(root)
-    environment = tmp_path / "launch.env"
+    environment = root / ".alice.env"
+    (root / "agents/alice/.env").write_text("OLLAMA_HOST=home-fallback\n")
     if not missing:
         environment.write_text(
             "OLLAMA_HOST=http://fixture.invalid:11434\nTOOLANG_SANDBOX=docker:spoofed\n"
@@ -320,18 +325,13 @@ def test_guest_requires_the_explicit_launch_environment(tmp_path, monkeypatch, m
             "docker:test",
             "--location",
             "guest",
-            "--environment-file",
-            str(environment),
         ],
     )
-    if missing:
-        assert result.exit_code == 1
-        assert "could not read environment file" in result.stderr
-        assert not captured
-    else:
-        assert result.exit_code == 0, result.stderr
-        assert captured[0]["OLLAMA_HOST"] == "http://fixture.invalid:11434"
-        assert captured[0]["TOOLANG_SANDBOX"] == "docker:test"
+    assert result.exit_code == 0, result.stderr
+    assert captured[0]["OLLAMA_HOST"] == (
+        "home-fallback" if missing else "http://fixture.invalid:11434"
+    )
+    assert captured[0]["TOOLANG_SANDBOX"] == "docker:test"
 
 
 @pytest.mark.parametrize("agent_first", [False, True])
@@ -343,7 +343,7 @@ def test_run_resolves_sandbox_inputs_and_runs_in_foreground(
     root = tmp_path / "toolang"
     layout = _create_agent(root)
     model_catalog = tmp_path / "models.json"
-    (root / "config.toml").write_text(
+    (root_file(root, "config.toml")).write_text(
         '[limit]\ntokens = 1000\ncost = "5"\n',
         encoding="utf-8",
     )

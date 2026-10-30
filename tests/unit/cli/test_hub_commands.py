@@ -14,13 +14,15 @@ from toolang.common.layout import AgentLayout
 from toolang.up.config import resolve_port_override
 from toolang.up.records import HubRecord
 
+from tests.support.layout import root_file
+
 
 @pytest.mark.parametrize("arguments", [[], ["--help"]])
 def test_hub_help_never_inspects_runtime_or_config(
     tmp_path, monkeypatch, capsys, arguments
 ):
     monkeypatch.setattr("sys.argv", ["too"])
-    (tmp_path / "config.toml").write_text("bad {{{")
+    (root_file(tmp_path, "config.toml")).write_text("bad {{{")
     monkeypatch.setattr(
         hub.HubProcess, "current", lambda _: pytest.fail("help inspected process")
     )
@@ -52,7 +54,9 @@ def test_hub_status_uses_record_and_keeps_up_when_version_unavailable(
         pid=os.getpid(), created=psutil.Process().create_time(), host=host, port=9999
     )
     record.save(process.path)
-    (tmp_path / "config.toml").write_text("[teaming]\nhub = 42\n[hub]\nport = 7777\n")
+    (root_file(tmp_path, "config.toml")).write_text(
+        "[teaming]\nhub = 42\n[hub]\nport = 7777\n"
+    )
     client_type = httpx.Client
     requests = []
 
@@ -94,7 +98,7 @@ def test_hub_status_ignores_malformed_root_configuration(tmp_path, monkeypatch, 
         pid=os.getpid(), created=psutil.Process().create_time(), port=9999
     )
     record.save(process.path)
-    (tmp_path / "config.toml").write_text("bad {{{")
+    (root_file(tmp_path, "config.toml")).write_text("bad {{{")
     client_type = httpx.Client
     monkeypatch.setattr(
         hub.httpx,
@@ -176,7 +180,7 @@ def test_hub_start_and_serve_port_precedence(
     if env is not None:
         monkeypatch.setenv("TOOLANG_HUB_PORT", env)
     content = "" if configured is None else f"[hub]\nport = {configured}\n"
-    (tmp_path / "config.toml").write_text(content)
+    (root_file(tmp_path, "config.toml")).write_text(content)
     seen = []
 
     def start(self, argv):
@@ -194,7 +198,7 @@ def test_hub_start_and_serve_port_precedence(
     args = [] if option is None else ["--port", str(option)]
     assert cli.main(["--root", str(tmp_path), "hub", command, *args]) == 0
     assert seen == [expected]
-    assert (tmp_path / "config.toml").read_text() == content
+    assert (root_file(tmp_path, "config.toml")).read_text() == content
 
 
 @pytest.mark.parametrize("raw", ["", "bad", "0", "65536", "-1", "7.1", "７０００"])
@@ -248,7 +252,7 @@ def test_root_api_settings_rejected_and_convo_list_requires_running_hub(
         httpx, "AsyncClient", lambda **kwargs: http_client(async_client_type, **kwargs)
     )
     layout = AgentLayout.resident(tmp_path, "alice")
-    (tmp_path / "config.toml").write_text("[api]\nport = 7001\n")
+    (root_file(tmp_path, "config.toml")).write_text("[api]\nport = 7001\n")
     with pytest.raises(ValueError, match="agent home scope"):
         agent_port(layout, None, environ={})
     assert cli.main(["--root", str(tmp_path), "convo", "list"]) != 0
@@ -266,7 +270,7 @@ def test_root_api_settings_rejected_and_convo_list_requires_running_hub(
 def test_hub_status_without_record_uses_server_config(
     tmp_path, monkeypatch, capsys, host, local
 ):
-    (tmp_path / "config.toml").write_text(
+    (root_file(tmp_path, "config.toml")).write_text(
         f'[hub]\nhost = "{host}"\nport = 8123\n'
         '[teaming]\nhub = "http://client.example:7777"\n'
     )
@@ -298,7 +302,7 @@ def test_hub_status_without_record_uses_server_config(
 def test_hub_status_omits_unknown_address_with_malformed_config(
     tmp_path, monkeypatch, capsys, local, config
 ):
-    (tmp_path / "config.toml").write_text(config)
+    (root_file(tmp_path, "config.toml")).write_text(config)
     process = hub.HubProcess(tmp_path)
     if local == "corrupt":
         process.path.parent.mkdir()

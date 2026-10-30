@@ -36,7 +36,6 @@ if TYPE_CHECKING:
     from .addresses import AgentAddress
 
 AgentTargetForm = Literal["name", "shorthand", "ref"]
-_MAX_ROAMING_PROJECTION_ATTEMPTS = 3
 
 
 AgentRef = HttpRef | GitHubRef
@@ -262,188 +261,121 @@ def materialize_roaming_program(
     from .identity import read_home_identity
 
     read_home_identity(layout, toolang_root=layout.root)
-    _link_roaming_program(layout, resolved_source)
-    _sync_roaming_project(layout, resolved_source)
+    from toolang.common.config_sources import script_sources, source_catalog
+
+    for directory in (
+        layout.agent_root,
+        layout.agent_home.parent,
+        layout.agent_home,
+        layout.root_config.parent,
+    ):
+        if directory.is_symlink():
+            raise ValueError(
+                f"shared agent directory must not be a symlink: {directory}"
+            )
+        directory.mkdir(parents=True, exist_ok=True)
+    with (
+        EditLock(layout.place_state / "edit.lock").write(),
+        EditLock(layout.home_edit_lock).write(),
+    ):
+        candidates = script_sources(resolved_source)
+        selected_config = next(
+            (item.path for item in reversed(candidates) if item.path.is_file()), None
+        )
+        catalog = source_catalog(candidates, roaming=True, validate=False)
+        previous = (
+            json.loads(layout.source_receipt.read_bytes())
+            if layout.source_receipt.is_file()
+            else {}
+        )
+        if previous.get("source_path", str(resolved_source)) != str(resolved_source):
+            raise FileExistsError(
+                f"agent home {layout.agent_home} already belongs to {previous['source_path']}"
+            )
+        if (
+            layout.program.exists()
+            and not previous
+            and not layout.program.samefile(resolved_source)
+        ):
+            raise FileExistsError(f"cannot replace authored file: {layout.program}")
+        origins = {"program": str(resolved_source)}
+        previous_root = (
+            json.loads(layout.root_source_receipt.read_bytes())
+            if layout.root_source_receipt.is_file()
+            else {}
+        )
+        previous_origins = {
+            **previous.get("origins", {}),
+            **previous_root.get("origins", {}),
+        }
+        for target, source, key in (
+            (layout.program, resolved_source, "program"),
+            (layout.root_config, selected_config, "root"),
+            (layout.root_catalog, catalog, "root/catalog.json"),
+        ):
+            exists = target.exists() or target.is_symlink()
+            if (
+                exists
+                and key not in previous_origins
+                and not (
+                    source is not None
+                    and source.is_file()
+                    and target.is_file()
+                    and target.samefile(source)
+                )
+            ):
+                raise ValueError(
+                    f"fetched source conflicts with existing entry: {target}"
+                )
+            if source is not None:
+                if key == "root/catalog.json" and not source.exists():
+                    target.unlink(missing_ok=True)
+                else:
+                    _hardlink_source(source, target)
+                origins[key] = str(source)
+            elif key in previous_origins:
+                target.unlink(missing_ok=True)
+        for path, value in (
+            (
+                layout.root_source_receipt,
+                {
+                    "origins": {
+                        key: value for key, value in origins.items() if key != "program"
+                    }
+                },
+            ),
+            (
+                layout.source_receipt,
+                {
+                    "source_path": str(resolved_source),
+                    "sha256": sha256(layout.program.read_bytes()).hexdigest(),
+                    "origins": {"program": str(resolved_source)},
+                },
+            ),
+        ):
+            receipt = json.dumps(value, sort_keys=True)
+            if not path.is_file() or path.read_text() != receipt:
+                atomic_write_text(path, receipt)
     return layout
 
 
-def _link_roaming_program(layout: AgentLayout, source: Path) -> None:
-    """Atomically claim the normalized home without replacing another source."""
-    layout.home.mkdir(parents=True, exist_ok=True)
-    try:
-        layout.program.symlink_to(os.path.relpath(source, start=layout.home))
-    except FileExistsError:
-        if layout.program.is_symlink():
-            if layout.program.resolve() == source:
-                return
-            raise FileExistsError(
-                f"agent home {layout.home} already belongs to {layout.program.resolve()}"
-            ) from None
-        raise FileExistsError(
-            f"cannot replace authored file: {layout.program}"
-        ) from None
-
-
-def _sync_roaming_project(layout: AgentLayout, source: Path) -> None:
-    from toolang.common.config_sources import (
-        PROJECTION_HEADER,
-        project_sources,
-        read_config,
-        script_sources,
-        source_catalog,
-    )
-
-    place = layout.place
-    root_lock = EditLock(layout.place_edit_lock)
-
-    def capture():
-        sources = script_sources(source)
-        return sources, source_catalog(sources, roaming=True, validate=False)
-
-    sources, catalog = root_lock.read(capture)
-    projected = project_sources(sources, source=source, catalog=catalog)
-    target = place / "config.toml"
-    catalog_target = place / "catalog.json"
-    lock = EditLock(layout.place_state / "edit.lock")
-
-    def retire_previous_projection() -> None:
-        # Relocate generated inputs only after the new PLACE projection succeeds.
-        old_config = layout.config
-        old_lock = EditLock(layout.home_edit_lock)
-
-        def owned() -> bool:
-            if old_config.is_symlink():
-                return (
-                    old_config.resolve() == source.with_name("toolang.toml").resolve()
-                )
-            return old_config.is_file() and old_config.read_text().startswith(
-                PROJECTION_HEADER
-            )
-
-        if not old_lock.read(owned):
-            return
-        with old_lock.write():
-            if not owned():
-                return
-            previous = read_config(old_config)
-            old_catalog = layout.home / "catalog.json"
-            known_catalogs = {source.with_name("toolang.catalog.json").resolve()}
-            for value in (previous.get("__toolang_catalog__"), catalog):
-                if isinstance(value, str | Path):
-                    known_catalogs.add(Path(value).resolve())
-            if old_catalog.is_symlink() and old_catalog.resolve() in known_catalogs:
-                old_catalog.unlink()
-            old_config.unlink()
-
-    def needs_update() -> bool:
-        previous_catalog = None
-        previous_source = None
-        if (
-            target.is_file()
-            and not target.is_symlink()
-            and target.read_text().startswith(PROJECTION_HEADER)
-        ):
-            previous = read_config(target)
-            previous_catalog = previous.get("__toolang_catalog__")
-            previous_source = previous.get("__toolang_source__")
-        for path in (target, catalog_target):
-            if path.is_symlink():
-                # Relative generated links remain owned when the project moves,
-                # even if the old absolute catalog origin no longer matches.
-                if (
-                    path == catalog_target
-                    and isinstance(previous_catalog, str)
-                    and isinstance(previous_source, str)
-                ):
-                    old_source = Path(previous_source)
-                    old_home = AgentLayout.roaming(old_source).place
-                    if os.readlink(path) == os.path.relpath(
-                        previous_catalog, start=old_home
-                    ):
-                        continue
-                expected = (
-                    (source.with_name("toolang.toml"),)
-                    if path == target
-                    else tuple(
-                        value
-                        for value in (
-                            catalog,
-                            Path(previous_catalog)
-                            if isinstance(previous_catalog, str)
-                            else None,
-                        )
-                        if value is not None
-                    )
-                )
-                if any(path.resolve() == value.resolve() for value in expected):
-                    continue
-                raise ValueError(
-                    f"generated project symlink conflicts with existing entry: {path}"
-                )
-            if not path.exists():
-                continue
-            if (
-                path == target
-                and path.is_file()
-                and path.read_text().startswith(PROJECTION_HEADER)
-            ):
-                continue
-            raise ValueError(
-                f"generated project file conflicts with existing file: {path}"
-            )
-        return (
-            target.is_symlink()
-            or not target.exists()
-            or target.read_text() != projected
-            or (
-                catalog is not None
-                and (
-                    not catalog_target.is_symlink()
-                    or catalog_target.resolve() != catalog.resolve()
-                )
-            )
-            or (catalog is None and catalog_target.is_symlink())
-        )
-
-    for _ in range(_MAX_ROAMING_PROJECTION_ATTEMPTS):
-        if lock.read(needs_update):
-            with lock.write():
-                if needs_update():
-                    if target.is_symlink():
-                        target.unlink()
-                    if not target.exists() or target.read_text() != projected:
-                        atomic_write_text(target, projected)
-                    if catalog is not None:
-                        _replace_relative_symlink(catalog_target, catalog)
-                    elif catalog_target.is_symlink():
-                        catalog_target.unlink()
-        # Authored edits and projection never hold each other's guards. An
-        # older invocation delayed on the projection guard must not leave a stale
-        # projection behind after a newer root edit/projection has completed.
-        current_sources, current_catalog = root_lock.read(capture)
-        if (sources, catalog) == (current_sources, current_catalog):
-            retire_previous_projection()
-            return
-        sources, catalog = current_sources, current_catalog
-        projected = project_sources(sources, source=source, catalog=catalog)
-    raise RuntimeError("project sources changed repeatedly while projecting")
-
-
-def _replace_relative_symlink(link_path: Path, target_path: Path) -> None:
-    if link_path.is_symlink() and link_path.resolve() == target_path.resolve():
+def _hardlink_source(source: Path, target: Path) -> None:
+    """Publish an ordinary source entry without copying bytes or permissions."""
+    if not source.is_file():
+        raise ValueError(f"source must be a file: {source}")
+    if target.is_file() and not target.is_symlink() and target.samefile(source):
         return
-    if link_path.exists() or link_path.is_symlink():
-        if not link_path.is_symlink():
-            raise FileExistsError(f"cannot replace authored file: {link_path}")
-        link_path.unlink()
-    link_path.parent.mkdir(parents=True, exist_ok=True)
-    relative_target = os.path.relpath(target_path, start=link_path.parent)
+    import tempfile
+
+    descriptor, name = tempfile.mkstemp(prefix=f".{target.name}.", dir=target.parent)
+    os.close(descriptor)
+    staged = Path(name)
+    staged.unlink()
     try:
-        link_path.symlink_to(relative_target)
-    except FileExistsError:
-        # Another invocation may have just installed the identical owned link.
-        if not link_path.is_symlink() or link_path.resolve() != target_path.resolve():
-            raise
+        os.link(source.resolve(), staged)
+        os.replace(staged, target)
+    finally:
+        staged.unlink(missing_ok=True)
 
 
 def materialize_visiting_program(
@@ -473,7 +405,7 @@ def materialize_visiting_program(
     with visiting_home_guard(layout):
         atomic_write_text(layout.program, source_text)
         atomic_write_text(
-            layout.home / "agent.source.json",
+            layout.source_receipt,
             json.dumps(
                 {
                     "declared_ref": acquired.declared_ref,
@@ -571,7 +503,7 @@ def _prepare_visiting_source(
     progress: ProgressSink | None,
     toolang_root: Path,
 ) -> AgentLayout:
-    from toolang.state.prepare import parse_visiting_agent
+    from toolang.state.source import parse_agent_source
 
     captured = _cached_visiting_source(layout)
     if (
@@ -580,7 +512,7 @@ def _prepare_visiting_source(
         and _visiting_program_cache_fresh(layout.program)
     ):
         layout = replace(layout, program_acquisition=captured)
-        parse_visiting_agent(
+        parse_agent_source(
             layout,
             ref=_display_ref(target.text),
             progress=progress,
@@ -600,7 +532,7 @@ def _prepare_visiting_source(
         progress=progress,
         progress_id=progress_id,
     )
-    parse_visiting_agent(
+    parse_agent_source(
         layout,
         ref=_display_ref(resolved_ref.render()),
         source=source_text,
@@ -785,7 +717,7 @@ def _resolve_github_commit(ref: GitHubRef) -> str:
 
 def _cached_visiting_source(layout: AgentLayout) -> AcquiredSource | None:
     try:
-        receipt = json.loads((layout.home / "agent.source.json").read_bytes())
+        receipt = json.loads(layout.source_receipt.read_bytes())
         if not isinstance(receipt, dict) or not all(
             isinstance(receipt.get(key), str) and receipt[key]
             for key in ("declared_ref", "resolved_ref", "entry", "sha256")

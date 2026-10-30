@@ -9,25 +9,74 @@ import pytest
 from toolang.common.config_runtime import (
     CONFIG_PATCH_ENV,
     RuntimeConfig,
-    WorkspaceBinding,
 )
 from toolang.common.layout import AgentLayout
 from toolang.state.prepare import prepare_agent_state, inspect_root_caps
 from toolang.state.cache import layer_revision_dir
 from toolang.state.watcher import StateWatcher
-from toolang.up.mounts import prepare_source_mounts, prepare_guest_environment
+from toolang.up.mounts import prepare_place_mounts, prepare_guest_environment
 from toolang.up.source import materialize_roaming_program
+
+from tests.support.layout import root_file, capture_guest_source
+
+
+@pytest.mark.parametrize("present", [False, True])
+@pytest.mark.parametrize("corrupt_pointer", [False, True])
+def test_guest_config_snapshot_cannot_roll_back_shared_state(
+    tmp_path, present, corrupt_pointer
+):
+    import os
+
+    host = AgentLayout.resident(tmp_path / "host", "alice")
+    host.agent_home.mkdir(parents=True)
+    host.program.write_text("flow run():\n  pass\n")
+    if present:
+        host.root_config.write_text('[allow]\ntools = ["first"]\n')
+    initial = prepare_agent_state(host)
+    guest_root = tmp_path / "guest"
+    guest_root.mkdir()
+    # A hardlink models a file bind retaining the replaced source inode.
+    if present:
+        os.link(host.root_config, guest_root / "config.toml")
+    (guest_root / ".state").symlink_to(host.agent_root / ".state")
+    (guest_root / "agents").symlink_to(host.agent_root / "agents")
+    patch = prepare_guest_environment(host, mapping={})[CONFIG_PATCH_ENV]
+    guest = AgentLayout.resident(guest_root, "alice")
+    capture_guest_source(host, guest, state_revision=initial.revision)
+    guest = replace(guest, runtime_config=RuntimeConfig.parse(patch))
+    accepted = prepare_agent_state(guest)
+    assert accepted.revision == initial.revision
+    watcher = StateWatcher(guest, initial_state=accepted)
+    replacement = host.root_config.with_suffix(".replacement")
+    replacement.write_text('[allow]\ntools = ["second"]\n')
+    replacement.replace(host.root_config)
+    updated = prepare_agent_state(host)
+    assert updated.revision != initial.revision
+    if corrupt_pointer:
+        from toolang.state.cache import layer_current_path
+
+        layer_current_path(host, "root").write_text("f" * 64 + "\n")
+    with pytest.raises(ValueError, match="restart"):
+        prepare_agent_state(guest)
+    result = asyncio.run(watcher.refresh_result())
+    assert result.state is accepted
+    assert result.error == "state_rejected"
+    assert any("restart" in diagnostic.message for diagnostic in result.diagnostics)
+    from toolang.state.prepare import load_agent_state
+
+    assert load_agent_state(host).revision == updated.revision
 
 
 def test_guest_mounts_original_configuration_bytes(tmp_path):
     layout = AgentLayout.resident(tmp_path / "host", "alice")
-    layout.home.mkdir(parents=True)
+    layout.agent_home.mkdir(parents=True)
+    layout.place_config.parent.mkdir(parents=True, exist_ok=True)
     layout.place_config.write_text(
         '# Preserve this source\n[workspaces.alice]\nrepo = "."\n'
     )
     layout.config.write_text('[workspaces]\nhome = "."\n')
     guest = Path("/guest")
-    mounts = prepare_source_mounts(layout.place, layout.name, guest)
+    mounts = prepare_place_mounts(layout.agent_root, guest)
     root = next(m for m in mounts if m.hosted_path == guest / "config.toml")
     assert root.local_path == layout.place_config
     assert root.read_only
@@ -42,33 +91,26 @@ def test_roaming_configuration_belongs_to_place(tmp_path):
     layout = materialize_roaming_program(source, toolang_root=tmp_path / "global")
     assert layout.place_config.is_file()
     assert not layout.config.exists()
-    assert "__toolang_sources__" in layout.place_config.read_text()
+    assert layout.place_config.samefile(tmp_path / "toolang.toml")
 
 
-@pytest.mark.parametrize("legacy_link", [False, True])
-def test_roaming_relocates_only_owned_legacy_home_inputs(tmp_path, legacy_link):
-    from toolang.common.config_sources import project_sources, script_sources
+@pytest.mark.parametrize(
+    "declaration", ["workspaces = 7", '[workspaces]\nrepo = "\\u0000"']
+)
+def test_roaming_guest_ignores_ancestor_workspace_declarations(tmp_path, declaration):
+    import subprocess
 
-    source = tmp_path / "aid.too"
+    project = tmp_path / "project"
+    project.mkdir()
+    subprocess.run(["git", "init", "-q", str(project)], check=True)
+    (project / "toolang.toml").write_text(declaration)
+    source = project / "scripts" / "aid.too"
+    source.parent.mkdir()
     source.write_text("flow run():\n  pass\n")
-    config = tmp_path / "toolang.toml"
-    config.write_text('[workspaces]\nrepo = "."\n')
-    catalog = tmp_path / "toolang.catalog.json"
-    catalog.write_text("{}")
     layout = materialize_roaming_program(source, toolang_root=tmp_path / "global")
-    layout.place_config.unlink()
-    if legacy_link:
-        layout.config.symlink_to(config)
-    else:
-        layout.config.write_text(
-            project_sources(script_sources(source), source=source, catalog=catalog)
-        )
-    (layout.home / "catalog.json").symlink_to(catalog)
-    materialize_roaming_program(source, layout=layout)
-    assert layout.place_config.is_file()
-    assert not layout.config.exists() and not layout.config.is_symlink()
-    assert not (layout.home / "catalog.json").exists()
-    assert config.read_text() == '[workspaces]\nrepo = "."\n'
+    assert prepare_agent_state(layout).workspaces == {}
+    patch = prepare_guest_environment(layout, mapping={})[CONFIG_PATCH_ENV]
+    assert "workspaces" not in RuntimeConfig.parse(patch).values
 
 
 def test_roaming_preserves_authored_home_and_ignores_global_agent_config(tmp_path):
@@ -82,7 +124,7 @@ def test_roaming_preserves_authored_home_and_ignores_global_agent_config(tmp_pat
     )
     root = tmp_path / "global"
     root.mkdir()
-    (root / "config.toml").write_text('[teaming]\nhuman = "global-owner"\n')
+    (root_file(root, "config.toml")).write_text('[teaming]\nhuman = "global-owner"\n')
     layout = materialize_roaming_program(source, toolang_root=root)
     authored = '[teaming]\nenabled = false\n[workspaces]\nnotes = "."\n'
     layout.config.write_text(authored)
@@ -96,12 +138,12 @@ def test_roaming_preserves_authored_home_and_ignores_global_agent_config(tmp_pat
     )
     assert teaming.root.human == "human:project-owner" and not teaming.enabled
     assert prepare_agent_state(layout).workspaces == {
-        "notes": str(layout.home),
+        "notes": str(layout.agent_home),
         "repo": str(tmp_path),
     }
 
 
-def test_roaming_workspace_commands_edit_authored_root_instead_of_projection(tmp_path):
+def test_roaming_workspace_commands_edit_authored_source(tmp_path):
     import tomllib
     from toolang.cli.toolang.main import main
 
@@ -136,39 +178,53 @@ def test_shared_state_stays_stable_across_host_and_guest(tmp_path, project, link
         source = tmp_path / "project/aid.too"
         source.parent.mkdir()
         source.write_text("flow run():\n  pass\n")
-        (source.parent / "toolang.toml").write_text('[workspaces]\nproject = "."\n')
+        project_path = "."
+        if linked:
+            (source.parent / "root-repo").mkdir()
+            (source.parent / "root-link").symlink_to(
+                source.parent / "root-repo", target_is_directory=True
+            )
+            project_path = "./root-link"
+        (source.parent / "toolang.toml").write_text(
+            f'[workspaces]\nproject = "{project_path}"\n'
+        )
         host = materialize_roaming_program(source, toolang_root=tmp_path / "global")
     else:
         host = AgentLayout.resident(tmp_path / "host", "aid")
         host.home.mkdir(parents=True)
+        host.place_config.parent.mkdir(parents=True, exist_ok=True)
         host.place_config.write_text('[workspaces.aid]\nproject = "."\n')
-    repo = host.home / "repo"
+    repo = host.agent_home / "repo"
     repo.mkdir()
     if linked:
-        (host.home / "linked").symlink_to(repo, target_is_directory=True)
+        (host.agent_home / "linked").symlink_to(repo, target_is_directory=True)
     host.config.write_text(
         f'[workspaces]\nrepo = "./{"linked" if linked else "repo"}"\n'
     )
     initial = prepare_agent_state(host)
     guest_place = tmp_path / "guest"
     guest_place.mkdir()
-    for path in ("config.toml", ".state"):
-        (guest_place / path).symlink_to(host.place / path)
+    for path in ("config.toml", "source.json", ".state"):
+        if (host.agent_root / path).exists():
+            (guest_place / path).symlink_to(host.agent_root / path)
     (guest_place / "agents").mkdir()
-    (guest_place / "agents" / host.name).symlink_to(host.home, target_is_directory=True)
+    (guest_place / "agents" / host.name).symlink_to(
+        host.agent_home, target_is_directory=True
+    )
     mapping = {
         name: (value, str(guest_place / "workspaces" / host.name / name))
         for name, value in initial.workspaces.items()
     }
     patch = prepare_guest_environment(host, mapping=mapping)[CONFIG_PATCH_ENV]
-    runtime = RuntimeConfig.parse(
-        patch,
-        workspaces={
-            name: WorkspaceBinding(Path(source), Path(path))
-            for name, (source, path) in mapping.items()
-        },
+    runtime = RuntimeConfig.parse(patch)
+    guest = replace(
+        host,
+        place=guest_place,
+        root=guest_place,
+        agent_root_path=guest_place,
+        runtime_config=runtime,
     )
-    guest = replace(host, place=guest_place, root=guest_place, runtime_config=runtime)
+    capture_guest_source(host, guest, state_revision=initial.revision)
     for _ in range(3):
         assert prepare_agent_state(guest).revision == initial.revision
         inspect_root_caps(host, kinds=set())
@@ -207,29 +263,39 @@ def test_guest_does_not_restore_stale_symlink_identity_after_host_publication(
     first, second = tmp_path / "first", tmp_path / "second"
     first.mkdir()
     second.mkdir()
-    directory = host.place if scope == "root" else host.home
+    directory = host.place_config.parent if scope == "root" else host.home
+    directory.mkdir(parents=True, exist_ok=True)
     link = directory / "repo-link"
     link.symlink_to(first, target_is_directory=True)
     config = host.place_config if scope == "root" else host.config
     table = "workspaces.aid" if scope == "root" else "workspaces"
+    config.parent.mkdir(parents=True, exist_ok=True)
     config.write_text(f'[{table}]\nrepo = "./repo-link"\n')
     if not host.place_config.exists():
+        host.place_config.parent.mkdir(parents=True, exist_ok=True)
         host.place_config.write_text("")
     initial = prepare_agent_state(host)
     guest_place = tmp_path / "guest"
     guest_place.mkdir()
-    for path in ("config.toml", ".state"):
-        (guest_place / path).symlink_to(host.place / path)
+    for path in ("config.toml", "source.json", ".state"):
+        if (host.agent_root / path).exists():
+            (guest_place / path).symlink_to(host.agent_root / path)
     (guest_place / "agents").mkdir()
-    (guest_place / "agents/aid").symlink_to(host.home, target_is_directory=True)
+    (guest_place / "agents/aid").symlink_to(host.agent_home, target_is_directory=True)
     target = guest_place / "workspaces/aid/repo"
     runtime = RuntimeConfig.parse(
         prepare_guest_environment(host, mapping={"repo": (str(first), str(target))})[
             CONFIG_PATCH_ENV
         ],
-        workspaces={"repo": WorkspaceBinding(first, target)},
     )
-    guest = replace(host, place=guest_place, root=guest_place, runtime_config=runtime)
+    guest = replace(
+        host,
+        place=guest_place,
+        root=guest_place,
+        agent_root_path=guest_place,
+        runtime_config=runtime,
+    )
+    capture_guest_source(host, guest, state_revision=initial.revision)
     assert prepare_agent_state(guest).revision == initial.revision
     watcher = StateWatcher(guest, initial_state=initial)
     link.unlink()
@@ -259,27 +325,22 @@ def test_guest_does_not_restore_stale_symlink_identity_after_host_publication(
 
 
 @pytest.mark.parametrize("kind", ["packaged", "root", "home"])
-def test_guest_catalog_selection_is_fixed_for_the_launch(tmp_path, kind):
+def test_guest_catalog_selection_tracks_mounted_directory_inputs(tmp_path, kind):
     from toolang.plugin.catalogs.models_dev.path import resolve_model_catalog_selection
 
     host = AgentLayout.resident(tmp_path, "aid")
     host.home.mkdir(parents=True)
     if kind in {"root", "home"}:
-        (host.place / "catalog.json").write_text("{}")
+        (root_file(host.agent_root, "catalog.json")).write_text("{}")
     if kind == "home":
         (host.home / "catalog.json").write_text("{}")
     selected = resolve_model_catalog_selection(host)
-    patch = prepare_guest_environment(host, mapping={}, catalog=selected)[
-        CONFIG_PATCH_ENV
-    ]
+    patch = prepare_guest_environment(host, mapping={})[CONFIG_PATCH_ENV]
     guest = replace(host, runtime_config=RuntimeConfig.parse(patch))
     assert resolve_model_catalog_selection(guest).path == selected.path
     if kind == "home":
         (host.home / "catalog.json").unlink()
-        with pytest.raises(FileNotFoundError, match="mounted model catalog"):
-            resolve_model_catalog_selection(guest)
+        assert resolve_model_catalog_selection(guest).scope == "root"
     else:
         (host.home / "catalog.json").write_text("{}")
-        if kind == "packaged":
-            (host.place / "catalog.json").write_text("{}")
-        assert resolve_model_catalog_selection(guest).path == selected.path
+        assert resolve_model_catalog_selection(guest).path == host.home / "catalog.json"

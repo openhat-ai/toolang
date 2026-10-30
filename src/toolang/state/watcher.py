@@ -3,16 +3,18 @@
 from __future__ import annotations
 
 from toolang.catalog import source as source_owner
+from toolang.catalog.types import CAP_DIRECTORY_NAMES
 
 import asyncio
 from collections import deque
 from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass
 import logging
+import os
 from pathlib import Path
 from weakref import WeakValueDictionary
 
-from watchfiles import Change, awatch
+from toolang.common.watching import directory_changes
 
 from toolang.common.layout import AgentLayout
 from toolang.common.progress import ProgressSink
@@ -22,8 +24,7 @@ from .errors import StateDiagnostic, StatePreparationError
 from .types import StateSyncError, StateSyncResult
 from .cache import (
     LayerScope,
-    agent_current_path,
-    layer_current_path,
+    AGENT_STATE_FORMAT,
     load_current_agent_revision,
     load_current_revision,
     load_layer_source,
@@ -44,7 +45,24 @@ from .source import (
 DEFAULT_INTERVAL_MS = 1_000.0
 DEFAULT_DEBOUNCE_MS = 500.0
 logger = logging.getLogger(__name__)
-_RELEVANT_CHANGES = {Change.added, Change.modified, Change.deleted}
+
+
+def _watch_directories(layout: AgentLayout) -> tuple[Path, ...]:
+    """Enumerate State source directories and current-format pointer ancestors."""
+    directories = {layout.agent_root, layout.agent_home, layout.root_config.parent}
+    for anchor in (layout.place_state, layout.home_state, layout.agent_state):
+        directories.update((anchor.parent, anchor, anchor / f"v{AGENT_STATE_FORMAT}"))
+    for base in (layout.agent_root, layout.agent_home):
+        for name in CAP_DIRECTORY_NAMES:
+            source = base / name
+            if source.is_dir() and not source.is_symlink():
+                directories.update(
+                    Path(parent) for parent, _, _ in os.walk(source, followlinks=False)
+                )
+    directories.update(layout.agent_home / name for name in ("runnables", "chores"))
+    return tuple(
+        sorted(path for path in directories if path.is_dir() and not path.is_symlink())
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -116,6 +134,7 @@ class StateWatcher:
         self._checked_root_source: SourceManifest | None = None
         self._checked_home_source: SourceManifest | None = None
         self._checked_layer_revisions: tuple[str | None, str | None] | None = None
+        self._checked_agent_revision: str | None = None
         if (
             initial_state is not None
             and initial_state.allow_overrides == self._allow_overrides
@@ -125,8 +144,12 @@ class StateWatcher:
             self._record_persisted_baseline(initial_state)
         else:
             try:
-                state = load_agent_state(layout)
-            except (FileNotFoundError, KeyError, TypeError, ValueError):
+                state = load_agent_state(
+                    layout,
+                    allow_overrides=self._allow_overrides,
+                    workspace_additions=self._workspace_additions,
+                )
+            except (OSError, KeyError, TypeError, ValueError):
                 pass
             else:
                 if (
@@ -139,6 +162,7 @@ class StateWatcher:
         self._check_requests: deque[_CheckRequest] = deque()
         self._check_task: asyncio.Task[None] | None = None
         self._monitoring = False
+        self._checked_origins: dict[str, Path] | None = None
 
     def current(self) -> AgentState:
         """Return the latest immutable State publication."""
@@ -277,9 +301,14 @@ class StateWatcher:
         """Run the sole candidate check and publication path."""
 
         try:
-            root_observation = observe_root_source(self.layout.place)
+            context = source_config_context(self.layout)
+            origins = dict(context.origins) if context else {}
+            if self._checked_origins is not None and origins != self._checked_origins:
+                requested = True
+            self._checked_origins = origins
+            root_observation = observe_root_source(self.layout.agent_root)
             home_observation = observe_home_source(
-                self.layout.place,
+                self.layout.agent_root,
                 self.layout.name,
                 root_config=self.layout.root_config,
                 workspace_key=self.layout.config_key,
@@ -300,12 +329,7 @@ class StateWatcher:
             invalidated_root = frozenset(item.path for item in root_observation.files)
             invalidated_home = frozenset(item.path for item in home_observation.files)
         try:
-            context = source_config_context(self.layout)
-            if (
-                context is not None
-                and self.layout.runtime_config is not None
-                and context.origins != self.layout.runtime_config.origins
-            ):
+            if context is not None and context.captured:
                 invalidated_home = invalidated_home | {ROOT_WORKSPACE_SOURCE}
             root_source = root_source_manifest(
                 root_observation,
@@ -383,6 +407,10 @@ class StateWatcher:
             candidate.home_revision,
         )
         self._failure = None
+        try:
+            self._checked_agent_revision = load_current_agent_revision(self.layout)
+        except (OSError, TypeError, ValueError):
+            self._checked_agent_revision = None
         return StateRefresh(self._state)
 
     def _reject_check(self, exc: Exception) -> StateRefresh:
@@ -411,50 +439,30 @@ class StateWatcher:
                 await self._request_check(requested=True)
             logger.debug(
                 "watch.started place=%s agent=%s interval_ms=%s debounce_ms=%s",
-                self.layout.place,
+                self.layout.agent_root,
                 self.layout.name,
                 int(interval_ms),
                 int(debounce_ms),
             )
-            timeout_ms = max(int(interval_ms), 50)
-            async for changes in awatch(
-                self.layout.place,
-                *(
-                    ()
-                    if self.layout.root_config.is_relative_to(self.layout.place)
-                    or not self.layout.root_config.parent.is_dir()
-                    else (self.layout.root_config.parent,)
-                ),
-                debounce=max(int(debounce_ms), 50),
-                step=timeout_ms,
-                rust_timeout=timeout_ms,
-                yield_on_timeout=True,
-                stop_event=stop_signal,
+            async for paths in directory_changes(
+                lambda: _watch_directories(self.layout),
+                stop_signal=stop_signal,
+                interval_ms=interval_ms,
+                debounce_ms=debounce_ms,
             ):
-                paths = {
-                    Path(path)
-                    for kind, path in changes
-                    if kind in _RELEVANT_CHANGES
-                    and (
-                        source_path_scope(
-                            self.layout.place,
-                            self.layout.name,
-                            Path(path),
-                        )
-                        is not None
-                        or Path(path) == self.layout.root_config
-                        or _is_state_current_path(self.layout, Path(path))
-                    )
-                }
-                if changes and not paths:
-                    continue
                 invalidated_root: set[str] = set()
                 invalidated_home: set[str] = set()
                 for path in paths:
+                    if path in {
+                        self.layout.source_receipt,
+                        self.layout.root_source_receipt,
+                    }:
+                        invalidated_root.add("config.toml")
+                        invalidated_home.add(ROOT_WORKSPACE_SOURCE)
                     if path == self.layout.root_config:
                         invalidated_home.add(ROOT_WORKSPACE_SOURCE)
                     source = source_path_scope(
-                        self.layout.place,
+                        self.layout.agent_root,
                         self.layout.name,
                         path,
                     )
@@ -507,7 +515,8 @@ class StateWatcher:
                 not self._sources_reusable(state)
                 or bool(self._checked_root_source and self._checked_root_source.issues)
                 or bool(self._checked_home_source and self._checked_home_source.issues)
-                or load_current_agent_revision(self.layout) != state.revision
+                or load_current_agent_revision(self.layout)
+                != self._checked_agent_revision
                 or _current_layer_revisions(self.layout)
                 != self._checked_layer_revisions
                 or root_observation != self._checked_root_observation
@@ -529,7 +538,8 @@ class StateWatcher:
             return (
                 self._checked_home_observation is None
                 or not self._sources_reusable(state)
-                or load_current_agent_revision(self.layout) != state.revision
+                or load_current_agent_revision(self.layout)
+                != self._checked_agent_revision
                 or _current_layer_revisions(self.layout)
                 != self._checked_layer_revisions
                 or root_source != self._checked_root_source
@@ -556,6 +566,7 @@ class StateWatcher:
         """Load portable manifests without reconstructing the supplied State."""
 
         try:
+            self._checked_agent_revision = load_current_agent_revision(self.layout)
             root_source = load_layer_source(
                 self.layout,
                 "root",
@@ -566,7 +577,7 @@ class StateWatcher:
                 "home",
                 state.home_revision,
             )
-        except (FileNotFoundError, KeyError, TypeError, ValueError):
+        except (OSError, KeyError, TypeError, ValueError):
             return
         if not isinstance(root_source, SourceManifest) or not isinstance(
             home_source, SourceManifest
@@ -591,15 +602,6 @@ class StateWatcher:
         self._checked_root_source = root_source
         self._checked_home_source = home_source
         self._checked_layer_revisions = _current_layer_revisions(self.layout)
-
-
-def _is_state_current_path(layout: AgentLayout, path: Path) -> bool:
-    candidate = path.resolve(strict=False)
-    return candidate in {
-        layer_current_path(layout, "root").resolve(strict=False),
-        layer_current_path(layout, "home").resolve(strict=False),
-        agent_current_path(layout).resolve(strict=False),
-    }
 
 
 def _current_layer_revisions(

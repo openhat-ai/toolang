@@ -126,7 +126,8 @@ def _editable_layout(ctx: typer.Context) -> AgentLayout:
 
 def _authored_config(layout: AgentLayout) -> Path:
     if layout.placement == "roaming":
-        return layout.program.resolve(strict=True).parent / "toolang.toml"
+        assert layout.source_path is not None
+        return layout.source_path.parent / "toolang.toml"
     return layout.config
 
 
@@ -165,4 +166,5 @@ def _refresh_project(layout: AgentLayout) -> None:
     if layout.placement == "roaming":
         from toolang.up.source import materialize_roaming_program
 
-        materialize_roaming_program(layout.program.resolve(strict=True), layout=layout)
+        assert layout.source_path is not None
+        materialize_roaming_program(layout.source_path, layout=layout)

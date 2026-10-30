@@ -39,6 +39,8 @@ from toolang.setup.routes import (
 
 from toolang.base.types.model import ModelProvider
 
+from tests.support.layout import root_file
+
 
 @dataclass(frozen=True, slots=True)
 class _SnapshotCatalog(ModelCatalog):
@@ -373,7 +375,7 @@ def test_catalog_rejects_duplicate_model_identity_as_a_complete_snapshot() -> No
 def test_catalog_source_precedence_and_explicit_failure(tmp_path: Path) -> None:
     layout = AgentLayout.resident(tmp_path / "root", "alice")
     layout.home.mkdir(parents=True)
-    root = layout.place / "catalog.json"
+    root = root_file(layout.agent_root, "catalog.json")
     home = layout.home / "catalog.json"
     configured = tmp_path / "models.json"
     explicit = tmp_path / "explicit-models.json"
@@ -424,7 +426,7 @@ def test_root_catalog_is_selected_despite_unrecognized_models_file(
     layout = AgentLayout.resident(tmp_path / "root", "alice")
     layout.home.mkdir(parents=True)
     legacy = layout.home / "models.json"
-    root = layout.place / "catalog.json"
+    root = root_file(layout.agent_root, "catalog.json")
     _write_catalog(legacy, _catalog_data())
     _write_catalog(root, _catalog_data())
 

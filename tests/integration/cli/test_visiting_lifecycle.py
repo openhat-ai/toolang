@@ -20,6 +20,8 @@ from toolang.up.identity import visiting_home_guard
 from toolang.up.process import AgentProcess
 from toolang.up.source import visiting_layout
 
+from tests.support.layout import root_file
+
 
 def _wait(predicate, timeout=40):
     deadline = time.monotonic() + timeout
@@ -52,7 +54,7 @@ def _visiting_chat(tmp_path: Path, *, source_available: threading.Event | None =
     thread.start()
     root = tmp_path / "root"
     root.mkdir()
-    (root / "config.toml").write_text("[teaming]\nenabled = false\n")
+    (root_file(root, "config.toml")).write_text("[teaming]\nenabled = false\n")
     with socket.socket() as listener:
         listener.bind(("127.0.0.1", 0))
         agent_port = listener.getsockname()[1]
@@ -232,7 +234,7 @@ def test_visiting_reuse_ignores_caller_startup_defaults_and_unavailable_source(
         monkeypatch.setenv("TERM", "another-terminal")
         monkeypatch.setenv("TOOLANG_LIMIT_TOKENS", "invalid-startup-value")
         assert layout.root is not None
-        (layout.root / "config.toml").write_text(
+        (root_file(layout.root, "config.toml")).write_text(
             '[teaming]\nenabled = false\n[sandbox]\ndriver = "docker"\n'
         )
         assert command(url, "start").stdout.strip() == (

@@ -71,6 +71,46 @@ def load_agent_config(layout: AgentLayout) -> dict[str, object]:
     return read_config(layout.config)
 
 
+def load_workspace_sources(layout: AgentLayout) -> dict[str, str]:
+    """Load authored workspace identities without applying runtime overrides."""
+    from toolang.common.config_sources import config_origins, source_metadata
+    from toolang.state.config import (
+        configured_workspaces,
+        root_workspace_overrides,
+        parse_config,
+    )
+
+    if revision := source_metadata(layout).get("state_revision"):
+        from toolang.state.prepare import load_agent_state
+
+        state = load_agent_state(layout, str(revision))
+        return {
+            name: path
+            for name, path in state.workspaces.items()
+            if name not in state.workspace_additions
+        }
+    context = config_origins(layout)
+    grants = configured_workspaces(
+        read_config(
+            layout.config, origin=context.origin("home", layout.config), context=context
+        )
+    )
+    root = (
+        parse_config(layout.root_config.read_bytes())
+        if layout.root_config.is_file()
+        else {}
+    )
+    grants.update(
+        root_workspace_overrides(
+            root,
+            layout.config_key,
+            context.origin("root", layout.root_config).parent,
+            context=context,
+        )
+    )
+    return grants
+
+
 def load_setup_envs(layout: AgentLayout) -> dict[str, str]:
     """Resolve an agent boundary, or reuse its already installed snapshot."""
     active = current_environment()

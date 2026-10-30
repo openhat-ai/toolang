@@ -153,7 +153,14 @@ def _source_command(label: str) -> TyperGroup:
             )
         if source.suffix != ".too":
             raise BadParameter(f"expected a .too file: {label}", param_hint=["FILE"])
-        program = Program.from_source(source.read_text(encoding="utf-8"))
+        from toolang.common.layout import AgentLayout
+        from toolang.state.source import parse_agent_source
+
+        program = parse_agent_source(
+            AgentLayout.roaming(source),
+            source=source.read_bytes().decode("utf-8"),
+            ref=str(source),
+        )
     except FileNotFoundError as exc:
         raise ClickException(f"script not found: {label}") from exc
     except (OSError, RuntimeError, UnicodeError, ValueError, ToolangError) as exc:

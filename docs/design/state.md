@@ -14,7 +14,7 @@ execution progress. Root chores are ignored; the home directory is created
 only on its first explicit file write. Installed providers, tools, environments,
 and other [Setup](setup.md) data remain separate from Agent State.
 
-State preparation reads authored source but never edits it. The place
+State preparation reads authored source but never edits it. The agent root
 and agent home must already exist. A missing `agent.too` produces the empty
 default `agent` module term with an empty Program without creating the source
 file.
@@ -27,8 +27,8 @@ creation times.
 
 State has two persistent layers and one composition:
 
-- the `root` layer contains configuration and capabilities from PLACE;
-- the `home` layer contains configuration from HOME, agent and runnable modules,
+- the `root` layer contains configuration and capabilities from agent root;
+- the `home` layer contains configuration from agent home, agent and runnable modules,
   home and module-local capabilities, and Markdown chore terms; and
 - the `agent` composition identifies one exact root/home revision pair.
 
@@ -56,7 +56,7 @@ referenced capabilities have `here` scope and belong to one module.
 ## Persistent Layout
 
 ```text
-${PLACE}/.state/root/
+${AGENT_ROOT}/.state/root/
   edit.lock
   v24/
     current
@@ -69,7 +69,7 @@ ${PLACE}/.state/root/
         skills/<name>/SKILL.md
       materialized/<acquisition-key>/<original-relative-path>
 
-${PLACE}/agents/<agent>/.state/home/
+${AGENT_HOME}/.state/home/
   edit.lock
   v24/
     current
@@ -85,7 +85,7 @@ ${PLACE}/agents/<agent>/.state/home/
         skills/<name>/SKILL.md
       materialized/<acquisition-key>/<original-relative-path>
 
-${PLACE}/agents/<agent>/.state/agent/v24/
+${AGENT_HOME}/.state/agent/v24/
   current
   publish.lock
   revs/<state-revision>/
@@ -106,6 +106,13 @@ Unversioned caches and other formats' stores are ignored without migration,
 fallback, or deletion. A missing current-format store is rebuilt from authored
 inputs; exact historical loads search only the running format's store. State
 isolation does not change runtime, API, or database compatibility rules.
+
+[Placement](layout.md#agent-placement) resolves agent root and agent home.
+Roaming State sources and watchers use `DIR/.toolang`; runtime identity/storage
+remains below `DIR/.toolang/R8/P19`. Each State scope keeps its own `current`; no State pointer
+is added to `.runtime`. Agent `current` publishes authored State;
+invocation overrides and temporary grants are captured in separate exact Run
+revisions. Changing another instance's bindings does not change accepted Runs.
 
 ## Canonical Documents and Revisions
 
@@ -163,8 +170,12 @@ Revisions are lowercase 64-character SHA-256 strings. Each new revision includes
 a fixed-width UTC creation time with microseconds, such as
 `2026-10-15T08:30:00.000000Z`. Before assigning time, preparation compares the
 candidate without `created_at` to the current document. A no-op reuses that
-revision and time, including on forced refresh. Returning to earlier content
-after an intervening change creates a new revision.
+revision and time, including on forced refresh. Returning to earlier layer
+content after an intervening change creates a new revision.
+
+Agent compositions use the later root/home layer timestamp, so identical
+layers and invocation bindings resolve to the same revision across processes
+and host/guest launches. Their shared `current` still selects authored State.
 
 List home revisions by creation time from an agent home:
 
@@ -303,11 +314,32 @@ complete; integrity checks happen only through explicit validation.
 read the current State, load an exact revision, request another candidate
 check, and inspect diagnostics for the latest rejected candidate.
 
+A guest retains its root config snapshot for its launch. If the host publishes
+State from a different root config, the guest rejects further preparation with a
+restart diagnostic and preserves its accepted State without rewriting shared
+pointers. Source snapshot metadata lives in guest `GR/source.json`, so direct
+guest commands enforce the same publication boundary.
+
 At startup it first attempts to load `agent/current` as the last-known-good
 State. A valid changed candidate is fully persisted before it replaces that
 State. An invalid candidate records structured diagnostics and keeps the prior
 revision available; startup fails only when neither a valid candidate nor a
 loadable new-format published State exists.
+
+All placements watch their resolved agent root/home with the same rules;
+State owns source and pointer subscriptions; layout supplies resolved paths.
+Startup fetching belongs to source acquisition, outside the watcher. Native
+subscriptions use `recursive=False` and enumerate only authored capability
+directories, agent root/home, `runnables/`, `chores/`, and the parents
+of root/home/agent State `current` pointers. Watching existing parents catches
+creation of missing source or State directories; subscriptions are rebuilt and
+rescanned when those directories appear or disappear. `.runtime/`, workspaces,
+revision contents, and other agents are excluded from directory traversal.
+
+An independent reconciliation deadline runs even during continuous unrelated or
+filtered filesystem events. Changes to root or home `source.json`
+reload source origins; external edits to any of the three `current` pointers
+trigger validation and reconciliation even when authored bytes are unchanged.
 
 The watcher permits one filesystem monitor and one serialized check/publication
 path. It retains process-local path and stat observations separately from the

@@ -9,6 +9,7 @@ import logging
 from pathlib import Path
 
 from toolang.common.config_runtime import ConfigOrigins
+from toolang.common.config_sources import config_origins
 from toolang.common.layout import AgentLayout, ensure_scratch_workspace
 from toolang.common.source import AcquiredSource
 from toolang.catalog import source as cap_source
@@ -26,6 +27,7 @@ from .state import (
     compose_agent_state,
     effective_caps,
     merge_materialized_files,
+    agent_state_revision,
     _allowed_caps,
 )
 from .config import (
@@ -45,7 +47,7 @@ from .source import (
     SourceObservation,
     SourceSnapshot,
     ROOT_WORKSPACE_SOURCE,
-    parse_agent_program,
+    parse_agent_source,
     observe_home_source,
     observe_root_source,
     read_authored_source,
@@ -62,6 +64,7 @@ from .cache import (
     agent_revision_dir,
     load_agent_revisions,
     load_current_revision,
+    load_current_agent_revision,
     load_home_layer,
     load_root_layer,
     layer_build_lock,
@@ -72,38 +75,6 @@ from .cache import (
 
 _MAX_SOURCE_SNAPSHOT_ATTEMPTS = 3
 logger = logging.getLogger(__name__)
-
-
-def parse_visiting_agent(
-    layout: AgentLayout,
-    *,
-    ref: str,
-    source: str | None = None,
-    progress_id: str | None = None,
-    progress: ProgressSink | None = None,
-) -> Program:
-    """Parse the visiting agent before any root or home dependency preparation."""
-
-    text = source if source is not None else layout.program.read_bytes().decode("utf-8")
-    digest = sha256(text.encode("utf-8")).hexdigest()
-    prepared = None
-    try:
-        home = load_home_layer(layout)
-        if (
-            home.schema == AGENT_STATE_FORMAT
-            and home.module_digests.get("agent") == digest
-        ):
-            prepared = home.modules.get("agent")
-    except (FileNotFoundError, KeyError, TypeError, ValueError):
-        pass
-    return parse_agent_program(
-        layout.program,
-        text,
-        ref=ref,
-        progress=progress,
-        prepared=prepared,
-        progress_id=progress_id,
-    )
 
 
 def prepare_agent_state(
@@ -117,9 +88,9 @@ def prepare_agent_state(
 ) -> AgentState:
     """Prepare and compose the immutable runtime state for one agent."""
 
-    _require_place(layout)
+    _require_agent_root(layout)
     _require_agent_home(layout)
-    ensure_scratch_workspace(layout.home)
+    ensure_scratch_workspace(layout.agent_home)
     overrides = normalize_cap_overrides(allow_overrides)
     with _agent_publish_lock(layout, progress=progress):
         root, home = prepare_root_home(
@@ -127,6 +98,24 @@ def prepare_agent_state(
             force=force,
             progress=progress,
         )
+        # Shared current selects authored State, so effective compositions must
+        # be reproducible without a process-local previous State or extra pointer.
+        composition_time = max(root.created_at, home.created_at)
+        authored_revision = None
+        if overrides or workspace_additions:
+            authored_revision = _persist_agent_revision(
+                layout,
+                root_revision=root.revision,
+                home_revision=home.revision,
+                publish=False,
+                created_at=composition_time,
+            )
+            try:
+                published = load_current_agent_revision(layout)
+            except (OSError, ValueError):
+                published = None
+            if published != authored_revision:
+                load_agent_state(layout, authored_revision)
         revision = _persist_agent_revision(
             layout,
             root_revision=root.revision,
@@ -134,6 +123,7 @@ def prepare_agent_state(
             allow_overrides=overrides,
             workspace_additions=workspace_additions,
             publish=False,
+            created_at=composition_time,
         )
         created_at = load_agent_revisions(layout, revision)[-1]
         revision_dir = agent_revision_dir(layout, revision)
@@ -145,7 +135,7 @@ def prepare_agent_state(
             else compose_layer_state(
                 root,
                 home,
-                place=layout.place,
+                place=layout.agent_root,
                 name=layout.name,
                 allow_overrides=overrides,
                 workspace_additions=workspace_additions,
@@ -153,7 +143,9 @@ def prepare_agent_state(
                 created_at=created_at,
             )
         )
-        publish_agent_current(layout, revision)
+        with layer_build_lock(layout, "root", progress=progress):
+            _validate_root_snapshot(layout)
+            publish_agent_current(layout, authored_revision or revision)
         return state
 
 
@@ -206,6 +198,9 @@ def _source_files(scope: LayerScope, source: SourceManifest) -> tuple[StateFile,
 def load_agent_state(
     layout: AgentLayout,
     revision: str | None = None,
+    *,
+    allow_overrides: Mapping[str, tuple[str, ...] | None] | None = None,
+    workspace_additions: Mapping[str, str] | None = None,
 ) -> AgentState:
     """Load one durable Agent State without consulting authored source."""
 
@@ -215,20 +210,40 @@ def load_agent_state(
         home_revision,
         name,
         overrides,
-        workspace_additions,
+        additions,
         created_at,
     ) = load_agent_revisions(layout, revision)
+    if allow_overrides is not None or workspace_additions is not None:
+        # Current selects authored State. Invocation options select a cached
+        # composition of that same layer pair without changing the pointer.
+        effective = agent_state_revision(
+            root_revision,
+            home_revision,
+            name=name,
+            created_at=created_at,
+            allow_overrides=normalize_cap_overrides(allow_overrides),
+            workspace_additions=workspace_additions,
+        )
+        (
+            _,
+            root_revision,
+            home_revision,
+            name,
+            overrides,
+            additions,
+            created_at,
+        ) = load_agent_revisions(layout, effective)
     root = load_root_layer(layout, root_revision)
     home = load_home_layer(layout, home_revision)
     state = compose_layer_state(
         root,
         home,
         revision_dir=agent_revision_dir(layout, effective),
-        place=layout.place,
+        place=layout.agent_root,
         name=name,
         created_at=created_at,
         allow_overrides=overrides,
-        workspace_additions=workspace_additions,
+        workspace_additions=additions,
     )
     if state.revision != effective:
         raise ValueError("Agent State composition revision mismatch")
@@ -267,10 +282,10 @@ def prepare_root_home(
 ) -> tuple[RootLayer, HomeLayer]:
     """Prepare and load the shared root and one agent home."""
 
-    _require_place(layout)
+    _require_agent_root(layout)
     _require_agent_home(layout)
     if layout.placement == "visiting":
-        parse_visiting_agent(layout, ref=str(layout.program), progress=progress)
+        parse_agent_source(layout, ref=str(layout.program), progress=progress)
     root = prepare_root(
         layout,
         force=force,
@@ -292,8 +307,9 @@ def prepare_root(
 ) -> RootLayer:
     """Build or reuse the root State layer shared by every agent."""
 
-    _require_place(layout)
-    source = scan_root_source(layout.place)
+    _require_agent_root(layout)
+    _validate_root_snapshot(layout)
+    source = scan_root_source(layout.agent_root)
     current = _matching_root(
         layout,
         source=source,
@@ -302,7 +318,8 @@ def prepare_root(
     if current is not None:
         return current
     with layer_build_lock(layout, "root", progress=progress):
-        source = scan_root_source(layout.place)
+        _validate_root_snapshot(layout)
+        source = scan_root_source(layout.agent_root)
         current = _matching_root(
             layout,
             source=source,
@@ -314,13 +331,40 @@ def prepare_root(
             layout,
             scope="root",
             cap_scope="root",
-            context=layout.runtime_config.source_context
-            if layout.runtime_config
-            else None,
+            context=source_config_context(layout),
             reuse_remote=not force,
             progress=progress,
         )
         return load_root_layer(layout)
+
+
+def _validate_root_snapshot(layout: AgentLayout) -> None:
+    """Keep a pinned guest config from replacing newer shared authored State."""
+    snapshots = config_origins(layout).snapshots
+    if "config.toml" not in snapshots:
+        return
+    expected = snapshots["config.toml"]
+    local = (
+        sha256(layout.root_config.read_bytes()).hexdigest()
+        if layout.root_config.is_file()
+        else None
+    )
+    if local != expected:
+        raise ValueError("root configuration changed; restart the sandbox")
+    try:
+        published = load_root_layer(layout).source
+    except (OSError, KeyError, TypeError, ValueError):
+        try:
+            _, revision, *_ = load_agent_revisions(layout)
+            published = load_root_layer(layout, revision).source
+        except (OSError, KeyError, TypeError, ValueError):
+            return  # Ordinary preparation repairs absent or invalid caches.
+    digest = next(
+        (entry.raw_digest for entry in published.files if entry.path == "config.toml"),
+        None,
+    )
+    if digest != expected:
+        raise ValueError("shared root configuration changed; restart the sandbox")
 
 
 def inspect_root_caps(
@@ -335,7 +379,7 @@ def inspect_root_caps(
     entries = tuple(cap for cap in root.caps if cap.kind in kinds)
     allowed = _allowed_caps(
         entries,
-        place=layout.place,
+        place=layout.agent_root,
         agent_name="",
         allows=resolve_cap_allows((root.config,)),
     )
@@ -352,11 +396,11 @@ def inspect_agent_caps(
     _require_agent_home(layout)
     root = prepare_root(layout, progress=progress)
     authored = read_authored_source(
-        layout.place,
+        layout.agent_root,
         layout.name,
         root_config=layout.root_config,
         workspace_key=layout.config_key,
-        context=layout.runtime_config.source_context if layout.runtime_config else None,
+        context=source_config_context(layout),
     )
     accepted = accept_sources(authored, scope="home", include_programs=False)
     for record in accepted.records:
@@ -407,7 +451,7 @@ def inspect_agent_caps(
     )
     allowed = _allowed_caps(
         entries,
-        place=layout.place,
+        place=layout.agent_root,
         agent_name=layout.name,
         allows=resolve_cap_allows((root.config, home_config)),
     )
@@ -425,7 +469,7 @@ def prepare_home(
     _require_agent_home(layout)
     context = source_config_context(layout)
     source = scan_home_source(
-        layout.place,
+        layout.agent_root,
         layout.name,
         root_config=layout.root_config,
         workspace_key=layout.config_key,
@@ -441,7 +485,7 @@ def prepare_home(
         return current
     with layer_build_lock(layout, "home", progress=progress):
         source = scan_home_source(
-            layout.place,
+            layout.agent_root,
             layout.name,
             root_config=layout.root_config,
             workspace_key=layout.config_key,
@@ -516,7 +560,7 @@ def _matching_home(
                     raw,
                     context.origin("home", layout.config).parent
                     if context
-                    else layout.home,
+                    else layout.agent_home,
                     context=context,
                 )
             )
@@ -652,10 +696,10 @@ def _build_layer_revision(
         observation = _observe_scope_source(layout, scope=scope)
         try:
             authored = (
-                read_root_source(layout.place, context=context)
+                read_root_source(layout.agent_root, context=context)
                 if scope == "root"
                 else read_authored_source(
-                    layout.place,
+                    layout.agent_root,
                     layout.name,
                     root_config=layout.root_config,
                     workspace_key=layout.config_key,
@@ -796,23 +840,23 @@ def _observe_scope_source(
     scope: LayerScope,
 ) -> SourceObservation:
     if scope == "root":
-        return observe_root_source(layout.place)
+        return observe_root_source(layout.agent_root)
     return observe_home_source(
-        layout.place,
+        layout.agent_root,
         layout.name,
         root_config=layout.root_config,
         workspace_key=layout.config_key,
     )
 
 
-def _require_place(layout: AgentLayout) -> None:
-    if not layout.place.is_dir():
-        raise FileNotFoundError(f"agent root not found: {layout.place}")
+def _require_agent_root(layout: AgentLayout) -> None:
+    if not layout.agent_root.is_dir():
+        raise FileNotFoundError(f"agent root not found: {layout.agent_root}")
 
 
 def _require_agent_home(layout: AgentLayout) -> None:
-    if not layout.home.is_dir():
-        raise FileNotFoundError(f"agent home not found: {layout.home}")
+    if not layout.agent_home.is_dir():
+        raise FileNotFoundError(f"agent home not found: {layout.agent_home}")
 
 
 def _snapshot_files(

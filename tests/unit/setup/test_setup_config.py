@@ -21,12 +21,14 @@ from toolang.setup.config import (
     resolve_setup_allow,
 )
 
+from tests.support.layout import root_file
+
 
 def test_setup_config_reads_only_the_toolang_root(tmp_path: Path) -> None:
     root = tmp_path / "toolang"
     home = root / "agents" / "alice"
     home.mkdir(parents=True)
-    (root / "config.toml").write_text(
+    (root_file(root, "config.toml")).write_text(
         '[models.providers.gateway]\nendpoint = "https://root.example/v1"\n',
         encoding="utf-8",
     )

@@ -112,7 +112,7 @@ def _mutate(layout, family, contended, done):
             ),
             context,
         )
-    elif family == "projection":
+    elif family in {"fetch", "fetch-program"}:
         source = layout.source_path
         assert source is not None
         materialize_roaming_program(source, layout=layout)
@@ -124,31 +124,35 @@ def _mutate(layout, family, contended, done):
 
 
 @pytest.mark.parametrize(
-    "family", ["cap", "config", "chore", "workspace", "state", "projection"]
+    "family", ["cap", "config", "chore", "workspace", "state", "fetch", "fetch-program"]
 )
 def test_home_writers_share_edit_lock_across_processes(tmp_path, family):
     source = tmp_path / "alice.too"
     source.write_text("agic:\n  Hello.\n")
     layout = (
         materialize_roaming_program(source, toolang_root=tmp_path)
-        if family == "projection"
+        if family in {"fetch", "fetch-program"}
         else AgentLayout.resident(tmp_path / ".toolang", "alice")
     )
     layout.home.mkdir(parents=True, exist_ok=True)
-    if family == "projection":
+    if family == "fetch":
         (tmp_path / "toolang.toml").write_text('[workspaces]\nrepo = "."\n')
+    elif family == "fetch-program":
+        atomic_write_text(source, "agic:\n  Updated source.\n")
     ctx = multiprocessing.get_context("spawn")
     contended, done = ctx.Event(), ctx.Event()
     process = ctx.Process(target=_mutate, args=(layout, family, contended, done))
     try:
         with EditLock(
             layout.place_state / "edit.lock"
-            if family == "projection"
+            if family == "fetch"
             else layout.home_edit_lock
         ).write():
             process.start()
             assert contended.wait(10), family
             assert not done.is_set()
+            if family == "fetch-program":
+                assert layout.program.read_text() == "agic:\n  Hello.\n"
         assert done.wait(10), family
     finally:
         process.join(10)
@@ -156,6 +160,8 @@ def test_home_writers_share_edit_lock_across_processes(tmp_path, family):
             process.terminate()
             process.join()
     assert process.exitcode == 0
+    if family == "fetch-program":
+        assert layout.program.samefile(source)
     assert not tuple(layout.home.glob("*.lock"))
 
 
@@ -175,8 +181,7 @@ def test_other_home_and_root_edits_remain_independent(tmp_path):
             assert pool.submit(edit).result(timeout=10)
 
 
-def test_catalog_reads_and_unchanged_projection_do_not_create_guards(tmp_path):
-    from toolang.common.config_sources import project_sources, script_sources
+def test_catalog_reads_and_unchanged_fetch_do_not_create_extra_guards(tmp_path):
 
     source = tmp_path / "alice.too"
     source.write_text("agic:\n  Hello.\n")
@@ -184,9 +189,7 @@ def test_catalog_reads_and_unchanged_projection_do_not_create_guards(tmp_path):
 
     layout = prepare_roaming_home(source, toolang_root=tmp_path)
     layout.home.mkdir(parents=True, exist_ok=True)
-    layout.place_config.write_text(
-        project_sources(script_sources(source), source=source, catalog=None)
-    )
+    materialize_roaming_program(source, layout=layout)
     caps = CapsManager(layout)
     assert caps.root_authoring.list() == caps.home_authoring.list() == ()
     assert caps.root_configured.list() == caps.home_configured.list() == ()
@@ -239,11 +242,13 @@ def test_shared_roaming_config_updates_preserve_both_scripts_workspaces(tmp_path
     assert not (tmp_path / "toolang.toml.lock").exists()
 
 
-def test_delayed_roaming_projection_does_not_overwrite_newer_workspace_config(
-    tmp_path, monkeypatch
-):
+def test_delayed_roaming_fetch_uses_current_config_and_catalog(tmp_path, monkeypatch):
     source = tmp_path / "alice.too"
     source.write_text("agic:\n  Hello.\n")
+    config = tmp_path / "toolang.toml"
+    config.write_text('[plugin.model_catalog.models_dev]\npath = "first.json"\n')
+    for name in ("first", "second"):
+        (tmp_path / f"{name}.json").write_text("{}")
     layout = materialize_roaming_program(source, toolang_root=tmp_path)
     grants = ConfiguredWorkspaces(
         tmp_path / "toolang.toml", lock_path=layout.place_edit_lock
@@ -258,7 +263,7 @@ def test_delayed_roaming_projection_does_not_overwrite_newer_workspace_config(
     def write(lock):
         if (
             lock.path == layout.place_state / "edit.lock"
-            and current_thread().name.startswith("old-projection")
+            and current_thread().name.startswith("old-fetch")
             and not paused.is_set()
         ):
             paused.set()
@@ -267,21 +272,25 @@ def test_delayed_roaming_projection_does_not_overwrite_newer_workspace_config(
             yield
 
     monkeypatch.setattr(EditLock, "write", write)
-    with ThreadPoolExecutor(thread_name_prefix="old-projection") as pool:
+    with ThreadPoolExecutor(thread_name_prefix="old-fetch") as pool:
         pending = pool.submit(
             materialize_roaming_program, source, toolang_root=tmp_path
         )
         try:
             assert paused.wait(10)
             grants.add(tmp_path / "second", name="second")
+            atomic_write_text(
+                config, config.read_text().replace("first.json", "second.json")
+            )
             materialize_roaming_program(source, toolang_root=tmp_path)
         finally:
             resume.set()
         pending.result(timeout=10)
-    projected = ConfiguredWorkspaces(
+    cached = ConfiguredWorkspaces(
         layout.place_config, lock_path=layout.place_state / "edit.lock"
     )
-    assert set(projected.list()) == {"first", "second"}
+    assert set(cached.list()) == {"first", "second"}
+    assert layout.root_catalog.samefile(tmp_path / "second.json")
 
 
 def test_effective_chores_retry_inline_and_file_reads_after_first_edit(

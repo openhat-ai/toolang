@@ -11,7 +11,7 @@ from typing import IO
 
 from toolang.cli.config import resolve_title_prefix
 from toolang.common.config_sources import ConfigSource, config_sources, read_config
-from toolang.common.layout import AgentLayout
+from toolang.common.layout import AgentLayout, root_config_path
 
 from .context import load_root_environ, load_runtime_environ, startup_environ, user_call
 from .terminal_title import TerminalTitle
@@ -114,7 +114,7 @@ def prepare_terminal(
     else:
         if root is None:
             raise ValueError("terminal publication requires a root or agent layout")
-        path = root / "config.toml"
+        path = root_config_path(root)
         sources = (ConfigSource(path, user_call(read_config, path)),)
         environ = load_root_environ(root, base_environ=process)
     prefix = user_call(

@@ -29,6 +29,8 @@ from toolang.teaming.errors import (
 from toolang.teaming.messaging import MessagingClient
 from toolang.teaming.schemas import HUB_API_VERSION, HubConnection, Message
 
+from tests.support.layout import root_file
+
 
 def client(server, config, actor="human:owner", token="lease"):
     return MessagingClient(
@@ -51,8 +53,8 @@ def test_setup_canonicalizes_host_root_before_deriving_namespace(tmp_path):
     alias = tmp_path / "alias"
     alias.symlink_to(root, target_is_directory=True)
     direct = hub_config(
-        read_config(root / "config.toml"),
-        source=root / "config.toml",
+        read_config(root_file(root, "config.toml")),
+        source=root_file(root, "config.toml"),
         root=str(root.resolve()),
     ).backend
     assert (

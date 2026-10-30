@@ -60,7 +60,17 @@ def select_roaming(
 
 
 def retained_roaming(source: Path, *, toolang_root: Path) -> tuple[AgentLayout, ...]:
+    """Read a complete retained inventory under the allocation/publication guard."""
     source = source.expanduser().resolve()
+    guard = EditLock(source.parent / ".toolang" / ".state" / "launch.lock")
+    return guard.read(
+        lambda: _retained_roaming_locked(source, toolang_root=toolang_root)
+    )
+
+
+def _retained_roaming_locked(
+    source: Path, *, toolang_root: Path
+) -> tuple[AgentLayout, ...]:
     cache = (
         source.parent / ".toolang" / root_code(str(toolang_root.expanduser().resolve()))
     )
@@ -87,7 +97,7 @@ def _select_retained_roaming(
     places = (
         [_retained_layout(cache / place_code, derive_agent_name(source.stem))]
         if place_code is not None
-        else retained_roaming(source, toolang_root=toolang_root)
+        else _retained_roaming_locked(source, toolang_root=toolang_root)
     )
     for layout in places:
         if layout.source_path != source:
@@ -121,7 +131,7 @@ def prepare_roaming_home(source: Path, *, toolang_root: Path) -> AgentLayout:
     if source.suffix != ".too":
         raise ValueError(f"agent program must be a .too file: {source}")
     with EditLock(source.parent / ".toolang" / ".state" / "launch.lock").write():
-        retained = retained_roaming(source, toolang_root=toolang_root)
+        retained = _retained_roaming_locked(source, toolang_root=toolang_root)
         return (
             retained[0]
             if retained
@@ -135,7 +145,7 @@ def _allocate_roaming_locked(
     cache = source.parent / ".toolang" / root_code(str(toolang_root))
     verify_root_namespace(cache, toolang_root, create=True)
     highest = -1
-    for previous in retained_roaming(source, toolang_root=toolang_root):
+    for previous in _retained_roaming_locked(source, toolang_root=toolang_root):
         assert previous.place_code is not None
         highest = max(highest, roaming_timestamp_ms(previous.place_code))
     timestamp_ms = max(time.time_ns() // 1_000_000, highest + 1)

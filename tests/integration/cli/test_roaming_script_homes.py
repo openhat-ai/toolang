@@ -28,7 +28,9 @@ def test_info_prepares_one_root_scoped_home_and_explicit_run_reuses_it(source_ho
     assert original is not None and original["workload"]["status"] == "stopped"
     assert not home.run_store.exists()
     assert not list((root / ".runtime" / "active").glob("*/info.json"))
-    assert not (source.parent / ".toolang" / "agents").exists()
+    assert home.agent_home == source.parent / ".toolang" / "agents" / home.name
+    assert home.agent_home.is_dir()
+    assert home.agent_home != home.home
     assert main(["info", f"{source}@"]) == 0
     assert retained_roaming(source, toolang_root=root) == (home,)
     for operand in (f"{source}@", f"{source}@{home.place_code}"):
@@ -41,6 +43,39 @@ def test_info_prepares_one_root_scoped_home_and_explicit_run_reuses_it(source_ho
     assert latest != home
     assert main([f"{source}@{home.place_code}", "main", "--quiet", "old"]) == 0
     assert select_roaming(source, toolang_root=root) == latest
+
+
+def test_fresh_cli_processes_reuse_shared_state_across_roots(source_home):
+    import os
+    import subprocess
+    import sys
+
+    source, root = source_home
+    shared = source.parent / ".toolang"
+    revisions = None
+    for selected in (root, root, root.with_name("another root")):
+        result = subprocess.run(
+            [sys.executable, "-m", "toolang.cli.toolang", str(source), "main", "hello"],
+            env={**os.environ, "TOOLANG_ROOT": str(selected)},
+            input="",
+            text=True,
+            capture_output=True,
+            timeout=30,
+        )
+        assert result.returncode == 0, result.stderr
+        current = set(shared.glob("**/revs/*"))
+        if revisions is None:
+            revisions = current
+            assert revisions
+        else:
+            assert current == revisions
+            assert "Prepared state" not in result.stderr
+    layouts = (
+        *retained_roaming(source, toolang_root=root),
+        *retained_roaming(source, toolang_root=root.with_name("another root")),
+    )
+    assert len(layouts) == len({layout.run_store for layout in layouts}) == 3
+    assert len({layout.agent_home for layout in layouts}) == 1
 
 
 def test_explicit_missing_home_does_not_prepare_another(source_home):
@@ -65,7 +100,7 @@ def test_busy_script_and_rerun_cannot_change_the_current_owner(source_home, caps
     assert main([f"{source}@", "main", "--quiet", "released"]) == 0
 
 
-def test_info_does_not_reproject_inputs_or_renew_an_owner(source_home, monkeypatch):
+def test_info_does_not_fetch_inputs_or_renew_an_owner(source_home, monkeypatch):
     from toolang.up import source as sources
 
     source, root = source_home
@@ -75,8 +110,8 @@ def test_info_does_not_reproject_inputs_or_renew_an_owner(source_home, monkeypat
         before = read_instance(home.runtime_status)
         monkeypatch.setattr(
             sources,
-            "_sync_roaming_project",
-            lambda *_args: pytest.fail("info reprojected active inputs"),
+            "materialize_roaming_program",
+            lambda *_args, **_kwargs: pytest.fail("info fetched active inputs"),
         )
         assert main(["info", f"{source}@"]) == 0
         assert read_instance(home.runtime_status) == before
@@ -139,7 +174,7 @@ def test_concurrent_first_info_allocates_only_one_home(source_home):
             stdout, stderr = worker.communicate(timeout=20)
             assert worker.returncode == 0, (stdout, stderr)
         (home,) = retained_roaming(source, toolang_root=root)
-        assert home.program.resolve() == source
+        assert home.program.samefile(source)
         assert not home.run_store.exists()
         assert not list((root / ".runtime" / "active").glob("*/info.json"))
     finally:

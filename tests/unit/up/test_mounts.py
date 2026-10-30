@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 import json
 import pwd
+from typing import cast
 from types import SimpleNamespace
 
 from toolang.common.layout import AgentLayout
@@ -14,11 +15,13 @@ from toolang.base.types.sandbox import SandboxMount
 from toolang.up.mounts import (
     prepare_catalog_mount,
     prepare_guest_environment,
-    prepare_linked_state_source_mounts,
+    prepare_guest_source,
     prepare_place_mounts,
     prepare_workspace_mounts,
-    prepare_source_mounts,
+    validate_source_mounts,
 )
+
+from tests.support.layout import root_file
 
 
 @pytest.mark.parametrize("resident", [False, True])
@@ -32,6 +35,7 @@ def test_guest_environment_keeps_configuration_out_of_state(
     )
     layout.home.mkdir(parents=True)
     authored = '[teaming]\nhuman = "explicit"\nhub = "http://first"\n'
+    layout.place_config.parent.mkdir(parents=True, exist_ok=True)
     layout.place_config.write_text(authored)
     monkeypatch.setenv("LOGNAME", "bryan")
     monkeypatch.setenv("USER", "host-human")
@@ -41,9 +45,10 @@ def test_guest_environment_keeps_configuration_out_of_state(
     patch = json.loads(
         prepare_guest_environment(layout, mapping={})["TOOLANG_CONFIG_PATCH"]
     )
-    assert patch["defaults"] == {"root": {"teaming": {"human": "host-human"}}}
-    assert patch["origins"]["root"] == str(layout.place_config)
-    assert "root" not in patch and "home" not in patch
+    assert patch == {}
+    metadata = prepare_guest_source(layout)
+    assert metadata["human"] == "host-human"
+    assert cast(dict[str, str], metadata["origins"])["root"] == str(layout.place_config)
     assert layout.place_config.read_text() == authored
 
 
@@ -54,14 +59,13 @@ def test_prepare_place_mounts_owns_place_inputs(tmp_path: Path) -> None:
     mounts = prepare_place_mounts(local_place, hosted_place)
 
     assert {(item.local_path, item.hosted_path) for item in mounts} == {
-        (local_place / "config.toml", hosted_place / "config.toml"),
-        (local_place / ".state", hosted_place / ".state"),
+        (local_place / ".state/root", hosted_place / ".state/root"),
         (local_place / "psyches", hosted_place / "psyches"),
         (local_place / "skills", hosted_place / "skills"),
         (local_place / "services", hosted_place / "services"),
         (local_place / "prompts", hosted_place / "prompts"),
     }
-    assert (local_place / "config.toml").is_file()
+    assert not (local_place / "config").exists()
     assert not (local_place / ".setup").exists()
     assert all(
         (local_place / name).is_dir()
@@ -75,62 +79,114 @@ def test_prepare_place_mounts_owns_place_inputs(tmp_path: Path) -> None:
     )
 
 
-def test_prepare_linked_state_source_mounts_covers_root_and_home_sources(
-    tmp_path: Path,
-) -> None:
-    local_place = tmp_path / "toolang"
-    local_home = local_place / "agents" / "alice"
-    local_home.mkdir(parents=True)
-    hosted_place = Path("/root/.toolang")
-    hosted_home = hosted_place / "agents" / "alice"
-    external = tmp_path / "external"
-    external.mkdir()
-    sources = {
-        local_home / "agent.too": external / "agent.too",
-        local_home / "config.toml": external / "config.toml",
-        local_place / "prompts" / "review.md": external / "review.md",
-        local_home / "runnables" / "research.too": external / "research.too",
-        local_home / "skills" / "pdf" / "SKILL.md": external / "SKILL.md",
-    }
-    for logical, target in sources.items():
-        logical.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text("source\n", encoding="utf-8")
-        logical.symlink_to(target)
+def test_place_catalog_is_an_independent_startup_snapshot(tmp_path: Path) -> None:
+    local = tmp_path / "root"
+    catalog = root_file(local, "catalog.json")
+    catalog.write_text("{}")
+    guest = Path("/root/.toolang")
+    mounts = prepare_place_mounts(local, guest)
+    assert SandboxMount(catalog, guest / "catalog.json", read_only=True) in mounts
+    assert not (local / "config").exists()
 
-    mounts = prepare_linked_state_source_mounts(
-        local_place,
-        "alice",
-        hosted_place,
+
+@pytest.mark.parametrize("relative", [False, True])
+def test_source_links_must_resolve_in_the_guest_directory_view(tmp_path, relative):
+    layout = AgentLayout.resident(tmp_path, "alice")
+    layout.agent_home.mkdir(parents=True)
+    target = layout.agent_home / "entry-source"
+    target.write_text("flow run():\n  pass\n")
+    layout.program.symlink_to(target.name if relative else target)
+    mounts = (SandboxMount(layout.agent_home, Path("/guest/agents/alice")),)
+    if relative:
+        validate_source_mounts(layout, mounts)
+    else:
+        with pytest.raises(ValueError, match="source symlink target is unavailable"):
+            validate_source_mounts(layout, mounts)
+
+
+@pytest.mark.parametrize(
+    "source_kind",
+    ["program", "root-catalog", "home-catalog", "root-receipt", "home-receipt"],
+)
+def test_source_link_chain_cannot_escape_the_guest_directory_view(
+    tmp_path, source_kind
+):
+    layout = AgentLayout.resident(tmp_path, "alice")
+    layout.agent_home.mkdir(parents=True)
+    source = {
+        "program": layout.program,
+        "root-catalog": layout.root_catalog,
+        "home-catalog": layout.agent_home / "catalog.json",
+        "root-receipt": layout.root_source_receipt,
+        "home-receipt": layout.source_receipt,
+    }[source_kind]
+    source.parent.mkdir(parents=True, exist_ok=True)
+    target = tmp_path / "outside.too"
+    target.write_text("flow run():\n  pass\n")
+    (source.parent / "intermediate").symlink_to(target)
+    source.symlink_to("intermediate")
+    guest = Path("/guest")
+    mounts = (
+        SandboxMount(layout.agent_home, guest / "agents/alice"),
+        *prepare_place_mounts(layout.agent_root, guest),
+    )
+    if source_kind in {"root-catalog", "root-receipt"}:
+        validate_source_mounts(layout, mounts)
+    else:
+        with pytest.raises(ValueError, match="source symlink target is unavailable"):
+            validate_source_mounts(layout, mounts)
+
+
+@pytest.mark.parametrize("through_directory", [False, True])
+def test_source_link_chain_can_resolve_inside_the_guest_mount(
+    tmp_path, through_directory
+):
+    layout = AgentLayout.resident(tmp_path, "alice")
+    directory = layout.agent_home / "entries"
+    directory.mkdir(parents=True)
+    target = directory / "source.too"
+    target.write_text("flow run():\n  pass\n")
+    (layout.agent_home / "intermediate").symlink_to("entries/source.too")
+    if through_directory:
+        (directory / "nested").mkdir()
+        (layout.agent_home / "directory").symlink_to("entries/nested")
+        layout.program.symlink_to("directory/../source.too")
+    else:
+        layout.program.symlink_to("intermediate")
+    mounts = (SandboxMount(layout.agent_home, Path("/guest/agents/alice")),)
+    validate_source_mounts(layout, mounts)
+
+
+def test_external_catalog_override_ignores_unused_implicit_catalog_links(tmp_path):
+    from toolang.plugin.catalogs.models_dev.path import ModelCatalogSelection
+
+    layout = AgentLayout.resident(tmp_path / "root", "alice")
+    layout.agent_home.mkdir(parents=True)
+    implicit = tmp_path / "implicit.json"
+    implicit.write_text("{}")
+    (layout.agent_home / "catalog.json").symlink_to(implicit)
+    explicit = tmp_path / "explicit.json"
+    explicit.write_text("{}")
+    mounts = (
+        SandboxMount(layout.agent_home, Path("/guest/agents/alice")),
+        SandboxMount(explicit, Path("/guest/.inputs/catalog.json"), read_only=True),
+    )
+    validate_source_mounts(
+        layout, mounts, catalog=ModelCatalogSelection(explicit, "custom")
     )
 
-    assert set(mounts) == {
-        SandboxMount(
-            target,
-            (
-                hosted_home / logical.relative_to(local_home)
-                if logical.is_relative_to(local_home)
-                else hosted_place / logical.relative_to(local_place)
-            ),
-            read_only=True,
-        )
-        for logical, target in sources.items()
-    }
 
-
-@pytest.mark.parametrize("linked", [False, True])
-def test_place_catalog_is_mounted_read_only(tmp_path: Path, linked: bool) -> None:
-    local_place = tmp_path / "toolang"
-    local_place.mkdir()
-    catalog = local_place / "catalog.json"
-    source = tmp_path / "external.json" if linked else catalog
-    source.write_text("{}")
-    if linked:
-        catalog.symlink_to(source)
-    hosted_place = Path("/root/.toolang")
-
-    assert SandboxMount(
-        source.resolve(), hosted_place / "catalog.json", read_only=True
-    ) in prepare_place_mounts(local_place, hosted_place)
+def test_source_link_uses_its_authored_mount_when_also_granted_as_a_workspace(tmp_path):
+    layout = AgentLayout.resident(tmp_path, "alice")
+    runnables = layout.agent_home / "runnables"
+    runnables.mkdir(parents=True)
+    (layout.agent_home / "entry-source").write_text("flow work():\n  pass\n")
+    (runnables / "extra.too").symlink_to("../entry-source")
+    mounts = (
+        SandboxMount(layout.agent_home, Path("/guest/agents/alice")),
+        SandboxMount(runnables, Path("/guest/workspaces/alice/modules")),
+    )
+    validate_source_mounts(layout, mounts)
 
 
 def test_workspace_mounts_snapshot_only_available_grants(tmp_path: Path) -> None:
@@ -268,20 +324,31 @@ def test_workspace_mounts_keep_captured_state_when_source_changes(tmp_path):
 
 
 @pytest.mark.parametrize("scope", ["root", "place", "home"])
-def test_custom_catalog_uses_fixed_read_only_target_even_when_covered(tmp_path, scope):
+def test_custom_catalog_reuses_covered_root_or_home(tmp_path, scope):
+    from toolang.plugin.catalogs.models_dev.path import ModelCatalogSelection
+
     directory = tmp_path / scope
     directory.mkdir()
     catalog = directory / "catalog.json"
     catalog.write_text("{}")
-    additional, target = prepare_catalog_mount(catalog, Path("/guest/place"))
-    assert target == Path("/guest/place/.inputs/catalog.json")
-    assert additional == (SandboxMount(catalog, target, read_only=True),)
+    additional, target = prepare_catalog_mount(
+        ModelCatalogSelection(catalog, "custom"),
+        Path("/guest/place"),
+        (SandboxMount(directory, Path("/guest/place") / scope),),
+    )
+    assert target == Path("/guest/place") / scope / "catalog.json"
+    assert additional == ()
 
 
 def test_external_catalog_preserves_its_filename_and_is_read_only(tmp_path):
+    from toolang.plugin.catalogs.models_dev.path import ModelCatalogSelection
+
     catalog = tmp_path / "custom-models.json"
     catalog.write_text("{}")
-    mounts, target = prepare_catalog_mount(catalog, Path("/guest/place"))
+    mounts, target = prepare_catalog_mount(
+        ModelCatalogSelection(catalog, "custom"), Path("/guest/place")
+    )
+    assert target is not None
     assert target == Path("/guest/place/.inputs/catalog.json")
     assert mounts == (SandboxMount(catalog, target, read_only=True),)
 
@@ -291,7 +358,7 @@ def test_workspace_keeps_writes_when_home_has_a_read_only_config_override(tmp_pa
     home.mkdir(parents=True)
     guest = Path("/guest/agents/alice")
     (home / "config.toml").write_text('[workspaces]\nhome = "."\n')
-    inputs = prepare_source_mounts(tmp_path, "alice", Path("/guest"))
+    inputs = prepare_place_mounts(tmp_path, Path("/guest"))
     assert not any(mount.hosted_path == guest / "config.toml" for mount in inputs)
     guest_workspaces = Path("/guest/workspaces/alice")
     mounts, mapping = prepare_workspace_mounts(
@@ -312,11 +379,9 @@ def test_root_inputs_do_not_expose_a_same_named_resident_home(tmp_path):
     secret = tmp_path / "private.too"
     secret.write_text("private\n")
     (peer / "agent.too").symlink_to(secret)
-    mounts = prepare_source_mounts(
+    mounts = prepare_place_mounts(
         root,
-        "alice",
         Path("/guest/root"),
-        include_home=False,
     )
     assert not any(mount.local_path == secret for mount in mounts)
     assert not any(

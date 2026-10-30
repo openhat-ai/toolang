@@ -1,7 +1,6 @@
 import asyncio
 
 import pytest
-from watchfiles import Change
 
 from toolang.common.layout import AgentLayout
 from toolang.state import watcher
@@ -20,13 +19,13 @@ def test_invalid_edit_does_not_end_chore_watch(tmp_path, monkeypatch, invalid):
 
     async def changes(*args, **kwargs):
         path.write_text(invalid)
-        yield {(Change.modified, str(path))}
+        yield {path}
         assert reader.current().chores == ()
         assert reader.diagnostics()
         path.write_text("Corrected.")
-        yield {(Change.modified, str(path))}
+        yield {path}
 
-    monkeypatch.setattr(watcher, "awatch", changes)
+    monkeypatch.setattr(watcher, "directory_changes", changes)
 
     async def read():
         return [

@@ -38,6 +38,8 @@ from toolang.teaming.stream_client import HubStreamState
 from toolang.driver.talk import MessagingLoop
 from toolang.teaming.runtime import TeamingLoop
 
+from tests.support.layout import root_file
+
 pytestmark = pytest.mark.live_valkey
 
 
@@ -182,7 +184,7 @@ def test_inflight_message_survives_hub_restart_and_scoped_fanout(
                 if fault == "lease_loss":
                     await raw.zadd(Keys(valkey.root_code).presence, {client.actor: 1})
                 if fault == "backend_switch":
-                    (tmp_path / "config.toml").write_text(
+                    (root_file(tmp_path, "config.toml")).write_text(
                         f'[teaming]\nhuman = "owner"\nhub = "{connection.endpoint}"\n[hub.backend]\nurl = "{valkey.url}?db=1"\n'
                     )
                 local = await harness.executor.run(

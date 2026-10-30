@@ -334,13 +334,16 @@ def test_materialize_roaming_program_links_source_and_config(tmp_path: Path) -> 
     assert layout == AgentLayout.roaming(
         source, place_code=layout.place_code, root=tmp_path
     )
-    assert layout.program.is_symlink()
+    assert not layout.program.is_symlink()
     assert layout.place_config.is_file()
     assert not layout.config.exists()
-    assert (layout.program.parent / os.readlink(layout.program)).resolve() == source
+    assert layout.program.samefile(source)
     from toolang.common.config_sources import config_sources
 
-    assert config_sources(layout)[-1].path == config
+    assert (
+        next(item for item in config_sources(layout) if item.scope == "root").path
+        == config
+    )
 
 
 def test_concurrent_roaming_materialization_accepts_the_same_program_link(tmp_path):
@@ -357,40 +360,33 @@ def test_concurrent_roaming_materialization_accepts_the_same_program_link(tmp_pa
             )
         )
     assert layouts[0] == layouts[1]
-    assert layouts[0].program.resolve() == source
+    assert layouts[0].program.samefile(source)
 
 
 @pytest.mark.parametrize("same_source", [True, False])
-def test_roaming_link_published_after_missing_stat_is_checked_at_claim(
-    tmp_path, monkeypatch, same_source
-):
-    source = tmp_path / "aid.too"
-    source.write_text("flow main():\n  pass\n")
-    competitor = source if same_source else tmp_path / "aid-.too"
-    competitor.write_text(source.read_text())
-    layout = agent_sources.roaming_layout(source, toolang_root=tmp_path)
-    symlink = Path.symlink_to
-    published = False
+def test_concurrent_hardlink_claims_preserve_one_source_owner(tmp_path, same_source):
+    from concurrent.futures import ThreadPoolExecutor
+    import json
 
-    def race(path, target, *args, **kwargs):
-        nonlocal published
-        if path == layout.program and not published:
-            published = True
-            symlink(path, competitor)
-            raise FileExistsError(str(path))
-        return symlink(path, target, *args, **kwargs)
+    first = tmp_path / "aid.too"
+    second = first if same_source else tmp_path / "aid-.too"
+    for source in (first, second):
+        source.write_text("flow main():\n  pass\n")
 
-    monkeypatch.setattr(Path, "symlink_to", race)
-    if same_source:
-        assert (
-            agent_sources.materialize_roaming_program(source, toolang_root=tmp_path)
-            == layout
-        )
-    else:
-        with pytest.raises(FileExistsError, match="already belongs"):
-            agent_sources.materialize_roaming_program(source, toolang_root=tmp_path)
-    assert published
-    assert layout.program.resolve() == competitor
+    def claim(source):
+        try:
+            return agent_sources.materialize_roaming_program(
+                source, toolang_root=tmp_path
+            )
+        except FileExistsError:
+            return None
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(claim, (first, second)))
+    assert sum(result is not None for result in results) == (2 if same_source else 1)
+    winner = next(result for result in results if result is not None)
+    receipt = json.loads(winner.source_receipt.read_bytes())
+    assert winner.program.samefile(receipt["source_path"])
 
 
 @pytest.mark.parametrize("prefix", ["gh:", "github:", "github://"])
@@ -403,7 +399,7 @@ def test_visiting_aliases_share_a_root_and_normalized_name(tmp_path, prefix):
     assert layout.name == "daily_report_v2"
 
 
-def test_normalized_source_names_have_independent_homes(
+def test_normalized_source_name_collision_preserves_existing_source(
     tmp_path,
 ):
     first = tmp_path / "daily-report.too"
@@ -414,10 +410,9 @@ def test_normalized_source_names_have_independent_homes(
     marker = layout.home / "keep.txt"
     marker.write_text("history")
     before = {path.relative_to(layout.home) for path in layout.home.rglob("*")}
-    second = agent_sources.materialize_roaming_program(other, toolang_root=tmp_path)
-    assert second.home != layout.home and second.name == layout.name
-    assert second.program.resolve() == other
-    assert layout.program.resolve() == first
+    with pytest.raises(FileExistsError, match="already belongs to"):
+        agent_sources.materialize_roaming_program(other, toolang_root=tmp_path)
+    assert layout.program.samefile(first)
     assert marker.read_text() == "history"
     assert {path.relative_to(layout.home) for path in layout.home.rglob("*")} == before
 
@@ -456,12 +451,14 @@ def test_roaming_queries_do_not_select_legacy_unnumbered_homes(
     layout.program.symlink_to(original)
     before = layout.program.read_bytes()
     result = cli.main([str(other), *command])
-    assert result == (1 if command[0] == "inspect" else 0)
+    assert result == (0 if command[0] == "workspace" else 1)
     output = capsys.readouterr()
     if command[0] == "inspect":
         assert "no retained instance" in output.err
+    elif command[0] == "info":
+        assert "cannot replace authored file" in " ".join(output.out.split())
     assert layout.program.read_bytes() == before
-    assert layout.program.resolve() == original
+    assert layout.program.samefile(original)
 
 
 def test_visiting_acquisition_pins_and_preserves_provenance(tmp_path, monkeypatch):
@@ -552,7 +549,7 @@ def test_invalid_visiting_receipt_is_refetched(tmp_path, monkeypatch, field, val
         content,
         toolang_root=tmp_path,
     )
-    path = cached.home / "agent.source.json"
+    path = cached.home / "source.json"
     receipt = json.loads(path.read_bytes())
     receipt[field] = value
     path.write_text(json.dumps(receipt))

@@ -206,23 +206,19 @@ environment_allow_pattern = '^(?:COMPANY_CATALOG_TOKEN|HTTPS?_PROXY)$'
 
 Docker always writes resolved guest values to mode-`0600` `guest.env`, including
 an empty result. It mounts that file read-only at the ordinary loader's
-highest-priority root policy path: `ROOT/.<name>.env` for residents, or the
-shared [source-identity filename](setup.md#environments) for roaming/visiting
-agents. Managed Docker startup also receives the bootstrap copy's explicit path
-through hidden `--environment-file` and requires that launch snapshot before
-plugin construction; missing or invalid inputs fail. Both paths use the common
-dotenv parser. File presence disables fallback and `pick` for ordinary guest
-commands. The complete home mount retains any authored `HOME/.env` without masking
+highest-priority path, `GR/.NAME.env`, for every placement. `_serve` and other
+agent commands use the common environment loader without a separate file option.
+File presence disables fallback and `pick`.
+The complete home mount retains any authored `HOME/.env` without masking
 or modification; the loader does not merge it with the selected root file. The
 controller does not separately reload authored dotenv files for staging. Public
 sandbox requests retain the trusted `dotenv_envs` input, whose names bypass the
 optional pattern; resolved process bindings win on duplicate names in the generated file.
 Generated names use the common dotenv validator before container creation.
 
-The guest preserves all native image/entrypoint environment variables, overlays
-the loaded bindings, and restores the finite launcher-owned control values.
-Host `keep` never removes image variables or automatically imports host
-`PATH`/`HOME`. Toolang prepends its private bin to the selected guest PATH.
+The guest applies the same `keep` and selected-file rules to its native root
+environment, then restores finite launcher-owned control values.
+Toolang prepends its private bin to the selected guest PATH.
 Host serving preserves the selected PATH, including an absent or empty value.
 Shell tools use `/bin/sh -c`, preserving that environment without login profiles.
 Setup refreshes, model calls, tools, and child processes reuse the startup
@@ -316,50 +312,59 @@ staging directory is cleaned manually.
 
 ## Docker filesystem
 
-[Layout](layout.md#agent-placement) defines host and guest ROOT, PLACE, and HOME.
-Let `R` be host ROOT, `P` host PLACE, `H` host HOME, `G` guest ROOT = PLACE, and
-`A` the complete address. `G` defaults to `/root/.toolang`; guest HOME is always
-`G/agents/NAME`, including roaming without a source-directory grant.
+[Layout](layout.md#agent-placement) defines host and guest agent and runtime roots.
+Use `ROOT` for the host Toolang root, `AR` for agent root, `AH` for
+`AR/agents/NAME`, and `RR` for runtime root. In the guest, Toolang root,
+agent root, and runtime root all equal `GR` (default `/root/.toolang`);
+guest agent home is `GH = GR/agents/NAME`.
 
-| Host source | Guest target | Access |
+| Host source | Guest target | Access and purpose |
 | --- | --- | --- |
-| `H/` | `G/agents/NAME/` | Read-write; linked authored inputs receive read-only overlays |
-| `P/.state/` and cap directories | Same relative paths below `G/` | Read-write |
-| Each granted workspace directory | `G/workspaces/NAME/WORKSPACE/` | Read-write |
-| `R/.runtime/active/A/docker/L/active/` | `G/.runtime/active/NAME/` | Read-only |
-| `P/config.toml` | `G/config.toml` | Read-only; original bytes |
-| `P/catalog.json`, when automatically selected | `G/catalog.json` | Read-only |
-| Generated `active/guest.env` | Selected guest root dotenv policy path | Read-only; mode `0600` |
+| `AH/` | `GH/` | Read-write; Program, home config/catalog, receipt, and State |
+| `RR/agents/NAME/.runtime/` | `GH/.runtime/` | Read-write; mounted after home in every placement |
+| `AR/config.toml` | `GR/config.toml` | Read-only private hardlink when present; startup snapshot |
+| `AR/catalog.json` | `GR/catalog.json` | Read-only private hardlink when present; startup snapshot |
+| Generated launch `source.json` | `GR/source.json` | Read-only source origins and config snapshot identity |
+| `AR/.state/root/` | `GR/.state/root/` | Read-write; root revisions, current pointer, and locks |
+| `AR/{psyches,skills,services,prompts}/` | Same relative directories below `GR/` | Read-write; root authored capabilities |
+| `AR/workspaces/NAME/lab/` | `GR/workspaces/NAME/lab/` | Read-write; shared lab |
+| Each granted workspace directory | `GR/workspaces/NAME/WORKSPACE/` | Read-write; captured grants |
+| `ROOT/.runtime/active/ADDRESS/docker/L/active/` | `GR/.runtime/active/NAME/` | Read-only; private launch bootstrap |
+| Generated `active/guest.env` | `GR/.NAME.env` | Read-only; mode `0600` |
 
-Lab is an ordinary separate mount from `P/workspaces/NAME/lab`. All workspace
-names are unique before mounting; nested and alias sources retain distinct named
-targets. Authored-input overlays cannot make a workspace grant read-only.
+Directory mounts expose atomic replacement of contained files. Root config/catalog
+file binds use private launch hardlinks to retain their startup inode even when
+the original host entry is replaced; atomic changes require restart. A stale
+guest config cannot publish over a newer shared root State. Explicit catalogs
+already covered by root/home mounts reuse those paths; external files receive
+a separate read-only bind at `GR/.inputs/catalog.json`. Startup rejects authored
+symlinks whose targets, including intermediate links and linked directories,
+are unavailable through the selected directory mounts.
+All workspace names are unique before mounting; nested and alias sources retain
+distinct named targets.
 
-Host and guest read the same PLACE/HOME source bytes and share prepared State.
-Runtime corrections travel through `guest.env` to the selected root dotenv file
-as `TOOLANG_CONFIG_PATCH`. Source origins keep relative paths and symlink targets
-in the host's canonical path view. Source parsers receive only `ConfigOrigins`;
-`RuntimeConfig` holds deeply immutable execution defaults, patches, and bindings,
-and derives fresh Setup views. Human fallbacks fill missing values, so explicit
-`[teaming]` edits remain effective.
+Host and guest read the same agent-root/home source bytes and share prepared State.
+Configured workspace paths are corrected through `TOOLANG_CONFIG_PATCH` in
+`guest.env`. The patch has config.toml's structure and applies through the same
+command/configuration boundary on host and guest. Source origins, snapshot
+identity, prepared revision, and host human fallback live in `GR/source.json`.
+Source parsing receives `ConfigOrigins`; the patch changes runtime views only.
 Hub loopback addresses use the existing host gateway. `[hub]` remains unchanged
 and clients need no Hub-directory mount.
 
-The host constructs common `_serve --workspace-bindings` records containing
-canonical `source`, execution `path`, and `temporary` for captured workspaces.
-Only temporary source paths enter State additions; execution paths never do.
-A common `--launch-schema` check rejects incompatible startup contracts before
-State writes. `guest.sh` bootstraps and executes arguments without rewriting options.
+Workspace/workdir options are translated to guest paths before building argv.
+The workload uses ordinary `--workspace` and `--workdir` options, preserving
+logical workdirs. Lab requires its directory mount only. A common `--launch-schema`
+check rejects incompatible contracts before State writes; `guest.sh` executes
+arguments without rewriting options.
 [Workspaces](workspaces.md) owns grant selection and captured-mount checks.
 
-The guest uses its own packaged catalog without a mount or override. Automatic
-PLACE and HOME catalogs retain their owning scope. Independently selected
-catalogs, including an explicit selection of the default file, mount read-only
-at `G/.inputs/catalog.json`; only these need `TOOLANG_MODEL_CATALOG`.
-Automatic catalog choices are captured in `root/catalog.json` or
-`home/catalog.json` origin entries. Later files cannot replace that selection;
-a missing selected file rejects refresh. Changing the selected file or mounted
-workspace grants requires restart.
+The guest uses its packaged catalog without a mount. Root catalogs retain their
+scope through a read-only startup snapshot; home catalogs follow their directory
+mount, including atomic replacement and TOML path changes. Explicit CLI/env
+catalogs reuse root/home coverage and retain their mapped selection path.
+Only uncovered or runtime-hidden files receive an independent read-only bind at
+`GR/.inputs/catalog.json`. Changing workspace mounts requires restart.
 
 Assembly is split between [mount preparation](../../src/toolang/up/mounts.py),
 the [launch boundary](../../src/toolang/up/sandbox.py), and the
@@ -373,6 +378,8 @@ release cannot remove a replacement launch's inputs.
 
 Docker uses the engine's default missing-image pull behavior. Its guest script
 quietly bootstraps uv and installs the selected package with `uv tool install`.
+After container creation, guests have 120 seconds to bootstrap and expose their
+Agent API; host processes retain the 30-second readiness budget.
 The self-contained `guest.sh` reuses a capable image uv, installs pinned uv
 through Python 3.8+ with pip into a private directory, or downloads the pinned
 installer through curl/wget. uv reuses Python 3.11+ or installs managed Python
@@ -382,9 +389,6 @@ subshell; the parent retains the image environment and directly `exec`s the
 workload with its original arguments, container identity, and private bin path.
 Workload output is opened once before diagnostics are retired. Its opened file
 is marked `0600` and remains valid across log rotation.
-For a source-local roaming agent, Docker overlays linked `agent.too` and
-authored configuration targets as explicit read-only guest files so host symlinks do not
-become broken paths in the container.
 Successful installation suppresses ensurepip chatter, pip's container root-user
 warning, package lists, and uv progress bars; installer failure stderr remains
 available. Before execution, the guest checks that the installed CLI can start

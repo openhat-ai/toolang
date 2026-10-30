@@ -64,7 +64,7 @@ def workspace_context(setup: AgentSetup, state: AgentState, cwd: str) -> ToolCon
     """Bind path resolution to captured workspace grants and runtime roots."""
     grants = setup.workspace_grants(state.workspaces)
     return ToolContext(
-        home=setup.layout.home,
+        home=setup.layout.agent_home,
         room=setup.layout.tool_room("runtime"),
         workspaces=setup.workspace_roots(state.workspaces),
         workspace_names=tuple(grants),
@@ -162,7 +162,7 @@ def resolve_agent_resources(
         caps,
         ceiling,
         agent_name=setup.layout.name,
-        place=setup.layout.place,
+        place=setup.layout.agent_root,
         label="cap",
     )
     return _agent_resources(models=models, tools=dict(tools), caps=caps)
@@ -207,7 +207,7 @@ def apply_agent_ceiling(
         caps,
         ceiling,
         agent_name=setup.layout.name,
-        place=setup.layout.place,
+        place=setup.layout.agent_root,
         label="cap ceiling",
     )
     return _agent_resources(models=models, tools=tools, caps=caps)
@@ -279,7 +279,7 @@ def resolve_runnable_resources(
         selected = cap_collection(
             entries,
             agent_name=setup.layout.name,
-            place=setup.layout.place,
+            place=setup.layout.agent_root,
             kind=kind,
         ).apply(_query_operations(_directives(runnable, directive_name)))
         selected_cap_ids.update(

@@ -192,7 +192,7 @@ def visiting_paths(layout: AgentLayout) -> Iterator[VisitingPaths]:
             layout.home_edit_lock,
             layout.runtime_status,
             layout.program,
-            layout.home / "agent.source.json",
+            layout.source_receipt,
         ):
             try:
                 info = path.lstat()

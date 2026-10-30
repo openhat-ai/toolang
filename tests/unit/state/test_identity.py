@@ -7,13 +7,14 @@ from pathlib import Path
 import pytest
 import tomlkit
 
-from toolang.common.layout import AgentLayout
+from toolang.common.layout import AgentLayout, AgentPlacement
 from toolang.state import collections
 from toolang.state.cache import (
     agent_current_path,
     agent_revision_dir,
     canonical_json,
     load_home_layer,
+    load_current_agent_revision,
 )
 from toolang.state.config import ConfiguredWorkspaces
 from toolang.state.prepare import load_agent_state, prepare_agent_state
@@ -151,9 +152,38 @@ def test_old_composition_is_rejected_and_current_cache_is_rebuilt(tmp_path):
     with pytest.raises(ValueError, match="unsupported Agent State schema"):
         load_agent_state(layout, legacy)
     restored = asyncio.run(StateWatcher(layout).refresh())
-    assert restored.revision != current.revision
+    assert restored.revision == current.revision
+    assert load_current_agent_revision(layout) == current.revision
     assert restored.modules == current.modules
     assert (directory / "layers.json").read_bytes() == encoded
+
+
+@pytest.mark.parametrize("placement", ["resident", "visiting", "roaming"])
+def test_invocation_workspaces_reuse_state_without_replacing_shared_current(
+    tmp_path: Path, placement: AgentPlacement
+):
+    layout = AgentLayout(
+        tmp_path / "runtime", "alice", placement, agent_root_path=tmp_path / "shared"
+    )
+    layout.agent_home.mkdir(parents=True)
+    layout.program.write_text("flow main():\n  pass\n")
+    authored = prepare_agent_state(layout)
+    host_paths = {"repo": str(tmp_path / "host-repo")}
+    guest_paths = {"repo": str(tmp_path / "guest-repo")}
+    host = prepare_agent_state(layout, workspace_additions=host_paths)
+    guest = prepare_agent_state(layout, workspace_additions=guest_paths)
+    assert host.revision_dir is not None
+    revisions = set(host.revision_dir.parent.iterdir())
+
+    assert len({authored.revision, host.revision, guest.revision}) == 3
+    for paths, expected in ((host_paths, host), (guest_paths, guest)):
+        assert prepare_agent_state(layout, workspace_additions=paths) == expected
+        watcher = StateWatcher(layout, workspace_additions=paths)
+        assert watcher.current() == expected
+        assert asyncio.run(watcher.refresh()) == expected
+    assert set(host.revision_dir.parent.iterdir()) == revisions
+    assert load_current_agent_revision(layout) == authored.revision
+    assert load_agent_state(layout) == authored
 
 
 @pytest.mark.parametrize("scope", ["root", "home"])
@@ -163,6 +193,7 @@ def test_raw_config_changes_have_distinct_state_identity_after_rebasing(
     layout = _layout(tmp_path)
     path = layout.place_config if scope == "root" else layout.config
     content = b'# Original\r\n[workspaces]\r\nrepo = "."\r\n'
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(content)
     watcher = StateWatcher(layout)
     before = asyncio.run(watcher.refresh())

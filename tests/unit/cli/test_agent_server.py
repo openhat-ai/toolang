@@ -198,6 +198,7 @@ def test_running_server_reuses_bound_settings_without_resolving_startup(
     monkeypatch.setenv("PWD", "/different/directory")
     monkeypatch.setenv("TERM", "different-terminal")
     monkeypatch.setenv("TOOLANG_LIMIT_TOKENS", "invalid-startup-value")
+    layout.place_config.parent.mkdir(parents=True, exist_ok=True)
     layout.place_config.write_text('[sandbox]\ndriver = "docker"\n')
     monkeypatch.setattr(
         agent_server,

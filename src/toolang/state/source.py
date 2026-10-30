@@ -10,13 +10,18 @@ import os
 from pathlib import Path
 import re
 from threading import RLock
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from toolang.catalog.types import CAP_DIRECTORY_NAMES
 from toolang.common.config_runtime import ConfigOrigins
+from toolang.common.layout import root_config_path
 
 from ..lang.ast import AgicDecl, FlowDecl, Program
 from ..common.progress import ProgressSink, emit_progress
+
+if TYPE_CHECKING:
+    from toolang.common.layout import AgentLayout
+
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _AGENT_PROGRAMS: OrderedDict[tuple[Path, str], Program] = OrderedDict()
@@ -90,6 +95,40 @@ def parse_agent_program(
         while len(_AGENT_PROGRAMS) > 32:
             _AGENT_PROGRAMS.popitem(last=False)
         return prepared
+
+
+def parse_agent_source(
+    layout: AgentLayout,
+    *,
+    ref: str,
+    source: str | None = None,
+    progress_id: str | None = None,
+    progress: ProgressSink | None = None,
+) -> Program:
+    """Parse source or reuse its exact prepared Program before dependency preparation."""
+
+    text = source if source is not None else layout.program.read_bytes().decode("utf-8")
+    digest = sha256(text.encode("utf-8")).hexdigest()
+    from .cache import AGENT_STATE_FORMAT, load_home_layer
+
+    prepared = None
+    try:
+        home = load_home_layer(layout)
+        if (
+            home.schema == AGENT_STATE_FORMAT
+            and home.module_digests.get("agent") == digest
+        ):
+            prepared = home.modules.get("agent")
+    except (OSError, KeyError, TypeError, ValueError):
+        pass
+    return parse_agent_program(
+        layout.program,
+        text,
+        ref=ref,
+        progress=progress,
+        prepared=prepared,
+        progress_id=progress_id,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -348,8 +387,23 @@ def build_source_manifest(
 
 def observe_root_source(place: Path) -> SourceObservation:
     """Observe shared config and independently authored capabilities."""
-    _require_source_shape(place / "config.toml", shape="file")
-    return observe_source(place, ("config.toml", *CAP_DIRECTORY_NAMES), isolate=True)
+    config = root_config_path(place)
+    _require_source_shape(config, shape="file")
+    observation = observe_source(place, CAP_DIRECTORY_NAMES, isolate=True)
+    if not config.is_file():
+        return observation
+    return replace(
+        observation,
+        files=tuple(
+            sorted(
+                (
+                    *observation.files,
+                    _observe_file(config, relative_path="config.toml"),
+                ),
+                key=lambda item: item.path,
+            )
+        ),
+    )
 
 
 def observe_home_source(
@@ -723,6 +777,11 @@ def _read_scope_sources(
                         entry.source,
                         category=category,
                         layer=layer,
+                        relative_path=(
+                            Path("agents") / agent_name / entry.path
+                        ).as_posix()
+                        if layer == "agent"
+                        else entry.path,
                         context=context,
                     )
                 )
@@ -784,7 +843,7 @@ def source_path_scope(
     if relative_path is None:
         return None
     if relative_path == Path("config.toml"):
-        return "root", relative_path.as_posix()
+        return "root", "config.toml"
     if relative_path.parts[:1] and relative_path.parts[0] in CAP_DIRECTORY_NAMES:
         return (
             ("root", relative_path.as_posix())

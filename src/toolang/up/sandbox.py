@@ -13,7 +13,7 @@ import os
 import threading
 import time
 from dataclasses import replace
-from typing import TYPE_CHECKING, Literal, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Literal, Protocol, runtime_checkable, cast
 from urllib.error import URLError
 from urllib.parse import urlsplit
 from urllib.request import urlopen
@@ -33,17 +33,17 @@ from toolang.base.types.progress import (
 from toolang.base.types.sandbox import SandboxOutput, SandboxRef, SandboxRequest
 from toolang.common.files import file_lock_path
 from toolang.common.version import embedded_source_version, toolang_version
-from toolang.common.environment import agent_environment_paths
 from toolang.common.progress import emit_progress
 from toolang.common.layout import AgentLayout, agent_workspaces_path
 from .closing import ClosingDeadline
+from toolang.common.immutable import mutable_data
 from toolang.common.config_sources import config_sources
-from toolang.common.config_runtime import WorkspaceBinding
+from toolang.common.config_runtime import CONFIG_PATCH_ENV
 from toolang.plugin.catalogs.models_dev.path import (
     resolve_model_catalog_selection,
     MODEL_CATALOG_ENV,
 )
-from toolang.base.types.sandbox import SandboxMount
+from toolang.base.types.sandbox import SandboxMount, JsonValue
 from toolang.catalog.agent import LocalAgents
 from toolang.plugin.sandboxes.host import process_ref
 from toolang.plugin.config import (
@@ -53,10 +53,11 @@ from toolang.plugin.config import (
 from toolang.plugin.loading import create_sandbox
 from toolang.state.config import CAP_ALLOW_FIELDS
 from toolang.up.mounts import (
-    mapped_path,
     prepare_catalog_mount,
     prepare_guest_environment,
-    prepare_source_mounts,
+    prepare_guest_source,
+    prepare_place_mounts,
+    validate_source_mounts,
     prepare_workspace_mounts,
 )
 from toolang.up.instance import (
@@ -78,6 +79,7 @@ if TYPE_CHECKING:
     from toolang.up.server import ServeSpec
 
 SANDBOX_READY_TIMEOUT_SEC = 30.0
+GUEST_READY_TIMEOUT_SEC = 120.0
 SANDBOX_ATTACH_GRACE_SEC = 0.2
 _TASK_LOCKS: WeakKeyDictionary[
     asyncio.AbstractEventLoop, dict[tuple[Path, str | None], asyncio.Lock]
@@ -366,15 +368,29 @@ async def _launch_locked(
         workspace_mounts: tuple[SandboxMount, ...] = ()
         workspace_mapping: dict[str, tuple[str, str]] = {}
         if not on_host:
-            source_mounts = prepare_source_mounts(
-                layout.place, layout.name, hosted_place
+            source_mounts = (
+                *prepare_place_mounts(layout.agent_root, hosted_place),
+                SandboxMount(layout.agent_home, hosted_home),
+                SandboxMount(layout.runtime, hosted_home / ".runtime"),
             )
         state = await asyncio.to_thread(prepare_launch_state, spec, progress=progress)
         if not on_host:
+            execution_workspaces = dict(state.workspaces)
+            if layout.runtime_config is not None:
+                execution_workspaces.update(
+                    {
+                        name: str(path)
+                        for name, path in layout.runtime_config.workspace_paths(
+                            layout.config_key, directory=layout.agent_home
+                        ).items()
+                        if name in state.workspaces
+                        and name not in spec.serve.workspace_additions
+                    }
+                )
             workspace_mounts, workspace_mapping = prepare_workspace_mounts(
-                layout.home,
+                layout.agent_home,
                 agent_workspaces_path(hosted_place, layout.name),
-                workspaces=state.workspaces,
+                workspaces=execution_workspaces,
             )
         if not on_host and any(
             name not in workspace_mapping for name in spec.serve.workspace_additions
@@ -385,54 +401,58 @@ async def _launch_locked(
         catalog_mounts: tuple[SandboxMount, ...] = ()
         catalog_env: dict[str, str] = {}
         catalog = None
-        covered_mounts = (
-            *source_mounts,
-            SandboxMount(layout.home, hosted_home),
-            *workspace_mounts,
-        )
         if not on_host:
             catalog = resolve_model_catalog_selection(layout, environ=spec.environ)
-            if catalog.scope == "custom":
-                catalog_mounts, guest_catalog = prepare_catalog_mount(
-                    catalog.path, hosted_place
-                )
+            catalog_mounts, guest_catalog = prepare_catalog_mount(
+                catalog, hosted_place, source_mounts
+            )
+            if guest_catalog is not None:
                 catalog_env[MODEL_CATALOG_ENV] = str(guest_catalog)
-            elif catalog.scope == "home":
-                catalog_mounts = (
-                    SandboxMount(
-                        catalog.path, hosted_home / "catalog.json", read_only=True
-                    ),
-                )
         guest_environment = (
             prepare_guest_environment(
-                layout, mapping=workspace_mapping, catalog=catalog
+                layout,
+                mapping=workspace_mapping,
+                hosted_workspaces=agent_workspaces_path(hosted_place, layout.name),
+                workspaces={
+                    name: path
+                    for name, path in state.workspaces.items()
+                    if name not in spec.serve.workspace_additions
+                },
             )
             if not on_host
             else {}
         )
+        if not on_host:
+            validate_source_mounts(
+                layout,
+                (*source_mounts, *workspace_mounts, *catalog_mounts),
+                catalog=catalog,
+            )
         if on_host:
             workspace_mapping = {
                 name: (source, source) for name, source in state.workspaces.items()
             }
             workspace_mapping["lab"] = (str(layout.lab), str(layout.lab))
-        bindings = {
-            name: WorkspaceBinding(
-                Path(workspace_mapping[name][0]),
-                Path(workspace_mapping[name][1]),
-                name in spec.serve.workspace_additions,
-            )
-            for name in ("lab", *(name for name in state.workspaces if name != "lab"))
-            if name in workspace_mapping
+        additions = {
+            name: source if on_host else workspace_mapping[name][1]
+            for name, source in spec.serve.workspace_additions.items()
         }
-        edit_lock_mounts: tuple[SandboxMount, ...] = ()
-        guest_edit_lock = None
-        if not on_host and spec.serve.layout.source_path is not None:
-            local_guard = spec.serve.layout.place_edit_lock
-            local_guard.parent.mkdir(parents=True, exist_ok=True)
-            local_guard.touch(exist_ok=True)
-            guest_edit_lock = hosted_place / ".state" / "root" / "edit.lock"
-            edit_lock_mounts = (SandboxMount(local_guard, guest_edit_lock),)
-        environment_paths = agent_environment_paths(hosted_root, spec.serve.layout)
+        workdir = spec.serve.workdir
+        if not on_host and workdir is not None and "://" not in workdir:
+            selected = Path(workdir).expanduser().resolve()
+            for source, target in sorted(
+                workspace_mapping.values(),
+                key=lambda pair: len(Path(pair[0]).parts),
+                reverse=True,
+            ):
+                if selected.is_relative_to(source):
+                    workdir = str(Path(target) / selected.relative_to(source))
+                    break
+        guest_edit_lock = (
+            hosted_place / ".state/root/edit.lock"
+            if not on_host and layout.source_path is not None
+            else None
+        )
         request = SandboxRequest(
             local_place=spec.serve.layout.place,
             local_home=spec.serve.layout.home,
@@ -450,13 +470,18 @@ async def _launch_locked(
             hosted_root=hosted_root,
             local_runtime=local_root / ".runtime" / "active" / layout.address,
             hosted_runtime=hosted_root / ".runtime" / "active" / layout.name,
-            hosted_source=mapped_path(
-                layout.source_path,
-                tuple(mount for mount in covered_mounts if mount.local_path.is_dir()),
-            )
+            hosted_source=hosted_home / "agent.too"
             if layout.source_path is not None and not on_host
             else layout.source_path,
             source_ref=layout.source_ref,
+            source_metadata=cast(
+                dict[str, JsonValue],
+                prepare_guest_source(
+                    layout, catalog=catalog, state_revision=state.revision
+                ),
+            )
+            if not on_host
+            else {},
             bind_host=spec.serve.host,
             endpoint_host=spec.serve.endpoint_host,
             port=spec.serve.port,
@@ -471,7 +496,11 @@ async def _launch_locked(
                     location=implementation.location,
                     host=spec.serve.host if on_host else "0.0.0.0",
                     source_edit_lock=guest_edit_lock,
-                    workspace_bindings=bindings,
+                    source_path=hosted_home / "agent.too"
+                    if not on_host and layout.source_path is not None
+                    else layout.source_path,
+                    workspace_additions=additions,
+                    workdir=workdir,
                 ),
             ),
             working_directory=spec.serve.layout.home if on_host else hosted_home,
@@ -482,6 +511,17 @@ async def _launch_locked(
                     spec.environ
                     if on_host or spec.guest_environ is None
                     else spec.guest_environ
+                ),
+                **(
+                    {
+                        CONFIG_PATCH_ENV: json.dumps(
+                            mutable_data(layout.runtime_config.values)
+                        )
+                    }
+                    if on_host
+                    and layout.runtime_config is not None
+                    and layout.runtime_config.values
+                    else {}
                 ),
                 **catalog_env,
                 **guest_environment,
@@ -495,9 +535,6 @@ async def _launch_locked(
                 "TOOLANG_WORKSPACE_LOCATION": "host" if on_host else "guest",
             },
             dotenv_envs={**spec.dotenv_envs, **guest_environment},
-            environment_path=environment_paths[0]
-            if not on_host and environment_paths
-            else None,
             mounts=(
                 ()
                 if on_host
@@ -505,7 +542,6 @@ async def _launch_locked(
                     *workspace_mounts,
                     *catalog_mounts,
                     *source_mounts,
-                    *edit_lock_mounts,
                 )
             ),
             local_dev_artifact=spec.dev_artifact,
@@ -614,7 +650,9 @@ async def _launch_locked(
                 implementation,
                 ref,
                 launch_id=launch_id,
-                timeout_sec=SANDBOX_READY_TIMEOUT_SEC,
+                timeout_sec=GUEST_READY_TIMEOUT_SEC
+                if implementation.location == "guest"
+                else SANDBOX_READY_TIMEOUT_SEC,
             )
         )
         try:

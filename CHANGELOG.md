@@ -17,6 +17,11 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   Tavily access and `SERPAPI_API_KEY` required only at invocation.
   ([#987](https://github.com/openhat-ai/toolang/pull/987))
 
+- Roaming launches share one `DIR/.toolang` agent root, hardlinking the Program,
+  nearest `toolang.toml`, and catalog, and reuse preparation, State, and prepared
+  Programs across processes, launches, and roots.
+  ([#990](https://github.com/openhat-ai/toolang/pull/990))
+
 ### Changed
 
 - **Breaking:** Upgrade Hub and clients together: business APIs require
@@ -39,6 +44,44 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   `plugin.toolset.web` settings.
   ([#987](https://github.com/openhat-ai/toolang/pull/987))
 
+- **Breaking:** Roaming `lab` workspaces move to
+  `DIR/.toolang/workspaces/NAME/lab` and are shared across instances and
+  Toolang roots; per-`P19` labs stay untouched, so copy needed files manually.
+  ([#990](https://github.com/openhat-ai/toolang/pull/990))
+
+- **Breaking:** Same-directory roaming source files whose names normalize to one
+  agent name must be renamed, because they now share a single `DIR/.toolang`
+  agent root.
+  ([#990](https://github.com/openhat-ai/toolang/pull/990))
+
+- **Breaking:** Visiting provenance is now `agents/NAME/source.json`; rename
+  existing `agent.source.json` files. Roaming records Program ownership there
+  and shared config/catalog origins in root `source.json`.
+  ([#990](https://github.com/openhat-ai/toolang/pull/990))
+
+- **Breaking:** Project `toolang.toml` files no longer merge; only the nearest
+  existing file applies, even when empty or invalid, so move required settings
+  into it.
+  ([#990](https://github.com/openhat-ai/toolang/pull/990))
+
+- **Breaking:** Authored symlinks whose complete chains the guest view cannot
+  resolve, including linked parent directories, now reject launch; replace them
+  with real files instead of relying on symlink authoring support.
+  ([#990](https://github.com/openhat-ai/toolang/pull/990))
+
+- Roaming instances keep separate runtime status, records, history, logs, and
+  ownership, while `too AGENT info` and `too AGENT cd` use the shared home.
+  ([#990](https://github.com/openhat-ai/toolang/pull/990))
+
+- Shared roaming sources require one filesystem supporting hardlinks, so place
+  the Program, project TOML, and catalog on the `DIR/.toolang` filesystem.
+  ([#990](https://github.com/openhat-ai/toolang/pull/990))
+
+- Upstream atomic replacement of a roaming Program, project TOML, or catalog
+  takes effect at the next startup fetch, while in-place edits are shared
+  immediately.
+  ([#990](https://github.com/openhat-ai/toolang/pull/990))
+
 ### Fixed
 
 - Default humans resolve from the process UID's OS account rather than an
@@ -53,6 +96,44 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 - Invalid search timeout settings report a configuration error instead of an
   uncaught traceback.
   ([#987](https://github.com/openhat-ai/toolang/pull/987))
+
+- Roaming instance discovery waits for complete instance publication, so a
+  starting instance is not rejected as corrupt.
+  ([#990](https://github.com/openhat-ai/toolang/pull/990))
+
+- Roaming programs with CRLF sources reuse their prepared parse like LF
+  sources, so repeated launches skip source preparation.
+  ([#990](https://github.com/openhat-ai/toolang/pull/990))
+
+- Running guests see replaced source files instead of overwriting newer shared
+  State with stale or empty values.
+  ([#990](https://github.com/openhat-ai/toolang/pull/990))
+
+- State watchers in every placement notice external root, home, and agent
+  `current` changes and reconcile even while unrelated events stream
+  continuously.
+  ([#990](https://github.com/openhat-ai/toolang/pull/990))
+
+- Guest bindings accept valid internal source symlinks and overlapping workspace
+  grants instead of rejecting them as inaccessible.
+  ([#990](https://github.com/openhat-ai/toolang/pull/990))
+
+- Concurrent roaming startup and authoring no longer interleave, so a fetch
+  cannot replace a Program mid-edit and discard newer State changes.
+  ([#990](https://github.com/openhat-ai/toolang/pull/990))
+
+- Docker launches ignore malformed workspace grants from ancestor `toolang.toml`
+  files that no longer apply, matching host preparation instead of failing.
+  ([#990](https://github.com/openhat-ai/toolang/pull/990))
+
+- Removing an implicitly fetched roaming catalog during execution now falls back
+  to the packaged catalog unless a home catalog overrides it, while explicit
+  missing catalog paths still fail.
+  ([#990](https://github.com/openhat-ai/toolang/pull/990))
+
+- Cold Docker guests receive 120 seconds for bootstrap and readiness after
+  container creation, while host launches keep their 30-second budget.
+  ([#990](https://github.com/openhat-ai/toolang/pull/990))
 
 ### Security
 

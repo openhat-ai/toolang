@@ -7,7 +7,6 @@ import pytest
 from toolang.common.config_sources import (
     config_sources,
     script_directories,
-    source_catalog,
 )
 from toolang.common.layout import AgentLayout
 from toolang.plugin.catalogs.models_dev.path import resolve_model_catalog_path
@@ -20,7 +19,71 @@ from toolang.plugin.config import merge_plugin_configs
 from toolang.up.sandbox import resolve_selection
 from toolang.state.prepare import prepare_agent_state
 from toolang.up.source import materialize_roaming_program
-from toolang.up.mounts import prepare_source_mounts
+from tests.support.layout import capture_guest_source
+from toolang.up.mounts import prepare_place_mounts
+
+
+@pytest.mark.parametrize("scope", ["root", "home"])
+def test_declared_local_catalog_keeps_directory_ownership_in_the_guest(tmp_path, scope):
+    from dataclasses import replace
+
+    from toolang.common.config_runtime import CONFIG_PATCH_ENV, RuntimeConfig
+    from toolang.plugin.catalogs.models_dev.path import resolve_model_catalog_selection
+    from toolang.up.mounts import prepare_guest_environment
+
+    host = AgentLayout.resident(tmp_path / "host", "alice")
+    guest = AgentLayout.resident(tmp_path / "guest", "alice")
+    config = host.root_config if scope == "root" else host.config
+    guest_config = guest.root_config if scope == "root" else guest.config
+    for path in (config, guest_config):
+        (path.parent / "nested").mkdir(parents=True)
+        for name in ("one", "two"):
+            (path.parent / f"nested/{name}.json").write_text("{}")
+    host.agent_home.mkdir(parents=True, exist_ok=True)
+    for name in ("one", "two"):
+        contents = f'[plugin.model_catalog.models_dev]\npath = "nested/{name}.json"\n'
+        config.write_text(contents)
+        guest_config.write_text(contents)
+        selected = resolve_model_catalog_selection(host)
+        assert selected.scope == scope
+        if name == "one":
+            capture_guest_source(host, guest)
+            environment = prepare_guest_environment(host, mapping={})
+            guest = replace(
+                guest,
+                runtime_config=RuntimeConfig.parse(environment[CONFIG_PATCH_ENV]),
+            )
+        observed = resolve_model_catalog_selection(guest)
+        assert observed.scope == scope
+        assert observed.path == guest_config.parent / f"nested/{name}.json"
+
+
+@pytest.mark.parametrize("declared", [False, True])
+def test_removed_roaming_catalog_obeys_local_selection_without_refetch(
+    tmp_path, declared
+):
+    from toolang.plugin.catalogs.models_dev.path import PACKAGED_MODEL_CATALOG
+
+    source = tmp_path / "aid.too"
+    source.write_text("flow run():\n  pass\n")
+    catalog = tmp_path / "toolang.catalog.json"
+    catalog.write_text('{"providers": [], "models": []}')
+    (tmp_path / "toolang.toml").write_text(
+        '[plugin.model_catalog.models_dev]\npath = "toolang.catalog.json"\n'
+        if declared
+        else ""
+    )
+    layout = materialize_roaming_program(source, toolang_root=tmp_path / "root")
+    assert resolve_model_catalog_path(layout) == layout.root_catalog
+    layout.root_catalog.unlink()
+    assert catalog.is_file()
+    if declared:
+        with pytest.raises(FileNotFoundError, match="catalog"):
+            resolve_model_catalog_path(layout)
+    else:
+        assert resolve_model_catalog_path(layout) == PACKAGED_MODEL_CATALOG
+    materialize_roaming_program(source, layout=layout)
+    assert resolve_model_catalog_path(layout).samefile(catalog)
 
 
 @pytest.mark.parametrize("placement", ["resident", "roaming", "visiting"])
@@ -37,22 +100,20 @@ def test_shared_workspaces_are_ignored_before_path_resolution(tmp_path, placemen
         expected = str(source.parent)
     else:
         layout = AgentLayout(tmp_path, "helper", placement)
-        layout.home.mkdir(parents=True)
+        layout.agent_home.mkdir(parents=True)
         layout.program.write_text("flow run():\n  pass\n")
+        layout.place_config.parent.mkdir(parents=True, exist_ok=True)
         layout.place_config.write_text(shared)
         layout.config.write_text('[workspaces]\nrepo = "."\n')
-        expected = str(layout.home)
+        expected = str(layout.agent_home)
 
     sources = config_sources(layout)
     assert "workspaces" not in sources[0].config
     assert prepare_agent_state(layout).workspaces == {"repo": expected}
     # Guest snapshots must obey the same ownership rule as host loading.
-    mounts = prepare_source_mounts(layout.place, layout.name, tmp_path / "guest")
+    mounts = prepare_place_mounts(layout.agent_root, tmp_path / "guest")
     root_mount = next(
-        m
-        for m in mounts
-        if m.hosted_path.name == "config.toml"
-        and m.hosted_path.parent == tmp_path / "guest"
+        m for m in mounts if m.hosted_path == tmp_path / "guest/config.toml"
     )
     assert root_mount.local_path.read_bytes() == layout.place_config.read_bytes()
 
@@ -76,12 +137,14 @@ def test_bounded_layers_keep_path_origins_and_local_permissions(tmp_path, monkey
     monkeypatch.setenv("GIT_WORK_TREE", "/wrong")
     layout = materialize_roaming_program(source, toolang_root=tmp_path)
     sources = config_sources(layout)
-    assert [item.path.parent for item in sources] == [tmp_path, project, source_dir]
-    assert sources[-1].config["workspaces"] == {"repo": str(project)}
+    assert [item.path.parent for item in sources if item.scope == "root"] == [
+        source_dir
+    ]
+    assert all("workspaces" not in item.config for item in sources)
     assert "workspaces" not in sources[0].config
     # Use the existing field-specific resolver on every authored layer.
     defaults = resolve_run_defaults([item.config for item in sources])
-    assert defaults.model is not None and defaults.model.ref == "openai/gpt-4o"
+    assert defaults.model is None
     assert prepare_agent_state(layout).workspaces == {"repo": str(project)}
     assert layout == AgentLayout.roaming(
         source, place_code=layout.place_code, root=tmp_path
@@ -102,12 +165,12 @@ def test_nearest_companion_beats_outer_catalog_path(tmp_path):
         '[plugin.model_catalog.models_dev]\npath = "outer.json"\n'
     )
     layout = materialize_roaming_program(source, toolang_root=tmp_path)
-    assert resolve_model_catalog_path(layout) == nearest
-    assert source_catalog(config_sources(layout), roaming=True) == nearest
-    assert (layout.place / "catalog.json").resolve() == nearest
+    assert resolve_model_catalog_path(layout).samefile(nearest)
+    assert resolve_model_catalog_path(layout) == layout.root_catalog
+    assert layout.root_catalog.samefile(nearest)
     nearest.unlink()
     materialize_roaming_program(source, toolang_root=tmp_path)
-    assert resolve_model_catalog_path(layout) == outer
+    assert resolve_model_catalog_path(layout).samefile(outer)
 
 
 def test_non_git_and_nested_git_do_not_inherit_outer_config(tmp_path):
@@ -139,6 +202,7 @@ def test_removed_source_config_clears_derived_settings(tmp_path):
     config.unlink()
     materialize_roaming_program(source, toolang_root=tmp_path)
     assert prepare_agent_state(layout).workspaces == {}
+    layout.place_config.parent.mkdir(parents=True, exist_ok=True)
     layout.place_config.write_text("# authored conflict\n")
     with pytest.raises(ValueError, match="conflicts"):
         materialize_roaming_program(source, toolang_root=tmp_path)
@@ -233,12 +297,15 @@ def test_git_boundary_does_not_inherit_parent(tmp_path, kind):
     source = inner / "aid.too"
     source.touch()
     assert script_directories(source) == (inner, worktree)
-    assert (
-        config_sources(materialize_roaming_program(source, toolang_root=tmp_path)) == ()
+    assert all(
+        not item.config
+        for item in config_sources(
+            materialize_roaming_program(source, toolang_root=tmp_path)
+        )
     )
 
 
-def test_three_project_layers_preserve_field_specific_merges(tmp_path):
+def test_three_project_candidates_use_only_the_nearest_file(tmp_path):
     git_init(tmp_path)
     middle = tmp_path / "project"
     inner = middle / "module"
@@ -266,17 +333,13 @@ def test_three_project_layers_preserve_field_specific_merges(tmp_path):
     layout = materialize_roaming_program(source, toolang_root=tmp_path)
     configs = [item.config for item in config_sources(layout)]
     defaults = resolve_run_defaults(configs)
-    assert defaults.model is not None
-    assert defaults.model.ref == "test/base"
-    assert defaults.model.reasoning is not None
-    assert defaults.model.reasoning.effort == "high"
+    assert defaults.model is None
     compact = resolve_compact_config(configs)
     assert compact.model[-1].identity == "test/new" and compact.model[-1].effort is None
     assert resolve_setup_allow(configs).tools == ("shell/*",)
     assert resolve_selection(layout) == "host"
     assert merge_plugin_configs(configs, family="toolset")["fs"] == {
         "values": [3],
-        "options": {"outer": True, "inner": True},
     }
 
 
@@ -286,9 +349,9 @@ def test_unowned_symlink_is_not_replaced(tmp_path):
     layout = materialize_roaming_program(source, toolang_root=tmp_path)
     unrelated = tmp_path / "unrelated.toml"
     unrelated.write_text("# keep me\n")
-    layout.place_config.unlink()
+    layout.place_config.unlink(missing_ok=True)
     layout.place_config.symlink_to(unrelated)
-    with pytest.raises(ValueError, match="symlink conflicts"):
+    with pytest.raises(ValueError, match="conflicts"):
         materialize_roaming_program(source, toolang_root=tmp_path)
     assert layout.place_config.is_symlink()
     assert unrelated.read_text() == "# keep me\n"
@@ -304,7 +367,7 @@ def test_explicit_catalog_can_override_a_missing_authored_catalog(tmp_path):
     explicit = tmp_path / "explicit.json"
     explicit.write_text("{}")
     assert resolve_model_catalog_path(layout, explicit=explicit) == explicit
-    with pytest.raises(ValueError, match="not a file"):
+    with pytest.raises(FileNotFoundError, match="catalog"):
         resolve_model_catalog_path(layout)
 
 
@@ -318,7 +381,7 @@ def test_empty_catalog_path_does_not_become_the_config_directory(tmp_path):
         materialize_roaming_program(source, toolang_root=tmp_path)
 
 
-def test_relocated_project_can_clear_its_owned_catalog_link(tmp_path):
+def test_copied_home_does_not_claim_another_source_identity(tmp_path):
     import shutil
 
     original = tmp_path / "original"
@@ -330,8 +393,8 @@ def test_relocated_project_can_clear_its_owned_catalog_link(tmp_path):
     copied = tmp_path / "copied"
     shutil.copytree(original, copied, symlinks=True)
     (copied / "toolang.catalog.json").unlink()
-    layout = materialize_roaming_program(copied / "aid.too", toolang_root=tmp_path)
-    assert not (layout.place / "catalog.json").is_symlink()
+    with pytest.raises(FileExistsError, match="already belongs"):
+        materialize_roaming_program(copied / "aid.too", toolang_root=tmp_path)
     assert (original / "toolang.catalog.json").is_file()
 
 
@@ -348,8 +411,10 @@ def test_only_companion_directories_contribute_layers(tmp_path):
 
     layout = materialize_roaming_program(source, toolang_root=tmp_path)
 
-    assert [item.path.parent for item in config_sources(layout)] == [tmp_path, middle]
-    assert resolve_model_catalog_path(layout) == catalog
+    assert [
+        item.path.parent for item in config_sources(layout) if item.scope == "root"
+    ] == [tmp_path]
+    assert resolve_model_catalog_path(layout).samefile(catalog)
     assert prepare_agent_state(layout).workspaces == {}
 
 
@@ -358,6 +423,6 @@ def test_roaming_dangling_home_catalog_does_not_fall_back_to_project(tmp_path):
     source.write_text("flow run():\n  pass\n")
     (tmp_path / "toolang.catalog.json").write_text("{}")
     layout = materialize_roaming_program(source, toolang_root=tmp_path / "global")
-    (layout.home / "catalog.json").symlink_to(tmp_path / "missing.json")
+    (layout.agent_home / "catalog.json").symlink_to(tmp_path / "missing.json")
     with pytest.raises(ValueError, match="model catalog is not a file"):
         resolve_model_catalog_path(layout)
