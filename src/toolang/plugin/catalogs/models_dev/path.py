@@ -11,6 +11,7 @@ from toolang.common.layout import AgentLayout
 from toolang.common.config_sources import (
     ConfigSource,
     config_sources,
+    config_origins,
     source_catalog,
     catalog_config,
 )
@@ -63,38 +64,33 @@ def resolve_model_catalog_selection(
         path = Path(configured).expanduser().resolve(strict=False)
         _require_catalog_candidate(path, label=MODEL_CATALOG_ENV)
         return ModelCatalogSelection(path, "custom")
-    if layout.runtime_config is not None and layout.runtime_config.origins:
-        # Host selection already decided which files to mount. Authored origins
-        # remain host identities and must never be opened in the guest.
-        candidates = (
-            *(((layout.agent_home / "catalog.json", "home"),) if include_agent else ()),
-            (layout.agent_root / "catalog.json", "root"),
+    origins = (
+        config_origins(layout).origins if layout.root_source_receipt.is_file() else {}
+    )
+    for source in reversed(
+        sources
+        if sources is not None
+        else config_sources(layout, include_agent=include_agent)
+    ):
+        scope = "home" if source.scope == "home" else "root"
+        local = (
+            layout.agent_home / "catalog.json"
+            if scope == "home"
+            else layout.root_catalog
         )
-        for path, scope in candidates:
-            if f"{scope}/catalog.json" not in layout.runtime_config.origins:
-                continue
-            _require_catalog_candidate(path, label="mounted model catalog")
-            return ModelCatalogSelection(path, scope)
-    else:
-        for source in reversed(
-            sources
-            if sources is not None
-            else config_sources(layout, include_agent=include_agent)
-        ):
-            selected = source_catalog(
-                (source,),
-                roaming=bool(layout.project_inputs) and source.scope != "home",
+        if scope == "root" and "root/catalog.json" in origins:
+            _require_catalog_candidate(local, label="placement model catalog")
+            return ModelCatalogSelection(local, scope)
+        config_path = layout.config if scope == "home" else layout.root_config
+        selected = source_catalog(
+            (ConfigSource(config_path, source.config, source.scope),), roaming=False
+        )
+        if selected is not None:
+            configured = catalog_config(source.config)
+            return ModelCatalogSelection(
+                selected.resolve(strict=False),
+                "custom" if configured and "path" in configured else scope,
             )
-            if selected is not None:
-                config = catalog_config(source.config)
-                scope = (
-                    "custom"
-                    if config is not None and "path" in config
-                    else "home"
-                    if source.scope == "home" or source.path == layout.config
-                    else "root"
-                )
-                return ModelCatalogSelection(selected.resolve(strict=False), scope)
     _require_catalog_candidate(PACKAGED_MODEL_CATALOG, label="packaged model catalog")
     return ModelCatalogSelection(
         PACKAGED_MODEL_CATALOG.resolve(strict=False), "packaged"

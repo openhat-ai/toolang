@@ -52,6 +52,7 @@ def test_runtime_defaults_do_not_freeze_explicit_configuration(tmp_path):
         )
 
     assert teaming().root.human == "human:host-owner"
+    layout.place_config.parent.mkdir(parents=True, exist_ok=True)
     layout.place_config.write_text(
         '[teaming]\nhuman = "explicit-owner"\nenabled = false\nhub = "http://new-host:7001"\n'
     )

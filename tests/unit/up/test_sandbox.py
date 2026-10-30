@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-
 import asyncio
 from dataclasses import replace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -28,6 +27,8 @@ from toolang.up import sandbox
 from toolang.up.instance import SandboxState
 from toolang.up import process as process_runtime
 from toolang.up.server import ServeSpec
+
+from tests.support.layout import root_file
 
 
 def captured_workspace_mounts(request):
@@ -245,6 +246,7 @@ def test_resolve_selection_uses_explicit_home_root_host_precedence(
 
     assert sandbox.resolve_selection(layout) == "host"
 
+    layout.place_config.parent.mkdir(parents=True, exist_ok=True)
     layout.place_config.write_text(
         "[sandbox]\ndriver = 'docker'\ntarget = 'root-image'\n",
         encoding="utf-8",
@@ -553,7 +555,8 @@ def test_launch_delegates_complete_spec_and_stop_releases_state(
     spec = _launch_spec(tmp_path)
     external_program = tmp_path / "external-agent.too"
     external_program.write_text("# Agent alice\n", encoding="utf-8")
-    spec.serve.layout.program.symlink_to(external_program)
+    spec.serve.layout.program.hardlink_to(external_program)
+    spec.serve.layout.place_config.parent.mkdir(parents=True, exist_ok=True)
     spec.serve.layout.place_config.write_text(
         "[plugin.sandbox.fake]\ncurrent = true\n",
         encoding="utf-8",
@@ -571,12 +574,16 @@ def test_launch_delegates_complete_spec_and_stop_releases_state(
     assert request.toolang_root == tmp_path.resolve()
     assert request.hosted_home == Path("/runtime/agents/alice")
     assert (
-        SandboxMount(
-            external_program,
-            request.hosted_home / "agent.too",
-            read_only=True,
-        )
+        SandboxMount(spec.serve.layout.agent_home, request.hosted_home)
         in request.mounts
+    )
+    assert (
+        SandboxMount(spec.serve.layout.runtime, request.hosted_home / ".runtime")
+        in request.mounts
+    )
+    assert not any(
+        mount.hosted_path == request.hosted_home / "agent.too"
+        for mount in request.mounts
     )
     assert SandboxState.load(spec.serve.layout.runtime_status) == handle.state
     assert [
@@ -643,9 +650,10 @@ def test_guest_roaming_mounts_the_shared_project_edit_guard(monkeypatch, tmp_pat
     )
     request = cast(SandboxRequest, prepared[2])
     guard = tmp_path / ".toolang" / ".state" / "root" / "edit.lock"
-    assert guard.is_file()
+    assert guard.parent.is_dir()
     guest_place = Path("/runtime")
-    assert SandboxMount(guard, guest_place / ".state/root/edit.lock") in request.mounts
+    assert SandboxMount(guard.parent, guest_place / ".state/root") in request.mounts
+    assert all(mount.local_path != guard for mount in request.mounts)
     position = request.command.index("--source-edit-lock")
     assert request.command[position + 1] == str(guest_place / ".state/root/edit.lock")
     registry = tmp_path / "global" / ".runtime" / "active" / layout.address
@@ -706,8 +714,8 @@ def test_mount_layout_preserves_root_place_and_home_scopes(
     if placement == "roaming":
         if source_workspace:
             layout.config.write_text(f'[workspaces]\nproject = "{source.parent}"\n')
-        layout.program.symlink_to(source)
-    catalog = root / "catalog.json"
+        layout.program.hardlink_to(source)
+    catalog = root_file(root, "catalog.json")
     catalog.write_text("{}")
     spec = replace(
         spec,
@@ -747,16 +755,12 @@ def test_mount_layout_preserves_root_place_and_home_scopes(
             str(guest_lab),
         ]
         assert not (layout.home / ".lab").exists()
-        if placement == "roaming" and source_workspace:
-            assert (
-                request.hosted_source
-                == request.hosted_place / "workspaces/alice/project/alice.too"
-            )
-        elif placement == "roaming":
-            assert request.hosted_source is None
-            assert not any(
-                mount.local_path == source.parent for mount in request.mounts
-            )
+        if placement == "roaming":
+            assert request.hosted_source == request.hosted_home / "agent.too"
+            if not source_workspace:
+                assert not any(
+                    mount.local_path == source.parent for mount in request.mounts
+                )
         assert request.envs[MODEL_CATALOG_ENV] == "/runtime/.inputs/catalog.json"
         assert (
             SandboxMount(root / "hub", guest_root / "hub", read_only=True)
@@ -1480,7 +1484,7 @@ def test_guest_catalog_launch_preserves_selection_provenance(
     monkeypatch.setattr(sandbox, "_wait_ready", ready)
     spec = _launch_spec(tmp_path)
     if catalog_kind in {"root", "custom"}:
-        catalog = spec.serve.layout.place / "catalog.json"
+        catalog = root_file(spec.serve.layout.agent_root, "catalog.json")
         catalog.write_text("{}")
     elif catalog_kind == "home":
         (spec.serve.layout.home / "catalog.json").write_text("{}")
@@ -1593,6 +1597,10 @@ def test_guest_workspace_config_retains_its_host_origin(tmp_path, monkeypatch, l
         spec.serve.layout.config.symlink_to(authored)
     else:
         spec.serve.layout.config.write_text('[workspaces]\nrepo = "../../repo"\n')
+    if linked:
+        with pytest.raises(ValueError, match="source symlink target is unavailable"):
+            asyncio.run(sandbox.launch(spec))
+        return
     asyncio.run(sandbox.launch(spec))
     prepared = implementation.calls[0]
     assert isinstance(prepared, tuple)

@@ -11,9 +11,11 @@ import pytest
 from toolang.common.layout import AgentLayout
 from toolang.state import collections as state_collections
 from toolang.state import watcher as state_watcher
-from toolang.state.cache import agent_revision_dir, state_root
+from toolang.state.cache import agent_current_path, agent_revision_dir, state_root
 from toolang.state.format import AGENT_STATE_FORMAT
 from toolang.state.prepare import prepare_agent_state
+
+from tests.support.layout import root_file
 
 
 def test_obsolete_publications_are_released_but_history_remains_loadable(tmp_path):
@@ -88,7 +90,7 @@ def test_initial_state_timeout_hashes_once_without_preparing_again(
         async def one_timeout(*_args: object, **_kwargs: object):
             yield set()
 
-        monkeypatch.setattr(state_watcher, "awatch", one_timeout)
+        monkeypatch.setattr(state_watcher, "directory_changes", one_timeout)
 
         def fail_prepare(*_args: object, **_kwargs: object) -> None:
             raise AssertionError("warm watcher must not prepare an unchanged State")
@@ -131,20 +133,20 @@ def test_foreign_state_activity_is_ignored_until_authored_source_changes(
                 foreign.mkdir(parents=True, exist_ok=True)
                 current = foreign / "current"
                 current.write_text("a" * 64)
-                yield {(state_watcher.Change.modified, str(current))}
+                yield {Path(str(current))}
                 yield set()
                 assert calls == []
                 assert watcher.current() is first
             layout.program.write_text("# Changed\nflow work():\n  pass\n")
             prompt.write_text("Changed style.\n")
             yield {
-                (state_watcher.Change.modified, str(layout.program)),
-                (state_watcher.Change.modified, str(prompt)),
+                Path(str(layout.program)),
+                Path(str(prompt)),
             }
             yield set()
 
         monkeypatch.setattr(state_watcher, "prepare_agent_state", counted_prepare)
-        monkeypatch.setattr(state_watcher, "awatch", foreign_then_source)
+        monkeypatch.setattr(state_watcher, "directory_changes", foreign_then_source)
         observed = [
             state async for state in watcher.updates(stop_signal=asyncio.Event())
         ]
@@ -185,7 +187,7 @@ def test_timeout_check_recovers_change_before_watch_registration(
         async def one_timeout(*_args, **_kwargs):
             yield set()
 
-        monkeypatch.setattr(state_watcher, "awatch", one_timeout)
+        monkeypatch.setattr(state_watcher, "directory_changes", one_timeout)
         updates = watcher.updates(stop_signal=asyncio.Event())
         changed = await anext(updates)
 
@@ -227,7 +229,7 @@ def test_timeout_check_recovers_change_after_preparation_returns(
         async def one_timeout(*_args: object, **_kwargs: object):
             yield set()
 
-        monkeypatch.setattr(state_watcher, "awatch", one_timeout)
+        monkeypatch.setattr(state_watcher, "directory_changes", one_timeout)
         updates = watcher.updates(stop_signal=asyncio.Event())
         changed = await anext(updates)
 
@@ -253,7 +255,7 @@ def test_timeout_check_skips_full_prepare_when_metadata_is_current(
         async def one_timeout(*_args, **_kwargs):
             yield set()
 
-        monkeypatch.setattr(state_watcher, "awatch", one_timeout)
+        monkeypatch.setattr(state_watcher, "directory_changes", one_timeout)
 
         def fail_prepare(*_args, **_kwargs):
             raise AssertionError("unchanged timeout must not load full Agent State")
@@ -322,9 +324,9 @@ def test_source_event_detects_content_change_with_preserved_metadata(
         os.utime(program, ns=(original.st_atime_ns, original.st_mtime_ns))
 
         async def one_event(*_args: object, **_kwargs: object):
-            yield {(state_watcher.Change.modified, str(program))}
+            yield {Path(str(program))}
 
-        monkeypatch.setattr(state_watcher, "awatch", one_event)
+        monkeypatch.setattr(state_watcher, "directory_changes", one_event)
         updates = watcher.updates(stop_signal=asyncio.Event())
         changed = await anext(updates)
 
@@ -359,16 +361,11 @@ def test_current_publication_does_not_retrigger_candidate_preparation(
             return prepare(*args, **kwargs)
 
         async def source_then_current(*_args, **_kwargs):
-            yield {(state_watcher.Change.modified, str(program))}
-            yield {
-                (
-                    state_watcher.Change.modified,
-                    str(state_watcher.agent_current_path(layout)),
-                )
-            }
+            yield {Path(str(program))}
+            yield {Path(str(agent_current_path(layout)))}
 
         monkeypatch.setattr(state_watcher, "prepare_agent_state", counted_prepare)
-        monkeypatch.setattr(state_watcher, "awatch", source_then_current)
+        monkeypatch.setattr(state_watcher, "directory_changes", source_then_current)
 
         observed = [
             state async for state in watcher.updates(stop_signal=asyncio.Event())
@@ -399,15 +396,11 @@ def test_unreadable_current_pointer_does_not_stop_monitoring(
                 patch.setattr(
                     state_watcher, "load_current_agent_revision", unreadable_pointer
                 )
-                yield (
-                    {(state_watcher.Change.modified, str(layout.program))}
-                    if source_event
-                    else set()
-                )
+                yield ({Path(str(layout.program))} if source_event else set())
             layout.program.write_text("agic answer:\n  Recovered.\n")
-            yield {(state_watcher.Change.modified, str(layout.program))}
+            yield {Path(str(layout.program))}
 
-        monkeypatch.setattr(state_watcher, "awatch", unreadable_then_changed)
+        monkeypatch.setattr(state_watcher, "directory_changes", unreadable_then_changed)
         observed = [
             state async for state in watcher.updates(stop_signal=asyncio.Event())
         ]
@@ -452,13 +445,13 @@ def test_rejected_candidate_does_not_retry_partially_published_layers(
 
         async def rejected_then_timeout(*_args, **_kwargs):
             yield {
-                (state_watcher.Change.modified, str(root_prompt)),
-                (state_watcher.Change.modified, str(flow)),
+                Path(str(root_prompt)),
+                Path(str(flow)),
             }
             yield set()
 
         monkeypatch.setattr(state_watcher, "prepare_agent_state", counted_prepare)
-        monkeypatch.setattr(state_watcher, "awatch", rejected_then_timeout)
+        monkeypatch.setattr(state_watcher, "directory_changes", rejected_then_timeout)
 
         observed = [
             state async for state in watcher.updates(stop_signal=asyncio.Event())
@@ -571,7 +564,7 @@ def test_only_one_filesystem_monitor_can_run(
             if False:  # pragma: no cover - keeps this an async generator
                 yield set()
 
-        monkeypatch.setattr(state_watcher, "awatch", waiting_watch)
+        monkeypatch.setattr(state_watcher, "directory_changes", waiting_watch)
 
         async def consume() -> list[object]:
             return [
@@ -647,18 +640,18 @@ def test_watcher_tracks_module_rename_and_deletion(tmp_path, monkeypatch, kind):
     async def edits(*_args, **_kwargs):
         source.rename(renamed)
         yield {
-            (state_watcher.Change.deleted, str(source)),
-            (state_watcher.Change.added, str(renamed)),
+            Path(str(source)),
+            Path(str(renamed)),
         }
         renamed.unlink()
-        yield {(state_watcher.Change.deleted, str(renamed))}
+        yield {Path(str(renamed))}
         ignored = layout.home / "flows/research.too"
         ignored.parent.mkdir()
         ignored.write_text("Invalid ignored source.")
-        yield {(state_watcher.Change.added, str(ignored))}
+        yield {Path(str(ignored))}
         yield set()
 
-    monkeypatch.setattr(state_watcher, "awatch", edits)
+    monkeypatch.setattr(state_watcher, "directory_changes", edits)
 
     async def run():
         initial = await watcher.refresh()
@@ -741,9 +734,9 @@ def test_workspace_change_publishes_a_new_state_revision(
         )
 
         async def workspace_event(*_args: object, **_kwargs: object):
-            yield {(state_watcher.Change.modified, str(config))}
+            yield {Path(str(config))}
 
-        monkeypatch.setattr(state_watcher, "awatch", workspace_event)
+        monkeypatch.setattr(state_watcher, "directory_changes", workspace_event)
         updates = watcher.updates(stop_signal=asyncio.Event())
         changed = await anext(updates)
 
@@ -860,7 +853,7 @@ def test_state_watcher_publishes_filtered_caps_once_per_revision_and_override(
             f"---\ndescription: {name.title()}\n---\nUse {name}.\n",
             encoding="utf-8",
         )
-    (toolang_root / "config.toml").write_text(
+    (root_file(toolang_root, "config.toml")).write_text(
         '[allow]\nprompts = ["prompt/one"]\nskills = ["skill/one"]\n',
         encoding="utf-8",
     )

@@ -11,7 +11,9 @@ from toolang.setup.teaming import load_teaming_root, resolve_teaming_setup
 from toolang.teaming.errors import TeamingError
 from toolang.up.config import hub_config
 
-ROOT = Path("/root/config.toml")
+from tests.support.layout import root_file
+
+ROOT = Path("/root/config/config.toml")
 HOME = Path("/root/agents/alice/config.toml")
 
 
@@ -26,7 +28,7 @@ def test_default_human_uses_os_account_despite_inherited_login_name(
     raw: dict[str, object] = (
         {"teaming": {"human": configured_human}} if configured_human else {}
     )
-    root = tmp_path / "config.toml"
+    root = root_file(tmp_path, "config.toml")
     if configured_human:
         root.write_text(f'[teaming]\nhuman = "{configured_human}"\n')
 
@@ -49,7 +51,7 @@ def resolve(root=None, home=None, extra=()):
         (ConfigSource(ROOT, root or {}), ConfigSource(HOME, home or {}), *extra),
         root=ROOT,
         home=HOME,
-        host_root=ROOT.parent,
+        host_root=ROOT.parent.parent,
         default_human="owner",
     )
 

@@ -22,15 +22,15 @@ plugins receive their own resolved factory configuration. Core configuration
 does not dereference a plugin's secret-reference fields. [Plugins](plugins.md)
 owns those contracts and [Models](models.md) owns catalogs and connection routes.
 
-Resident and visiting layouts read the
-[root/home authored scopes](layout.md#roots-and-agent-home). Roaming layouts use
-the captured project layers described in [Scripts](scripts.md#directories-and-configuration),
-with relative paths bound to the declaring file. Environment selection is
-independent of these TOML layers.
+All placements read the same [root/home scopes](layout.md#roots-and-agent-home).
+Startup fetch hardlinks roaming's nearest project TOML and selected catalog into
+root config, retaining original paths for relative references. Visiting retains
+its remote Program cache. Fetch is separate from State/Setup watching; environment
+selection remains a startup snapshot.
 
 ## Environments
 
-Only the selected Toolang `ROOT/config.toml` accepts environment name lists:
+Only the selected Toolang `ROOT/config/config.toml` accepts environment name lists:
 
 ```toml
 [env]

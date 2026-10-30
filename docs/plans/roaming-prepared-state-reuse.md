@@ -30,9 +30,9 @@ use the resolved layout of their own process; guest AR/AH resolve to GR/GH.
 
 ## Path changes
 
-These are changes from the current worktree. No compatibility lookup or migration.
+Path changes in this implementation. No compatibility lookup or migration.
 
-| Current path | Proposed path | Explanation |
+| Previous path | Current path | Explanation |
 | --- | --- | --- |
 | `ROOT/config.toml` | `ROOT/config/config.toml` | Resident root config and selected-ROOT startup policy. |
 | `ROOT/catalog.json` | `ROOT/config/catalog.json` | Resident root catalog. |
@@ -41,7 +41,8 @@ These are changes from the current worktree. No compatibility lookup or migratio
 | `DIR/.toolang/config.toml` | `DIR/.toolang/config/config.toml` | Hardlink the nearest selected `toolang.toml`, preserving its bytes. |
 | `DIR/.toolang/catalog.json` | `DIR/.toolang/config/catalog.json` | Roaming catalog; replace the external symlink with a hardlink to the selected catalog. |
 | `/tmp/toolang/R8/P10/agents/NAME/agent.source.json` | `/tmp/toolang/R8/P10/agents/NAME/source.json` | Rename visiting provenance receipt. |
-| — | `DIR/.toolang/agents/NAME/source.json` | Add roaming source ownership/provenance receipt, shared across P19s/ROOTs. |
+| — | `DIR/.toolang/agents/NAME/source.json` | Record roaming Program ownership/digest, shared across P19s/ROOTs. |
+| — | `DIR/.toolang/config/source.json` | Record shared config/catalog origins once for every agent using this root. |
 | `DIR/.toolang/agents/NAME/agent.too` | `DIR/.toolang/agents/NAME/agent.too` | Replace the symlink to `DIR/FILE.too` with a hardlink. |
 | `GR/config.toml` | `GR/config/config.toml` | Guest reads the mounted root config directory. |
 | `GR/catalog.json` | `GR/config/catalog.json` | Guest reads the mounted root catalog. |
@@ -59,7 +60,8 @@ orchestration, never watchers; guest execution does not repeat it.
 | `URL/ref` | `/tmp/toolang/R8/P10/agents/NAME/agent.too` | Fetch remote Program bytes, using the existing cache. |
 | `URL/ref` | `/tmp/toolang/R8/P10/agents/NAME/source.json` | Record requested/resolved ref, entry, and digest. |
 | `DIR/FILE.too` | `DIR/.toolang/agents/NAME/agent.too` | Hardlink the Program without changing its bytes. |
-| `DIR/FILE.too` | `DIR/.toolang/agents/NAME/source.json` | Record canonical Program ownership/digest and selected config/catalog origins; reject normalized-name conflicts. |
+| `DIR/FILE.too` | `DIR/.toolang/agents/NAME/source.json` | Record canonical Program ownership/digest; reject normalized-name conflicts. |
+| `SELECTED_TOML`, `SELECTED_CATALOG` | `DIR/.toolang/config/source.json` | Record original config/catalog paths in their shared owning scope. |
 | `SELECTED_TOML` | `DIR/.toolang/config/config.toml` | Hardlink the nearest `toolang.toml`; do not merge other project TOMLs. |
 | `SELECTED_CATALOG` | `DIR/.toolang/config/catalog.json` | Hardlink the selected catalog without copying or merging its contents. |
 
@@ -71,7 +73,7 @@ contents. Keep the existing catalog-selection precedence and link only its
 selected file, `SELECTED_CATALOG`.
 
 Fetch preserves source bytes, changing only the placement path/name. Record
-original config/catalog paths in `AH/source.json` and pass resolved origins to
+original config/catalog paths in `AR/config/source.json` and pass resolved origins to
 readers, so relative paths retain their source-directory meaning on host and
 guest. A selected ancestor TOML still does not grant ancestor workspaces. Normal
 home configuration remains a separate scope. Consumers read placement-local
@@ -118,6 +120,8 @@ the same host files and use the same State/Setup reconciliation as host edits.
 `WORKSPACE_PATH` is each granted host directory; `L` derives from `launch_id`.
 Mount assembly has no placement branches. Do not mount whole host roots,
 workspace parents, sibling agents, other instances, or namespace ownership records.
+Authored symlinks must resolve through selected directory mounts; reject targets
+unavailable in the guest instead of adding mutable file overlays.
 Instance runtime contains `status.json`, `runs.db`, `stats.db`, `agent.log`,
 `logs/`, and `tools/`; runtime control/observation remains separate.
 
@@ -145,7 +149,7 @@ starve checks. Setup retains its refresh/publication ownership and probing.
 | --- | --- | --- |
 | `AR/` | `GR/` | Discover relevant optional root directories. |
 | `AH/` | `GH/` | Watch `agent.too`, `config.toml`, `catalog.json`, `source.json`, and relevant directory creation/removal. |
-| `AR/config/` | `GR/config/` | State/Setup config; Setup selected catalog. |
+| `AR/config/` | `GR/config/` | State/Setup config and shared `source.json`; Setup selected catalog. |
 | `AR/{psyches,skills,services,prompts}/` | `GR/{psyches,skills,services,prompts}/` | State sources; shallow-watch each existing directory and authored subdirectory. |
 | `AH/{psyches,skills,services,prompts,runnables,chores}/` | `GH/{psyches,skills,services,prompts,runnables,chores}/` | State sources; same shallow enumeration. |
 | `AR/.state/root/v24/current` | `GR/.state/root/v24/current` | Shallow-watch the parent; detect external atomic replacement. |
@@ -202,8 +206,7 @@ visible to existing guests, shared in-place writes, and clear hardlink-support/
 cross-filesystem failures. Cover Program, TOML, and catalog hardlinks.
 Docker filesystem probes cover atomic file replacement within stable directories
 and uniform home/runtime mounts. A catalog hardlink probe covers guest visibility,
-upstream atomic replacement, relinking, and shared writes; full application
-acceptance is still required.
+upstream atomic replacement, relinking, and shared writes; application acceptance covers shared State and running guests after relinking.
 
 Touchpoints: `common/layout.py`, source/environment and CLI orchestration,
 State/Setup source discovery/watch, guest mounts, and design docs. Risks: source

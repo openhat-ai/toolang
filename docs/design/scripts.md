@@ -21,9 +21,10 @@ the nearest Git working-tree root. Nested repositories, submodules, and worktree
 have their own boundaries. Outside Git, only srcdir is searched. Configuration
 paths resolve relative to the file that declares them.
 
-Shared settings merge from outer to inner configurations using the existing
-field-specific rules. Workspace grants come only from source-local TOML; ancestor
-workspace declarations are ignored before resolving their paths. For example:
+Use only the nearest existing `toolang.toml`; an empty file stops discovery and
+invalid input fails without falling back. Workspace grants come only from
+source-local TOML; a selected ancestor's workspace declarations are ignored before
+resolving their paths. For example:
 
 ```toml
 # scripts/toolang.toml
@@ -35,7 +36,8 @@ Catalogs never merge. Selection order is an explicit CLI override, the
 `TOOLANG_MODEL_CATALOG` environment variable, then the nearest authored layer,
 then the bundled catalog. Within a layer, `plugin.model_catalog.models_dev.path`
 precedes `toolang.catalog.json`. A project file named `catalog.json` is ignored.
-Resident agents retain their root/home `catalog.json` convention.
+Resident catalogs live at `ROOT/config/catalog.json` and
+`ROOT/agents/NAME/catalog.json`.
 
 Each bare execution creates a runtime root at
 `<srcdir>/.toolang/<root_code>/<place_code>/`; instance records/control live in
@@ -56,8 +58,13 @@ Each runtime instance admits one script invocation, including rerun, at a time.
 Different instances may run on host and Docker concurrently; a verified stopped
 instance may switch environments on its next invocation. Reuse preserves history and resolves current inputs
 and grants, rather than retaining temporary options from the previous invocation.
-Instances share their canonical source; they are not source checkouts. Roaming has
-no Chat or standalone hosting commands.
+At each startup, hardlink the Program, nearest TOML, and selected catalog into
+the shared layout. Source bytes remain unchanged; config/catalog origins live in
+`.toolang/config/source.json` and Program ownership in the home `source.json`.
+Re-link changed source identities at startup. During execution, upstream atomic
+replacement may leave the old inode in use; in-place writes through either name
+share data. File hardlinks require a supported common filesystem. Roaming has no
+Chat or standalone hosting commands.
 
 Roaming scripts use the selected root's [environment policy](setup.md#environments),
 preferring the root file named by the encoded canonical source path over a

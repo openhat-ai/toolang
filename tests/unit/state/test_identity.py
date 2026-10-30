@@ -163,6 +163,7 @@ def test_raw_config_changes_have_distinct_state_identity_after_rebasing(
     layout = _layout(tmp_path)
     path = layout.place_config if scope == "root" else layout.config
     content = b'# Original\r\n[workspaces]\r\nrepo = "."\r\n'
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(content)
     watcher = StateWatcher(layout)
     before = asyncio.run(watcher.refresh())

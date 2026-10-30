@@ -53,10 +53,10 @@ from toolang.plugin.config import (
 from toolang.plugin.loading import create_sandbox
 from toolang.state.config import CAP_ALLOW_FIELDS
 from toolang.up.mounts import (
-    mapped_path,
     prepare_catalog_mount,
     prepare_guest_environment,
-    prepare_source_mounts,
+    prepare_place_mounts,
+    validate_source_mounts,
     prepare_workspace_mounts,
 )
 from toolang.up.instance import (
@@ -366,15 +366,11 @@ async def _launch_locked(
         workspace_mounts: tuple[SandboxMount, ...] = ()
         workspace_mapping: dict[str, tuple[str, str]] = {}
         if not on_host:
-            source_mounts = prepare_source_mounts(
-                layout.agent_root, layout.name, hosted_place
+            source_mounts = (
+                *prepare_place_mounts(layout.agent_root, hosted_place),
+                SandboxMount(layout.agent_home, hosted_home),
+                SandboxMount(layout.runtime, hosted_home / ".runtime"),
             )
-            if layout.agent_home != layout.home:
-                source_mounts = (
-                    *source_mounts,
-                    SandboxMount(layout.agent_home, hosted_home),
-                    SandboxMount(layout.runtime, hosted_home / ".runtime"),
-                )
         state = await asyncio.to_thread(prepare_launch_state, spec, progress=progress)
         if not on_host:
             workspace_mounts, workspace_mapping = prepare_workspace_mounts(
@@ -391,11 +387,6 @@ async def _launch_locked(
         catalog_mounts: tuple[SandboxMount, ...] = ()
         catalog_env: dict[str, str] = {}
         catalog = None
-        covered_mounts = (
-            *source_mounts,
-            SandboxMount(layout.home, hosted_home),
-            *workspace_mounts,
-        )
         if not on_host:
             catalog = resolve_model_catalog_selection(layout, environ=spec.environ)
             if catalog.scope == "custom":
@@ -403,12 +394,6 @@ async def _launch_locked(
                     catalog.path, hosted_place
                 )
                 catalog_env[MODEL_CATALOG_ENV] = str(guest_catalog)
-            elif catalog.scope == "home":
-                catalog_mounts = (
-                    SandboxMount(
-                        catalog.path, hosted_home / "catalog.json", read_only=True
-                    ),
-                )
         guest_environment = (
             prepare_guest_environment(
                 layout, mapping=workspace_mapping, catalog=catalog
@@ -416,6 +401,10 @@ async def _launch_locked(
             if not on_host
             else {}
         )
+        if not on_host:
+            validate_source_mounts(
+                layout, (*source_mounts, *workspace_mounts, *catalog_mounts)
+            )
         if on_host:
             workspace_mapping = {
                 name: (source, source) for name, source in state.workspaces.items()
@@ -430,14 +419,11 @@ async def _launch_locked(
             for name in ("lab", *(name for name in state.workspaces if name != "lab"))
             if name in workspace_mapping
         }
-        edit_lock_mounts: tuple[SandboxMount, ...] = ()
-        guest_edit_lock = None
-        if not on_host and spec.serve.layout.source_path is not None:
-            local_guard = spec.serve.layout.place_edit_lock
-            local_guard.parent.mkdir(parents=True, exist_ok=True)
-            local_guard.touch(exist_ok=True)
-            guest_edit_lock = hosted_place / ".state" / "root" / "edit.lock"
-            edit_lock_mounts = (SandboxMount(local_guard, guest_edit_lock),)
+        guest_edit_lock = (
+            hosted_place / ".state/root/edit.lock"
+            if not on_host and layout.source_path is not None
+            else None
+        )
         environment_paths = agent_environment_paths(hosted_root, spec.serve.layout)
         request = SandboxRequest(
             local_place=spec.serve.layout.place,
@@ -456,10 +442,7 @@ async def _launch_locked(
             hosted_root=hosted_root,
             local_runtime=local_root / ".runtime" / "active" / layout.address,
             hosted_runtime=hosted_root / ".runtime" / "active" / layout.name,
-            hosted_source=mapped_path(
-                layout.source_path,
-                tuple(mount for mount in covered_mounts if mount.local_path.is_dir()),
-            )
+            hosted_source=hosted_home / "agent.too"
             if layout.source_path is not None and not on_host
             else layout.source_path,
             source_ref=layout.source_ref,
@@ -477,6 +460,9 @@ async def _launch_locked(
                     location=implementation.location,
                     host=spec.serve.host if on_host else "0.0.0.0",
                     source_edit_lock=guest_edit_lock,
+                    source_path=hosted_home / "agent.too"
+                    if not on_host and layout.source_path is not None
+                    else layout.source_path,
                     workspace_bindings=bindings,
                 ),
             ),
@@ -511,7 +497,6 @@ async def _launch_locked(
                     *workspace_mounts,
                     *catalog_mounts,
                     *source_mounts,
-                    *edit_lock_mounts,
                 )
             ),
             local_dev_artifact=spec.dev_artifact,

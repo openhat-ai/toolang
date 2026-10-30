@@ -190,6 +190,7 @@ def build_serve_argv(
     sandbox: str = "host",
     location: str = "host",
     source_edit_lock: Path | None = None,
+    source_path: Path | None = None,
     registry_directory: Path | None = None,
     workspace_bindings: Mapping[str, WorkspaceBinding] | None = None,
 ) -> tuple[str, ...]:
@@ -245,7 +246,7 @@ def build_serve_argv(
         command.extend(
             [
                 "--source-path",
-                str(spec.layout.source_path),
+                str(source_path or spec.layout.source_path),
                 "--source-edit-lock",
                 str(source_edit_lock or spec.layout.place_edit_lock),
             ]

@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from toolang.common.accounts import current_username
+from toolang.common.layout import root_config_path
 from toolang.common.config_sources import ConfigSource, read_config, merge_mappings
 from toolang.teaming.config import (
     TeamingRootConfig,
@@ -71,7 +72,7 @@ def resolve_teaming_setup(
 
 
 def load_teaming_root(root: Path) -> TeamingRootConfig:
-    path = root / "config.toml"
+    path = root_config_path(root)
     return root_config(
         read_config(path, include_workspaces=False),
         source=path,

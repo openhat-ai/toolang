@@ -300,9 +300,7 @@ def prepare_root(
             layout,
             scope="root",
             cap_scope="root",
-            context=layout.runtime_config.source_context
-            if layout.runtime_config
-            else None,
+            context=source_config_context(layout),
             reuse_remote=not force,
             progress=progress,
         )

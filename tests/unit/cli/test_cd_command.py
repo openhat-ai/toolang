@@ -511,9 +511,9 @@ def test_cd_prepares_nonresident_home_and_reuses_it(
     if selector_kind == "roaming":
         assert layout.runtime_status.exists()
         assert not layout.run_store.exists()
-        assert layout.program.is_symlink()
-        assert layout.program.resolve() == source
-        assert layout.place_config.is_file()
+        assert not layout.program.is_symlink()
+        assert layout.program.samefile(source)
+        assert layout.place_config.exists() == (source.parent / "toolang.toml").exists()
         assert not layout.config.exists()
         assert fetches == []
     else:

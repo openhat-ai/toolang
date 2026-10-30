@@ -48,6 +48,8 @@ from toolang.state.prepare import (
 from toolang.state.source import ProgramSource
 from toolang.state.state import runnable_module_name
 
+from tests.support.layout import root_file
+
 
 def _assert_excluded(state, match=None):
     excluded = [file for file in state.files if not file.accepted]
@@ -252,7 +254,7 @@ def test_prepare_root_home_snapshot_root_and_home(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     root_prompt = toolang_root / "prompts" / "review.md"
     root_prompt.parent.mkdir(parents=True)
-    (toolang_root / "config.toml").write_text(
+    (root_file(toolang_root, "config.toml")).write_text(
         '[models]\ndefault = "root"\n', encoding="utf-8"
     )
     root_prompt.write_text(
@@ -330,7 +332,7 @@ def test_prepare_rejects_invalid_state_owned_config_queries(
     toolang_root = tmp_path / "toolang"
     home = toolang_root / "agents" / "alice"
     home.mkdir(parents=True)
-    (toolang_root / "config.toml").write_text(
+    (root_file(toolang_root, "config.toml")).write_text(
         '[allow]\ncaps = ["*[missing=value]"]\n',
         encoding="utf-8",
     )
@@ -540,7 +542,7 @@ def test_setup_only_config_changes_revision_but_not_state_terms(
     home = toolang_root / "agents" / "alice"
     home.mkdir(parents=True)
     (home / "agent.too").write_text("# Agent alice\n", encoding="utf-8")
-    config = toolang_root / "config.toml"
+    config = root_file(toolang_root, "config.toml")
     config.write_text(
         '[model]\nref = "openai/one"\n\n[allow]\nmodels = ["openai/*"]\n',
         encoding="utf-8",
@@ -579,7 +581,7 @@ def test_setup_only_config_creation_and_removal_changes_dependency_revision(
     (home / "agent.too").write_text("# Agent alice\n", encoding="utf-8")
     layout = _layout(toolang_root)
     first = prepare_agent_state(layout)
-    config = toolang_root / "config.toml"
+    config = root_file(toolang_root, "config.toml")
     config.write_text(
         '[model]\nref = "openai/one"\n\n[allow]\nmodels = ["openai/*"]\n',
         encoding="utf-8",
@@ -959,7 +961,7 @@ def test_remote_refresh_changes_resolved_and_root_revision(
 ) -> None:
     toolang_root = tmp_path / "toolang"
     toolang_root.mkdir()
-    (toolang_root / "config.toml").write_text(
+    (root_file(toolang_root, "config.toml")).write_text(
         '[prompts]\nrewrite = { ref = "gh:acme/rewrite" }\n',
         encoding="utf-8",
     )
@@ -1016,7 +1018,7 @@ def test_local_change_reuses_unchanged_remote_materialization(
 ) -> None:
     toolang_root = tmp_path / "toolang"
     toolang_root.mkdir()
-    (toolang_root / "config.toml").write_text(
+    (root_file(toolang_root, "config.toml")).write_text(
         '[prompts]\nrewrite = { ref = "gh:acme/rewrite" }\n',
         encoding="utf-8",
     )
@@ -1078,7 +1080,7 @@ def test_local_change_does_not_reuse_corrupt_remote_materialization(
 ) -> None:
     toolang_root = tmp_path / "toolang"
     toolang_root.mkdir()
-    (toolang_root / "config.toml").write_text(
+    (root_file(toolang_root, "config.toml")).write_text(
         '[prompts]\nrewrite = { ref = "gh:acme/rewrite" }\n',
         encoding="utf-8",
     )
@@ -1125,7 +1127,7 @@ def test_declared_ref_change_refreshes_remote_materialization(
 ) -> None:
     toolang_root = tmp_path / "toolang"
     toolang_root.mkdir()
-    config = toolang_root / "config.toml"
+    config = root_file(toolang_root, "config.toml")
     config.write_text(
         '[prompts]\nrewrite = { ref = "gh:acme/rewrite" }\n',
         encoding="utf-8",

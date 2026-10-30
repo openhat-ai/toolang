@@ -101,7 +101,7 @@ def test_full_visiting_id_collision_fails_before_cached_program_or_history_chang
             first.program,
             first.runtime_status,
             first.run_store,
-            first.home / "agent.source.json",
+            first.home / "source.json",
         )
     }
     with pytest.raises(ValueError, match="collision"):

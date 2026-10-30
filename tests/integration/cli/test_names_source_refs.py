@@ -162,5 +162,5 @@ def test_script_entry_points_keep_the_filename_and_share_the_normalized_home(
 
     layout = select_roaming(source, toolang_root=tmp_path / "registry")
     assert layout.name == "daily_report_v2"
-    assert layout.program.resolve() == source.resolve()
+    assert layout.program.samefile(source)
     assert layout.place.name == layout.place_code

@@ -320,6 +320,20 @@ State. An invalid candidate records structured diagnostics and keeps the prior
 revision available; startup fails only when neither a valid candidate nor a
 loadable new-format published State exists.
 
+All placements watch their resolved agent root/home with the same rules;
+startup fetching belongs to source acquisition, outside the watcher. Native
+subscriptions use `recursive=False` and enumerate only authored capability
+directories, root `config/`, agent home, `runnables/`, `chores/`, and the parents
+of root/home/agent State `current` pointers. Watching existing parents catches
+creation of missing source or State directories; subscriptions are rebuilt and
+rescanned when those directories appear or disappear. `.runtime/`, workspaces,
+revision contents, and other agents are excluded from directory traversal.
+
+An independent reconciliation deadline runs even during continuous unrelated or
+filtered filesystem events. Changes to `config/source.json` or home `source.json`
+reload source origins; external edits to any of the three `current` pointers
+trigger validation and reconciliation even when authored bytes are unchanged.
+
 The watcher permits one filesystem monitor and one serialized check/publication
 path. It retains process-local path and stat observations separately from the
 portable manifests. Periodic checks compare observations without reading file

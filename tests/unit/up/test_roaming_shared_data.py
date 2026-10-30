@@ -60,20 +60,21 @@ def test_roaming_shares_authored_state_and_lab_across_instances_and_roots(tmp_pa
         assert not (second.runtime / "state").exists()
 
 
-def test_other_scripts_do_not_rewrite_the_shared_project_projection(tmp_path):
+def test_other_scripts_do_not_rewrite_shared_project_inputs(tmp_path):
     root = tmp_path / "root"
     first_source, second_source = tmp_path / "one.too", tmp_path / "two.too"
     first_source.write_text("flow first():\n  pass\n")
     second_source.write_text("flow second():\n  pass\n")
+    (tmp_path / "toolang.toml").write_text("# Shared project settings\n")
     first = _layout(first_source, root)
     state = prepare_agent_state(first)
-    projection = first.place_config.read_bytes()
+    original_config = first.place_config.read_bytes()
     second = _layout(second_source, root)
     other = prepare_agent_state(second)
-    assert first.place_config.read_bytes() == projection
+    assert first.place_config.read_bytes() == original_config
     assert other.root_revision == state.root_revision
-    assert first.program.resolve() == first_source
-    assert second.program.resolve() == second_source
+    assert first.program.samefile(first_source)
+    assert second.program.samefile(second_source)
     assert set(state.runnables) == {"first"}
     assert set(other.runnables) == {"second"}
 
@@ -192,7 +193,7 @@ def test_guest_reuses_shared_layers(tmp_path, monkeypatch):
             prepare_guest_environment(host, mapping={})[CONFIG_PATCH_ENV]
         ),
     )
-    shutil.copyfile(host.place_config, guest.place_config)
+    shutil.copytree(host.root_config.parent, guest.root_config.parent)
     shutil.copytree(host.place_state.parent, guest.place_state.parent)
     shutil.copytree(host.agent_home, guest.agent_home)
 

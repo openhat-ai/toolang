@@ -11,7 +11,7 @@ from toolang.cli.common import terminal_session as sessions
 from toolang.cli.common.terminal_session import TerminalSession, prepare_terminal
 from toolang.cli.common.terminal_title import TerminalTitle
 from toolang.cli.config import TITLE_KINDS, resolve_title_prefix
-from toolang.common.config_sources import ConfigSource, project_sources
+from toolang.common.config_sources import ConfigSource
 from toolang.common.layout import AgentLayout
 
 
@@ -167,6 +167,7 @@ def test_resident_and_root_only_sources(tmp_path, terminal_io, placement):
     terminal_io = terminal_io()
     layout = AgentLayout(tmp_path, "alice", placement)
     layout.home.mkdir(parents=True)
+    layout.place_config.parent.mkdir(parents=True, exist_ok=True)
     layout.place_config.write_text(
         '[terminal.title.prefix]\nchat="root "\ntop="root "\n'
     )
@@ -221,13 +222,10 @@ def test_visiting_pane_marks_publish_the_selected_root(
 
 
 @pytest.mark.parametrize("prefix", [None, "env ", ""])
-def test_roaming_uses_captured_project_layers_and_no_dotenv(
-    tmp_path, terminal_io, prefix
-):
+def test_roaming_uses_local_configuration_and_no_dotenv(tmp_path, terminal_io, prefix):
     from dataclasses import replace
 
     terminal_io = terminal_io()
-    # A concrete projected roaming layout avoids creating any execution state.
     layout = replace(
         AgentLayout.resident(tmp_path, "script"),
         placement="roaming",
@@ -235,16 +233,9 @@ def test_roaming_uses_captured_project_layers_and_no_dotenv(
         managed_membership=False,
     )
     layout.home.mkdir(parents=True)
-    layout.config.write_text(
-        project_sources(
-            [
-                source("outer/toolang.toml", run="outer"),
-                source("inner/toolang.toml", run="inner "),
-            ],
-            directory=tmp_path,
-        )
-    )
-    layout.place_config.write_text('[terminal.title.prefix]\nrun="wrong"\n')
+    layout.place_config.parent.mkdir(parents=True)
+    layout.place_config.parent.mkdir(parents=True, exist_ok=True)
+    layout.place_config.write_text('[terminal.title.prefix]\nrun="inner "\n')
     layout.env.write_text("TOOLANG_TITLE_PREFIX_RUN=wrong\n")
     layout.place_env.write_text("TOOLANG_TITLE_PREFIX_RUN=wrong\n")
     environment = {} if prefix is None else {"TOOLANG_TITLE_PREFIX_RUN": prefix}

@@ -21,6 +21,8 @@ from toolang.plugin.catalogs.models_dev.catalog import ModelsDevModelCatalog
 from toolang.setup import watcher as watcher_module
 from toolang.setup.watcher import SetupWatcher
 
+from tests.support.layout import root_file
+
 
 def _write_catalog(path: Path, names: tuple[str, ...] = ("one", "two")) -> None:
     provider = {
@@ -77,7 +79,7 @@ def _watcher(
     dynamic: _DynamicCatalog | None = None,
     validate_defaults: bool = False,
 ) -> tuple[SetupWatcher, dict[str, int]]:
-    path = root / "catalog.json"
+    path = root_file(root, "catalog.json")
     if not path.exists():
         _write_catalog(path)
     layout = AgentLayout.resident(root, "alice")
@@ -204,7 +206,7 @@ def test_failed_setup_refresh_reports_progress(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     watcher, _counts = _watcher(monkeypatch, tmp_path)
-    (tmp_path / "catalog.json").write_text("invalid JSON")
+    (root_file(tmp_path, "catalog.json")).write_text("invalid JSON")
     events = []
     with pytest.raises(ValueError):
         asyncio.run(watcher.refresh(progress=events.append))
@@ -329,7 +331,7 @@ def test_plugin_accessors_load_independently_of_model_data(
 def test_effective_views_filter_allow_and_readiness_but_full_views_do_not(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    path = tmp_path / "catalog.json"
+    path = root_file(tmp_path, "catalog.json")
     _write_catalog(path)
     data = json.loads(path.read_text())
     test_provider = dict(data["providers"][0])
@@ -342,6 +344,7 @@ def test_effective_views_filter_allow_and_readiness_but_full_views_do_not(
     )
     path.write_text(json.dumps(data), encoding="utf-8")
     watcher, _counts = _watcher(monkeypatch, tmp_path)
+    watcher.layout.place_config.parent.mkdir(parents=True, exist_ok=True)
     watcher.layout.place_config.write_text(
         '[allow]\nmodels = ["test/one"]\n', encoding="utf-8"
     )
@@ -367,7 +370,7 @@ def test_effective_views_filter_allow_and_readiness_but_full_views_do_not(
 def test_new_setup_is_lazy_and_old_setup_stays_pinned_after_source_change(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    path = tmp_path / "catalog.json"
+    path = root_file(tmp_path, "catalog.json")
     _write_catalog(path, ("one",))
     watcher, counts = _watcher(monkeypatch, tmp_path)
     first = asyncio.run(watcher.refresh())
@@ -401,7 +404,7 @@ def test_dynamic_probe_changes_publish_new_revision_without_disk_cache(
 def test_touching_flat_catalog_without_content_change_preserves_setup_revision(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    path = tmp_path / "catalog.json"
+    path = root_file(tmp_path, "catalog.json")
     _write_catalog(path, ("one",))
     watcher, _counts = _watcher(monkeypatch, tmp_path)
     first = asyncio.run(watcher.refresh())
@@ -418,7 +421,7 @@ def test_touching_flat_catalog_without_content_change_preserves_setup_revision(
 def test_invalid_catalog_refresh_keeps_last_good_setup(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    path = tmp_path / "catalog.json"
+    path = root_file(tmp_path, "catalog.json")
     _write_catalog(path, ("one",))
     watcher, _counts = _watcher(monkeypatch, tmp_path)
     good = asyncio.run(watcher.refresh())
@@ -430,9 +433,10 @@ def test_invalid_catalog_refresh_keeps_last_good_setup(
 def test_model_defaults_are_validated_when_models_are_first_loaded(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    path = tmp_path / "catalog.json"
+    path = root_file(tmp_path, "catalog.json")
     _write_catalog(path, ("one",))
     watcher, _counts = _watcher(monkeypatch, tmp_path, validate_defaults=True)
+    watcher.layout.place_config.parent.mkdir(parents=True, exist_ok=True)
     watcher.layout.place_config.write_text(
         '[model]\nref = "test/missing"\n', encoding="utf-8"
     )
@@ -468,7 +472,7 @@ def test_environment_changes_require_a_new_watcher(
 def test_full_routes_are_resolved_before_effective_adapter_policy(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    path = tmp_path / "catalog.json"
+    path = root_file(tmp_path, "catalog.json")
     _write_catalog(path)
     raw = json.loads(path.read_text(encoding="utf-8"))
     raw["providers"][0]["npm"] = "@ai-sdk/openai"
@@ -483,6 +487,7 @@ def test_full_routes_are_resolved_before_effective_adapter_policy(
     }
     path.write_text(json.dumps(raw), encoding="utf-8")
     watcher, _counts = _watcher(monkeypatch, tmp_path)
+    watcher.layout.place_config.parent.mkdir(parents=True, exist_ok=True)
     watcher.layout.place_config.write_text(
         '[allow]\nmodels = ["*[_toolang.route.adapter=responses]"]\n', encoding="utf-8"
     )
@@ -513,22 +518,26 @@ def test_compact_changes_publish_new_setup_and_preserve_captured_values(
     watcher, _counts = _watcher(monkeypatch, tmp_path)
     first = asyncio.run(watcher.refresh())
     captured = first.compact
+    watcher.layout.place_config.parent.mkdir(parents=True, exist_ok=True)
     watcher.layout.place_config.write_text(f"[compact]\n{field} = {value}\n")
     second = asyncio.run(watcher.refresh())
     assert second.revision != first.revision
     assert getattr(second.compact, field) == expected
     assert first.compact == captured
+    watcher.layout.place_config.parent.mkdir(parents=True, exist_ok=True)
     watcher.layout.place_config.write_text('[compact.model]\nref = "unset"\n')
     assert asyncio.run(watcher.refresh()) is second
     assert watcher.diagnostics
 
 
 def test_teaming_url_refreshes_without_mutating_captured_setup(tmp_path, monkeypatch):
-    config = tmp_path / "config.toml"
+    config = root_file(tmp_path, "config.toml")
     config.write_text('[teaming]\nhub = "http://first"\n')
     watcher, _ = _watcher(monkeypatch, tmp_path)
     watcher = SetupWatcher(
-        watcher.layout, model_catalog=tmp_path / "catalog.json", validate_defaults=False
+        watcher.layout,
+        model_catalog=root_file(tmp_path, "catalog.json"),
+        validate_defaults=False,
     )
     watcher.layout.home.mkdir(parents=True, exist_ok=True)
     captured = []
@@ -557,7 +566,9 @@ def test_teaming_refresh_tracks_settings_without_loading_tools(
 ):
     watcher, counts = _watcher(monkeypatch, tmp_path)
     watcher = SetupWatcher(
-        watcher.layout, model_catalog=tmp_path / "catalog.json", validate_defaults=False
+        watcher.layout,
+        model_catalog=root_file(tmp_path, "catalog.json"),
+        validate_defaults=False,
     )
     watcher.layout.home.mkdir(parents=True, exist_ok=True)
     if disabled_by == "home":
@@ -585,7 +596,9 @@ def test_teaming_consumers_share_scoped_configuration(tmp_path, monkeypatch, ena
 
     watcher, _ = _watcher(monkeypatch, tmp_path)
     watcher = SetupWatcher(
-        watcher.layout, model_catalog=tmp_path / "catalog.json", validate_defaults=False
+        watcher.layout,
+        model_catalog=root_file(tmp_path, "catalog.json"),
+        validate_defaults=False,
     )
     watcher.layout.home.mkdir(parents=True, exist_ok=True)
     if enabled is not None:
@@ -684,7 +697,7 @@ def test_interrupted_completion_observer_keeps_published_setup_resources(
 def test_structured_talk_refresh_changes_generation_without_eager_model_loading(
     tmp_path, monkeypatch
 ):
-    config = tmp_path / "config.toml"
+    config = root_file(tmp_path, "config.toml")
     config.write_text(
         '[model]\nref="test/one"\n[limit]\ntime=500\n[talk.model]\nref="test/two"\nmax_output=40\n[talk.limit]\ntime=60\n[compact.model]\nmax_output=20\n'
     )
@@ -712,7 +725,7 @@ def test_structured_talk_refresh_changes_generation_without_eager_model_loading(
 def test_parameter_only_talk_waits_for_handler_model_and_invalid_refs_fail_lazily(
     tmp_path, monkeypatch
 ):
-    config = tmp_path / "config.toml"
+    config = root_file(tmp_path, "config.toml")
     config.write_text("[talk.model]\nmax_output=30\n[compact.model]\nmax_output=20\n")
     watcher, counts = _watcher(monkeypatch, tmp_path, validate_defaults=True)
     setup = asyncio.run(watcher.refresh())
@@ -735,7 +748,7 @@ def test_parameter_only_talk_waits_for_handler_model_and_invalid_refs_fail_lazil
 def test_unowned_model_configuration_does_not_change_setup(
     tmp_path, monkeypatch, content
 ):
-    config = tmp_path / "config.toml"
+    config = root_file(tmp_path, "config.toml")
     config.write_text(content)
     watcher, counts = _watcher(monkeypatch, tmp_path, validate_defaults=True)
     first = asyncio.run(watcher.refresh())

@@ -13,6 +13,8 @@ from toolang.catalog import templates
 from toolang.catalog.cap import AuthoredCaps, CapFile
 from toolang.common.layout import place_edit_lock_path
 
+from tests.support.layout import root_file
+
 
 runner = CliRunner()
 
@@ -240,7 +242,7 @@ def test_cap_location_query_uses_the_same_root_in_allow_and_inspection(
     skill.parent.mkdir(parents=True)
     skill.write_text("---\nname: reviewer\ndescription: Review changes\n---\nReview.\n")
     expression = f'*[location="{skill}"]'
-    (tmp_path / "config.toml").write_text(
+    (root_file(tmp_path, "config.toml")).write_text(
         f"[allow]\nskills = [{json.dumps(expression)}]\n"
     )
     result = runner.invoke(

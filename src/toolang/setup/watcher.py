@@ -14,6 +14,7 @@ from toolang.base.protocols.model import ModelAdapter, ModelCatalog
 from toolang.base.types.model import ModelCatalogSnapshot, ModelOverride
 from toolang.base.types.policy import AgentCeiling, RunDefaults, RunLimits
 from toolang.common.layout import AgentLayout
+from toolang.common.watching import directory_changes
 from toolang.common.progress import ProgressSink
 from .progress import setup_progress
 from .teaming import TeamingSetup, resolve_teaming_setup
@@ -416,14 +417,20 @@ class SetupWatcher:
 
         if self._setup is None:
             await self.refresh()
-        interval_sec = max(interval_ms, 50.0) / 1_000
-        while not stop_signal.is_set():
-            try:
-                await asyncio.wait_for(stop_signal.wait(), timeout=interval_sec)
-            except TimeoutError:
-                pass
-            if stop_signal.is_set():
-                break
+
+        def directories() -> tuple[Path, ...]:
+            paths = {
+                self.layout.agent_root,
+                self.layout.agent_home,
+                self.layout.root_config.parent,
+            }
+            if self._model_catalog_override is not None:
+                paths.add(self._model_catalog_override.parent)
+            return tuple(sorted(path for path in paths if path.is_dir()))
+
+        async for _ in directory_changes(
+            directories, stop_signal=stop_signal, interval_ms=interval_ms
+        ):
             previous = self.current()
             current = await self.refresh()
             if current is not previous:

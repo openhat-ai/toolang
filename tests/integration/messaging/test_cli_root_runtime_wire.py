@@ -29,6 +29,8 @@ from toolang.teaming.backend.valkey.keys import Keys
 from toolang.teaming.client import HubClient
 from toolang.teaming.schemas import HubConnection, Message, stream_id
 
+from tests.support.layout import root_file
+
 pytestmark = pytest.mark.live_valkey
 
 
@@ -163,7 +165,7 @@ def test_cli_root_selection_honors_flags_environment_default_and_aliases(
     ]
     for root in roots:
         root.mkdir(parents=True)
-        (root / "config.toml").write_text(f'[teaming]\nhub = "{endpoint}"\n')
+        (root_file(root, "config.toml")).write_text(f'[teaming]\nhub = "{endpoint}"\n')
     alias = tmp_path / "alias"
     alias.symlink_to(roots[0], target_is_directory=True)
     base = [sys.executable, "-m", "toolang.cli.toolang.main"]
@@ -267,7 +269,7 @@ def test_cli_same_name_agents_reply_in_their_root_and_recover_independently(
         (home / "agent.too").write_text(
             "agic talk(_: Json):\n  recall = none\n  context = none\n  user: {{_}}\nflow local:\n  let result = Done\n"
         )
-        (root / "config.toml").write_text(
+        (root_file(root, "config.toml")).write_text(
             f'[teaming]\nhub = "{endpoint}"\n[model]\nref = "ollama/test-ollama:latest"\n[allow]\nmodels = ["ollama/*"]\ntools = ["*"]\n'
         )
         (root / ".env").write_text(f"OLLAMA_HOST=http://127.0.0.1:{reply_model}\n")

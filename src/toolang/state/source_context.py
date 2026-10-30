@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import cast
 
 from toolang.common.config_runtime import ConfigOrigins
+from toolang.common.config_sources import config_origins
 from toolang.common.layout import AgentLayout
 
 from .cache import layer_revision_dir, load_agent_revisions, load_home_layer
@@ -21,10 +22,8 @@ def source_config_context(layout: AgentLayout) -> ConfigOrigins | None:
     later canonical identity published by the host after a symlink is retargeted.
     Execution bindings remain frozen and will reject that newly bound source.
     """
-    if layout.runtime_config is None:
-        return None
-    context = layout.runtime_config.source_context
-    if not context.origins:
+    context = config_origins(layout)
+    if not context.origins or not context.captured:
         return context
 
     def declarations(path: Path, *, root: bool) -> Mapping[str, object]:

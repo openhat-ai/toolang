@@ -14,6 +14,8 @@ from toolang.common.environment import (
 from toolang.common.flatname import encode_flatname
 from toolang.common.layout import AgentLayout
 
+from tests.support.layout import root_file
+
 
 def test_default_environment_names_are_alphabetical():
     assert DEFAULT_KEEP == tuple(sorted(DEFAULT_KEEP))
@@ -78,7 +80,7 @@ def test_root_without_file_retains_shell_and_agent_selects_one_provider(tmp_path
 def test_guest_receives_only_pick_or_explicit_bindings(
     tmp_path, content, pick, expected
 ):
-    (tmp_path / "config.toml").write_text(
+    (root_file(tmp_path, "config.toml")).write_text(
         f'[env]\nkeep = ["HOME", "CUSTOM", "OPENAI_API_KEY"]\npick = [{pick}]\n'
     )
     if content is not None:
@@ -366,7 +368,7 @@ def test_uninspectable_environment_file_fails_instead_of_using_automatic_policy(
 
 
 def test_configured_lists_replace_defaults_and_skip_blank_values(tmp_path):
-    (tmp_path / "config.toml").write_text(
+    (root_file(tmp_path, "config.toml")).write_text(
         '[env]\nkeep=[]\npick=["EMPTY", "BLANK", "CUSTOM", "OTHER"]\n'
     )
     root = resolve_root_environment(
@@ -400,7 +402,7 @@ def test_configured_lists_replace_defaults_and_skip_blank_values(tmp_path):
 )
 def test_invalid_configuration_never_echoes_values(tmp_path, config):
     with pytest.raises(ValueError) as error:
-        EnvironmentPolicy.from_config(config, tmp_path / "config.toml")
+        EnvironmentPolicy.from_config(config, root_file(tmp_path, "config.toml"))
     assert "do-not-print" not in str(error.value)
 
 

@@ -100,7 +100,7 @@ def test_busy_script_and_rerun_cannot_change_the_current_owner(source_home, caps
     assert main([f"{source}@", "main", "--quiet", "released"]) == 0
 
 
-def test_info_does_not_reproject_inputs_or_renew_an_owner(source_home, monkeypatch):
+def test_info_does_not_fetch_inputs_or_renew_an_owner(source_home, monkeypatch):
     from toolang.up import source as sources
 
     source, root = source_home
@@ -110,8 +110,8 @@ def test_info_does_not_reproject_inputs_or_renew_an_owner(source_home, monkeypat
         before = read_instance(home.runtime_status)
         monkeypatch.setattr(
             sources,
-            "_sync_roaming_project",
-            lambda *_args: pytest.fail("info reprojected active inputs"),
+            "materialize_roaming_program",
+            lambda *_args, **_kwargs: pytest.fail("info fetched active inputs"),
         )
         assert main(["info", f"{source}@"]) == 0
         assert read_instance(home.runtime_status) == before
@@ -174,7 +174,7 @@ def test_concurrent_first_info_allocates_only_one_home(source_home):
             stdout, stderr = worker.communicate(timeout=20)
             assert worker.returncode == 0, (stdout, stderr)
         (home,) = retained_roaming(source, toolang_root=root)
-        assert home.program.resolve() == source
+        assert home.program.samefile(source)
         assert not home.run_store.exists()
         assert not list((root / ".runtime" / "active").glob("*/info.json"))
     finally:

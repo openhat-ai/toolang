@@ -865,7 +865,7 @@ def test_independent_files_can_be_saved_before_composition_is_valid(context):
 
 
 @pytest.mark.parametrize("source_name", ["parrot.too", " parrot .too"])
-def test_roaming_main_preserves_canonical_link_and_source_mode(tmp_path, source_name):
+def test_roaming_atomic_main_edit_keeps_original_source_and_mode(tmp_path, source_name):
     from toolang.up.source import materialize_roaming_program
 
     source = tmp_path / source_name
@@ -890,8 +890,9 @@ def test_roaming_main_preserves_canonical_link_and_source_mode(tmp_path, source_
     synced = invoke(context, "sync")
     assert synced.error is None
     assert accepted_receipt(result.output) in synced.output["files"]
-    assert layout.program.is_symlink()
-    assert sha256(source.read_bytes()).hexdigest() == result.output["digest"]
+    assert not layout.program.is_symlink()
+    assert sha256(layout.program.read_bytes()).hexdigest() == result.output["digest"]
+    assert source.read_text() == "agic:\n  Original.\n"
     assert source.stat().st_mode & 0o777 == 0o755
     assert layout.home_edit_lock.exists()
     assert not (layout.home / ".project.lock").exists()
@@ -1003,6 +1004,7 @@ def test_sync_captures_raw_config_shadowed_inputs_and_assets(context):
     prompt = context.layout.place / "prompts/same.md"
     prompt.parent.mkdir()
     prompt.write_text("Root prompt.")
+    context.layout.place_config.parent.mkdir(parents=True, exist_ok=True)
     context.layout.place_config.write_bytes(
         b'# Root comment\r\n[workspaces]\r\nignored = "."\r\n'
     )

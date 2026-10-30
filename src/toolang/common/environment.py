@@ -19,7 +19,7 @@ from dotenv.parser import parse_stream
 
 from .config_sources import read_config
 from .flatname import encode_flatname
-from .layout import AgentLayout
+from .layout import AgentLayout, root_config_path
 
 DEFAULT_KEEP = (
     "COLORTERM",
@@ -227,7 +227,7 @@ def resolve_root_environment(
 ) -> ResolvedEnvironment:
     root = root.expanduser().resolve()
     policy = EnvironmentPolicy.from_config(
-        read_config(root / "config.toml"), root / "config.toml"
+        read_config(root_config_path(root)), root_config_path(root)
     )
     source = root / ".env"
     if _exists(source):

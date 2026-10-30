@@ -16,6 +16,8 @@ from toolang.common.github import GitHubRef
 from toolang.setup import tools as setup_tools
 from toolang.up import source as sources
 
+from tests.support.layout import root_file
+
 
 @pytest.fixture
 def shell_environment(monkeypatch, tmp_path):
@@ -270,7 +272,9 @@ def test_guest_launch_uses_common_dotenv_priority_and_preserves_native_environme
 
     root = tmp_path / "root"
     root.mkdir()
-    (root / "config.toml").write_text('[env]\nkeep=[]\npick=["OPENAI_API_KEY"]\n')
+    (root_file(root, "config.toml")).write_text(
+        '[env]\nkeep=[]\npick=["OPENAI_API_KEY"]\n'
+    )
     if placement == "resident":
         layout = AgentLayout.resident(root, "alice")
     elif placement == "roaming":
@@ -390,7 +394,7 @@ def test_host_serve_reduces_environment_with_an_authored_home_dotenv(
 
     root = tmp_path / "root"
     LocalAgents(root / "agents").create("alice", content="")
-    (root / "config.toml").write_text('[env]\nkeep=["PATH", "HOME"]\n')
+    (root_file(root, "config.toml")).write_text('[env]\nkeep=["PATH", "HOME"]\n')
     (root / "agents/alice/.env").write_text("ADMITTED=home-value\n")
     if root_policy is not None:
         (root / ".alice.env").write_text(root_policy)
@@ -445,7 +449,7 @@ def test_host_serve_preserves_an_explicit_or_absent_path(
 
     root = tmp_path / "root"
     LocalAgents(root / "agents").create("alice", content="")
-    (root / "config.toml").write_text('[env]\nkeep=["HOME"]\n')
+    (root_file(root, "config.toml")).write_text('[env]\nkeep=["HOME"]\n')
     (root / ".alice.env").write_text("" if path is None else f"PATH={path}\n")
     observed = []
 

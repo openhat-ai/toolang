@@ -7,6 +7,7 @@ from pathlib import Path
 import tomllib
 from typing import cast
 
+from toolang.common.layout import root_config_path
 from toolang.common.config_sources import ConfigSource
 
 
@@ -27,7 +28,7 @@ def load_config_layers(
     """Load root and optional agent configuration layers."""
 
     return (
-        load_config(root / "config.toml"),
+        load_config(root_config_path(root)),
         load_config(root / "agents" / agent_name / "config.toml") if agent_name else {},
     )
 

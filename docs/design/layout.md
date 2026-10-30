@@ -29,8 +29,9 @@ Current root layout:
 
 ```text
 ${TOOLANG_ROOT}/
-  config.toml
-  catalog.json                      # Optional root catalog
+  config/
+    config.toml
+    catalog.json                    # Optional root catalog
   psyches/
   skills/
   services/
@@ -106,7 +107,7 @@ Different roots have separate root-code directories even for the same source and
 Previous layouts and registry directories remain untouched and are not searched.
 Temporary directory cleanup can remove its state and remembered settings. The cached
 remote `agent.too` is refetched after one hour. Its source-owned
-`agent.source.json` cache receipt records the acquired ref and byte digest;
+`source.json` cache receipt records the acquired ref and byte digest;
 State captures the same Program and provenance. Roaming instances share State, Setup inputs, and lab under `DIR/.toolang`,
 including across selected Toolang roots; runtime records/history remain independent. Host scripts serve the shared Agent API beside
 their foreground workload on one event loop.
@@ -138,20 +139,21 @@ Key paths:
 
 ## Agent Placement
 
-`AgentLayout` derives placement paths. In the table, `R` is the selected host ROOT,
-`G` is the configured Docker root (default `/root/.toolang`), and `DIR` is the
+`AgentLayout` derives placement paths. In the table, `ROOT` is the selected host Toolang root,
+`GR` is the configured guest root (default `/root/.toolang`), and `DIR` is the
 canonical roaming source directory. `R8`, `P10`, and `P19` denote complete codes.
 
 | Placement | Host agent root | Host runtime root | Guest root |
 | --- | --- | --- | --- |
-| Resident | `R` | `R` | `G` |
-| Visiting | `/tmp/toolang/<R8>/<P10>` | `/tmp/toolang/<R8>/<P10>` | `G` |
-| Roaming | `DIR/.toolang` | `DIR/.toolang/<R8>/<P19>` | `G` |
+| Resident | `ROOT` | `ROOT` | `GR` |
+| Visiting | `/tmp/toolang/R8/P10` | `/tmp/toolang/R8/P10` | `GR` |
+| Roaming | `DIR/.toolang` | `DIR/.toolang/R8/P19` | `GR` |
 
 Each Docker guest hosts one agent. Agent home is `AGENT_ROOT/agents/NAME` and
 lab is `AGENT_ROOT/workspaces/NAME/lab`; guest shared and runtime roots both map
-to `G`, with the selected instance `.runtime` mounted separately. Other host workspaces
-may live anywhere; their guest targets are `G/workspaces/NAME/WORKSPACE`.
+to `GR`, with the selected instance `.runtime` mounted separately in every placement.
+Guest agent home (`GH`) is `GR/agents/NAME`. Other host workspaces
+may live anywhere; their guest targets are `GR/workspaces/NAME/WORKSPACE`.
 Roaming agent home does not depend on exposing its source directory. The guest retains
 the original placement and full address even though its physical agent and runtime roots
 coincide. [Hosting](hosting.md#docker-filesystem) defines the mounts.
@@ -161,17 +163,22 @@ Roaming shared paths retain the ordinary State layout:
 
 ```text
 DIR/.toolang/
-  config.toml
+  config/config.toml                 # Hardlink to the nearest toolang.toml
+  config/catalog.json                # Hardlink to the selected catalog, if any
+  config/source.json                 # Shared configuration/catalog origins
   .state/root/v24/
-  agents/NAME/agent.too               # Link to the canonical local Program
+  agents/NAME/agent.too               # Hardlink to FILE.too
+  agents/NAME/source.json             # Program ownership, origin, and digest
   agents/NAME/.state/home/v24/
   agents/NAME/.state/agent/v24/
   workspaces/NAME/lab/
   R8/P19/agents/NAME/.runtime/        # Independent instance records/control
 ```
 
-Old per-P19 State and labs are ignored without migration or deletion.
 Preparation and exact history loads use shared State; new runs use the shared lab.
+Startup fetch refreshes hardlinks; watchers read only this resolved layout.
+An upstream atomic replacement becomes visible on the next fetch. In-place writes
+share the linked inode. No previous layout is searched or migrated.
 
 ## Setup Data
 
@@ -212,11 +219,12 @@ For example, the guest view for a roaming Docker launch is:
   "home": "/root/.toolang/agents/aid",
   "launch": "<launch-id>",
   "location": "guest",
-  "sandbox": "docker:python:3.13-slim"
+  "sandbox": "docker:python:3.13-slim",
+  "source": "/root/.toolang/agents/aid/agent.too"
 }
 ```
 
-The guest receives its read-only view at `ROOT/.runtime/active/NAME/`; it writes
+The guest receives its read-only view at `GR/.runtime/active/NAME/`; it writes
 status through the separately mounted runtime directory. The host removes the address directory
 only after resource release and generation checks. Registration enables active
 discovery; removing it does not delete history or prove process death.
@@ -285,13 +293,11 @@ Authored scopes and derived State use locks in their existing `.state` directori
 Edit locks first appear on a mutation attempt, including one that fails or makes
 no content change. Read-only operations never create edit locks or their parent
 directories: they acquire an existing guard, or read optimistically and retry
-under the guard if the first writer creates it during the read. An unchanged
-roaming configuration projection also leaves an absent edit lock absent.
-Shared roaming `toolang.toml` edits use `<srcdir>/.toolang/.state/root/edit.lock`; projected
-agent-root configuration uses `AGENT_ROOT/.state/root/edit.lock`. Release edit locks before refreshing
-State. The watcher uses source-change detection independently of edit locks.
-Roaming projection verifies its root inputs again after releasing the projection guard
-and retries changed inputs, up to three attempts. Chore inspection reads inline
+under the guard if the first writer creates it during the read.
+Roaming startup fetch serializes hardlink and receipt updates under the shared
+root edit lock. Release edit locks before refreshing State. Watchers observe
+placement-local sources independently of edit locks and never fetch upstream inputs.
+Chore inspection reads inline
 and file definitions together. API patches hold edit across winner checks and
 read/modify/write; CLI saves/deletes recheck the winner under edit through commit.
 The interactive editor runs outside the guard.
@@ -359,7 +365,7 @@ owns path capture; [Hosting](hosting.md) owns guest mounts.
 
 Durable authored state lives in:
 
-- `AGENT_ROOT/config.toml`
+- `AGENT_ROOT/config/config.toml`
 - agent-root cap directories
 - `AGENT_HOME/config.toml`
 - `AGENT_HOME/agent.too`

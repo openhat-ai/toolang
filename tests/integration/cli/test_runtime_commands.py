@@ -26,6 +26,8 @@ from toolang.up import sandbox as sandbox_runtime
 from toolang.up import server as agent_server
 from toolang.up.server import ServeSpec
 
+from tests.support.layout import root_file
+
 runner = CliRunner()
 
 
@@ -343,7 +345,7 @@ def test_run_resolves_sandbox_inputs_and_runs_in_foreground(
     root = tmp_path / "toolang"
     layout = _create_agent(root)
     model_catalog = tmp_path / "models.json"
-    (root / "config.toml").write_text(
+    (root_file(root, "config.toml")).write_text(
         '[limit]\ntokens = 1000\ncost = "5"\n',
         encoding="utf-8",
     )

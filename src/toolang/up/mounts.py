@@ -12,6 +12,7 @@ if TYPE_CHECKING:
     from toolang.plugin.catalogs.models_dev.path import ModelCatalogSelection
 
 from toolang.base.types.sandbox import SandboxMount
+from toolang.state.source import observe_root_source, observe_home_source
 from toolang.catalog.types import CAP_DIRECTORY_NAMES
 from toolang.common.accounts import current_username
 from toolang.common.layout import (
@@ -19,28 +20,9 @@ from toolang.common.layout import (
     IMPLICIT_WORKSPACE_NAME,
     ensure_scratch_workspace,
 )
-from toolang.state.source import observe_home_source, observe_root_source
 from toolang.state.config import parse_config, root_workspace_declarations
-from toolang.common.config_sources import PROJECTION_KEY, catalog_config, resolve_path
+from toolang.common.config_sources import config_origins, catalog_config, resolve_path
 from toolang.common.config_runtime import CONFIG_PATCH_ENV
-
-
-def mapped_path(path: Path, mounts: Sequence[SandboxMount]) -> Path | None:
-    """Reuse the most specific existing file or directory mapping."""
-    path = path.resolve()
-    matches = [
-        mount
-        for mount in mounts
-        if path == mount.local_path.resolve()
-        or (
-            mount.local_path.is_dir()
-            and path.is_relative_to(mount.local_path.resolve())
-        )
-    ]
-    if not matches:
-        return None
-    mount = max(matches, key=lambda item: len(item.local_path.resolve().parts))
-    return mount.hosted_path / path.relative_to(mount.local_path.resolve())
 
 
 def prepare_catalog_mount(
@@ -55,64 +37,13 @@ def prepare_place_mounts(
     local_place: Path,
     hosted_place: Path,
 ) -> tuple[SandboxMount, ...]:
-    """Prepare authored place inputs and their explicit hosted mounts."""
-
-    config_path = local_place / "config.toml"
-    config_path.parent.mkdir(parents=True, exist_ok=True)
-    if not config_path.exists() and not config_path.is_symlink():
-        config_path.touch(exist_ok=True)
-
-    mounts = [
-        SandboxMount(
-            local_path=config_path,
-            hosted_path=hosted_place / "config.toml",
-            read_only=True,
-        )
-    ]
-    catalog_path = local_place / "catalog.json"
-    if catalog_path.is_file():
-        mounts.append(
-            SandboxMount(
-                local_path=catalog_path.resolve(strict=True),
-                hosted_path=hosted_place / "catalog.json",
-                read_only=True,
-            )
-        )
-    for directory_name in (".state", *CAP_DIRECTORY_NAMES):
-        local_path = local_place / directory_name
-        local_path.mkdir(parents=True, exist_ok=True)
-        mounts.append(
-            SandboxMount(
-                local_path=local_path,
-                hosted_path=hosted_place / directory_name,
-            )
-        )
+    """Mount mutable root inputs by directory, keeping their anchors stable."""
+    mounts = []
+    for name in ("config", ".state/root", *CAP_DIRECTORY_NAMES):
+        source = local_place / name
+        source.mkdir(parents=True, exist_ok=True)
+        mounts.append(SandboxMount(source, hosted_place / name))
     return tuple(mounts)
-
-
-def prepare_linked_state_source_mounts(
-    local_place: Path,
-    agent_name: str,
-    hosted_place: Path,
-    *,
-    include_home: bool = True,
-) -> tuple[SandboxMount, ...]:
-    """Mount every symbolic-linked State source at its logical guest path."""
-
-    hosted_home = hosted_place / "agents" / agent_name
-    observations = ((observe_root_source(local_place), hosted_place),)
-    if include_home:
-        observations += ((observe_home_source(local_place, agent_name), hosted_home),)
-    return tuple(
-        SandboxMount(
-            local_path=item.source.resolve(strict=True),
-            hosted_path=hosted_base / item.path,
-            read_only=True,
-        )
-        for observation, hosted_base in observations
-        for item in observation.files
-        if item.source.is_symlink()
-    )
 
 
 def prepare_workspace_mounts(
@@ -146,6 +77,55 @@ def prepare_workspace_mounts(
     return tuple(mounts), mapping
 
 
+def validate_source_mounts(layout: AgentLayout, mounts: Sequence[SandboxMount]) -> None:
+    """Reject source links whose targets would disappear in the guest view."""
+    directory_mounts = sorted(
+        (mount for mount in mounts if mount.local_path.is_dir()),
+        key=lambda mount: len(mount.hosted_path.parts),
+        reverse=True,
+    )
+    sources = (
+        *observe_root_source(layout.agent_root).files,
+        *observe_home_source(layout.agent_root, layout.name).files,
+    )
+    for entry in sources:
+        source = entry.source
+        if not source.is_symlink():
+            continue
+        owner = max(
+            (
+                mount
+                for mount in mounts
+                if mount.local_path.is_dir() and source.is_relative_to(mount.local_path)
+            ),
+            key=lambda mount: len(mount.local_path.parts),
+            default=None,
+        )
+        if owner is None:
+            raise ValueError(f"source symlink is outside guest mounts: {source}")
+        hosted = owner.hosted_path / source.relative_to(owner.local_path)
+        target = Path(os.readlink(source))
+        target = Path(
+            os.path.normpath(
+                str(target if target.is_absolute() else hosted.parent / target)
+            )
+        )
+        mounted = next(
+            (
+                mount
+                for mount in directory_mounts
+                if target.is_relative_to(mount.hosted_path)
+            ),
+            None,
+        )
+        if (
+            mounted is None
+            or (mounted.local_path / target.relative_to(mounted.hosted_path)).resolve()
+            != source.resolve()
+        ):
+            raise ValueError(f"source symlink target is unavailable in guest: {source}")
+
+
 def prepare_guest_environment(
     layout: AgentLayout,
     *,
@@ -153,8 +133,10 @@ def prepare_guest_environment(
     catalog: ModelCatalogSelection | None = None,
 ) -> dict[str, str]:
     """Capture source origins and execution corrections without rewriting sources."""
+    context = config_origins(layout)
     origins = {
-        "root": str(layout.place_config),
+        **{key: str(value) for key, value in context.origins.items()},
+        "root": str(context.origin("root", layout.place_config)),
         "home": str(layout.config),
         "toolang_root": str(layout.host_root),
     }
@@ -164,6 +146,7 @@ def prepare_guest_environment(
     for scope, path in (("root", layout.place_config), ("home", layout.config)):
         if not path.is_file():
             continue
+        directory = context.origin(scope, path).parent
         config = parse_config(path.read_bytes())
         workspaces = (
             root_workspace_declarations(config, layout.config_key)
@@ -176,8 +159,8 @@ def prepare_guest_environment(
         for name, value in cast(Mapping[str, object], workspaces).items():
             if not isinstance(value, str) or not value:
                 continue
-            canonical = resolve_path(value, path.parent)
-            reference = os.path.normpath(str(path.parent / value))
+            canonical = resolve_path(value, directory, context=context)
+            reference = os.path.normpath(str(directory / value))
             origins[reference] = str(canonical)
             mounted = mapping.get(name)
             if mounted is not None and mounted[0] == str(canonical):
@@ -189,13 +172,13 @@ def prepare_guest_environment(
             and configured_catalog["path"]
         ):
             value = str(configured_catalog["path"])
-            origins[os.path.normpath(str(path.parent / value))] = str(
-                resolve_path(value, path.parent)
+            origins[os.path.normpath(str(directory / value))] = str(
+                resolve_path(value, directory, context=context)
             )
         if corrected:
             overlays[scope] = {
                 "workspaces": {layout.config_key: corrected}
-                if scope == "root" and PROJECTION_KEY not in config
+                if scope == "root" and layout.config_key != ""
                 else corrected
             }
     return {
@@ -207,23 +190,3 @@ def prepare_guest_environment(
             }
         ),
     }
-
-
-def prepare_source_mounts(
-    local_place: Path,
-    agent_name: str,
-    hosted_place: Path,
-    *,
-    include_home: bool = True,
-) -> tuple[SandboxMount, ...]:
-    """Mount original State inputs without environment-specific byte changes."""
-    mounts = {
-        mount.hosted_path: mount
-        for mount in (
-            *prepare_place_mounts(local_place, hosted_place),
-            *prepare_linked_state_source_mounts(
-                local_place, agent_name, hosted_place, include_home=include_home
-            ),
-        )
-    }
-    return tuple(mounts.values())

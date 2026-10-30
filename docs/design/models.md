@@ -49,8 +49,12 @@ Toolang selects the catalog file in this order:
 1. command-level `--catalog PATH`, where supported;
 2. `TOOLANG_MODEL_CATALOG`;
 3. the active agent home `catalog.json`;
-4. `${TOOLANG_ROOT}/catalog.json`;
+4. `AGENT_ROOT/config/catalog.json`;
 5. the bundled flat catalog.
+
+Within each root/home scope, `plugin.model_catalog.models_dev.path` takes
+precedence over its implicit catalog. Roaming fetch stages the selected project
+catalog at `AGENT_ROOT/config/catalog.json`.
 
 A higher-priority file fully replaces lower-priority files. Toolang does not
 merge multiple static files or download catalog data during startup. Explicit

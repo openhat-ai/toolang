@@ -317,26 +317,28 @@ staging directory is cleaned manually.
 ## Docker filesystem
 
 [Layout](layout.md#agent-placement) defines host and guest agent and runtime roots.
-Let `R` be host Toolang root, `P` host agent root, `H` host agent home,
-`G` guest root, and `A` the complete address. `G` defaults to `/root/.toolang`; guest agent home is always
-`G/agents/NAME`, including roaming without a source-directory grant.
+Use `ROOT` for the host Toolang root, `AR` for agent root, `AH` for
+`AR/agents/NAME`, and `RR` for runtime root. In the guest, Toolang root,
+agent root, and runtime root all equal `GR` (default `/root/.toolang`);
+guest agent home is `GH = GR/agents/NAME`.
 
-| Host source | Guest target | Access |
+| Host source | Guest target | Access and purpose |
 | --- | --- | --- |
-| `RUNTIME_ROOT/agents/NAME/.runtime/` | `G/agents/NAME/.runtime/` | Read-write; instance data |
-| `H/` | `G/agents/NAME/` | Read-write; linked authored inputs receive read-only overlays |
-| `P/.state/` and cap directories | Same relative paths below `G/` | Read-write |
-| Each granted workspace directory | `G/workspaces/NAME/WORKSPACE/` | Read-write |
-| `R/.runtime/active/A/docker/L/active/` | `G/.runtime/active/NAME/` | Read-only |
-| `P/config.toml` | `G/config.toml` | Read-only; original bytes |
-| `P/catalog.json`, when automatically selected | `G/catalog.json` | Read-only |
+| `AH/` | `GH/` | Read-write; Program, home config/catalog, receipt, and State |
+| `RR/agents/NAME/.runtime/` | `GH/.runtime/` | Read-write; mounted after home in every placement |
+| `AR/config/` | `GR/config/` | Read-write; root config/catalog and shared source receipt |
+| `AR/.state/root/` | `GR/.state/root/` | Read-write; root revisions, current pointer, and locks |
+| `AR/{psyches,skills,services,prompts}/` | Same relative directories below `GR/` | Read-write; root authored capabilities |
+| `AR/workspaces/NAME/lab/` | `GR/workspaces/NAME/lab/` | Read-write; shared lab |
+| Each granted workspace directory | `GR/workspaces/NAME/WORKSPACE/` | Read-write; captured grants |
+| `ROOT/.runtime/active/ADDRESS/docker/L/active/` | `GR/.runtime/active/NAME/` | Read-only; private launch bootstrap |
 | Generated `active/guest.env` | Selected guest root dotenv policy path | Read-only; mode `0600` |
 
-Roaming mounts the selected instance runtime directory over
-`G/agents/NAME/.runtime`, separately from shared agent home. Lab is an ordinary
-separate mount from `P/workspaces/NAME/lab`. All workspace
-names are unique before mounting; nested and alias sources retain distinct named
-targets. Authored-input overlays cannot make a workspace grant read-only.
+Directory mounts expose atomic replacement of contained files. Mutable Program,
+config, and automatic catalog files have no file overlays. Startup rejects authored
+symlinks whose targets are unavailable through the selected directory mounts.
+All workspace names are unique before mounting; nested and alias sources retain
+distinct named targets.
 
 Host and guest read the same agent-root/home source bytes and share prepared State.
 Runtime corrections travel through `guest.env` to the selected root dotenv file
@@ -358,11 +360,10 @@ State writes. `guest.sh` bootstraps and executes arguments without rewriting opt
 The guest uses its own packaged catalog without a mount or override. Automatic
 agent-root and agent-home catalogs retain their owning scope. Independently selected
 catalogs, including an explicit selection of the default file, mount read-only
-at `G/.inputs/catalog.json`; only these need `TOOLANG_MODEL_CATALOG`.
-Automatic catalog choices are captured in `root/catalog.json` or
-`home/catalog.json` origin entries. Later files cannot replace that selection;
-a missing selected file rejects refresh. Changing the selected file or mounted
-workspace grants requires restart.
+at `GR/.inputs/catalog.json`; only these need `TOOLANG_MODEL_CATALOG`.
+Automatic root/home catalog selection follows the mounted directories, including
+file creation and removal. Explicit catalog selection and workspace mounts remain
+fixed for the launch; changing them requires restart.
 
 Assembly is split between [mount preparation](../../src/toolang/up/mounts.py),
 the [launch boundary](../../src/toolang/up/sandbox.py), and the
@@ -385,9 +386,6 @@ subshell; the parent retains the image environment and directly `exec`s the
 workload with its original arguments, container identity, and private bin path.
 Workload output is opened once before diagnostics are retired. Its opened file
 is marked `0600` and remains valid across log rotation.
-For a source-local roaming agent, Docker overlays linked `agent.too` and
-authored configuration targets as explicit read-only guest files so host symlinks do not
-become broken paths in the container.
 Successful installation suppresses ensurepip chatter, pip's container root-user
 warning, package lists, and uv progress bars; installer failure stderr remains
 available. Before execution, the guest checks that the installed CLI can start
@@ -574,7 +572,7 @@ separate: inactive host execution is embedded and script-created guests stop on 
 ## Hub process
 
 `too hub start`, `serve`, and `stop` control the selected root's local process.
-The server reads `[hub]` in `ROOT/config.toml`; bind port precedence is `--port`,
+The server reads `[hub]` in `ROOT/config/config.toml`; bind port precedence is `--port`,
 `TOOLANG_HUB_PORT`, `hub.port`, then `7001`. The host defaults to `127.0.0.1`.
 Changing the listener requires separately configuring client `teaming.hub`.
 

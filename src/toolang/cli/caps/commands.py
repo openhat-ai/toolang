@@ -16,7 +16,12 @@ from toolang.cli.common.parameters import TextType
 from toolang.cli.common.editor import edit_markdown
 from ...catalog import templates
 from ...catalog.errors import CatalogConflictError
-from ...common.layout import AgentLayout, home_edit_lock_path, place_edit_lock_path
+from ...common.layout import (
+    AgentLayout,
+    home_edit_lock_path,
+    place_edit_lock_path,
+    root_config_path,
+)
 from toolang.catalog import source as cap_source
 from toolang.catalog import cap as cap_store
 from toolang.catalog import config as cap_config
@@ -550,7 +555,9 @@ def _configured_caps(
     scope: MutableScope,
 ) -> cap_config.ConfiguredCaps:
     return cap_config.ConfiguredCaps(
-        _cap_directory(toolang_root, agent_name, scope) / "config.toml",
+        root_config_path(toolang_root)
+        if scope == "root"
+        else _cap_directory(toolang_root, agent_name, scope) / "config.toml",
         lock_path=_cap_edit_lock(toolang_root, agent_name, scope),
     )
 

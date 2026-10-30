@@ -259,12 +259,12 @@ partial file list.
 Delete removes exactly one file. Deleting SKILL.md leaves assets in place; deleting
 a chore preserves its checkpoint and does not cancel an existing Run.
 Root resources, external cap content, arbitrary paths, and directory
-operations are excluded. Symlinks are rejected except the canonical roaming
-`agent.too` link to its own original script; that link is preserved when editing.
-Linked config files are not writable through state.
+operations are excluded. Symlinks are rejected. Roaming source files are ordinary
+hardlinked entries: in-place writes share source data, while atomic tool updates
+replace the home entry independently of the original.
 
 All home file mutations use `.state/home/edit.lock`, shared with configured caps,
-workspaces, authored caps/chores, and roaming-home configuration projection.
+workspaces and authored caps/chores.
 `list/get` never create it: they use an existing lock, or read optimistically and
 retry under the lock if the first writer creates it during that read. Mutation
 attempts create it before digest/existence checks; failed or identical-content

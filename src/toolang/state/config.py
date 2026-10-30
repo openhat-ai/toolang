@@ -15,7 +15,7 @@ import tomlkit
 
 from toolang.catalog.types import CAP_DIR_BY_KIND, CAP_KINDS
 from toolang.common.errors import ToolangError
-from toolang.common.config_sources import PROJECTION_KEY, read_config, rebase_config
+from toolang.common.config_sources import read_config, rebase_config
 from toolang.common.config_runtime import ConfigOrigins
 from toolang.common.files import EditLock, atomic_write_text
 from toolang.common.policy import resolve_query_sentinels
@@ -178,7 +178,7 @@ def root_workspace_declarations(
         raise ValueError("root workspaces config must be a table")
     selected = (
         raw
-        if PROJECTION_KEY in config
+        if key == ""
         else cast(Mapping[str, object], raw).get(key, {})
         if key is not None
         else {}
@@ -196,6 +196,15 @@ def root_workspace_overrides(
     context: ConfigOrigins | None = None,
 ) -> dict[str, str]:
     """Select one stable identity without inheriting same-name foreign sources."""
+    if key == "" and context is not None:
+        program = context.origins.get("program")
+        origin = context.origins.get("root")
+        if (
+            program is not None
+            and origin is not None
+            and program.parent != origin.parent
+        ):
+            return {}
     selected = root_workspace_declarations(config, key)
     return configured_workspaces(
         rebase_config({"workspaces": selected}, directory, context=context)

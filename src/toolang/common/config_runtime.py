@@ -17,7 +17,7 @@ from .immutable import freeze_mapping, mutable_data
 CONFIG_PATCH_ENV = "TOOLANG_CONFIG_PATCH"
 LAUNCH_SCHEMA = 2
 _SCOPES = {"root", "home"}
-_FILE_ORIGINS = {"root/catalog.json", "home/catalog.json"}
+_FILE_ORIGINS = {"root/catalog.json", "home/catalog.json", "program"}
 _STATE_FIELDS = {
     "psyches",
     "skills",
@@ -139,6 +139,7 @@ class ConfigOrigins:
     """Source identities and path resolution, without execution configuration."""
 
     origins: Mapping[str, Path] = field(default_factory=dict)
+    captured: bool = True
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "origins", MappingProxyType(dict(self.origins)))
@@ -154,7 +155,7 @@ class ConfigOrigins:
         captured = self.origins.get(reference)
         if captured is not None:
             return captured
-        if self.origins:
+        if self.origins and self.captured:
             if value.startswith("~"):
                 raise ValueError("uncaptured source path requires a new launch")
             return Path(reference)

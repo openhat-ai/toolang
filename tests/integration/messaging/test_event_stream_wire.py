@@ -35,6 +35,8 @@ from toolang.teaming.exporter import EventExporter
 from toolang.teaming.stream_client import HubStreamState
 from toolang.up.hub import HubProcess
 
+from tests.support.layout import root_file
+
 pytestmark = pytest.mark.live_valkey
 
 
@@ -189,7 +191,7 @@ def test_agents_reconnect_through_hub_without_direct_backend_access(valkey, tmp_
 
     agents = {name: port() for name in ("alice", "bob")}
     hub_port = port()
-    (tmp_path / "config.toml").write_text(
+    (root_file(tmp_path, "config.toml")).write_text(
         f'[teaming]\nhuman = "owner"\nhub = "http://127.0.0.1:{hub_port}"\n[hub.backend]\nurl = "{valkey.url}"\n'
     )
     hub = HubProcess(tmp_path)

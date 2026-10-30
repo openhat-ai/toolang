@@ -18,7 +18,7 @@ from typer._click.exceptions import ClickException
 from ...catalog.agent import LocalAgents
 from ...common.errors import ToolangError
 from ...common.config import resolve_ui_base_url
-from ...common.layout import AgentLayout
+from ...common.layout import AgentLayout, root_config_path
 from ...common.environment import (
     ResolvedEnvironment,
     current_environment,
@@ -256,7 +256,7 @@ def resolve_root(
 def ui_base_url(*, environ: Mapping[str, str] | None = None) -> str:
     values = startup_environ(os.environ if environ is None else environ)
     root = resolve_root(None) if environ is None else resolve_root(None, environ=values)
-    config = load_config(root / "config.toml")
+    config = load_config(root_config_path(root))
     return resolve_ui_base_url(config, environ=values)
 
 

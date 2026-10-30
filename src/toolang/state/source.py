@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Literal
 
 from toolang.catalog.types import CAP_DIRECTORY_NAMES
 from toolang.common.config_runtime import ConfigOrigins
+from toolang.common.layout import root_config_path
 
 from ..lang.ast import AgicDecl, FlowDecl, Program
 from ..common.progress import ProgressSink, emit_progress
@@ -386,8 +387,23 @@ def build_source_manifest(
 
 def observe_root_source(place: Path) -> SourceObservation:
     """Observe shared config and independently authored capabilities."""
-    _require_source_shape(place / "config.toml", shape="file")
-    return observe_source(place, ("config.toml", *CAP_DIRECTORY_NAMES), isolate=True)
+    config = root_config_path(place)
+    _require_source_shape(config, shape="file")
+    observation = observe_source(place, CAP_DIRECTORY_NAMES, isolate=True)
+    if not config.is_file():
+        return observation
+    return replace(
+        observation,
+        files=tuple(
+            sorted(
+                (
+                    *observation.files,
+                    _observe_file(config, relative_path="config.toml"),
+                ),
+                key=lambda item: item.path,
+            )
+        ),
+    )
 
 
 def observe_home_source(
@@ -761,6 +777,11 @@ def _read_scope_sources(
                         entry.source,
                         category=category,
                         layer=layer,
+                        relative_path=(
+                            Path("agents") / agent_name / entry.path
+                        ).as_posix()
+                        if layer == "agent"
+                        else entry.path,
                         context=context,
                     )
                 )
@@ -821,8 +842,8 @@ def source_path_scope(
     relative_path = _relative_to_root(place, path)
     if relative_path is None:
         return None
-    if relative_path == Path("config.toml"):
-        return "root", relative_path.as_posix()
+    if relative_path == Path("config/config.toml"):
+        return "root", "config.toml"
     if relative_path.parts[:1] and relative_path.parts[0] in CAP_DIRECTORY_NAMES:
         return (
             ("root", relative_path.as_posix())
