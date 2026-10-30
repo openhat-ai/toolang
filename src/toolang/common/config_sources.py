@@ -14,7 +14,12 @@ from typing import TYPE_CHECKING, Literal, cast
 
 import tomlkit
 
-from .config_runtime import ConfigOrigins, RuntimeConfig
+from .config_runtime import (
+    ConfigOrigins,
+    RuntimeConfig,
+    parse_source_metadata,
+    current_runtime_config,
+)
 
 if TYPE_CHECKING:
     from .layout import AgentLayout
@@ -160,20 +165,25 @@ def script_sources(source: Path) -> tuple[ConfigSource, ...]:
     return tuple(result)
 
 
+def source_metadata(layout: AgentLayout) -> dict[str, object]:
+    if not layout.root_source_receipt.is_file():
+        return {}
+    data = json.loads(layout.root_source_receipt.read_bytes()).get("launch", {})
+    parse_source_metadata(data)
+    return cast(dict[str, object], data)
+
+
 def config_origins(layout: AgentLayout) -> ConfigOrigins:
     """Load placement-local provenance without opening upstream source files."""
-    origins = dict(layout.runtime_config.origins) if layout.runtime_config else {}
-    snapshots = dict(layout.runtime_config.snapshots) if layout.runtime_config else {}
-    launch_captured = bool(origins)
+    launch = source_metadata(layout)
+    context = parse_source_metadata(launch)
+    origins = dict(context.origins)
+    snapshots = dict(context.snapshots)
+    launch_captured = bool(launch)
     for path in (layout.source_receipt, layout.root_source_receipt):
         if not path.is_file():
             continue
         receipt = json.loads(path.read_bytes())
-        if path == layout.root_source_receipt and "launch" in receipt:
-            launch = RuntimeConfig.parse(json.dumps(receipt["launch"]))
-            origins.update(launch.origins)
-            snapshots.update(launch.snapshots)
-            launch_captured = True
         captured = receipt.get("origins", {})
         if not isinstance(captured, dict) or any(
             key not in {"root", "root/catalog.json", "program"}
@@ -194,7 +204,7 @@ def config_sources(
     layout: AgentLayout, *, include_agent: bool = True
 ) -> tuple[ConfigSource, ...]:
     """Load the same placement-local root/home configuration in every mode."""
-    runtime = layout.runtime_config or RuntimeConfig()
+    runtime = layout.runtime_config or current_runtime_config() or RuntimeConfig()
     context = config_origins(layout)
     paths = (
         ("root", layout.root_config),
@@ -204,7 +214,6 @@ def config_sources(
         ConfigSource(
             context.origin(scope, path),
             runtime.apply(
-                scope,
                 read_config(
                     path,
                     include_workspaces=scope == "home",
@@ -216,6 +225,11 @@ def config_sources(
         )
         for scope, path in paths
     )
+    if human := source_metadata(layout).get("human"):
+        root_config = sources[0].config
+        teaming = root_config.setdefault("teaming", {})
+        if isinstance(teaming, dict):
+            cast(dict[str, object], teaming).setdefault("human", human)
     for source in sources:
         if source.scope != "root" or layout.placement != "resident":
             _reject_local_environment(source.config, source.path)

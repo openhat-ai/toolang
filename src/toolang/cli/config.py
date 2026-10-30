@@ -17,9 +17,14 @@ TITLE_KINDS = frozenset({"chat", "talk", "top", "serve", "run", "rerun", "retry"
 def load_config(path: Path) -> dict[str, object]:
     """Load one TOML configuration file when it exists."""
 
-    if not path.is_file():
-        return {}
-    return tomllib.loads(path.read_text(encoding="utf-8"))
+    import os
+    from toolang.common.config_runtime import CONFIG_PATCH_ENV, RuntimeConfig
+    from toolang.cli.common.context import startup_environ
+
+    config = tomllib.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+    return RuntimeConfig.parse(startup_environ(os.environ).get(CONFIG_PATCH_ENV)).apply(
+        config
+    )
 
 
 def load_config_layers(

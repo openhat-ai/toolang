@@ -230,16 +230,13 @@ def test_guest_workspace_roots_require_matching_captured_mounts(
     lab_source = layout.lab
     guest_lab = Path("/srv/toolang/workspaces/alice/lab")
     from dataclasses import replace
-    from toolang.common.config_runtime import RuntimeConfig, WorkspaceBinding
+    from toolang.common.config_runtime import RuntimeConfig
 
+    layout.agent_home.mkdir(parents=True)
+    layout.config.write_text(f'[workspaces]\nrepo = "{repo}"\n')
+    guest_lab = layout.lab
     layout = replace(
-        layout,
-        runtime_config=RuntimeConfig(
-            workspaces={
-                "repo": WorkspaceBinding(repo, guest),
-                "lab": WorkspaceBinding(lab_source, guest_lab),
-            }
-        ),
+        layout, runtime_config=RuntimeConfig({"workspaces": {"repo": str(guest)}})
     )
     setup = AgentSetup(
         layout=layout,
@@ -277,16 +274,13 @@ def test_guest_workspace_roots_include_configured_tmp_mount(
     lab_guest = Path("/srv/toolang/workspaces/alice/lab")
     tmp_guest = Path("/srv/toolang/workspaces/alice/tmp")
     from dataclasses import replace
-    from toolang.common.config_runtime import RuntimeConfig, WorkspaceBinding
+    from toolang.common.config_runtime import RuntimeConfig
 
+    layout.agent_home.mkdir(parents=True)
+    layout.config.write_text(f'[workspaces]\ntmp = "{configured}"\n')
+    lab_guest = layout.lab
     layout = replace(
-        layout,
-        runtime_config=RuntimeConfig(
-            workspaces={
-                "lab": WorkspaceBinding(layout.lab, lab_guest),
-                "tmp": WorkspaceBinding(configured, tmp_guest),
-            }
-        ),
+        layout, runtime_config=RuntimeConfig({"workspaces": {"tmp": str(tmp_guest)}})
     )
     setup = AgentSetup(
         layout=layout,
@@ -314,15 +308,13 @@ def test_guest_layout_keeps_host_source_identifiers_for_workspace_config(
         AgentEnvironment.capture(guest, sandbox="host"),
         sandbox="docker",
         workspace_location="guest",
-        workspace_mounts={
-            "lab": (host.lab, guest.lab),
-            "repo": (repo, guest_repo),
-        },
+        workspace_sources={"repo": str(repo)},
+        workspace_paths={"repo": guest_repo},
     )
     setup = AgentSetup(layout=guest, envs={}, environment=environment)
     authored = {"repo": str(repo)}
     assert setup.workspace_grants(authored) == {
-        "lab": str(host.lab),
+        "lab": str(guest.lab),
         "repo": str(repo),
     }
     assert setup.workspace_roots(authored) == {
@@ -378,4 +370,4 @@ def test_host_environment_cannot_be_spoofed_by_authored_controls(tmp_path, monke
         AgentLayout.resident(tmp_path, "alice"), sandbox="host"
     )
     assert environment.workspace_location == "host"
-    assert not environment.workspace_mounts
+    assert not environment.workspace_paths

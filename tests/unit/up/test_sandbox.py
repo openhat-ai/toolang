@@ -32,12 +32,12 @@ from tests.support.layout import root_file
 
 
 def captured_workspace_mounts(request):
-    assert "TOOLANG_WORKSPACE_MOUNTS" not in request.envs
-    values = json.loads(
-        request.command[request.command.index("--workspace-bindings") + 1]
-    )
+    assert "--workspace-bindings" not in request.command
+    directory = request.hosted_place / "workspaces" / request.agent_name
     return {
-        name: [binding["source"], binding["path"]] for name, binding in values.items()
+        mount.hosted_path.name: [str(mount.local_path), str(mount.hosted_path)]
+        for mount in request.mounts
+        if mount.hosted_path.parent == directory
     }
 
 
@@ -1616,7 +1616,6 @@ def test_guest_catalog_hidden_by_runtime_mount_uses_its_selected_host_file(
 def test_guest_argv_preserves_cli_workspace_order_and_state_identity(
     tmp_path, monkeypatch
 ):
-    from toolang.common.config_runtime import parse_workspace_bindings
 
     implementation = FakeSandbox()
     monkeypatch.setattr(
@@ -1640,23 +1639,20 @@ def test_guest_argv_preserves_cli_workspace_order_and_state_identity(
     prepared = implementation.calls[0]
     assert isinstance(prepared, tuple)
     request = cast(SandboxRequest, prepared[2])
-    records = parse_workspace_bindings(
-        request.command[request.command.index("--workspace-bindings") + 1]
-    )
-    captured = {
-        name: str(binding.source)
-        for name, binding in records.items()
-        if binding.temporary
-    }
-    assert list(captured.items()) == list(additions.items())
-    before = state_prepare.load_agent_state(spec.serve.layout)
+    values = [
+        request.command[i + 1]
+        for i, value in enumerate(request.command)
+        if value == "--workspace"
+    ]
+    assert values == [f"{name}=/runtime/workspaces/alice/{name}" for name in additions]
+    assert "--workspace-bindings" not in request.command
+    assert request.command[request.command.index("--workdir") + 1] == "aa://"
+    current = state_prepare.load_agent_state(spec.serve.layout)
+    assert not current.workspace_additions
     assert (
-        state_prepare.prepare_agent_state(
-            spec.serve.layout, workspace_additions=captured
-        ).revision
-        == before.revision
+        current.revision
+        == state_prepare.prepare_agent_state(spec.serve.layout).revision
     )
-    assert request.command[request.command.index("--initial-workdir") + 1] == "aa://"
 
 
 def test_guest_rejects_temporary_workspace_lost_before_mounting(tmp_path, monkeypatch):
@@ -1680,7 +1676,7 @@ def test_guest_rejects_temporary_workspace_lost_before_mounting(tmp_path, monkey
 def test_guest_workspace_config_retains_its_host_origin(tmp_path, monkeypatch, linked):
     import tomllib
     from toolang.common.config_sources import rebase_config
-    from toolang.common.config_runtime import RuntimeConfig, parse_workspace_bindings
+    from toolang.common.config_runtime import parse_source_metadata
 
     implementation = FakeSandbox()
     monkeypatch.setattr(
@@ -1719,18 +1715,11 @@ def test_guest_workspace_config_retains_its_host_origin(tmp_path, monkeypatch, l
     content = (
         config_mount.local_path if config_mount else spec.serve.layout.config
     ).read_text()
-    runtime = RuntimeConfig.parse(
-        request.envs["TOOLANG_CONFIG_PATCH"],
-        workspaces=parse_workspace_bindings(
-            request.command[request.command.index("--workspace-bindings") + 1]
-        ),
-    )
+    context = parse_source_metadata(request.source_metadata)
     guest_config = rebase_config(
         tomllib.loads(content),
-        runtime.source_context.origin(
-            "home", request.hosted_home / "config.toml"
-        ).parent,
-        context=runtime.source_context,
+        context.origin("home", request.hosted_home / "config.toml").parent,
+        context=context,
     )
     assert len({mount.hosted_path for mount in request.mounts}) == len(request.mounts)
     assert (
@@ -2007,3 +1996,38 @@ def test_adapter_assigned_port_is_the_compatible_effective_port(tmp_path, monkey
         require_compatible(spec.serve.layout, {"port": 9184})
     finally:
         asyncio.run(sandbox.stop(spec.serve.layout))
+
+
+def test_guest_patch_mounts_the_hosts_effective_configured_workspace(
+    tmp_path, monkeypatch
+):
+    from toolang.common.config_runtime import RuntimeConfig
+
+    implementation = FakeSandbox()
+    monkeypatch.setattr(sandbox, "create_sandbox", lambda *_a, **_kw: implementation)
+
+    async def ready(*_a, **_kw):
+        return None
+
+    monkeypatch.setattr(sandbox, "_wait_ready", ready)
+    spec = _launch_spec(tmp_path)
+    original, overridden = tmp_path / "original", tmp_path / "overridden"
+    original.mkdir()
+    overridden.mkdir()
+    spec.serve.layout.config.write_text(f'[workspaces]\nrepo="{original}"\n')
+    layout = replace(
+        spec.serve.layout,
+        runtime_config=RuntimeConfig({"workspaces": {"repo": str(overridden)}}),
+    )
+    spec = replace(spec, serve=replace(spec.serve, layout=layout))
+    asyncio.run(sandbox.launch(spec))
+    prepared = implementation.calls[0]
+    assert isinstance(prepared, tuple)
+    request = cast(SandboxRequest, prepared[2])
+    assert (
+        SandboxMount(overridden, Path("/runtime/workspaces/alice/repo"))
+        in request.mounts
+    )
+    patch = json.loads(request.envs["TOOLANG_CONFIG_PATCH"])
+    assert patch == {"workspaces": {"repo": "/runtime/workspaces/alice/repo"}}
+    assert state_prepare.load_agent_state(layout).workspaces == {"repo": str(original)}

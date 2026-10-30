@@ -9,7 +9,6 @@ import pytest
 from toolang.common.config_runtime import (
     CONFIG_PATCH_ENV,
     RuntimeConfig,
-    WorkspaceBinding,
 )
 from toolang.common.layout import AgentLayout
 from toolang.state.prepare import prepare_agent_state, inspect_root_caps
@@ -18,16 +17,14 @@ from toolang.state.watcher import StateWatcher
 from toolang.up.mounts import prepare_place_mounts, prepare_guest_environment
 from toolang.up.source import materialize_roaming_program
 
-from tests.support.layout import root_file
+from tests.support.layout import root_file, capture_guest_source
 
 
 @pytest.mark.parametrize("present", [False, True])
-@pytest.mark.parametrize("receipt", [False, True])
 @pytest.mark.parametrize("corrupt_pointer", [False, True])
 def test_guest_config_snapshot_cannot_roll_back_shared_state(
-    tmp_path, present, receipt, corrupt_pointer
+    tmp_path, present, corrupt_pointer
 ):
-    import json
     import os
 
     host = AgentLayout.resident(tmp_path / "host", "alice")
@@ -45,17 +42,8 @@ def test_guest_config_snapshot_cannot_roll_back_shared_state(
     (guest_root / "agents").symlink_to(host.agent_root / "agents")
     patch = prepare_guest_environment(host, mapping={})[CONFIG_PATCH_ENV]
     guest = AgentLayout.resident(guest_root, "alice")
-    if receipt:
-        data = json.loads(patch)
-        guest.root_source_receipt.write_text(
-            json.dumps(
-                {
-                    "launch": {key: data[key] for key in ("origins", "snapshots")},
-                }
-            )
-        )
-    else:
-        guest = replace(guest, runtime_config=RuntimeConfig.parse(patch))
+    capture_guest_source(host, guest, state_revision=initial.revision)
+    guest = replace(guest, runtime_config=RuntimeConfig.parse(patch))
     accepted = prepare_agent_state(guest)
     assert accepted.revision == initial.revision
     watcher = StateWatcher(guest, initial_state=accepted)
@@ -122,7 +110,7 @@ def test_roaming_guest_ignores_ancestor_workspace_declarations(tmp_path, declara
     layout = materialize_roaming_program(source, toolang_root=tmp_path / "global")
     assert prepare_agent_state(layout).workspaces == {}
     patch = prepare_guest_environment(layout, mapping={})[CONFIG_PATCH_ENV]
-    assert "workspaces" not in RuntimeConfig.parse(patch).overlays.get("root", {})
+    assert "workspaces" not in RuntimeConfig.parse(patch).values
 
 
 def test_roaming_preserves_authored_home_and_ignores_global_agent_config(tmp_path):
@@ -228,13 +216,7 @@ def test_shared_state_stays_stable_across_host_and_guest(tmp_path, project, link
         for name, value in initial.workspaces.items()
     }
     patch = prepare_guest_environment(host, mapping=mapping)[CONFIG_PATCH_ENV]
-    runtime = RuntimeConfig.parse(
-        patch,
-        workspaces={
-            name: WorkspaceBinding(Path(source), Path(path))
-            for name, (source, path) in mapping.items()
-        },
-    )
+    runtime = RuntimeConfig.parse(patch)
     guest = replace(
         host,
         place=guest_place,
@@ -242,6 +224,7 @@ def test_shared_state_stays_stable_across_host_and_guest(tmp_path, project, link
         agent_root_path=guest_place,
         runtime_config=runtime,
     )
+    capture_guest_source(host, guest, state_revision=initial.revision)
     for _ in range(3):
         assert prepare_agent_state(guest).revision == initial.revision
         inspect_root_caps(host, kinds=set())
@@ -304,7 +287,6 @@ def test_guest_does_not_restore_stale_symlink_identity_after_host_publication(
         prepare_guest_environment(host, mapping={"repo": (str(first), str(target))})[
             CONFIG_PATCH_ENV
         ],
-        workspaces={"repo": WorkspaceBinding(first, target)},
     )
     guest = replace(
         host,
@@ -313,6 +295,7 @@ def test_guest_does_not_restore_stale_symlink_identity_after_host_publication(
         agent_root_path=guest_place,
         runtime_config=runtime,
     )
+    capture_guest_source(host, guest, state_revision=initial.revision)
     assert prepare_agent_state(guest).revision == initial.revision
     watcher = StateWatcher(guest, initial_state=initial)
     link.unlink()
@@ -352,9 +335,7 @@ def test_guest_catalog_selection_tracks_mounted_directory_inputs(tmp_path, kind)
     if kind == "home":
         (host.home / "catalog.json").write_text("{}")
     selected = resolve_model_catalog_selection(host)
-    patch = prepare_guest_environment(host, mapping={}, catalog=selected)[
-        CONFIG_PATCH_ENV
-    ]
+    patch = prepare_guest_environment(host, mapping={})[CONFIG_PATCH_ENV]
     guest = replace(host, runtime_config=RuntimeConfig.parse(patch))
     assert resolve_model_catalog_selection(guest).path == selected.path
     if kind == "home":

@@ -19,6 +19,11 @@ from ...catalog.agent import LocalAgents
 from ...common.errors import ToolangError
 from ...common.config import resolve_ui_base_url
 from ...common.layout import AgentLayout, root_config_path
+from ...common.config_runtime import (
+    CONFIG_PATCH_ENV,
+    RuntimeConfig,
+    runtime_config_scope,
+)
 from ...common.environment import (
     ResolvedEnvironment,
     current_environment,
@@ -41,6 +46,7 @@ if TYPE_CHECKING:
 _STARTUP_NAMES = frozenset(
     {
         "TOOLANG_MODEL_CATALOG",
+        CONFIG_PATCH_ENV,
         "TOOLANG_AGENT_PORT",
         "PY_LOG",
         "TOOLANG_UI_BASE_URL",
@@ -189,9 +195,13 @@ def context_layout(ctx: Context) -> AgentLayout:
         state.source = layout.source_path
         state.launch_id = launch_id
         state.prepared = state.instance_selected = True
-    if state.layout is not None:
-        return state.layout
-    return AgentLayout.resident(state.root, state.agent or require_prefix_agent(ctx))
+    layout = state.layout or AgentLayout.resident(
+        state.root, state.agent or require_prefix_agent(ctx)
+    )
+    raw = startup_environ(os.environ).get(CONFIG_PATCH_ENV)
+    if raw is not None:
+        layout = replace(layout, runtime_config=user_call(RuntimeConfig.parse, raw))
+    return layout
 
 
 def require_runtime_agent(ctx: Context, agent: str | None) -> str:
@@ -230,6 +240,7 @@ def prepare_agent(ctx: Context, *, progress: ProgressSink | None = None) -> Agen
             state.selector or "", toolang_root=state.root, progress=progress
         ),
         root=state.root,
+        runtime_config=layout.runtime_config,
     )
     state.prepared = True
     return state.layout
@@ -342,9 +353,15 @@ def command_environment(ctx: Context):
             if name in selected.values
         }
     )
+    if CONFIG_PATCH_ENV in settings:
+        selected = replace(
+            selected,
+            values={**selected.values, CONFIG_PATCH_ENV: settings[CONFIG_PATCH_ENV]},
+        )
     token = _STARTUP.set(settings)
     try:
-        with environment_scope(selected):
+        runtime = user_call(RuntimeConfig.parse, settings.get(CONFIG_PATCH_ENV))
+        with environment_scope(selected), runtime_config_scope(runtime):
             yield
     finally:
         _STARTUP.reset(token)

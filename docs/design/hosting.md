@@ -344,22 +344,19 @@ All workspace names are unique before mounting; nested and alias sources retain
 distinct named targets.
 
 Host and guest read the same agent-root/home source bytes and share prepared State.
-Runtime corrections travel through `guest.env` to the selected root dotenv file
-as `TOOLANG_CONFIG_PATCH`. Source origins keep relative paths and symlink targets
-in the host's canonical path view. The captured host agent root lets the layout
-map local catalog paths into guest directories without changing State identities.
-Source parsers receive only `ConfigOrigins`;
-`RuntimeConfig` holds deeply immutable execution defaults, patches, and bindings,
-and derives fresh Setup views. Human fallbacks fill missing values, so explicit
-`[teaming]` edits remain effective.
+Configured workspace paths are corrected through `TOOLANG_CONFIG_PATCH` in
+`guest.env`. The patch has config.toml's structure and applies through the same
+command/configuration boundary on host and guest. Source origins, snapshot
+identity, prepared revision, and host human fallback live in `GR/source.json`.
+Source parsing receives `ConfigOrigins`; the patch changes runtime views only.
 Hub loopback addresses use the existing host gateway. `[hub]` remains unchanged
 and clients need no Hub-directory mount.
 
-The host constructs common `_serve --workspace-bindings` records containing
-canonical `source`, execution `path`, and `temporary` for captured workspaces.
-Only temporary source paths enter State additions; execution paths never do.
-A common `--launch-schema` check rejects incompatible startup contracts before
-State writes. `guest.sh` bootstraps and executes arguments without rewriting options.
+Workspace/workdir options are translated to guest paths before building argv.
+The workload uses ordinary `--workspace` and `--workdir` options, preserving
+logical workdirs. Lab requires its directory mount only. A common `--launch-schema`
+check rejects incompatible contracts before State writes; `guest.sh` executes
+arguments without rewriting options.
 [Workspaces](workspaces.md) owns grant selection and captured-mount checks.
 
 The guest uses its packaged catalog without a mount. Root catalogs retain their

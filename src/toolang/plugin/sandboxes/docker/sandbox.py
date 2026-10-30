@@ -30,7 +30,7 @@ from toolang.base.types.sandbox import (
 )
 from toolang.common.progress import emit_progress
 from toolang.common.environment import RUNTIME_ENV_NAMES
-from toolang.common.config_runtime import CONFIG_PATCH_ENV, RuntimeConfig
+from toolang.common.config_runtime import parse_source_metadata
 from toolang.common.place_codes import root_code
 from toolang.plugin.catalogs.models_dev.path import (
     MODEL_CATALOG_ENV,
@@ -388,14 +388,9 @@ class DockerSandbox:
             path.parent.mkdir(parents=True, exist_ok=True)
             os.link(mount.local_path.resolve(strict=True), path)
             mounts[index] = replace(mount, local_path=path)
-        if raw_patch := process_envs.get(CONFIG_PATCH_ENV) or dotenv_envs.get(
-            CONFIG_PATCH_ENV
-        ):
-            patch = json.loads(raw_patch)
-            launch = {
-                key: patch[key] for key in ("origins", "snapshots") if key in patch
-            }
-            RuntimeConfig.parse(json.dumps(launch))
+        if request.source_metadata:
+            launch = request.source_metadata
+            parse_source_metadata(launch)
             target = hosted_env_path.parent / "source.json"
             original = next(
                 (mount.local_path for mount in mounts if mount.hosted_path == target),

@@ -195,13 +195,13 @@ def validate_source_mounts(
             raise ValueError(f"source symlink target is unavailable in guest: {source}")
 
 
-def prepare_guest_environment(
+def prepare_guest_source(
     layout: AgentLayout,
     *,
-    mapping: Mapping[str, tuple[str, str]],
     catalog: ModelCatalogSelection | None = None,
-) -> dict[str, str]:
-    """Capture source origins and execution corrections without rewriting sources."""
+    state_revision: str | None = None,
+) -> dict[str, object]:
+    """Capture provenance in source.json, independently of runtime overrides."""
     context = config_origins(layout)
     origins = {
         **{key: str(value) for key, value in context.origins.items()},
@@ -212,7 +212,6 @@ def prepare_guest_environment(
     }
     if catalog is not None and catalog.scope in {"root", "home"}:
         origins[f"{catalog.scope}/catalog.json"] = str(catalog.path)
-    overlays: dict[str, object] = {}
     for scope, path in (("root", layout.place_config), ("home", layout.config)):
         if not path.is_file():
             continue
@@ -229,16 +228,12 @@ def prepare_guest_environment(
             )
         if not isinstance(workspaces, Mapping):
             raise ValueError("workspaces config must be a table")
-        corrected = {}
         for name, value in cast(Mapping[str, object], workspaces).items():
             if not isinstance(value, str) or not value:
                 continue
             canonical = resolve_path(value, directory, context=context)
             reference = os.path.normpath(str(directory / value))
             origins[reference] = str(canonical)
-            mounted = mapping.get(name)
-            if mounted is not None and mounted[0] == str(canonical):
-                corrected[name] = mounted[1]
         configured_catalog = catalog_config(config)
         if (
             configured_catalog
@@ -249,23 +244,46 @@ def prepare_guest_environment(
             origins[os.path.normpath(str(directory / value))] = str(
                 resolve_path(value, directory, context=context)
             )
-        if corrected:
-            overlays[scope] = {
-                "workspaces": {layout.config_key: corrected}
-                if scope == "root" and layout.config_key != ""
-                else corrected
-            }
     return {
-        CONFIG_PATCH_ENV: json.dumps(
-            {
-                "origins": origins,
-                "snapshots": {
-                    "config.toml": sha256(layout.root_config.read_bytes()).hexdigest()
-                    if layout.root_config.is_file()
-                    else None,
-                },
-                "defaults": {"root": {"teaming": {"human": current_username()}}},
-                **overlays,
-            }
-        ),
+        "origins": origins,
+        "snapshots": {
+            "config.toml": sha256(layout.root_config.read_bytes()).hexdigest()
+            if layout.root_config.is_file()
+            else None
+        },
+        "human": current_username(),
+        **({"state_revision": state_revision} if state_revision is not None else {}),
     }
+
+
+def prepare_guest_environment(
+    layout: AgentLayout,
+    *,
+    mapping: Mapping[str, tuple[str, str]],
+    workspaces: Mapping[str, str] | None = None,
+    hosted_workspaces: Path | None = None,
+) -> dict[str, str]:
+    """Generate a config.toml-shaped patch for configured workspace paths."""
+    from toolang.common.config_runtime import RuntimeConfig
+    from toolang.common.immutable import mutable_data
+    from toolang.setup.config import load_workspace_sources
+
+    declared = load_workspace_sources(layout) if workspaces is None else workspaces
+    values = mutable_data((layout.runtime_config or RuntimeConfig()).values)
+    paths = {}
+    for name in declared:
+        if name == "lab":
+            continue
+        if name in mapping:
+            paths[name] = mapping[name][1]
+        elif hosted_workspaces is not None:
+            paths[name] = str(hosted_workspaces / name)
+    if paths:
+        original = (layout.runtime_config or RuntimeConfig()).workspace_paths(
+            layout.config_key, directory=layout.agent_home
+        )
+        values["workspaces"] = {
+            **{name: str(path) for name, path in original.items()},
+            **paths,
+        }
+    return {CONFIG_PATCH_ENV: json.dumps(values)}

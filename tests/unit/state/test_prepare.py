@@ -654,7 +654,8 @@ def test_prepare_repairs_a_corrupt_agent_composition(tmp_path: Path) -> None:
 
     repaired = prepare_agent_state(layout)
 
-    assert repaired.revision != first.revision
+    assert repaired.revision == first.revision
+    validate_agent_revision(layout, repaired.revision)
     assert load_agent_state(layout).revision == repaired.revision
 
 

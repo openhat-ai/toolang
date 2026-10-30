@@ -27,6 +27,7 @@ from .state import (
     compose_agent_state,
     effective_caps,
     merge_materialized_files,
+    agent_state_revision,
     _allowed_caps,
 )
 from .config import (
@@ -63,6 +64,7 @@ from .cache import (
     agent_revision_dir,
     load_agent_revisions,
     load_current_revision,
+    load_current_agent_revision,
     load_home_layer,
     load_root_layer,
     layer_build_lock,
@@ -98,13 +100,9 @@ def prepare_agent_state(
         )
         # Shared current selects authored State, so effective compositions must
         # be reproducible without a process-local previous State or extra pointer.
-        composition_time = (
-            max(root.created_at, home.created_at)
-            if layout.placement == "roaming"
-            else None
-        )
+        composition_time = max(root.created_at, home.created_at)
         authored_revision = None
-        if layout.placement == "roaming" and (overrides or workspace_additions):
+        if overrides or workspace_additions:
             authored_revision = _persist_agent_revision(
                 layout,
                 root_revision=root.revision,
@@ -112,7 +110,12 @@ def prepare_agent_state(
                 publish=False,
                 created_at=composition_time,
             )
-            load_agent_state(layout, authored_revision)
+            try:
+                published = load_current_agent_revision(layout)
+            except (OSError, ValueError):
+                published = None
+            if published != authored_revision:
+                load_agent_state(layout, authored_revision)
         revision = _persist_agent_revision(
             layout,
             root_revision=root.revision,
@@ -195,6 +198,9 @@ def _source_files(scope: LayerScope, source: SourceManifest) -> tuple[StateFile,
 def load_agent_state(
     layout: AgentLayout,
     revision: str | None = None,
+    *,
+    allow_overrides: Mapping[str, tuple[str, ...] | None] | None = None,
+    workspace_additions: Mapping[str, str] | None = None,
 ) -> AgentState:
     """Load one durable Agent State without consulting authored source."""
 
@@ -204,9 +210,29 @@ def load_agent_state(
         home_revision,
         name,
         overrides,
-        workspace_additions,
+        additions,
         created_at,
     ) = load_agent_revisions(layout, revision)
+    if allow_overrides is not None or workspace_additions is not None:
+        # Current selects authored State. Invocation options select a cached
+        # composition of that same layer pair without changing the pointer.
+        effective = agent_state_revision(
+            root_revision,
+            home_revision,
+            name=name,
+            created_at=created_at,
+            allow_overrides=normalize_cap_overrides(allow_overrides),
+            workspace_additions=workspace_additions,
+        )
+        (
+            _,
+            root_revision,
+            home_revision,
+            name,
+            overrides,
+            additions,
+            created_at,
+        ) = load_agent_revisions(layout, effective)
     root = load_root_layer(layout, root_revision)
     home = load_home_layer(layout, home_revision)
     state = compose_layer_state(
@@ -217,7 +243,7 @@ def load_agent_state(
         name=name,
         created_at=created_at,
         allow_overrides=overrides,
-        workspace_additions=workspace_additions,
+        workspace_additions=additions,
     )
     if state.revision != effective:
         raise ValueError("Agent State composition revision mismatch")
@@ -374,7 +400,7 @@ def inspect_agent_caps(
         layout.name,
         root_config=layout.root_config,
         workspace_key=layout.config_key,
-        context=layout.runtime_config.source_context if layout.runtime_config else None,
+        context=source_config_context(layout),
     )
     accepted = accept_sources(authored, scope="home", include_programs=False)
     for record in accepted.records:

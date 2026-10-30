@@ -395,9 +395,7 @@ class RunExecutor:
             )
 
     def _default_workdir(self, setup: AgentSetup, state: AgentState) -> str:
-        environment = setup.environment
-        if environment is None or environment.workspace_location == "host":
-            ensure_scratch_workspace(setup.layout.agent_home)
+        ensure_scratch_workspace(setup.layout.agent_home)
         return self.default_workdir(setup, state)
 
     def default_workdir(self, setup: AgentSetup, state: AgentState) -> str:

@@ -212,7 +212,6 @@ def test_copied_config_rebases_relative_workspaces_in_cached_state(tmp_path):
 def test_hosted_startup_transports_captured_grants_without_resolving_again(
     layout, tmp_path
 ):
-    import json
     from toolang.up.server import resolve_serve, build_serve_argv
 
     bindings = {"repo": str(tmp_path / "host-only")}
@@ -220,14 +219,9 @@ def test_hosted_startup_transports_captured_grants_without_resolving_again(
         layout=layout, port=7001, workspace_additions=bindings, workdir="repo://src"
     )
     argv = build_serve_argv(spec, place=Path("/guest"))
-    assert json.loads(argv[argv.index("--workspace-bindings") + 1]) == {
-        "repo": {
-            "source": bindings["repo"],
-            "path": bindings["repo"],
-            "temporary": True,
-        }
-    }
-    assert argv[argv.index("--initial-workdir") + 1] == "repo://src"
+    assert argv[argv.index("--workspace") + 1] == f"repo={bindings['repo']}"
+    assert argv[argv.index("--workdir") + 1] == "repo://src"
+    assert "--workspace-bindings" not in argv
     assert argv[argv.index("--placement") + 1] == layout.placement
     assert argv[argv.index("--store-schema") + 1] == "63"
     assert argv[argv.index("--source-policy") + 1] == (

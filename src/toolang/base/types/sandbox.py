@@ -71,6 +71,7 @@ class SandboxRequest:
     hosted_runtime: Path | None = None
     hosted_source: Path | None = None
     source_ref: str | None = None
+    source_metadata: dict[str, JsonValue] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         _validate_output(self.output, self.log_path)

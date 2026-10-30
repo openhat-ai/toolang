@@ -132,7 +132,7 @@ retain RO file mounts because this snapshot is immutable for the launch.
 | Host file | Guest file | Explanation |
 | --- | --- | --- |
 | `ROOT/.runtime/active/ADDRESS/docker/L/active/info.json` | `GR/.runtime/active/NAME/info.json` | Generate guest-path discovery metadata for this launch. |
-| `ROOT/.runtime/active/ADDRESS/docker/L/active/guest.env` | `GR/.runtime/active/NAME/guest.env` | Generate selected environment and runtime bindings; guest path/origin corrections travel here. |
+| `ROOT/.runtime/active/ADDRESS/docker/L/active/guest.env` | `GR/.runtime/active/NAME/guest.env` | Generate selected environment, including configured workspace path corrections in the config patch. |
 | `ROOT/.runtime/active/ADDRESS/docker/L/active/source.json` | `GR/source.json` | Generate source origins and config snapshot identity for all guest commands. |
 | `ROOT/.runtime/active/ADDRESS/docker/L/active/inputs/K/FILE` | `GR/config.toml`, `GR/catalog.json`, or `GR/.inputs/catalog.json` | Hardlink selected read-only file inputs at stable private entries; K hashes the guest mount target. |
 | `ROOT/.runtime/active/ADDRESS/docker/L/active/guest.sh` | `GR/.runtime/active/NAME/guest.sh` | Copy the packaged bootstrap unchanged. |
@@ -165,11 +165,31 @@ starve checks. Setup retains its refresh/publication ownership and probing.
 
 Validate/reconcile external pointer changes while preserving invocation-local
 grants/overrides.
-Roaming agent `current` selects authored State; future acceptance uses new
+Agent `current` selects authored State; future acceptance uses new
 generations, while accepted Runs keep their snapshots. Receipt changes validate
 source ownership/provenance and refresh origin-dependent bindings, without
 triggering upstream fetch. An origin change can affect configuration even when
 the selected TOML bytes are identical.
+
+## Runtime configuration and command arguments
+
+`TOOLANG_CONFIG_PATCH` is a JSON object with the same tables and value types as
+config.toml. Host and guest command boundaries load it after dotenv selection.
+It overrides runtime configuration without changing authored files or shared
+State. Guest generation corrects configured workspace paths only; no root/home
+wrappers, binding records, temporary flags, or source metadata enter the patch.
+Source origins, config snapshots, host human fallback, and the prepared revision
+belong in guest `GR/source.json`.
+
+Remove `--workspace-bindings` and its record type. Workspace/workdir options are
+translated while building guest argv; logical workdirs remain unchanged. Lab
+uses layout paths and its ordinary mount, with no patch or startup record.
+Mounts remain fixed for a launch. Accepted Runs retain their grants; stale path
+corrections must not revive revoked or rebound configured workspaces.
+
+Acceptance covers plain host/guest patches through ordinary commands and serve,
+unchanged shared State, CLI temporary workspace/workdir translation, implicit lab,
+config revocation/rebinding, restart, and all placement fetch/mount/watch cases.
 
 ## Environment and ownership boundaries
 

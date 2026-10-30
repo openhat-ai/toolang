@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from toolang.cli.common.context import load_runtime_environ
 from toolang.common.layout import AgentLayout
 
@@ -121,3 +123,30 @@ def test_launch_parses_controller_settings_without_widening_workload(
         "https://other.example",
     )
     assert captured["ui_base_url"] == "https://ui.example"
+
+
+@pytest.mark.parametrize("placement", ["resident", "visiting", "roaming"])
+@pytest.mark.parametrize("settings_only", [False, True])
+def test_launch_resolves_config_patch_without_an_active_command_context(
+    tmp_path, placement, settings_only
+):
+    import json
+    from toolang.cli.common.startup import resolve_runtime_launch
+    from toolang.common.config_runtime import CONFIG_PATCH_ENV
+
+    patch = {"workspaces": {"repo": str(tmp_path / "corrected")}}
+    controls = {CONFIG_PATCH_ENV: json.dumps(patch)}
+    spec = resolve_runtime_launch(
+        AgentLayout(tmp_path, "alice", placement),
+        toolang_root=tmp_path,
+        environ={} if settings_only else controls,
+        settings_environ=controls if settings_only else {},
+        sandbox="host",
+        port=8123,
+        dev=None,
+        lifetime="persistent",
+        background=True,
+    )
+    assert spec.serve.layout.runtime_config is not None
+    assert spec.serve.layout.runtime_config.apply({}) == patch
+    assert spec.environ[CONFIG_PATCH_ENV] == controls[CONFIG_PATCH_ENV]

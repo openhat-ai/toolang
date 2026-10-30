@@ -13,7 +13,7 @@ import os
 import threading
 import time
 from dataclasses import replace
-from typing import TYPE_CHECKING, Literal, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Literal, Protocol, runtime_checkable, cast
 from urllib.error import URLError
 from urllib.parse import urlsplit
 from urllib.request import urlopen
@@ -36,13 +36,14 @@ from toolang.common.version import embedded_source_version, toolang_version
 from toolang.common.progress import emit_progress
 from toolang.common.layout import AgentLayout, agent_workspaces_path
 from .closing import ClosingDeadline
+from toolang.common.immutable import mutable_data
 from toolang.common.config_sources import config_sources
-from toolang.common.config_runtime import WorkspaceBinding
+from toolang.common.config_runtime import CONFIG_PATCH_ENV
 from toolang.plugin.catalogs.models_dev.path import (
     resolve_model_catalog_selection,
     MODEL_CATALOG_ENV,
 )
-from toolang.base.types.sandbox import SandboxMount
+from toolang.base.types.sandbox import SandboxMount, JsonValue
 from toolang.catalog.agent import LocalAgents
 from toolang.plugin.sandboxes.host import process_ref
 from toolang.plugin.config import (
@@ -54,6 +55,7 @@ from toolang.state.config import CAP_ALLOW_FIELDS
 from toolang.up.mounts import (
     prepare_catalog_mount,
     prepare_guest_environment,
+    prepare_guest_source,
     prepare_place_mounts,
     validate_source_mounts,
     prepare_workspace_mounts,
@@ -373,10 +375,22 @@ async def _launch_locked(
             )
         state = await asyncio.to_thread(prepare_launch_state, spec, progress=progress)
         if not on_host:
+            execution_workspaces = dict(state.workspaces)
+            if layout.runtime_config is not None:
+                execution_workspaces.update(
+                    {
+                        name: str(path)
+                        for name, path in layout.runtime_config.workspace_paths(
+                            layout.config_key, directory=layout.agent_home
+                        ).items()
+                        if name in state.workspaces
+                        and name not in spec.serve.workspace_additions
+                    }
+                )
             workspace_mounts, workspace_mapping = prepare_workspace_mounts(
                 layout.agent_home,
                 agent_workspaces_path(hosted_place, layout.name),
-                workspaces=state.workspaces,
+                workspaces=execution_workspaces,
             )
         if not on_host and any(
             name not in workspace_mapping for name in spec.serve.workspace_additions
@@ -396,7 +410,14 @@ async def _launch_locked(
                 catalog_env[MODEL_CATALOG_ENV] = str(guest_catalog)
         guest_environment = (
             prepare_guest_environment(
-                layout, mapping=workspace_mapping, catalog=catalog
+                layout,
+                mapping=workspace_mapping,
+                hosted_workspaces=agent_workspaces_path(hosted_place, layout.name),
+                workspaces={
+                    name: path
+                    for name, path in state.workspaces.items()
+                    if name not in spec.serve.workspace_additions
+                },
             )
             if not on_host
             else {}
@@ -412,15 +433,21 @@ async def _launch_locked(
                 name: (source, source) for name, source in state.workspaces.items()
             }
             workspace_mapping["lab"] = (str(layout.lab), str(layout.lab))
-        bindings = {
-            name: WorkspaceBinding(
-                Path(workspace_mapping[name][0]),
-                Path(workspace_mapping[name][1]),
-                name in spec.serve.workspace_additions,
-            )
-            for name in ("lab", *(name for name in state.workspaces if name != "lab"))
-            if name in workspace_mapping
+        additions = {
+            name: source if on_host else workspace_mapping[name][1]
+            for name, source in spec.serve.workspace_additions.items()
         }
+        workdir = spec.serve.workdir
+        if not on_host and workdir is not None and "://" not in workdir:
+            selected = Path(workdir).expanduser().resolve()
+            for source, target in sorted(
+                workspace_mapping.values(),
+                key=lambda pair: len(Path(pair[0]).parts),
+                reverse=True,
+            ):
+                if selected.is_relative_to(source):
+                    workdir = str(Path(target) / selected.relative_to(source))
+                    break
         guest_edit_lock = (
             hosted_place / ".state/root/edit.lock"
             if not on_host and layout.source_path is not None
@@ -447,6 +474,14 @@ async def _launch_locked(
             if layout.source_path is not None and not on_host
             else layout.source_path,
             source_ref=layout.source_ref,
+            source_metadata=cast(
+                dict[str, JsonValue],
+                prepare_guest_source(
+                    layout, catalog=catalog, state_revision=state.revision
+                ),
+            )
+            if not on_host
+            else {},
             bind_host=spec.serve.host,
             endpoint_host=spec.serve.endpoint_host,
             port=spec.serve.port,
@@ -464,7 +499,8 @@ async def _launch_locked(
                     source_path=hosted_home / "agent.too"
                     if not on_host and layout.source_path is not None
                     else layout.source_path,
-                    workspace_bindings=bindings,
+                    workspace_additions=additions,
+                    workdir=workdir,
                 ),
             ),
             working_directory=spec.serve.layout.home if on_host else hosted_home,
@@ -475,6 +511,17 @@ async def _launch_locked(
                     spec.environ
                     if on_host or spec.guest_environ is None
                     else spec.guest_environ
+                ),
+                **(
+                    {
+                        CONFIG_PATCH_ENV: json.dumps(
+                            mutable_data(layout.runtime_config.values)
+                        )
+                    }
+                    if on_host
+                    and layout.runtime_config is not None
+                    and layout.runtime_config.values
+                    else {}
                 ),
                 **catalog_env,
                 **guest_environment,

@@ -110,7 +110,7 @@ isolation does not change runtime, API, or database compatibility rules.
 [Placement](layout.md#agent-placement) resolves agent root and agent home.
 Roaming State sources and watchers use `DIR/.toolang`; runtime identity/storage
 remains below `DIR/.toolang/R8/P19`. Each State scope keeps its own `current`; no State pointer
-is added to `.runtime`. Roaming agent `current` publishes authored State;
+is added to `.runtime`. Agent `current` publishes authored State;
 invocation overrides and temporary grants are captured in separate exact Run
 revisions. Changing another instance's bindings does not change accepted Runs.
 
@@ -173,7 +173,7 @@ candidate without `created_at` to the current document. A no-op reuses that
 revision and time, including on forced refresh. Returning to earlier layer
 content after an intervening change creates a new revision.
 
-Roaming compositions use the later root/home layer timestamp, so identical
+Agent compositions use the later root/home layer timestamp, so identical
 layers and invocation bindings resolve to the same revision across processes
 and host/guest launches. Their shared `current` still selects authored State.
 

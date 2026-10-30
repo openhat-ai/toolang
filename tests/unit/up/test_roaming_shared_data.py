@@ -4,6 +4,7 @@ import asyncio
 import io
 import shutil
 from concurrent.futures import ThreadPoolExecutor
+from tests.support.layout import capture_guest_source
 from dataclasses import replace
 
 import pytest
@@ -198,6 +199,8 @@ def test_guest_reuses_shared_layers(tmp_path, monkeypatch):
             shutil.copy2(path, guest.agent_root / path.name)
     shutil.copytree(host.place_state.parent, guest.place_state.parent)
     shutil.copytree(host.agent_home, guest.agent_home)
+
+    capture_guest_source(host, guest, state_revision=accepted.revision)
 
     def unexpected_parse(*args, **kwargs):
         pytest.fail("guest reparsed already prepared source")

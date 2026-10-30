@@ -122,6 +122,20 @@ class SetupWatcher:
             if agent_context
             else load_place_setup_envs(layout)
         )
+        if layout.runtime_config is None:
+            from toolang.common.config_runtime import (
+                CONFIG_PATCH_ENV,
+                RuntimeConfig,
+                current_runtime_config,
+            )
+
+            runtime = (
+                RuntimeConfig.parse(self._environ[CONFIG_PATCH_ENV])
+                if CONFIG_PATCH_ENV in self._environ
+                else current_runtime_config()
+            )
+            if runtime is not None:
+                self.layout = replace(layout, runtime_config=runtime)
         self._model_catalog_override = model_catalog
         self._model_catalog_path: Path | None = None
         self._allow_overrides = dict(allow_overrides or {})
@@ -144,6 +158,7 @@ class SetupWatcher:
             for item in plugin_provenance(group=group)
         )
         self._setup: AgentSetup | None = None
+        self._environment: AgentEnvironment | None = None
         self._diagnostics: tuple[SetupDiagnostic, ...] = ()
         self._refresh_lock = asyncio.Lock()
 
@@ -296,8 +311,13 @@ class SetupWatcher:
             for name, source_revision, snapshot in load.additional
             for provider_id in snapshot.providers
         )
+        if self._environment is None:
+            self._environment = AgentEnvironment.capture(
+                self.layout, sandbox=self._sandbox, environ=inputs.envs
+            )
         setup = _build_setup(
             layout=self.layout,
+            environment=self._environment,
             sandbox=self._sandbox,
             revision=revision,
             load=load,
@@ -471,6 +491,7 @@ def _resolve_catalog(
 def _build_setup(
     *,
     layout: AgentLayout,
+    environment: AgentEnvironment,
     sandbox: str,
     revision: str,
     load: _CatalogLoad,
@@ -551,7 +572,7 @@ def _build_setup(
         layout=layout,
         envs=captured_envs,
         revision=revision,
-        environment=AgentEnvironment.capture(layout, sandbox=sandbox, environ=envs),
+        environment=environment,
         defaults=defaults,
         limits=limits,
         compact=compact,

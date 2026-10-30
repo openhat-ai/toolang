@@ -20,7 +20,7 @@ def source_config_context(layout: AgentLayout) -> ConfigOrigins | None:
 
     Launch origins resolve paths unavailable in the guest. They must not undo a
     later canonical identity published by the host after a symlink is retargeted.
-    Execution bindings remain frozen and will reject that newly bound source.
+    Runtime path corrections remain frozen and reject a newly bound source.
     """
     context = config_origins(layout)
     if not context.origins or not context.captured:

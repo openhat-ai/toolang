@@ -25,17 +25,11 @@ def test_workspace_inspection_uses_published_state_and_runtime_paths(
     source = "/host-only/repo" if guest else str(runtime_repo)
     layout.config.write_text(f'[workspaces]\nrepo = "{source}"\n')
     if guest == "mapped-config":
-        import json
-        from toolang.common.config_runtime import RuntimeConfig, WorkspaceBinding
+        from toolang.common.config_runtime import RuntimeConfig
 
         layout = replace(
             layout,
-            runtime_config=RuntimeConfig.parse(
-                json.dumps({"home": {"workspaces": {"repo": str(runtime_repo)}}}),
-                workspaces={
-                    "repo": WorkspaceBinding(type(runtime_repo)(source), runtime_repo)
-                },
-            ),
+            runtime_config=RuntimeConfig({"workspaces": {"repo": str(runtime_repo)}}),
         )
     core = AgentCore(layout)
     state = asyncio.run(core.state.refresh())
@@ -47,10 +41,8 @@ def test_workspace_inspection_uses_published_state_and_runtime_paths(
             environment,
             sandbox="docker",
             workspace_location="guest",
-            workspace_mounts={
-                "lab": (layout.lab, guest_lab),
-                "repo": (type(runtime_repo)(source), runtime_repo),
-            },
+            workspace_sources={"repo": str(type(runtime_repo)(source))},
+            workspace_paths={"repo": runtime_repo},
         )
     setup = AgentSetup(layout=layout, envs={}, environment=environment)
     monkeypatch.setattr(core.setup, "current", lambda: setup)
@@ -103,7 +95,8 @@ def test_guest_workspace_added_after_launch_is_not_reported_available(
         AgentEnvironment.capture(layout, sandbox="host"),
         sandbox="docker",
         workspace_location="guest",
-        workspace_mounts={"lab": (layout.lab, layout.lab)},
+        workspace_sources={},
+        workspace_paths={},
     )
     monkeypatch.setattr(
         core.setup,
@@ -148,10 +141,8 @@ def test_workspace_inspection_accepts_symlinked_runtime_root(
             environment,
             sandbox="docker",
             workspace_location="guest",
-            workspace_mounts={
-                "lab": (layout.lab, layout.lab),
-                "repo": (link, link),
-            },
+            workspace_sources={"repo": str(link)},
+            workspace_paths={"repo": link},
         )
     setup = AgentSetup(layout=layout, envs={}, environment=environment)
     monkeypatch.setattr(core.setup, "current", lambda: setup)
@@ -215,10 +206,10 @@ def test_listing_reports_unavailable_lab_without_requiring_execution(
             environment,
             sandbox="docker",
             workspace_location="guest",
-            workspace_mounts={},
+            workspace_sources={},
+            workspace_paths={},
         )
-    else:
-        (layout.lab).rmdir()
+    (layout.lab).rmdir()
     monkeypatch.setattr(
         core.setup,
         "current",

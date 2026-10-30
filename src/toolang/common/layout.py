@@ -124,10 +124,11 @@ class AgentLayout:
     @property
     def host_root(self) -> Path:
         """Original host root, independent of a guest's mounted root and PLACE."""
-        if self.runtime_config is not None:
-            captured = self.runtime_config.origins.get("toolang_root")
-            if captured is not None:
-                return captured
+        from .config_sources import config_origins
+
+        captured = config_origins(self).origins.get("toolang_root")
+        if captured is not None:
+            return captured
         return self.root or self.place
 
     @classmethod

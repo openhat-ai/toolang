@@ -539,3 +539,30 @@ def test_managed_host_exec_uses_the_controller_environment_snapshot(
     assert "NEW_SECRET" not in observed[0]
     assert "PRIVATE_SENTINEL" not in observed[0]
     assert HOST_LAUNCH_ENV not in observed[0]
+
+
+@pytest.mark.parametrize("agent", [False, True])
+@pytest.mark.parametrize("dotenv", [False, True])
+def test_plain_config_patch_applies_to_ordinary_host_commands(
+    tmp_path, monkeypatch, shell_environment, agent, dotenv
+):
+    root = tmp_path / "root"
+    LocalAgents(root / "agents").create("alice", content="")
+    raw = json.dumps({"plugin": {"toolset": {"shell": {"patch_probe": "configured"}}}})
+    if dotenv:
+        (root / ".env").write_text("TOOLANG_CONFIG_PATCH='" + raw + "'\n")
+    else:
+        monkeypatch.setenv("TOOLANG_CONFIG_PATCH", raw)
+    observed = []
+    original = setup_tools.load_toolsets_with_sources
+
+    def factory(**kwargs):
+        observed.append(kwargs["config"]["shell"]["patch_probe"])
+        return original(**kwargs)
+
+    monkeypatch.setattr(setup_tools, "load_toolsets_with_sources", factory)
+    result = CliRunner().invoke(
+        app, ["--root", str(root), *(["alice"] if agent else []), "tools", "--json"]
+    )
+    assert result.exit_code == 0, (result.stderr, result.exception)
+    assert observed == ["configured"]

@@ -144,7 +144,11 @@ class StateWatcher:
             self._record_persisted_baseline(initial_state)
         else:
             try:
-                state = load_agent_state(layout)
+                state = load_agent_state(
+                    layout,
+                    allow_overrides=self._allow_overrides,
+                    workspace_additions=self._workspace_additions,
+                )
             except (OSError, KeyError, TypeError, ValueError):
                 pass
             else:
@@ -325,11 +329,7 @@ class StateWatcher:
             invalidated_root = frozenset(item.path for item in root_observation.files)
             invalidated_home = frozenset(item.path for item in home_observation.files)
         try:
-            if (
-                context is not None
-                and self.layout.runtime_config is not None
-                and context.origins != self.layout.runtime_config.origins
-            ):
+            if context is not None and context.captured:
                 invalidated_home = invalidated_home | {ROOT_WORKSPACE_SOURCE}
             root_source = root_source_manifest(
                 root_observation,

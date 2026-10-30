@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 import json
 import pwd
+from typing import cast
 from types import SimpleNamespace
 
 from toolang.common.layout import AgentLayout
@@ -14,6 +15,7 @@ from toolang.base.types.sandbox import SandboxMount
 from toolang.up.mounts import (
     prepare_catalog_mount,
     prepare_guest_environment,
+    prepare_guest_source,
     prepare_place_mounts,
     prepare_workspace_mounts,
     validate_source_mounts,
@@ -43,9 +45,10 @@ def test_guest_environment_keeps_configuration_out_of_state(
     patch = json.loads(
         prepare_guest_environment(layout, mapping={})["TOOLANG_CONFIG_PATCH"]
     )
-    assert patch["defaults"] == {"root": {"teaming": {"human": "host-human"}}}
-    assert patch["origins"]["root"] == str(layout.place_config)
-    assert "root" not in patch and "home" not in patch
+    assert patch == {}
+    metadata = prepare_guest_source(layout)
+    assert metadata["human"] == "host-human"
+    assert cast(dict[str, str], metadata["origins"])["root"] == str(layout.place_config)
     assert layout.place_config.read_text() == authored
 
 

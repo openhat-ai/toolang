@@ -32,6 +32,12 @@ paths selected by TOML or environment. Missing directories use their nearest
 existing ancestor; subscriptions advance as directories appear, including after
 a rejected refresh. Periodic probing remains independent.
 
+`TOOLANG_CONFIG_PATCH` supplies process-local configuration overrides through the
+same command boundary on host and guest. Its JSON tables and values match
+config.toml, without scope wrappers or launch metadata. Guest generation corrects
+configured workspace paths; CLI-only grants and workdirs stay in argv. Source
+files and shared authored State remain unchanged.
+
 ## Environments
 
 Only the selected Toolang `ROOT/config.toml` accepts environment name lists:

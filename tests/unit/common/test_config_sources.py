@@ -19,6 +19,7 @@ from toolang.plugin.config import merge_plugin_configs
 from toolang.up.sandbox import resolve_selection
 from toolang.state.prepare import prepare_agent_state
 from toolang.up.source import materialize_roaming_program
+from tests.support.layout import capture_guest_source
 from toolang.up.mounts import prepare_place_mounts
 
 
@@ -46,7 +47,8 @@ def test_declared_local_catalog_keeps_directory_ownership_in_the_guest(tmp_path,
         selected = resolve_model_catalog_selection(host)
         assert selected.scope == scope
         if name == "one":
-            environment = prepare_guest_environment(host, mapping={}, catalog=selected)
+            capture_guest_source(host, guest)
+            environment = prepare_guest_environment(host, mapping={})
             guest = replace(
                 guest,
                 runtime_config=RuntimeConfig.parse(environment[CONFIG_PATCH_ENV]),

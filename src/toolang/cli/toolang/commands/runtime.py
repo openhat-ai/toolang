@@ -606,12 +606,8 @@ def serve(
     registry_status: Annotated[
         Path | None, typer.Option("--registry-status", hidden=True)
     ] = None,
-    workspace_bindings: Annotated[
-        str, typer.Option("--workspace-bindings", hidden=True)
-    ] = "{}",
-    initial_workdir: Annotated[
-        str | None, typer.Option("--initial-workdir", hidden=True)
-    ] = None,
+    workspace_options: WorkspaceOptions = None,
+    workdir: WorkdirOption = None,
 ) -> None:
     """Run the internal AgentServer entrypoint."""
 
@@ -677,14 +673,15 @@ def serve(
     from toolang.common.config_runtime import (
         CONFIG_PATCH_ENV,
         RuntimeConfig,
-        parse_workspace_bindings,
     )
 
-    bindings = user_call(parse_workspace_bindings, workspace_bindings)
-    if location == "host" and any(
-        binding.source != binding.path for binding in bindings.values()
-    ):
-        raise ClickException("host workspace bindings must preserve source paths")
+    workspaces = user_call(
+        resolve_workspaces,
+        layout,
+        procdir=Path.cwd(),
+        paths=workspace_options or (),
+        workdir=workdir,
+    )
     controls_config = selected.values.get(
         CONFIG_PATCH_ENV, environ.get(CONFIG_PATCH_ENV)
     )
@@ -708,10 +705,10 @@ def serve(
         environ[MODEL_CATALOG_ENV] = str(model_catalog)
     layout = replace(
         layout,
-        runtime_config=user_call(
-            RuntimeConfig.parse, controls_config, workspaces=bindings
-        ),
+        runtime_config=user_call(RuntimeConfig.parse, controls_config),
     )
+    if controls_config is not None:
+        environ[CONFIG_PATCH_ENV] = controls_config
     environment = replace(selected, values=environ)
     with environment_scope(environment):
         cors_origins = None
@@ -743,12 +740,8 @@ def serve(
             log_spec=log_spec,
             cors_allowed_origins=cors_origins,
             ui_base_url=ui_base_url,
-            workspace_additions={
-                name: str(binding.source)
-                for name, binding in bindings.items()
-                if binding.temporary
-            },
-            workdir=initial_workdir,
+            workspace_additions=workspaces.additions,
+            workdir=workspaces.workdir,
         )
         spec = replace(
             spec, registry_directory=registry_directory, registry_status=registry_status
