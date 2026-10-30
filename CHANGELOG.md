@@ -7,6 +7,8 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ## [Unreleased]
 
+## [0.4.0b4] - 2026-10-30
+
 ### Added
 
 - Global `--root`/`-r` is accepted before implicit or explicit script entry,
@@ -40,7 +42,8 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 - `too ps` shows the client Hub's URL with `available, VERSION`, `unavailable`,
   or `error, REASON`; `too hub status` prints
-  `hub HOST:PORT running VERSION, pid=PID`, `not running`, or `error, REASON`.
+  `hub HOST:PORT running VERSION, pid=PID`, `hub HOST:PORT not running`, or
+  `error, REASON`.
   ([#984](https://github.com/openhat-ai/toolang/pull/984))
 
 - **Breaking:** The DDGS `web` toolset is no longer registered. Call
@@ -72,6 +75,18 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 - **Breaking:** Authored symlinks whose complete chains the guest view cannot
   resolve, including linked parent directories, now reject launch; replace them
   with real files instead of relying on symlink authoring support.
+  ([#990](https://github.com/openhat-ai/toolang/pull/990))
+
+- **Breaking:** Roaming and visiting environments now select
+  `AGENT_ROOT/.<name>.env`, then `AGENT_HOME/.env`, then the root pick list;
+  move `SOURCE_DIR/.toolang.env` and source-keyed policies to those paths, then
+  restart. Resident paths are unchanged.
+  ([#990](https://github.com/openhat-ai/toolang/pull/990))
+
+- **Breaking:** `TOOLANG_CONFIG_PATCH` now accepts plain config.toml-shaped
+  JSON: remove the `origins`, `defaults`, `root`, and `home` wrappers and place
+  tables at the top level, such as `{"workspaces":{"notes":"/path"}}`. Guest
+  path corrections stay process-local and never alter authored State.
   ([#990](https://github.com/openhat-ai/toolang/pull/990))
 
 - Roaming instances keep separate runtime status, records, history, logs, and
@@ -115,8 +130,9 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   sources, so repeated launches skip source preparation.
   ([#990](https://github.com/openhat-ai/toolang/pull/990))
 
-- Running guests see replaced source files instead of overwriting newer shared
-  State with stale or empty values.
+- Running guests observe atomic replacement of home sources, but root config and
+  catalog retain their launch content until restart, so stale guests cannot
+  publish older root State.
   ([#990](https://github.com/openhat-ai/toolang/pull/990))
 
 - State watchers in every placement notice external root, home, and agent
@@ -3507,7 +3523,8 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 - The formatter normalizes `exec` statements consistently with other flow
   statements. (#676)
 
-[Unreleased]: https://github.com/openhat-ai/toolang/compare/v0.4.0b3...HEAD
+[Unreleased]: https://github.com/openhat-ai/toolang/compare/v0.4.0b4...HEAD
+[0.4.0b4]: https://github.com/openhat-ai/toolang/compare/v0.4.0b3...v0.4.0b4
 [0.4.0b3]: https://github.com/openhat-ai/toolang/compare/v0.4.0b2...v0.4.0b3
 [0.4.0b2]: https://github.com/openhat-ai/toolang/compare/v0.4.0b1...v0.4.0b2
 [0.4.0b1]: https://github.com/openhat-ai/toolang/compare/v0.4.0a11...v0.4.0b1
