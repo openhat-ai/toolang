@@ -1,6 +1,7 @@
 # Roaming agent Chat
 
-Status: proposed for human approval. Build on [PR #990](https://github.com/openhat-ai/toolang/pull/990)
+Status: approved by the human in conversation on 2026-10-30, including
+implementation. Build on [PR #990](https://github.com/openhat-ai/toolang/pull/990)
 and its [shared-data definition](roaming-prepared-state-reuse.md). No implementation
 is included in this definition. This supersedes the roaming Chat exclusion in
 [the foreground ownership plan](roaming-script-instances.md) for the scope below.
@@ -104,4 +105,4 @@ commit; validate documentation links/examples and `git diff --check`.
 Ownership must cover failed startup and TUI exit without accidentally retaining
 or terminating another launch. Shared labs intentionally retain #990's concurrent
 write behavior. A Thread edit may succeed before Chat startup fails, as documented.
-No open design questions remain; human approval of this definition is pending.
+No open design questions remain.
