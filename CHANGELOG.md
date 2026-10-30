@@ -74,9 +74,9 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   into it.
   ([#990](https://github.com/openhat-ai/toolang/pull/990))
 
-- **Breaking:** Authored symlinks that guest directory mounts cannot resolve now
-  reject launch; replace them with real files instead of relying on symlink
-  authoring support.
+- **Breaking:** Authored symlinks whose complete chains the guest view cannot
+  resolve, including linked parent directories, now reject launch; replace them
+  with real files instead of relying on symlink authoring support.
   ([#990](https://github.com/openhat-ai/toolang/pull/990))
 
 - Roaming instances keep separate runtime status, records, history, logs, and
@@ -122,6 +122,18 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 - State watchers in every placement notice external root, home, and agent
   `current` changes and reconcile even while unrelated events stream
   continuously.
+  ([#990](https://github.com/openhat-ai/toolang/pull/990))
+
+- Guest bindings accept valid internal source symlinks and overlapping workspace
+  grants instead of rejecting them as inaccessible.
+  ([#990](https://github.com/openhat-ai/toolang/pull/990))
+
+- Concurrent roaming startup and authoring no longer interleave, so a fetch
+  cannot replace a Program mid-edit and discard newer State changes.
+  ([#990](https://github.com/openhat-ai/toolang/pull/990))
+
+- Docker launches ignore malformed workspace grants from ancestor `toolang.toml`
+  files that no longer apply, matching host preparation instead of failing.
   ([#990](https://github.com/openhat-ai/toolang/pull/990))
 
 ### Security
