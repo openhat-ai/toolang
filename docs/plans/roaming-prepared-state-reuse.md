@@ -121,7 +121,8 @@ the same host files and use the same State/Setup reconciliation as host edits.
 Mount assembly has no placement branches. Do not mount whole host roots,
 workspace parents, sibling agents, other instances, or namespace ownership records.
 Authored symlinks must resolve through selected directory mounts; reject targets
-unavailable in the guest instead of adding mutable file overlays.
+unavailable in the guest, including through intermediate links, instead of adding
+mutable file overlays.
 Instance runtime contains `status.json`, `runs.db`, `stats.db`, `agent.log`,
 `logs/`, and `tools/`; runtime control/observation remains separate.
 
@@ -190,7 +191,8 @@ reuses it; every startup has a new `launch_id`. No State pointer lives in runtim
 
 Coordination keeps `AR/.state/root/edit.lock`, `AH/.state/home/edit.lock`, layer
 `v24/build.lock`, and agent `v24/publish.lock`; lock events are not source/pointer
-invalidations. Roaming allocation owns host-side `AR/.state/launch.lock`.
+invalidations. Startup fetch acquires root edit, then home edit, so Program updates
+serialize with home authoring. Roaming allocation owns host-side `AR/.state/launch.lock`.
 
 ## Acceptance and scope
 

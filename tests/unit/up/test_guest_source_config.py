@@ -50,6 +50,25 @@ def test_roaming_configuration_belongs_to_place(tmp_path):
     assert layout.place_config.samefile(tmp_path / "toolang.toml")
 
 
+@pytest.mark.parametrize(
+    "declaration", ["workspaces = 7", '[workspaces]\nrepo = "\\u0000"']
+)
+def test_roaming_guest_ignores_ancestor_workspace_declarations(tmp_path, declaration):
+    import subprocess
+
+    project = tmp_path / "project"
+    project.mkdir()
+    subprocess.run(["git", "init", "-q", str(project)], check=True)
+    (project / "toolang.toml").write_text(declaration)
+    source = project / "scripts" / "aid.too"
+    source.parent.mkdir()
+    source.write_text("flow run():\n  pass\n")
+    layout = materialize_roaming_program(source, toolang_root=tmp_path / "global")
+    assert prepare_agent_state(layout).workspaces == {}
+    patch = prepare_guest_environment(layout, mapping={})[CONFIG_PATCH_ENV]
+    assert "workspaces" not in RuntimeConfig.parse(patch).overlays.get("root", {})
+
+
 def test_roaming_preserves_authored_home_and_ignores_global_agent_config(tmp_path):
     from toolang.common.config_sources import config_sources
     from toolang.setup.teaming import resolve_teaming_setup

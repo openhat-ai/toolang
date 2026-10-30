@@ -112,7 +112,7 @@ def _mutate(layout, family, contended, done):
             ),
             context,
         )
-    elif family == "fetch":
+    elif family in {"fetch", "fetch-program"}:
         source = layout.source_path
         assert source is not None
         materialize_roaming_program(source, layout=layout)
@@ -124,19 +124,21 @@ def _mutate(layout, family, contended, done):
 
 
 @pytest.mark.parametrize(
-    "family", ["cap", "config", "chore", "workspace", "state", "fetch"]
+    "family", ["cap", "config", "chore", "workspace", "state", "fetch", "fetch-program"]
 )
 def test_home_writers_share_edit_lock_across_processes(tmp_path, family):
     source = tmp_path / "alice.too"
     source.write_text("agic:\n  Hello.\n")
     layout = (
         materialize_roaming_program(source, toolang_root=tmp_path)
-        if family == "fetch"
+        if family in {"fetch", "fetch-program"}
         else AgentLayout.resident(tmp_path / ".toolang", "alice")
     )
     layout.home.mkdir(parents=True, exist_ok=True)
     if family == "fetch":
         (tmp_path / "toolang.toml").write_text('[workspaces]\nrepo = "."\n')
+    elif family == "fetch-program":
+        atomic_write_text(source, "agic:\n  Updated source.\n")
     ctx = multiprocessing.get_context("spawn")
     contended, done = ctx.Event(), ctx.Event()
     process = ctx.Process(target=_mutate, args=(layout, family, contended, done))
@@ -149,6 +151,8 @@ def test_home_writers_share_edit_lock_across_processes(tmp_path, family):
             process.start()
             assert contended.wait(10), family
             assert not done.is_set()
+            if family == "fetch-program":
+                assert layout.program.read_text() == "agic:\n  Hello.\n"
         assert done.wait(10), family
     finally:
         process.join(10)
@@ -156,6 +160,8 @@ def test_home_writers_share_edit_lock_across_processes(tmp_path, family):
             process.terminate()
             process.join()
     assert process.exitcode == 0
+    if family == "fetch-program":
+        assert layout.program.samefile(source)
     assert not tuple(layout.home.glob("*.lock"))
 
 

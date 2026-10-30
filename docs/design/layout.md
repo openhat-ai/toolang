@@ -294,8 +294,9 @@ Edit locks first appear on a mutation attempt, including one that fails or makes
 no content change. Read-only operations never create edit locks or their parent
 directories: they acquire an existing guard, or read optimistically and retry
 under the guard if the first writer creates it during the read.
-Roaming startup fetch serializes hardlink and receipt updates under the shared
-root edit lock. Release edit locks before refreshing State. Watchers observe
+Roaming startup fetch holds the shared root edit lock, then the home edit lock,
+while updating hardlinks and receipts. Program writes share the home guard with
+State authoring. Release edit locks before refreshing State. Watchers observe
 placement-local sources independently of edit locks and never fetch upstream inputs.
 Chore inspection reads inline
 and file definitions together. API patches hold edit across winner checks and

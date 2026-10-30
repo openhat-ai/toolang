@@ -336,7 +336,8 @@ guest agent home is `GH = GR/agents/NAME`.
 
 Directory mounts expose atomic replacement of contained files. Mutable Program,
 config, and automatic catalog files have no file overlays. Startup rejects authored
-symlinks whose targets are unavailable through the selected directory mounts.
+symlinks whose targets, including intermediate links and linked directories,
+are unavailable through the selected directory mounts.
 All workspace names are unique before mounting; nested and alias sources retain
 distinct named targets.
 

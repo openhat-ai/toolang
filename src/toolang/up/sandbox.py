@@ -403,7 +403,9 @@ async def _launch_locked(
         )
         if not on_host:
             validate_source_mounts(
-                layout, (*source_mounts, *workspace_mounts, *catalog_mounts)
+                layout,
+                (*source_mounts, *workspace_mounts, *catalog_mounts),
+                catalog=catalog,
             )
         if on_host:
             workspace_mapping = {

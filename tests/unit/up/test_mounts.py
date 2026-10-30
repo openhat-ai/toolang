@@ -103,6 +103,88 @@ def test_source_links_must_resolve_in_the_guest_directory_view(tmp_path, relativ
             validate_source_mounts(layout, mounts)
 
 
+@pytest.mark.parametrize(
+    "source_kind",
+    ["program", "root-catalog", "home-catalog", "root-receipt", "home-receipt"],
+)
+def test_source_link_chain_cannot_escape_the_guest_directory_view(
+    tmp_path, source_kind
+):
+    layout = AgentLayout.resident(tmp_path, "alice")
+    layout.agent_home.mkdir(parents=True)
+    source = {
+        "program": layout.program,
+        "root-catalog": layout.root_catalog,
+        "home-catalog": layout.agent_home / "catalog.json",
+        "root-receipt": layout.root_source_receipt,
+        "home-receipt": layout.source_receipt,
+    }[source_kind]
+    source.parent.mkdir(parents=True, exist_ok=True)
+    target = tmp_path / "outside.too"
+    target.write_text("flow run():\n  pass\n")
+    (source.parent / "intermediate").symlink_to(target)
+    source.symlink_to("intermediate")
+    guest = Path("/guest")
+    mounts = (
+        SandboxMount(layout.agent_home, guest / "agents/alice"),
+        *prepare_place_mounts(layout.agent_root, guest),
+    )
+    with pytest.raises(ValueError, match="source symlink target is unavailable"):
+        validate_source_mounts(layout, mounts)
+
+
+@pytest.mark.parametrize("through_directory", [False, True])
+def test_source_link_chain_can_resolve_inside_the_guest_mount(
+    tmp_path, through_directory
+):
+    layout = AgentLayout.resident(tmp_path, "alice")
+    directory = layout.agent_home / "entries"
+    directory.mkdir(parents=True)
+    target = directory / "source.too"
+    target.write_text("flow run():\n  pass\n")
+    (layout.agent_home / "intermediate").symlink_to("entries/source.too")
+    if through_directory:
+        (directory / "nested").mkdir()
+        (layout.agent_home / "directory").symlink_to("entries/nested")
+        layout.program.symlink_to("directory/../source.too")
+    else:
+        layout.program.symlink_to("intermediate")
+    mounts = (SandboxMount(layout.agent_home, Path("/guest/agents/alice")),)
+    validate_source_mounts(layout, mounts)
+
+
+def test_external_catalog_override_ignores_unused_implicit_catalog_links(tmp_path):
+    from toolang.plugin.catalogs.models_dev.path import ModelCatalogSelection
+
+    layout = AgentLayout.resident(tmp_path / "root", "alice")
+    layout.agent_home.mkdir(parents=True)
+    implicit = tmp_path / "implicit.json"
+    implicit.write_text("{}")
+    (layout.agent_home / "catalog.json").symlink_to(implicit)
+    explicit = tmp_path / "explicit.json"
+    explicit.write_text("{}")
+    mounts = (
+        SandboxMount(layout.agent_home, Path("/guest/agents/alice")),
+        SandboxMount(explicit, Path("/guest/.inputs/catalog.json"), read_only=True),
+    )
+    validate_source_mounts(
+        layout, mounts, catalog=ModelCatalogSelection(explicit, "custom")
+    )
+
+
+def test_source_link_uses_its_authored_mount_when_also_granted_as_a_workspace(tmp_path):
+    layout = AgentLayout.resident(tmp_path, "alice")
+    runnables = layout.agent_home / "runnables"
+    runnables.mkdir(parents=True)
+    (layout.agent_home / "entry-source").write_text("flow work():\n  pass\n")
+    (runnables / "extra.too").symlink_to("../entry-source")
+    mounts = (
+        SandboxMount(layout.agent_home, Path("/guest/agents/alice")),
+        SandboxMount(runnables, Path("/guest/workspaces/alice/modules")),
+    )
+    validate_source_mounts(layout, mounts)
+
+
 def test_workspace_mounts_snapshot_only_available_grants(tmp_path: Path) -> None:
     local_home = tmp_path / "agents/alice"
     local_home.mkdir(parents=True)

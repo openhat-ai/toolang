@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from collections import deque
 from collections.abc import Mapping, Sequence
 import json
 import os
@@ -20,7 +21,11 @@ from toolang.common.layout import (
     IMPLICIT_WORKSPACE_NAME,
     ensure_scratch_workspace,
 )
-from toolang.state.config import parse_config, root_workspace_declarations
+from toolang.state.config import (
+    parse_config,
+    root_workspace_declarations,
+    root_workspace_overrides,
+)
 from toolang.common.config_sources import config_origins, catalog_config, resolve_path
 from toolang.common.config_runtime import CONFIG_PATCH_ENV
 
@@ -77,52 +82,91 @@ def prepare_workspace_mounts(
     return tuple(mounts), mapping
 
 
-def validate_source_mounts(layout: AgentLayout, mounts: Sequence[SandboxMount]) -> None:
+def validate_source_mounts(
+    layout: AgentLayout,
+    mounts: Sequence[SandboxMount],
+    *,
+    catalog: ModelCatalogSelection | None = None,
+) -> None:
     """Reject source links whose targets would disappear in the guest view."""
     directory_mounts = sorted(
         (mount for mount in mounts if mount.local_path.is_dir()),
         key=lambda mount: len(mount.hosted_path.parts),
         reverse=True,
     )
+
+    def mounted_path(hosted: Path) -> Path | None:
+        mount = next(
+            (
+                mount
+                for mount in directory_mounts
+                if hosted.is_relative_to(mount.hosted_path)
+            ),
+            None,
+        )
+        return (
+            mount.local_path / hosted.relative_to(mount.hosted_path)
+            if mount is not None
+            else None
+        )
+
+    def resolve_guest(hosted: Path) -> Path | None:
+        pending = deque(hosted.parts[1:])
+        current = Path("/")
+        followed = 0
+        while pending:
+            part = pending.popleft()
+            if part == "..":
+                current = current.parent
+                continue
+            candidate = current / part
+            local = mounted_path(candidate)
+            # Bind mounts expose a directory, even when its host name is a link.
+            anchor = any(candidate == mount.hosted_path for mount in directory_mounts)
+            if local is not None and not anchor and local.is_symlink():
+                followed += 1
+                if followed > 40:
+                    return None
+                target = Path(os.readlink(local))
+                if target.is_absolute():
+                    current = Path("/")
+                pending.extendleft(
+                    reversed(target.parts[1:] if target.is_absolute() else target.parts)
+                )
+            else:
+                current = candidate
+        return mounted_path(current)
+
     sources = (
         *observe_root_source(layout.agent_root).files,
         *observe_home_source(layout.agent_root, layout.name).files,
     )
-    for entry in sources:
-        source = entry.source
+    for source in (
+        *(entry.source for entry in sources),
+        *(
+            ()
+            if catalog is not None and catalog.scope == "custom"
+            else (layout.root_catalog, layout.agent_home / "catalog.json")
+        ),
+        layout.root_source_receipt,
+        layout.source_receipt,
+    ):
         if not source.is_symlink():
             continue
-        owner = max(
-            (
-                mount
-                for mount in mounts
-                if mount.local_path.is_dir() and source.is_relative_to(mount.local_path)
-            ),
-            key=lambda mount: len(mount.local_path.parts),
-            default=None,
+        anchor = (
+            layout.agent_home
+            if source.is_relative_to(layout.agent_home)
+            else layout.agent_root / source.relative_to(layout.agent_root).parts[0]
+        )
+        owner = next(
+            (mount for mount in mounts if mount.local_path == anchor),
+            None,
         )
         if owner is None:
             raise ValueError(f"source symlink is outside guest mounts: {source}")
         hosted = owner.hosted_path / source.relative_to(owner.local_path)
-        target = Path(os.readlink(source))
-        target = Path(
-            os.path.normpath(
-                str(target if target.is_absolute() else hosted.parent / target)
-            )
-        )
-        mounted = next(
-            (
-                mount
-                for mount in directory_mounts
-                if target.is_relative_to(mount.hosted_path)
-            ),
-            None,
-        )
-        if (
-            mounted is None
-            or (mounted.local_path / target.relative_to(mounted.hosted_path)).resolve()
-            != source.resolve()
-        ):
+        target = resolve_guest(hosted)
+        if target is None or target.resolve() != source.resolve():
             raise ValueError(f"source symlink target is unavailable in guest: {source}")
 
 
@@ -148,11 +192,15 @@ def prepare_guest_environment(
             continue
         directory = context.origin(scope, path).parent
         config = parse_config(path.read_bytes())
-        workspaces = (
-            root_workspace_declarations(config, layout.config_key)
-            if scope == "root"
-            else config.get("workspaces", {})
-        )
+        workspaces = config.get("workspaces", {})
+        if scope == "root":
+            workspaces = (
+                root_workspace_declarations(config, layout.config_key)
+                if root_workspace_overrides(
+                    config, layout.config_key, directory, context=context
+                )
+                else {}
+            )
         if not isinstance(workspaces, Mapping):
             raise ValueError("workspaces config must be a table")
         corrected = {}

@@ -2884,3 +2884,71 @@ def test_roaming_guest_observes_startup_relinks_without_state_rollback(
                     _get_json(f"{endpoint}/api/v0/workspaces")["revision"]
                     == expected.revision
                 )
+
+
+@pytest.mark.parametrize("source_kind", ["ancestor-config", "linked-program"])
+def test_guest_source_validation_preserves_usable_inputs(
+    tmp_path, docker_wheel_dir, local_model_port, source_kind
+):
+    from toolang.cli.common.agent_server import acquire_agent_server
+    from toolang.common.environment import agent_environment_paths
+    from toolang.state.prepare import prepare_agent_state
+
+    root = tmp_path / "root"
+    root.mkdir()
+    program = "flow work():\n  pass\n"
+    if source_kind == "ancestor-config":
+        project = tmp_path / "project"
+        project.mkdir()
+        subprocess.run(["git", "init", "-q", str(project)], check=True)
+        (project / "toolang.toml").write_text(
+            "workspaces = 7\n[teaming]\nenabled = false\n"
+        )
+        source = project / "scripts/alice.too"
+        source.parent.mkdir()
+        source.write_text(program)
+        layout = agent_sources.materialize_roaming_program(source, toolang_root=root)
+    else:
+        layout = AgentLayout.resident(root, "alice")
+        nested = layout.agent_home / "entries/nested"
+        nested.mkdir(parents=True)
+        (nested.parent / "source.too").write_text(program)
+        (layout.agent_home / "directory").symlink_to("entries/nested")
+        layout.program.symlink_to("directory/../source.too")
+        root_file(root, "config.toml").write_text("[teaming]\nenabled = false\n")
+    expected = prepare_agent_state(layout)
+    assert set(expected.runnables) == {"work"}
+    assert expected.workspaces == {}
+    _write_local_model_env(root / ".env", local_model_port)
+    agent_environment_paths(root, layout)[0].write_text("OLLAMA_HOST\nLLAMA_CPP_HOST\n")
+    with acquire_agent_server(
+        layout,
+        sandbox="docker:python:3.13-slim",
+        dev=docker_wheel_dir,
+        temporary=True,
+        bound=True,
+        show_progress=False,
+    ) as server:
+        assert server is not None
+        assert (
+            _get_json(f"{server.endpoint}/api/v0/workspaces")["revision"]
+            == expected.revision
+        )
+        running = SandboxState.load(layout.runtime_status)
+        assert running is not None
+        read = subprocess.run(
+            [
+                "docker",
+                "exec",
+                running.ref.runtime_id,
+                "python",
+                "-c",
+                "from pathlib import Path; "
+                "print(Path('/root/.toolang/agents/alice/agent.too').read_text(), end='')",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        assert read.returncode == 0, read.stderr
+        assert read.stdout == program

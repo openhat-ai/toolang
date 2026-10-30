@@ -274,7 +274,10 @@ def materialize_roaming_program(
                 f"shared agent directory must not be a symlink: {directory}"
             )
         directory.mkdir(parents=True, exist_ok=True)
-    with EditLock(layout.place_state / "edit.lock").write():
+    with (
+        EditLock(layout.place_state / "edit.lock").write(),
+        EditLock(layout.home_edit_lock).write(),
+    ):
         candidates = script_sources(resolved_source)
         selected_config = next(
             (item.path for item in reversed(candidates) if item.path.is_file()), None
