@@ -138,11 +138,24 @@ def acquire_agent_server(
                 if not temporary and selected_server is not None:
                     try:
                         selected_server, lease = _retain_server(selected_server)
-                    except ServerClosingError:
-                        _wait_for_closing_server(layout, selected_server, deadline)
-                        if attach_only:
-                            raise
-                        continue
+                    except BaseException as exc:
+                        if closing is not None and isinstance(
+                            acquired, sandbox_runtime.SandboxHandle
+                        ):
+                            try:
+                                closing.begin("runtime acquisition failed")
+                            finally:
+                                run_foreground(
+                                    sandbox_runtime.stop_handle(
+                                        layout, acquired, progress=progress.sink
+                                    ),
+                                    closing=closing,
+                                )
+                        elif isinstance(exc, ServerClosingError):
+                            _wait_for_closing_server(layout, selected_server, deadline)
+                            if not attach_only:
+                                continue
+                        raise
                 if isinstance(acquired, AgentServerRef):
                     progress.complete_preparation()
                 break

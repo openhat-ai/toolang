@@ -843,7 +843,7 @@ def test_lifecycle_and_bootstrap_use_their_native_operand_forms(
         ("serve", "AGENT", "Agent name, ref, URL or instance"),
         ("stop", "AGENT", "Agent name, ref, URL or instance"),
         ("info", "AGENT", "Agent name, path, ref, URL or instance"),
-        ("chat", "AGENT", "Agent name, ref, URL or instance"),
+        ("chat", "AGENT", "Agent name, path, ref, URL or instance"),
         ("inspect", "AGENT", "Agent name, path, ref, URL or instance"),
         ("steer", "AGENT", "Running agent name, path, ref, URL or instance"),
         ("cancel", "AGENT", "Running agent name, path, ref, URL or instance"),

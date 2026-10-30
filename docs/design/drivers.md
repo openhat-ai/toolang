@@ -11,9 +11,9 @@ with a captured State/Setup snapshot.
 | `talk` | Incoming hub message batches | One bound `talk_` per agent/backend/conversation |
 
 Fresh resident start/serve enable all three by default; visiting start/serve
-enable chat/talk. New servers for Chat, rerun, and `fork/rewind --chat` enable
-chat only in every placement. Standalone scripts default to none; offline
-fork/rewind starts no server.
+enable chat/talk. Fresh Chat servers, including `fork/rewind --chat`, and
+resident/visiting rerun servers enable chat only. Standalone scripts and roaming
+rerun default to none; offline fork/rewind starts no server.
 `--enable chat,chore,talk` replaces the defaults; `--enable none` disables all
 drivers. Only `serve`, `start`, and
 `chat` expose this option. `talk` sends hub messages; script execution owns its
@@ -25,7 +25,8 @@ A mismatch or disabled chat fails with restart guidance without changing the
 running agent. Runtime profile, status, and startup logs report enabled drivers.
 Lifetime is independent of drivers: resident implicit servers persist, visiting
 implicit servers automatically reclaim when clients and accepted work finish,
-and explicit start/serve retain availability. See [server lifetime](hosting.md#server-lifetime-and-client-leases).
+roaming Chat servers last only for their owning foreground session,
+and explicit start/serve retain resident/visiting availability. See [server lifetime](hosting.md#server-lifetime-and-client-leases).
 
 The management HTTP API, health, inspection, cancellation, and script execution
 remain available with chat disabled. Interactive clients create threads at

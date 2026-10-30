@@ -7,8 +7,9 @@ boundary, and [Execution presentation](execution-presentation.md) shared renderi
 
 ## Session and submissions
 
-Chat connects through RemoteRunClient to a compatible resident or visiting
-AgentServer. Local roaming scripts do not support Chat. It creates a `chat_` thread on first execution,
+Chat connects through RemoteRunClient to an AgentServer in any placement.
+Roaming Chat owns a foreground runtime exclusively; resident/visiting Chat may
+attach to a compatible server. It creates a `chat_` thread on first execution,
 not merely when showing help or exiting an empty session. Subsequent turns reuse
 the thread. Startup `--thread`/`-t` accepts an explicit Thread or Run ID; bare
 `--thread` selects the most recently updated recorded thread and fails when none
@@ -115,7 +116,18 @@ Receipt/event reordering cannot change completed transcript history.
 
 ## Server acquisition and recovery
 
-An active server in the selected home is reused with its current settings; caller
+Bare `too file.too chat` allocates a fresh roaming runtime instance. Explicit
+`file.too@`/`file.too@CODE` selects an existing latest/exact instance; `-t` selects
+its latest recorded Thread, and an explicit Thread/Run binds its owning instance.
+Roaming Chat claims that instance before preparation and retains exclusive
+ownership through shutdown. Busy or unverifiable ownership fails without attachment
+or fallback. Fresh and resumed instances use current invocation settings with
+shared prepared State and lab; histories remain per instance. Exit/EOF/fatal client
+failure closes the owned runtime; host controller death or Docker owner-channel
+loss starts bounded finalization. `fork/rewind --chat` uses this same path after
+an idle-instance history edit.
+
+For resident/visiting Chat, an active server in the selected home is reused with its current settings; caller
 environment and local startup defaults are not compared. Required drivers and
 explicit requirements, including sandbox and workspace bindings, must match it.
 Without a server, hosting resolves CLI, configuration, remembered selector, then

@@ -22,6 +22,11 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   Programs across processes, launches, and roots.
   ([#990](https://github.com/openhat-ai/toolang/pull/990))
 
+- Roaming `.too` agents open Chat in a fresh runtime instance or continue an
+  exact, latest, or record-selected one, including `fork RUN --chat` and
+  `rewind RUN --chat`.
+  ([#992](https://github.com/openhat-ai/toolang/pull/992))
+
 ### Changed
 
 - **Breaking:** Upgrade Hub and clients together: business APIs require
@@ -81,6 +86,11 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   takes effect at the next startup fetch, while in-place edits are shared
   immediately.
   ([#990](https://github.com/openhat-ai/toolang/pull/990))
+
+- Roaming Chat holds exclusive foreground ownership from startup through
+  cleanup, stopping runtimes whose initial profile check fails, and rejects
+  busy sessions before source projection or history edits.
+  ([#992](https://github.com/openhat-ai/toolang/pull/992))
 
 ### Fixed
 

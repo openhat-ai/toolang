@@ -117,18 +117,14 @@ def test_info_does_not_fetch_inputs_or_renew_an_owner(source_home, monkeypatch):
         assert read_instance(home.runtime_status) == before
 
 
-def test_roaming_chat_and_history_continuation_fail_before_mutation(source_home):
+def test_roaming_hosting_fails_before_mutation(source_home):
     source, root = source_home
     assert main([str(source), "main", "--quiet", "hello"]) == 0
     home = select_roaming(source, toolang_root=root)
-    with closing(RunStore(home.run_store, read_only=True)) as store:
-        run = store.list_runs()[0]
     before = home.run_store.read_bytes()
-    for command in ("chat", "start", "serve", "stop"):
+    for command in ("start", "serve", "stop"):
         assert main([f"{source}@", command]) != 0
-    for command in ("fork", "rewind"):
-        assert main([f"{source}@", command, run.id, "--chat"]) != 0
-        assert home.run_store.read_bytes() == before
+    assert home.run_store.read_bytes() == before
     assert retained_roaming(source, toolang_root=root) == (home,)
 
 

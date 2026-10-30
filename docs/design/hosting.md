@@ -17,6 +17,11 @@ controller. Detached and guest workloads use hidden `too _serve`, receiving
 explicit agent paths, placement, place code, source policy, sandbox, location,
 launch ID, and required store schema; guests do not recompute host identities. The execution core is shared across sandboxes.
 
+Roaming Chat launches an exclusively owned foreground server with the chat driver.
+Client exit closes it; host controller death or Docker owner-channel loss starts
+bounded finalization. It uses the same invocation guards as roaming scripts and
+rerun; additional clients cannot attach to that owned instance.
+
 Embedded host scripts expose the full Agent API, including activity and Stats,
 through that script's executor and event loop. The caller owns its shutdown.
 
@@ -60,7 +65,7 @@ modes, not additional placement implementations.
   own preparation/finalization. Source-only roaming execution begins with a newly
   allocated identity; bound continuation validates the retained home instead.
   Discovery publication does not own execution state.
-- [Foreground invocations](../../src/toolang/up/invocation.py) claim script HOMEs
+- [Foreground invocations](../../src/toolang/up/invocation.py) claim roaming runtime instances
   and bind controller shutdown to the owned launch. The CLI supplies readiness
   and interruption events; invocation code publishes the fenced closing state.
 - [Closing deadlines](../../src/toolang/up/closing.py) bound process finalization

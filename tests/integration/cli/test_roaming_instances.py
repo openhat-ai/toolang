@@ -42,7 +42,7 @@ def test_duplicate_chat_workdir_does_not_prepare_a_roaming_instance(
     )
     before = set(tmp_path.rglob("*"))
     assert main([str(source), "chat", "-d", ".", "--workdir", "."]) == 2
-    assert "paths are not supported" in capsys.readouterr().err
+    assert "--workdir may only be specified once" in capsys.readouterr().err
     assert set(tmp_path.rglob("*")) == before
 
 
@@ -126,7 +126,7 @@ def test_resident_stop_selects_and_fences_the_original_owner(tmp_path, monkeypat
     assert captured["expected_launch_id"] == "selected-owner"
 
 
-@pytest.mark.parametrize("command", ["chat", "serve", "start", "stop"])
+@pytest.mark.parametrize("command", ["serve", "start", "stop"])
 @pytest.mark.parametrize("explicit_instance", [False, True])
 def test_roaming_rejects_hosting_commands_without_mutating_instances(
     tmp_path, monkeypatch, command, explicit_instance
@@ -202,7 +202,7 @@ def test_retained_selection_and_rerun_preserve_the_selected_home(
 
 
 @pytest.mark.parametrize("command", ["fork", "rewind"])
-def test_roaming_history_chat_rejects_before_edit(tmp_path, monkeypatch, command):
+def test_busy_roaming_history_chat_rejects_before_edit(tmp_path, monkeypatch, command):
     source = tmp_path / "aid.too"
     source.write_text("flow main(_: Text) -> Text:\n  pass\n")
     root = tmp_path / "global"
@@ -211,9 +211,12 @@ def test_roaming_history_chat_rejects_before_edit(tmp_path, monkeypatch, command
     home = select_roaming(source, toolang_root=root)
     with closing(RunStore(home.run_store, read_only=True)) as store:
         (run,) = store.list_runs()
-    before = home.run_store.read_bytes()
-    assert main([str(source), command, run.id, "--chat"]) == 1
-    assert home.run_store.read_bytes() == before
+    from toolang.up.invocation import script_invocation
+
+    with script_invocation(home):
+        before = home.run_store.read_bytes()
+        assert main([str(source), command, run.id, "--chat"]) == 1
+        assert home.run_store.read_bytes() == before
 
 
 def test_record_selection_binds_an_older_home_without_changing_the_default(
