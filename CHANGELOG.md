@@ -88,8 +88,8 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   ([#990](https://github.com/openhat-ai/toolang/pull/990))
 
 - Roaming Chat holds exclusive foreground ownership from startup through
-  cleanup, so a busy instance rejects new sessions before source projection
-  or history edits.
+  cleanup, stopping runtimes whose initial profile check fails, and rejects
+  busy sessions before source projection or history edits.
   ([#992](https://github.com/openhat-ai/toolang/pull/992))
 
 ### Fixed
