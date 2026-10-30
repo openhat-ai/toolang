@@ -17,9 +17,9 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   Tavily access and `SERPAPI_API_KEY` required only at invocation.
   ([#987](https://github.com/openhat-ai/toolang/pull/987))
 
-- Roaming launches share one `DIR/.toolang` agent root, reusing preparation,
-  source projections, State layers, catalogs, workspaces, and prepared
-  Programs across processes, host and guest launches, and Toolang roots.
+- Roaming launches share one `DIR/.toolang` agent root, hardlinking the Program,
+  nearest `toolang.toml`, and catalog, and reuse preparation, State, and prepared
+  Programs across processes, launches, and roots.
   ([#990](https://github.com/openhat-ai/toolang/pull/990))
 
 ### Changed
@@ -54,8 +54,42 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   agent root.
   ([#990](https://github.com/openhat-ai/toolang/pull/990))
 
+- **Breaking:** Root configuration and catalogs move to `config/config.toml` and
+  `config/catalog.json` under each selected root, including `TOOLANG_ROOT`; move
+  existing files there, because no lookup or migration remains.
+  ([#990](https://github.com/openhat-ai/toolang/pull/990))
+
+- **Breaking:** Root configuration relative paths now resolve from `config/`, so
+  rebase them when moving files, for example `repo = "../repo"` replacing
+  `repo = "repo"`.
+  ([#990](https://github.com/openhat-ai/toolang/pull/990))
+
+- **Breaking:** Visiting provenance is now `agents/NAME/source.json`; rename
+  existing `agent.source.json` files. Roaming records Program ownership there
+  and shared config/catalog origins in `config/source.json`.
+  ([#990](https://github.com/openhat-ai/toolang/pull/990))
+
+- **Breaking:** Project `toolang.toml` files no longer merge; only the nearest
+  existing file applies, even when empty or invalid, so move required settings
+  into it.
+  ([#990](https://github.com/openhat-ai/toolang/pull/990))
+
+- **Breaking:** Authored symlinks that guest directory mounts cannot resolve now
+  reject launch; replace them with real files instead of relying on symlink
+  authoring support.
+  ([#990](https://github.com/openhat-ai/toolang/pull/990))
+
 - Roaming instances keep separate runtime status, records, history, logs, and
   ownership, while `too AGENT info` and `too AGENT cd` use the shared home.
+  ([#990](https://github.com/openhat-ai/toolang/pull/990))
+
+- Shared roaming sources require one filesystem supporting hardlinks, so place
+  the Program, project TOML, and catalog on the `DIR/.toolang` filesystem.
+  ([#990](https://github.com/openhat-ai/toolang/pull/990))
+
+- Upstream atomic replacement of a roaming Program, project TOML, or catalog
+  takes effect at the next startup fetch, while in-place edits are shared
+  immediately.
   ([#990](https://github.com/openhat-ai/toolang/pull/990))
 
 ### Fixed
@@ -79,6 +113,15 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 - Roaming programs with CRLF sources reuse their prepared parse like LF
   sources, so repeated launches skip source preparation.
+  ([#990](https://github.com/openhat-ai/toolang/pull/990))
+
+- Running guests see replaced source files instead of overwriting newer shared
+  State with stale or empty values.
+  ([#990](https://github.com/openhat-ai/toolang/pull/990))
+
+- State watchers in every placement notice external root, home, and agent
+  `current` changes and reconcile even while unrelated events stream
+  continuously.
   ([#990](https://github.com/openhat-ai/toolang/pull/990))
 
 ### Security
