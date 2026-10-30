@@ -136,6 +136,15 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   files that no longer apply, matching host preparation instead of failing.
   ([#990](https://github.com/openhat-ai/toolang/pull/990))
 
+- Removing an implicitly fetched roaming catalog during execution now falls back
+  to the packaged catalog unless a home catalog overrides it, while explicit
+  missing catalog paths still fail.
+  ([#990](https://github.com/openhat-ai/toolang/pull/990))
+
+- Cold Docker guests receive 120 seconds for bootstrap and readiness after
+  container creation, while host launches keep their 30-second budget.
+  ([#990](https://github.com/openhat-ai/toolang/pull/990))
+
 ### Security
 
 - Search HTTP debug logs redact credential query parameters, including
