@@ -36,7 +36,7 @@ Catalogs never merge. Selection order is an explicit CLI override, the
 `TOOLANG_MODEL_CATALOG` environment variable, then the nearest authored layer,
 then the bundled catalog. Within a layer, `plugin.model_catalog.models_dev.path`
 precedes `toolang.catalog.json`. A project file named `catalog.json` is ignored.
-Resident catalogs live at `ROOT/config/catalog.json` and
+Resident catalogs live at `ROOT/catalog.json` and
 `ROOT/agents/NAME/catalog.json`.
 
 Each bare execution creates a runtime root at
@@ -60,16 +60,16 @@ instance may switch environments on its next invocation. Reuse preserves history
 and grants, rather than retaining temporary options from the previous invocation.
 At each startup, hardlink the Program, nearest TOML, and selected catalog into
 the shared layout. Source bytes remain unchanged; config/catalog origins live in
-`.toolang/config/source.json` and Program ownership in the home `source.json`.
+`.toolang/source.json` and Program ownership in the home `source.json`.
 Re-link changed source identities at startup. During execution, upstream atomic
 replacement may leave the old inode in use; in-place writes through either name
 share data. File hardlinks require a supported common filesystem. Roaming has no
 Chat or standalone hosting commands.
 
 Roaming scripts use the selected root's [environment policy](setup.md#environments),
-preferring the root file named by the encoded canonical source path over a
-source-local `.toolang.env`. Project `.env`, ancestor dotenv, and same-name
-resident files are ignored. Source-owned edit guards remain shared.
+selecting `AR/.NAME.env`, otherwise `AH/.env`, otherwise the first nonblank
+`pick` variable. These groups replace one another. Source-owned edit guards
+remain shared.
 
 ## Runnable input and help
 

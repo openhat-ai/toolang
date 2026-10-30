@@ -4,7 +4,7 @@ hub coordinates conversations, membership, presence, and event delivery through
 Redis/Valkey. Only hub connects directly to the backend. Agents reconnect when
 hub returns; local execution continues while it is unavailable. Uncertain sends are never automatically repeated.
 
-Both optional sections live in `ROOT/config/config.toml`; defaults are shown below
+Both optional sections live in `ROOT/config.toml`; defaults are shown below
 except `human`, which defaults to the client's OS account name resolved from its
 UID. Inherited `LOGNAME` and `USER` values do not override this default; an explicit
 `teaming.human` does.

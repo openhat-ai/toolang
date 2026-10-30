@@ -114,7 +114,7 @@ def test_root_add_does_not_resolve_unrelated_configured_caps(
     from toolang.catalog.config import ConfiguredCaps
     from toolang.cli.toolang.main import main
 
-    config = tmp_path / "config/config.toml"
+    config = tmp_path / "config.toml"
     config.parent.mkdir(parents=True, exist_ok=True)
     config.write_text('[prompts]\nstale = { ref = "gh:acme/stale" }\n')
     monkeypatch.setattr(cap_source, "_github_repo_default_branch", lambda *_: "main")

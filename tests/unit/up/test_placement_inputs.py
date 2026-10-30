@@ -28,9 +28,9 @@ def test_roaming_fetch_links_nearest_sources_without_projection(tmp_path: Path):
     program, config, catalog = _inputs(tmp_path)
     layout = materialize_roaming_program(program, toolang_root=tmp_path / "root")
     assert layout.program.samefile(program)
-    assert layout.root_config == program.parent / ".toolang/config/config.toml"
+    assert layout.root_config == program.parent / ".toolang/config.toml"
     assert layout.root_config.samefile(config)
-    assert (layout.agent_root / "config/catalog.json").samefile(catalog)
+    assert (layout.agent_root / "catalog.json").samefile(catalog)
     assert not layout.program.is_symlink()
     assert layout.root_config.read_bytes() == config.read_bytes()
     receipt = json.loads((layout.agent_home / "source.json").read_bytes())
@@ -52,7 +52,7 @@ def test_roaming_relinks_replaced_source_only_on_startup(tmp_path: Path, index: 
     targets = (
         layout.program,
         layout.root_config,
-        layout.agent_root / "config/catalog.json",
+        layout.agent_root / "catalog.json",
     )
     source = sources[index]
     target = targets[index]

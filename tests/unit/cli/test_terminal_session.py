@@ -177,18 +177,18 @@ def test_resident_and_root_only_sources(tmp_path, terminal_io, placement):
     for kwargs, expected in [
         (
             {"layout": layout},
-            ("home-env alice" if placement == "resident" else "home alice"),
+            "home-env alice",
         ),
         (
             {
                 "layout": layout,
                 "environment": {"TOOLANG_TITLE_PREFIX_CHAT": "process "},
             },
-            "home-env alice" if placement == "resident" else "process alice",
+            "home-env alice",
         ),
         (
             {"layout": layout, "environment": {"TOOLANG_TITLE_PREFIX_CHAT": ""}},
-            "home-env alice" if placement == "resident" else "alice",
+            "home-env alice",
         ),
         ({"root": tmp_path}, "root-env alice"),
     ]:
@@ -222,7 +222,9 @@ def test_visiting_pane_marks_publish_the_selected_root(
 
 
 @pytest.mark.parametrize("prefix", [None, "env ", ""])
-def test_roaming_uses_local_configuration_and_no_dotenv(tmp_path, terminal_io, prefix):
+def test_roaming_uses_local_configuration_and_home_dotenv(
+    tmp_path, terminal_io, prefix
+):
     from dataclasses import replace
 
     terminal_io = terminal_io()
@@ -233,7 +235,6 @@ def test_roaming_uses_local_configuration_and_no_dotenv(tmp_path, terminal_io, p
         managed_membership=False,
     )
     layout.home.mkdir(parents=True)
-    layout.place_config.parent.mkdir(parents=True)
     layout.place_config.parent.mkdir(parents=True, exist_ok=True)
     layout.place_config.write_text('[terminal.title.prefix]\nrun="inner "\n')
     layout.env.write_text("TOOLANG_TITLE_PREFIX_RUN=wrong\n")
@@ -243,7 +244,7 @@ def test_roaming_uses_local_configuration_and_no_dotenv(tmp_path, terminal_io, p
         "run", layout=layout, environment=environment, label="run file.too"
     ):
         pass
-    expected = "inner " if prefix is None else prefix
+    expected = "wrong"
     assert terminal_io.getvalue() == f"\x1b]0;{expected}run file.too\x07\x1b]0;\x07"
 
 

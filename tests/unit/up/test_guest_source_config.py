@@ -21,6 +21,64 @@ from toolang.up.source import materialize_roaming_program
 from tests.support.layout import root_file
 
 
+@pytest.mark.parametrize("present", [False, True])
+@pytest.mark.parametrize("receipt", [False, True])
+@pytest.mark.parametrize("corrupt_pointer", [False, True])
+def test_guest_config_snapshot_cannot_roll_back_shared_state(
+    tmp_path, present, receipt, corrupt_pointer
+):
+    import json
+    import os
+
+    host = AgentLayout.resident(tmp_path / "host", "alice")
+    host.agent_home.mkdir(parents=True)
+    host.program.write_text("flow run():\n  pass\n")
+    if present:
+        host.root_config.write_text('[allow]\ntools = ["first"]\n')
+    initial = prepare_agent_state(host)
+    guest_root = tmp_path / "guest"
+    guest_root.mkdir()
+    # A hardlink models a file bind retaining the replaced source inode.
+    if present:
+        os.link(host.root_config, guest_root / "config.toml")
+    (guest_root / ".state").symlink_to(host.agent_root / ".state")
+    (guest_root / "agents").symlink_to(host.agent_root / "agents")
+    patch = prepare_guest_environment(host, mapping={})[CONFIG_PATCH_ENV]
+    guest = AgentLayout.resident(guest_root, "alice")
+    if receipt:
+        data = json.loads(patch)
+        guest.root_source_receipt.write_text(
+            json.dumps(
+                {
+                    "launch": {key: data[key] for key in ("origins", "snapshots")},
+                }
+            )
+        )
+    else:
+        guest = replace(guest, runtime_config=RuntimeConfig.parse(patch))
+    accepted = prepare_agent_state(guest)
+    assert accepted.revision == initial.revision
+    watcher = StateWatcher(guest, initial_state=accepted)
+    replacement = host.root_config.with_suffix(".replacement")
+    replacement.write_text('[allow]\ntools = ["second"]\n')
+    replacement.replace(host.root_config)
+    updated = prepare_agent_state(host)
+    assert updated.revision != initial.revision
+    if corrupt_pointer:
+        from toolang.state.cache import layer_current_path
+
+        layer_current_path(host, "root").write_text("f" * 64 + "\n")
+    with pytest.raises(ValueError, match="restart"):
+        prepare_agent_state(guest)
+    result = asyncio.run(watcher.refresh_result())
+    assert result.state is accepted
+    assert result.error == "state_rejected"
+    assert any("restart" in diagnostic.message for diagnostic in result.diagnostics)
+    from toolang.state.prepare import load_agent_state
+
+    assert load_agent_state(host).revision == updated.revision
+
+
 def test_guest_mounts_original_configuration_bytes(tmp_path):
     layout = AgentLayout.resident(tmp_path / "host", "alice")
     layout.agent_home.mkdir(parents=True)
@@ -31,12 +89,10 @@ def test_guest_mounts_original_configuration_bytes(tmp_path):
     layout.config.write_text('[workspaces]\nhome = "."\n')
     guest = Path("/guest")
     mounts = prepare_place_mounts(layout.agent_root, guest)
-    root = next(m for m in mounts if m.hosted_path == guest / "config")
-    assert root.local_path == layout.place_config.parent
-    assert not root.read_only
-    assert (
-        root.local_path / "config.toml"
-    ).read_bytes() == layout.place_config.read_bytes()
+    root = next(m for m in mounts if m.hosted_path == guest / "config.toml")
+    assert root.local_path == layout.place_config
+    assert root.read_only
+    assert root.local_path.read_bytes() == layout.place_config.read_bytes()
     assert not any(m.hosted_path == guest / "agents/alice/config.toml" for m in mounts)
 
 
@@ -160,8 +216,9 @@ def test_shared_state_stays_stable_across_host_and_guest(tmp_path, project, link
     initial = prepare_agent_state(host)
     guest_place = tmp_path / "guest"
     guest_place.mkdir()
-    for path in ("config", ".state"):
-        (guest_place / path).symlink_to(host.agent_root / path)
+    for path in ("config.toml", "source.json", ".state"):
+        if (host.agent_root / path).exists():
+            (guest_place / path).symlink_to(host.agent_root / path)
     (guest_place / "agents").mkdir()
     (guest_place / "agents" / host.name).symlink_to(
         host.agent_home, target_is_directory=True
@@ -237,8 +294,9 @@ def test_guest_does_not_restore_stale_symlink_identity_after_host_publication(
     initial = prepare_agent_state(host)
     guest_place = tmp_path / "guest"
     guest_place.mkdir()
-    for path in ("config", ".state"):
-        (guest_place / path).symlink_to(host.agent_root / path)
+    for path in ("config.toml", "source.json", ".state"):
+        if (host.agent_root / path).exists():
+            (guest_place / path).symlink_to(host.agent_root / path)
     (guest_place / "agents").mkdir()
     (guest_place / "agents/aid").symlink_to(host.agent_home, target_is_directory=True)
     target = guest_place / "workspaces/aid/repo"

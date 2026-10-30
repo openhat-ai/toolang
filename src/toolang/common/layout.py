@@ -50,7 +50,7 @@ def derive_agent_name(stem: str) -> str:
 
 def root_config_path(root: Path) -> Path:
     """Return root-owned configuration, separate from private dotenv files."""
-    return root / "config" / "config.toml"
+    return root / "config.toml"
 
 
 def agent_workspaces_path(place: Path, name: str) -> Path:
@@ -215,11 +215,9 @@ class AgentLayout:
         """Map a captured host source path into this process's agent root."""
         if path.is_relative_to(self.agent_root):
             return path
-        origin = (
-            self.runtime_config.origins.get("agent_root")
-            if self.runtime_config is not None
-            else None
-        )
+        from .config_sources import config_origins
+
+        origin = config_origins(self).origins.get("agent_root")
         if origin is not None and path.is_relative_to(origin):
             return self.agent_root / path.relative_to(origin)
         return path
@@ -242,7 +240,7 @@ class AgentLayout:
 
     @property
     def root_catalog(self) -> Path:
-        return self.agent_root / "config" / "catalog.json"
+        return self.agent_root / "catalog.json"
 
     @property
     def root_source_receipt(self) -> Path:
@@ -275,7 +273,7 @@ class AgentLayout:
 
     @property
     def env(self) -> Path:
-        return self.home / ".env"
+        return self.agent_home / ".env"
 
     @property
     def place_state(self) -> Path:

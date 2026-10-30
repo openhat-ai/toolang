@@ -314,6 +314,12 @@ complete; integrity checks happen only through explicit validation.
 read the current State, load an exact revision, request another candidate
 check, and inspect diagnostics for the latest rejected candidate.
 
+A guest retains its root config snapshot for its launch. If the host publishes
+State from a different root config, the guest rejects further preparation with a
+restart diagnostic and preserves its accepted State without rewriting shared
+pointers. Source snapshot metadata lives in guest `GR/source.json`, so direct
+guest commands enforce the same publication boundary.
+
 At startup it first attempts to load `agent/current` as the last-known-good
 State. A valid changed candidate is fully persisted before it replaces that
 State. An invalid candidate records structured diagnostics and keeps the prior
@@ -324,14 +330,14 @@ All placements watch their resolved agent root/home with the same rules;
 State owns source and pointer subscriptions; layout supplies resolved paths.
 Startup fetching belongs to source acquisition, outside the watcher. Native
 subscriptions use `recursive=False` and enumerate only authored capability
-directories, root `config/`, agent home, `runnables/`, `chores/`, and the parents
+directories, agent root/home, `runnables/`, `chores/`, and the parents
 of root/home/agent State `current` pointers. Watching existing parents catches
 creation of missing source or State directories; subscriptions are rebuilt and
 rescanned when those directories appear or disappear. `.runtime/`, workspaces,
 revision contents, and other agents are excluded from directory traversal.
 
 An independent reconciliation deadline runs even during continuous unrelated or
-filtered filesystem events. Changes to `config/source.json` or home `source.json`
+filtered filesystem events. Changes to root or home `source.json`
 reload source origins; external edits to any of the three `current` pointers
 trigger validation and reconciliation even when authored bytes are unchanged.
 

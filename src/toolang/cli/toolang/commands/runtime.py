@@ -609,9 +609,6 @@ def serve(
     workspace_bindings: Annotated[
         str, typer.Option("--workspace-bindings", hidden=True)
     ] = "{}",
-    environment_file: Annotated[
-        Path | None, typer.Option("--environment-file", hidden=True)
-    ] = None,
     initial_workdir: Annotated[
         str | None, typer.Option("--initial-workdir", hidden=True)
     ] = None,
@@ -667,22 +664,8 @@ def serve(
     environ = dict(os.environ)
     environ["TOOLANG_ROOT"] = str(context_root(ctx))
     environ["TOOLANG_SANDBOX"] = sandbox
-    if environment_file is not None:
-        from toolang.common.environment import apply_environment_file
-
-        if location != "guest":
-            raise ClickException("an explicit workload environment requires a guest")
-        grants = user_call(apply_environment_file, environment_file, environ)
-        selected = ResolvedEnvironment(
-            context_root(ctx),
-            EnvironmentPolicy(),
-            environ,
-            identity=environment_identity(layout),
-            source=environment_file,
-            guest_values=grants,
-        )
-    elif location == "host" and host_launch:
-        # The controller already resolved and reduced this exec environment.
+    if location == "host" and host_launch:
+        # The controller has already captured this host invocation's environment.
         selected = ResolvedEnvironment(
             context_root(ctx),
             EnvironmentPolicy(),
@@ -690,7 +673,6 @@ def serve(
             identity=environment_identity(layout),
         )
     else:
-        # Guests load their generated root file; standalone hosts apply policy.
         selected = user_call(load_runtime_environment, layout, base_environ=environ)
     from toolang.common.config_runtime import (
         CONFIG_PATCH_ENV,
@@ -703,10 +685,13 @@ def serve(
         binding.source != binding.path for binding in bindings.values()
     ):
         raise ClickException("host workspace bindings must preserve source paths")
+    controls_config = selected.values.get(
+        CONFIG_PATCH_ENV, environ.get(CONFIG_PATCH_ENV)
+    )
     controls = {
         name: value for name, value in environ.items() if name in RUNTIME_ENV_NAMES
     }
-    environ = dict(selected.values) if location == "host" else environ
+    environ = dict(selected.values)
     environ.update(selected.guest_values)
     for name in RUNTIME_ENV_NAMES:
         environ.pop(name, None)
@@ -724,7 +709,7 @@ def serve(
     layout = replace(
         layout,
         runtime_config=user_call(
-            RuntimeConfig.parse, environ.get(CONFIG_PATCH_ENV), workspaces=bindings
+            RuntimeConfig.parse, controls_config, workspaces=bindings
         ),
     )
     environment = replace(selected, values=environ)

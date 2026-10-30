@@ -9,6 +9,7 @@ import logging
 from pathlib import Path
 
 from toolang.common.config_runtime import ConfigOrigins
+from toolang.common.config_sources import config_origins
 from toolang.common.layout import AgentLayout, ensure_scratch_workspace
 from toolang.common.source import AcquiredSource
 from toolang.catalog import source as cap_source
@@ -139,7 +140,9 @@ def prepare_agent_state(
                 created_at=created_at,
             )
         )
-        publish_agent_current(layout, authored_revision or revision)
+        with layer_build_lock(layout, "root", progress=progress):
+            _validate_root_snapshot(layout)
+            publish_agent_current(layout, authored_revision or revision)
         return state
 
 
@@ -279,6 +282,7 @@ def prepare_root(
     """Build or reuse the root State layer shared by every agent."""
 
     _require_agent_root(layout)
+    _validate_root_snapshot(layout)
     source = scan_root_source(layout.agent_root)
     current = _matching_root(
         layout,
@@ -288,6 +292,7 @@ def prepare_root(
     if current is not None:
         return current
     with layer_build_lock(layout, "root", progress=progress):
+        _validate_root_snapshot(layout)
         source = scan_root_source(layout.agent_root)
         current = _matching_root(
             layout,
@@ -305,6 +310,35 @@ def prepare_root(
             progress=progress,
         )
         return load_root_layer(layout)
+
+
+def _validate_root_snapshot(layout: AgentLayout) -> None:
+    """Keep a pinned guest config from replacing newer shared authored State."""
+    snapshots = config_origins(layout).snapshots
+    if "config.toml" not in snapshots:
+        return
+    expected = snapshots["config.toml"]
+    local = (
+        sha256(layout.root_config.read_bytes()).hexdigest()
+        if layout.root_config.is_file()
+        else None
+    )
+    if local != expected:
+        raise ValueError("root configuration changed; restart the sandbox")
+    try:
+        published = load_root_layer(layout).source
+    except (OSError, KeyError, TypeError, ValueError):
+        try:
+            _, revision, *_ = load_agent_revisions(layout)
+            published = load_root_layer(layout, revision).source
+        except (OSError, KeyError, TypeError, ValueError):
+            return  # Ordinary preparation repairs absent or invalid caches.
+    digest = next(
+        (entry.raw_digest for entry in published.files if entry.path == "config.toml"),
+        None,
+    )
+    if digest != expected:
+        raise ValueError("shared root configuration changed; restart the sandbox")
 
 
 def inspect_root_caps(

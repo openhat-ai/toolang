@@ -206,23 +206,19 @@ environment_allow_pattern = '^(?:COMPANY_CATALOG_TOKEN|HTTPS?_PROXY)$'
 
 Docker always writes resolved guest values to mode-`0600` `guest.env`, including
 an empty result. It mounts that file read-only at the ordinary loader's
-highest-priority root policy path: `ROOT/.<name>.env` for residents, or the
-shared [source-identity filename](setup.md#environments) for roaming/visiting
-agents. Managed Docker startup also receives the bootstrap copy's explicit path
-through hidden `--environment-file` and requires that launch snapshot before
-plugin construction; missing or invalid inputs fail. Both paths use the common
-dotenv parser. File presence disables fallback and `pick` for ordinary guest
-commands. The complete home mount retains any authored `HOME/.env` without masking
+highest-priority path, `GR/.NAME.env`, for every placement. `_serve` and other
+agent commands use the common environment loader without a separate file option.
+File presence disables fallback and `pick`.
+The complete home mount retains any authored `HOME/.env` without masking
 or modification; the loader does not merge it with the selected root file. The
 controller does not separately reload authored dotenv files for staging. Public
 sandbox requests retain the trusted `dotenv_envs` input, whose names bypass the
 optional pattern; resolved process bindings win on duplicate names in the generated file.
 Generated names use the common dotenv validator before container creation.
 
-The guest preserves all native image/entrypoint environment variables, overlays
-the loaded bindings, and restores the finite launcher-owned control values.
-Host `keep` never removes image variables or automatically imports host
-`PATH`/`HOME`. Toolang prepends its private bin to the selected guest PATH.
+The guest applies the same `keep` and selected-file rules to its native root
+environment, then restores finite launcher-owned control values.
+Toolang prepends its private bin to the selected guest PATH.
 Host serving preserves the selected PATH, including an absent or empty value.
 Shell tools use `/bin/sh -c`, preserving that environment without login profiles.
 Setup refreshes, model calls, tools, and child processes reuse the startup
@@ -326,16 +322,22 @@ guest agent home is `GH = GR/agents/NAME`.
 | --- | --- | --- |
 | `AH/` | `GH/` | Read-write; Program, home config/catalog, receipt, and State |
 | `RR/agents/NAME/.runtime/` | `GH/.runtime/` | Read-write; mounted after home in every placement |
-| `AR/config/` | `GR/config/` | Read-write; root config/catalog and shared source receipt |
+| `AR/config.toml` | `GR/config.toml` | Read-only private hardlink when present; startup snapshot |
+| `AR/catalog.json` | `GR/catalog.json` | Read-only private hardlink when present; startup snapshot |
+| Generated launch `source.json` | `GR/source.json` | Read-only source origins and config snapshot identity |
 | `AR/.state/root/` | `GR/.state/root/` | Read-write; root revisions, current pointer, and locks |
 | `AR/{psyches,skills,services,prompts}/` | Same relative directories below `GR/` | Read-write; root authored capabilities |
 | `AR/workspaces/NAME/lab/` | `GR/workspaces/NAME/lab/` | Read-write; shared lab |
 | Each granted workspace directory | `GR/workspaces/NAME/WORKSPACE/` | Read-write; captured grants |
 | `ROOT/.runtime/active/ADDRESS/docker/L/active/` | `GR/.runtime/active/NAME/` | Read-only; private launch bootstrap |
-| Generated `active/guest.env` | Selected guest root dotenv policy path | Read-only; mode `0600` |
+| Generated `active/guest.env` | `GR/.NAME.env` | Read-only; mode `0600` |
 
-Directory mounts expose atomic replacement of contained files. Mutable Program,
-config, and automatic catalog files have no file overlays. Startup rejects authored
+Directory mounts expose atomic replacement of contained files. Root config/catalog
+file binds use private launch hardlinks to retain their startup inode even when
+the original host entry is replaced; atomic changes require restart. A stale
+guest config cannot publish over a newer shared root State. Explicit catalogs
+already covered by root/home mounts reuse those paths; external files receive
+a separate read-only bind at `GR/.inputs/catalog.json`. Startup rejects authored
 symlinks whose targets, including intermediate links and linked directories,
 are unavailable through the selected directory mounts.
 All workspace names are unique before mounting; nested and alias sources retain
@@ -360,14 +362,12 @@ A common `--launch-schema` check rejects incompatible startup contracts before
 State writes. `guest.sh` bootstraps and executes arguments without rewriting options.
 [Workspaces](workspaces.md) owns grant selection and captured-mount checks.
 
-The guest uses its own packaged catalog without a mount or override. Catalogs
-inside root config or agent home retain their owning scope, including TOML path
-declarations, and follow directory-mounted file replacement and configuration
-changes. External TOML catalogs and CLI/environment overrides mount read-only at
-`GR/.inputs/catalog.json`; only these need `TOOLANG_MODEL_CATALOG` and remain
-fixed for the launch. Changing workspace mounts also requires restart.
-A catalog hidden by a nested runtime mount uses the same read-only file binding
-as an external catalog; scope alone does not determine mount coverage.
+The guest uses its packaged catalog without a mount. Root catalogs retain their
+scope through a read-only startup snapshot; home catalogs follow their directory
+mount, including atomic replacement and TOML path changes. Explicit CLI/env
+catalogs reuse root/home coverage and retain their mapped selection path.
+Only uncovered or runtime-hidden files receive an independent read-only bind at
+`GR/.inputs/catalog.json`. Changing workspace mounts requires restart.
 
 Assembly is split between [mount preparation](../../src/toolang/up/mounts.py),
 the [launch boundary](../../src/toolang/up/sandbox.py), and the
@@ -578,7 +578,7 @@ separate: inactive host execution is embedded and script-created guests stop on 
 ## Hub process
 
 `too hub start`, `serve`, and `stop` control the selected root's local process.
-The server reads `[hub]` in `ROOT/config/config.toml`; bind port precedence is `--port`,
+The server reads `[hub]` in `ROOT/config.toml`; bind port precedence is `--port`,
 `TOOLANG_HUB_PORT`, `hub.port`, then `7001`. The host defaults to `127.0.0.1`.
 Changing the listener requires separately configuring client `teaming.hub`.
 

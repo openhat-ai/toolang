@@ -83,7 +83,7 @@ def test_visiting_chat_reclaims_or_explicitly_stops_an_automatic_container(
         f'[teaming]\nenabled = false\n[model]\nref = "{_MODEL}"\n'
         '[allow]\nmodels = ["ollama/*"]\ntools = []\n'
     )
-    agent_environment_paths(root, layout)[0].write_text("OLLAMA_HOST\nLLAMA_CPP_HOST\n")
+    agent_environment_paths(layout)[0].write_text("OLLAMA_HOST\nLLAMA_CPP_HOST\n")
     base = (sys.executable, "-m", "toolang.cli.toolang", "--root", str(root), selector)
     env = {
         **os.environ,
@@ -229,7 +229,7 @@ def test_nonresident_launch_uses_selected_root_environment_and_cleans_reference(
         )
     layout.home.mkdir(parents=True, exist_ok=True)
     _write_local_model_env(layout.place_env, local_model_port)
-    _write_local_model_env(agent_environment_paths(root, layout)[0], local_model_port)
+    _write_local_model_env(agent_environment_paths(layout)[0], local_model_port)
     env = {**os.environ, "TOOLANG_ROOT": str(root)}
     base = (sys.executable, "-m", "toolang.cli.toolang")
     container_id = None
@@ -743,7 +743,7 @@ def configured_docker_agent(tmp_path_factory, docker_wheel_dir, local_model_port
         layout.place_config.parent.mkdir(parents=True, exist_ok=True)
         layout.place_config.write_text(
             '[teaming]\nenabled = false\nhuman = "fixture-owner"\n'
-            '[workspaces.alice]\nrepo = "../repo-link"\n'
+            '[workspaces.alice]\nrepo = "./repo-link"\n'
         )
         layout.config.write_text('[workspaces]\nnotes = "./notes"\n')
         (root_file(layout.agent_root, "catalog.json")).write_text(
@@ -865,7 +865,6 @@ def test_guest_current_watch_accepts_source_changes_without_restoring_grants(
     from toolang.state.prepare import prepare_agent_state
 
     agent = configured_docker_agent
-    root_header = '[teaming]\nenabled = false\nhuman = "updated-owner"\n'
     rebound = agent.layout.place / "rebound"
     rebound.mkdir()
     home_rebound = agent.layout.place / "home-rebound"
@@ -874,14 +873,6 @@ def test_guest_current_watch_accepts_source_changes_without_restoring_grants(
         (agent.layout.place / "repo-link", None),
         (agent.layout.config, f'[workspaces]\nnotes = "{home_rebound}"\n'),
         (agent.layout.config, "[workspaces]\n"),
-        (
-            agent.layout.place_config,
-            root_header + '[workspaces.alice]\nrepo = "../rebound"\n',
-        ),
-        (
-            agent.layout.place_config,
-            root_header + '[workspaces.alice]\nnew = "../repo"\n',
-        ),
     )
     for path, content in changes:
         if content is None:
@@ -924,7 +915,7 @@ def test_guest_current_watch_accepts_source_changes_without_restoring_grants(
 
 @pytest.mark.parametrize("guest_path", [False, True])
 @pytest.mark.parametrize("writable_file_mount", [False, True])
-def test_docker_catalog_fallback_is_read_only(
+def test_docker_catalog_reuses_the_home_mount(
     tmp_path, docker_wheel_dir, guest_path, writable_file_mount
 ):
     from toolang.base.types.sandbox import SandboxMount, SandboxRequest
@@ -939,21 +930,16 @@ def test_docker_catalog_fallback_is_read_only(
     guest = Path("/root/.toolang")
     hosted_home = guest / "agents/alice"
     hosted_catalog = hosted_home / catalog.name
-    script = """
+    script = r"""
 import errno, json, os
 from pathlib import Path
 from toolang.common.environment import apply_environment_file
 values = apply_environment_file(Path('/root/.toolang/.alice.env'), {})
 path = Path(values['TOOLANG_MODEL_CATALOG'])
-assert path == Path('/root/.toolang/.inputs/catalog.json'), path
+assert path == Path('/root/.toolang/agents/alice/company.json'), path
 assert json.loads(path.read_text()) == {'providers': [], 'models': []}
-try:
-    descriptor = os.open(path, os.O_WRONLY)
-except OSError as error:
-    assert error.errno == errno.EROFS, error
-else:
-    os.close(descriptor)
-    raise AssertionError('selected catalog is writable')
+with path.open('a') as stream:
+    stream.write('\n')
 Path('/root/.toolang/agents/alice/home-stays-writable').write_text('ok')
 """
     port = _available_port()
@@ -1073,11 +1059,11 @@ def test_guest_source_handoff_preserves_layers_catalogs_and_environment(
         layout.place_config.parent.mkdir(parents=True, exist_ok=True)
         layout.place_config.write_text(
             '[teaming]\nenabled = false\nhuman = "resident-owner"\n'
-            '[workspaces.alice]\nrepo = "../repo"\n'
+            '[workspaces.alice]\nrepo = "./repo"\n'
         )
         if catalog_kind in {"root", "config", "environment", "option", "explicit-root"}:
             catalog = (
-                root / "config/catalog.json"
+                root / "catalog.json"
                 if catalog_kind in {"root", "explicit-root"}
                 else root / "company.json"
             )
@@ -1085,7 +1071,7 @@ def test_guest_source_handoff_preserves_layers_catalogs_and_environment(
             if catalog_kind == "config":
                 with layout.place_config.open("a") as config:
                     config.write(
-                        '[plugin.model_catalog.models_dev]\npath = "../company.json"\n'
+                        '[plugin.model_catalog.models_dev]\npath = "./company.json"\n'
                     )
         elif catalog_kind == "explicit-packaged":
             from toolang.plugin.catalogs.models_dev.path import PACKAGED_MODEL_CATALOG
@@ -1106,7 +1092,7 @@ def test_guest_source_handoff_preserves_layers_catalogs_and_environment(
                 '[plugin.model_catalog.models_dev]\npath = ".runtime/models.json"\n'
             )
     _write_local_model_env(root / ".env", local_model_port)
-    policy = agent_environment_paths(root, layout)[0]
+    policy = agent_environment_paths(layout)[0]
     policy.write_text(
         "OLLAMA_HOST\nLLAMA_CPP_HOST\nFIXTURE_TOKEN=transport-only-sentinel\n"
         + (
@@ -1156,7 +1142,8 @@ from toolang.up.source import restore_program_acquisition
 args = Path('/proc/1/cmdline').read_bytes().decode().split('\0')
 def option(name):
     return args[args.index(name) + 1]
-env_file = Path(option('--environment-file'))
+assert '--environment-file' not in args
+env_file = Path('/root/.toolang/.alice.env')
 env = apply_environment_file(env_file, os.environ)
 bindings = parse_workspace_bindings(option('--workspace-bindings'))
 runtime = RuntimeConfig.parse(env[CONFIG_PATCH_ENV], workspaces=bindings)
@@ -1171,7 +1158,7 @@ catalog = resolve_model_catalog_selection(layout, environ=env)
 teaming = resolve_teaming_setup(config_sources(layout), root=layout.place_config, home=layout.config, host_root=layout.host_root)
 named_env = layout.place / sys.argv[2]
 assert apply_environment_file(named_env, os.environ) == env
-for path in (env_file, named_env, *((catalog.path,) if catalog.scope == 'custom' else ())):
+for path in (env_file, named_env, *((layout.place_config,) if layout.place_config.exists() else ()), *((catalog.path,) if catalog.scope != 'packaged' and not catalog.path.is_relative_to(layout.agent_home) else ())):
     try:
         fd = os.open(path, os.O_WRONLY)
     except OSError as error:
@@ -1179,7 +1166,7 @@ for path in (env_file, named_env, *((catalog.path,) if catalog.scope == 'custom'
     else:
         os.close(fd)
         raise AssertionError(f'writable source mount: {path}')
-for path in (layout.place_config, *((catalog.path,) if catalog.scope in {'root', 'home'} else ())):
+for path in (*((catalog.path,) if catalog.path.is_relative_to(layout.agent_home) else ()),):
     if path.exists():
         fd = os.open(path, os.O_WRONLY)
         os.close(fd)
@@ -1248,7 +1235,11 @@ print(json.dumps({'revision': state.revision, 'workspaces': dict(state.workspace
                 assert (
                     observed["catalog_env"]
                     == observed["catalog"]
-                    == "/root/.toolang/.inputs/catalog.json"
+                    == (
+                        "/root/.toolang/catalog.json"
+                        if catalog_kind == "explicit-root"
+                        else "/root/.toolang/.inputs/catalog.json"
+                    )
                 )
             else:
                 assert observed["catalog_env"] is None
@@ -1261,7 +1252,7 @@ print(json.dumps({'revision': state.revision, 'workspaces': dict(state.workspace
                     assert (
                         observed["catalog"]
                         == "/root/.toolang/"
-                        + ("agents/alice/" if catalog_kind == "home" else "config/")
+                        + ("agents/alice/" if catalog_kind == "home" else "")
                         + "catalog.json"
                     )
             assert (
@@ -1297,7 +1288,13 @@ def test_rust_guest_shell_uses_image_toolchain_without_bootstrap_uv_leaks(
     tmp_path_factory, docker_wheel_dir, local_model_port
 ):
     agents = _docker_agent(
-        tmp_path_factory, docker_wheel_dir, local_model_port, image="rust:1.75"
+        tmp_path_factory,
+        docker_wheel_dir,
+        local_model_port,
+        image="rust:1.75",
+        configure=lambda layout: layout.root_config.write_text(
+            '[env]\nkeep=["HOME", "PATH", "CARGO_HOME", "RUSTUP_HOME"]\n'
+        ),
     )
     try:
         agent = next(agents)
@@ -2813,12 +2810,12 @@ def test_owner_eof_stops_a_guest_whose_primary_process_cannot_handle_signals(
             _clean_script(worker, home or (homes[0] if homes else None))
 
 
-def test_roaming_guest_observes_startup_relinks_without_state_rollback(
+def test_roaming_guest_keeps_config_snapshots_without_state_rollback(
     tmp_path, docker_wheel_dir, local_model_port
 ):
     from toolang.cli.common.agent_server import acquire_agent_server
     from toolang.common.environment import agent_environment_paths
-    from toolang.state.prepare import prepare_agent_state
+    from toolang.state.prepare import prepare_agent_state, load_agent_state
 
     root = tmp_path / "root"
     root.mkdir()
@@ -2832,8 +2829,7 @@ def test_roaming_guest_observes_startup_relinks_without_state_rollback(
     catalog.write_text('{"providers": [], "models": []}')
     layout = agent_sources.materialize_roaming_program(source, toolang_root=root)
     _write_local_model_env(root / ".env", local_model_port)
-    agent_environment_paths(root, layout)[0].write_text("OLLAMA_HOST\nLLAMA_CPP_HOST\n")
-
+    agent_environment_paths(layout)[0].write_text("OLLAMA_HOST\nLLAMA_CPP_HOST\n")
     with acquire_agent_server(
         layout,
         sandbox="docker:python:3.13-slim",
@@ -2845,7 +2841,7 @@ def test_roaming_guest_observes_startup_relinks_without_state_rollback(
         assert server is not None
         running = SandboxState.load(layout.runtime_status)
         assert running is not None
-        endpoint = server.endpoint
+        accepted = _get_json(f"{server.endpoint}/api/v0/workspaces")["revision"]
         for original, contents, target in (
             (source, "flow after():\n  pass\n", layout.program),
             (
@@ -2853,49 +2849,94 @@ def test_roaming_guest_observes_startup_relinks_without_state_rollback(
                 f'[teaming]\nenabled = false\n[workspaces]\nrepo = "{project}"\n',
                 layout.root_config,
             ),
-            (
-                catalog,
-                '{\n"providers": [],\n"models": []\n}',
-                layout.root_catalog,
-            ),
+            (catalog, '{\n"providers": [],\n"models": []\n}', layout.root_catalog),
         ):
             before = target.read_bytes()
             replacement = original.with_suffix(".replacement")
             replacement.write_text(contents)
             replacement.replace(original)
             assert target.read_bytes() == before
-            # A subsequent startup refreshes shared inputs for existing guests.
             agent_sources.materialize_roaming_program(source, toolang_root=root)
             expected = prepare_agent_state(layout)
-            deadline = time.monotonic() + 15
-            while True:
-                observed = _get_json(f"{endpoint}/api/v0/workspaces")
-                if observed["revision"] == expected.revision:
-                    break
-                assert time.monotonic() < deadline, observed
-                time.sleep(0.1)
+            if target == layout.program:
+                deadline = time.monotonic() + 15
+                while (
+                    _get_json(f"{server.endpoint}/api/v0/workspaces")["revision"]
+                    != expected.revision
+                ):
+                    assert time.monotonic() < deadline
+                    time.sleep(0.1)
+                accepted = expected.revision
             guest_path = (
                 "/root/.toolang/agents/alice/agent.too"
                 if target == layout.program
-                else "/root/.toolang/config/" + target.name
+                else "/root/.toolang/" + target.name
             )
-            while True:
-                read = subprocess.run(
-                    ["docker", "exec", running.ref.runtime_id, "cat", guest_path],
-                    capture_output=True,
-                    text=True,
-                    timeout=10,
-                )
-                if read.returncode == 0 and read.stdout == contents:
-                    break
-                assert time.monotonic() < deadline, (read.stdout, read.stderr)
-                time.sleep(0.1)
-            for _ in range(3):
-                assert prepare_agent_state(layout).revision == expected.revision
-                assert (
-                    _get_json(f"{endpoint}/api/v0/workspaces")["revision"]
-                    == expected.revision
-                )
+            read = subprocess.run(
+                ["docker", "exec", running.ref.runtime_id, "cat", guest_path],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            assert read.returncode == 0, read.stderr
+            assert read.stdout == (
+                contents if target == layout.program else before.decode()
+            )
+            # A separate guest process must enforce the same publication boundary.
+            checked = subprocess.run(
+                [
+                    "docker",
+                    "exec",
+                    running.ref.runtime_id,
+                    "/tmp/toolang-runtime/tools/toolang/bin/python",
+                    "-c",
+                    "from pathlib import Path; from toolang.common.layout import AgentLayout; "
+                    "from toolang.state.prepare import prepare_agent_state; "
+                    "prepare_agent_state(AgentLayout.resident(Path('/root/.toolang'), 'alice'))",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+            if target == layout.program:
+                assert checked.returncode == 0, checked.stderr
+            else:
+                assert checked.returncode != 0 and "restart" in checked.stderr
+            assert load_agent_state(layout).revision == expected.revision
+            assert (
+                _get_json(f"{server.endpoint}/api/v0/workspaces")["revision"]
+                == accepted
+            )
+    with acquire_agent_server(
+        layout,
+        sandbox="docker:python:3.13-slim",
+        dev=docker_wheel_dir,
+        temporary=True,
+        bound=True,
+        show_progress=False,
+    ) as server:
+        assert server is not None
+        assert (
+            _get_json(f"{server.endpoint}/api/v0/workspaces")["revision"]
+            == expected.revision
+        )
+        running = SandboxState.load(layout.runtime_status)
+        assert running is not None
+        for path in (layout.root_config, layout.root_catalog):
+            read = subprocess.run(
+                [
+                    "docker",
+                    "exec",
+                    running.ref.runtime_id,
+                    "cat",
+                    "/root/.toolang/" + path.name,
+                ],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            assert read.returncode == 0, read.stderr
+            assert read.stdout == path.read_text()
 
 
 @pytest.mark.parametrize("source_kind", ["ancestor-config", "linked-program"])
@@ -2932,7 +2973,7 @@ def test_guest_source_validation_preserves_usable_inputs(
     assert set(expected.runnables) == {"work"}
     assert expected.workspaces == {}
     _write_local_model_env(root / ".env", local_model_port)
-    agent_environment_paths(root, layout)[0].write_text("OLLAMA_HOST\nLLAMA_CPP_HOST\n")
+    agent_environment_paths(layout)[0].write_text("OLLAMA_HOST\nLLAMA_CPP_HOST\n")
     with acquire_agent_server(
         layout,
         sandbox="docker:python:3.13-slim",
@@ -3035,9 +3076,7 @@ def test_live_placement_watches_sources_catalogs_and_external_pointers(
             (layout.agent_home / "catalog.json").write_text(empty_catalog)
         initial = prepare_agent_state(layout)
         _write_local_model_env(root / ".env", local_model_port)
-        agent_environment_paths(root, layout)[0].write_text(
-            "OLLAMA_HOST\nLLAMA_CPP_HOST\n"
-        )
+        agent_environment_paths(layout)[0].write_text("OLLAMA_HOST\nLLAMA_CPP_HOST\n")
 
         def noise():
             log = layout.runtime / "logs/noisy.log"
@@ -3123,7 +3162,9 @@ def test_live_placement_watches_sources_catalogs_and_external_pointers(
                     wait_items(
                         "models?query=placement-probe/*",
                         "ref",
-                        {f"placement-probe/{name}"},
+                        set()
+                        if location == "docker" and catalog == layout.root_catalog
+                        else {f"placement-probe/{name}"},
                     )
                 last_contents = catalog.read_text()
                 catalog.unlink()

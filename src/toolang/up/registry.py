@@ -105,9 +105,16 @@ def _registration_guard(
                     )
                 )
                 break
-            except (BlockingIOError, FileNotFoundError):
+            except (BlockingIOError, FileNotFoundError, FileExistsError) as exc:
+                removed = isinstance(exc, FileExistsError)
+                if removed and directory.exists() and not directory.is_dir():
+                    raise
                 if not blocking or time.monotonic() >= deadline:
                     stack.close()
+                    if removed:
+                        # An empty registration directory can disappear between
+                        # mkdir's EEXIST and its subsequent directory check.
+                        raise FileNotFoundError(directory) from exc
                     raise
                 time.sleep(min(0.02, max(0, deadline - time.monotonic())))
         try:

@@ -56,14 +56,13 @@ def test_prepare_place_mounts_owns_place_inputs(tmp_path: Path) -> None:
     mounts = prepare_place_mounts(local_place, hosted_place)
 
     assert {(item.local_path, item.hosted_path) for item in mounts} == {
-        (local_place / "config", hosted_place / "config"),
         (local_place / ".state/root", hosted_place / ".state/root"),
         (local_place / "psyches", hosted_place / "psyches"),
         (local_place / "skills", hosted_place / "skills"),
         (local_place / "services", hosted_place / "services"),
         (local_place / "prompts", hosted_place / "prompts"),
     }
-    assert (local_place / "config").is_dir()
+    assert not (local_place / "config").exists()
     assert not (local_place / ".setup").exists()
     assert all(
         (local_place / name).is_dir()
@@ -77,15 +76,14 @@ def test_prepare_place_mounts_owns_place_inputs(tmp_path: Path) -> None:
     )
 
 
-def test_place_catalog_is_covered_by_writable_directory_mount(tmp_path: Path) -> None:
+def test_place_catalog_is_an_independent_startup_snapshot(tmp_path: Path) -> None:
     local = tmp_path / "root"
     catalog = root_file(local, "catalog.json")
     catalog.write_text("{}")
     guest = Path("/root/.toolang")
     mounts = prepare_place_mounts(local, guest)
-    assert SandboxMount(local / "config", guest / "config") in mounts
-    assert all(mount.local_path.is_dir() for mount in mounts)
-    assert all(not mount.read_only for mount in mounts)
+    assert SandboxMount(catalog, guest / "catalog.json", read_only=True) in mounts
+    assert not (local / "config").exists()
 
 
 @pytest.mark.parametrize("relative", [False, True])
@@ -129,8 +127,11 @@ def test_source_link_chain_cannot_escape_the_guest_directory_view(
         SandboxMount(layout.agent_home, guest / "agents/alice"),
         *prepare_place_mounts(layout.agent_root, guest),
     )
-    with pytest.raises(ValueError, match="source symlink target is unavailable"):
+    if source_kind in {"root-catalog", "root-receipt"}:
         validate_source_mounts(layout, mounts)
+    else:
+        with pytest.raises(ValueError, match="source symlink target is unavailable"):
+            validate_source_mounts(layout, mounts)
 
 
 @pytest.mark.parametrize("through_directory", [False, True])
@@ -320,7 +321,7 @@ def test_workspace_mounts_keep_captured_state_when_source_changes(tmp_path):
 
 
 @pytest.mark.parametrize("scope", ["root", "place", "home"])
-def test_custom_catalog_uses_fixed_read_only_target_even_when_covered(tmp_path, scope):
+def test_custom_catalog_reuses_covered_root_or_home(tmp_path, scope):
     from toolang.plugin.catalogs.models_dev.path import ModelCatalogSelection
 
     directory = tmp_path / scope
@@ -328,11 +329,12 @@ def test_custom_catalog_uses_fixed_read_only_target_even_when_covered(tmp_path, 
     catalog = directory / "catalog.json"
     catalog.write_text("{}")
     additional, target = prepare_catalog_mount(
-        ModelCatalogSelection(catalog, "custom"), Path("/guest/place")
+        ModelCatalogSelection(catalog, "custom"),
+        Path("/guest/place"),
+        (SandboxMount(directory, Path("/guest/place") / scope),),
     )
-    assert target is not None
-    assert target == Path("/guest/place/.inputs/catalog.json")
-    assert additional == (SandboxMount(catalog, target, read_only=True),)
+    assert target == Path("/guest/place") / scope / "catalog.json"
+    assert additional == ()
 
 
 def test_external_catalog_preserves_its_filename_and_is_read_only(tmp_path):

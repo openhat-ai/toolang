@@ -110,10 +110,10 @@ def test_shared_workspaces_are_ignored_before_path_resolution(tmp_path, placemen
     assert prepare_agent_state(layout).workspaces == {"repo": expected}
     # Guest snapshots must obey the same ownership rule as host loading.
     mounts = prepare_place_mounts(layout.agent_root, tmp_path / "guest")
-    root_mount = next(m for m in mounts if m.hosted_path == tmp_path / "guest/config")
-    assert (
-        root_mount.local_path / "config.toml"
-    ).read_bytes() == layout.place_config.read_bytes()
+    root_mount = next(
+        m for m in mounts if m.hosted_path == tmp_path / "guest/config.toml"
+    )
+    assert root_mount.local_path.read_bytes() == layout.place_config.read_bytes()
 
 
 def git_init(path):

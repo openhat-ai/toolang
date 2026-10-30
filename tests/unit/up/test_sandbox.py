@@ -761,7 +761,11 @@ def test_mount_layout_preserves_root_place_and_home_scopes(
                 assert not any(
                     mount.local_path == source.parent for mount in request.mounts
                 )
-        assert request.envs[MODEL_CATALOG_ENV] == "/runtime/.inputs/catalog.json"
+        assert request.envs[MODEL_CATALOG_ENV] == (
+            "/runtime/catalog.json"
+            if placement == "resident"
+            else "/runtime/.inputs/catalog.json"
+        )
         assert (
             SandboxMount(root / "hub", guest_root / "hub", read_only=True)
             not in request.mounts
@@ -1554,9 +1558,9 @@ def test_guest_catalog_launch_preserves_selection_provenance(
     request = cast(SandboxRequest, prepared[2])
     assert not any(m.local_path == PACKAGED_MODEL_CATALOG for m in request.mounts)
     if catalog_kind == "custom":
-        assert request.envs[MODEL_CATALOG_ENV] == "/runtime/.inputs/catalog.json"
+        assert request.envs[MODEL_CATALOG_ENV] == "/runtime/catalog.json"
         assert (
-            SandboxMount(catalog, Path("/runtime/.inputs/catalog.json"), read_only=True)
+            SandboxMount(catalog, Path("/runtime/catalog.json"), read_only=True)
             in request.mounts
         )
     else:

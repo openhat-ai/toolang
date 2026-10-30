@@ -11,7 +11,6 @@ from typer.testing import CliRunner
 from toolang.catalog.agent import LocalAgents
 from toolang.cli.toolang.main import app
 from toolang.cli.toolang.commands import script
-from toolang.common.flatname import encode_flatname
 from toolang.common.github import GitHubRef
 from toolang.setup import tools as setup_tools
 from toolang.up import source as sources
@@ -92,13 +91,14 @@ def test_script_entry_uses_roaming_policy_before_execution(
     root = tmp_path / "root"
     source = tmp_path / "main.too"
     source.write_text("flow main():\n  pass\n")
+    from toolang.common.layout import AgentLayout
+
+    layout = AgentLayout.roaming(source, root=root)
+    layout.agent_home.mkdir(parents=True)
     if selected_file != "auto":
-        (source.parent / ".toolang.env").write_text("OPENAI_API_KEY\n")
+        layout.env.write_text("OPENAI_API_KEY\n")
     if selected_file == "root":
-        root.mkdir()
-        (root / f".{encode_flatname(str(source.resolve()))}.env").write_text(
-            "PRIVATE_SENTINEL\n"
-        )
+        (layout.agent_root / ".main.env").write_text("PRIVATE_SENTINEL\n")
     observed = []
 
     def execute(*_args, **_kwargs):
@@ -143,11 +143,12 @@ def test_visiting_factories_use_requested_identity_before_and_after_fetch(
     root.mkdir()
     (root / ".alice.env").write_text("RESIDENT=excluded\n")
     pinned_ref = GitHubRef("owner", "repo", "alice.too", "a" * 40)
-    (root / f".{encode_flatname(pinned_ref.render())}.env").write_text(
-        "PINNED=excluded\n"
-    )
+    layout = sources.visiting_layout(selector, toolang_root=root)
     if explicit:
-        (root / f".{encode_flatname(identity)}.env").write_text("OPENAI_API_KEY\n")
+        from toolang.up.identity import visiting_home_guard
+
+        with visiting_home_guard(layout):
+            (layout.agent_root / ".alice.env").write_text("OPENAI_API_KEY\n")
     monkeypatch.setattr(
         sources, "_resolve_github_agent_shorthand", lambda *_a, **_kw: pinned_ref
     )
@@ -204,12 +205,16 @@ def test_invalid_visiting_file_does_not_print_source_url_credentials(
     root = tmp_path / "root"
     root.mkdir()
     ref = "https://user:private-userinfo@example.invalid/alice.too?token=private-query#private-fragment"
-    (root / f".{encode_flatname(ref)}.env").write_text("TOKEN='private-value\n")
+    layout = sources.visiting_layout(ref, toolang_root=root)
+    from toolang.up.identity import visiting_home_guard
+
+    with visiting_home_guard(layout):
+        (layout.agent_root / ".alice.env").write_text("TOKEN='private-value\n")
     caller = dict(os.environ)
     result = CliRunner().invoke(app, ["--root", str(root), ref, "tools"])
     assert result.exit_code == 1
     output = "".join(result.output.replace("│", "").split())
-    assert "HTTPsourceredacted" in output
+    assert ".alice.env:1" in output
     for marker in (
         "private-userinfo",
         "private-query",
@@ -260,7 +265,7 @@ def test_shell_tool_child_receives_the_agent_snapshot(tmp_path):
 
 @pytest.mark.parametrize("path", [None, "", "/authorized/bin"])
 @pytest.mark.parametrize("placement", ["resident", "roaming", "visiting"])
-def test_guest_launch_uses_common_dotenv_priority_and_preserves_native_environment(
+def test_guest_launch_uses_common_dotenv_priority_and_explicit_keep(
     tmp_path, monkeypatch, shell_environment, path, placement
 ):
     from dataclasses import replace
@@ -272,9 +277,6 @@ def test_guest_launch_uses_common_dotenv_priority_and_preserves_native_environme
 
     root = tmp_path / "root"
     root.mkdir()
-    (root_file(root, "config.toml")).write_text(
-        '[env]\nkeep=[]\npick=["OPENAI_API_KEY"]\n'
-    )
     if placement == "resident":
         layout = AgentLayout.resident(root, "alice")
     elif placement == "roaming":
@@ -288,9 +290,14 @@ def test_guest_launch_uses_common_dotenv_priority_and_preserves_native_environme
             ),
             place=tmp_path / "visit",
         )
-    layout.home.mkdir(parents=True)
+    root = layout.agent_root
+    root_file(root, "config.toml").write_text(
+        '[env]\nkeep=["PATH", "CARGO_HOME", "RUSTUP_HOME", "UV_TOOL_DIR", '
+        '"UV_NO_PROGRESS", "PYTHONPATH", "IMAGE_CUSTOM"]\npick=["OPENAI_API_KEY"]\n'
+    )
+    layout.agent_home.mkdir(parents=True, exist_ok=True)
     layout.env.write_text("LOWER_PRIORITY=must-not-load\nADMITTED=wrong\n")
-    selected_file = agent_environment_paths(root, layout)[0]
+    selected_file = agent_environment_paths(layout)[0]
     values = (
         {}
         if path is None
@@ -349,7 +356,7 @@ def test_guest_launch_uses_common_dotenv_priority_and_preserves_native_environme
         "_serve",
         "alice",
         "--place",
-        str(layout.place),
+        str(root),
         "--location",
         "guest",
         "--sandbox",

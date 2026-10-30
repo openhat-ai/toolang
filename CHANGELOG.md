@@ -54,19 +54,9 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   agent root.
   ([#990](https://github.com/openhat-ai/toolang/pull/990))
 
-- **Breaking:** Root configuration and catalogs move to `config/config.toml` and
-  `config/catalog.json` under each selected root, including `TOOLANG_ROOT`; move
-  existing files there, because no lookup or migration remains.
-  ([#990](https://github.com/openhat-ai/toolang/pull/990))
-
-- **Breaking:** Root configuration relative paths now resolve from `config/`, so
-  rebase them when moving files, for example `repo = "../repo"` replacing
-  `repo = "repo"`.
-  ([#990](https://github.com/openhat-ai/toolang/pull/990))
-
 - **Breaking:** Visiting provenance is now `agents/NAME/source.json`; rename
   existing `agent.source.json` files. Roaming records Program ownership there
-  and shared config/catalog origins in `config/source.json`.
+  and shared config/catalog origins in root `source.json`.
   ([#990](https://github.com/openhat-ai/toolang/pull/990))
 
 - **Breaking:** Project `toolang.toml` files no longer merge; only the nearest

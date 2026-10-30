@@ -34,7 +34,7 @@ a rejected refresh. Periodic probing remains independent.
 
 ## Environments
 
-Only the selected Toolang `ROOT/config/config.toml` accepts environment name lists:
+Only the selected Toolang `ROOT/config.toml` accepts environment name lists:
 
 ```toml
 [env]
@@ -104,34 +104,15 @@ With it, they receive `keep` from the caller plus the file's bindings. Agent
 host processes start from that root result and receive `keep` plus one selected agent
 file, or the first nonblank variable in `pick` when no file exists.
 
-`keep` applies only to host inheritance. Guests receive the selected file's
-bindings or the single picked variable, including names that also occur in
-`keep`. An empty file forwards no host variables. Guests retain their native
-image/entrypoint environment as the baseline.
-Explicit file bindings can override native guest base values.
+All placements use `AR/.NAME.env`, then `AH/.env`, then `pick(root env)`.
+The agent receives `keep(root env)` plus exactly one of those binding groups.
+The files replace one another; they do not merge. Placement resolves AR/AH;
+environment selection has no placement-specific branches.
 
-| Placement | Selected agent file |
-| --- | --- |
-| Resident | `ROOT/.alice.env`, then `HOME/.env` |
-| Roaming | `ROOT/.{encode_flatname(canonical_source_path)}.env`, then `SOURCE_DIR/.toolang.env` |
-| Visiting | `ROOT/.{encode_flatname(canonical_requested_ref_or_url)}.env` |
-
-Nonresident root filenames use `toolang.common.flatname.encode_flatname`.
-Roaming identity is the canonical absolute `.too` path, resolving symlinks;
-visiting identity is the requested source standardized by the source parser,
-not the fetched content or resolved commit. GitHub URL/ref aliases share a
-canonical ref, while a shorthand such as `gh:owner/alice` remains a shorthand.
-Other HTTP URLs retain their requested spelling, including query and escapes.
-For example, `/work/aid.too` uses `ROOT/.%work%aid.too.env`, and
-`gh:owner/alice` uses `ROOT/.gh+3aowner%alice.env`.
-
-Encoding preserves case. If the complete encoded filename exceeds 255 ASCII
-bytes, use `ROOT/.source-<sha256>.env`, hashing the UTF-8 source identity. This
-keeps the same policy filename usable on supported hosts and Linux guests.
-Inspection/read errors fail resolution. Case-distinct encoded identities may
-share a file on a case-insensitive filesystem. Nonresident agents never use
-same-name resident files, visiting home dotenv, project `.env`, or ancestor
-`.toolang.env` files.
+For guests, sandbox startup computes the admitted host bindings and mounts the
+result at `GR/.NAME.env`. The normal loader applies the same rule to the guest's
+root environment. Native image values survive only when kept or explicitly
+selected; host-only kept values are not automatically staged.
 
 The first existing file replaces lower-priority agent files completely. Its
 bindings are applied after `keep`; explicit assignments can override kept names.
@@ -151,8 +132,7 @@ duplicate bindings fail with path/line diagnostics that omit values. Unreadable
 or nonregular files also fail without falling back. A bare agent binding cannot
 recover a caller variable excluded by the root file. Centralize values in
 `ROOT/.env` and normally use bare names in agent
-files. Root agent files are independent of generated homes and runtime instances,
-so policy survives home removal and is reused for the same stable identity.
+files. Named files belong to the resolved agent root and survive home removal.
 
 The CLI installs the selected environment before user plugin loading; adapters,
 tools, child processes, inspection, and `cd` share it. Controller startup inputs

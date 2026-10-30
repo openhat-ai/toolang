@@ -22,8 +22,8 @@ project configuration retains its flat workspace syntax. Paths may be anywhere o
 Absolute host paths are recommended in both agent-home and root configuration.
 `workspace add` resolves paths at the client's procdir and writes canonical
 absolute paths. Authored relative paths resolve at their declaring file.
-Roaming's nearest project TOML is hardlinked at `AGENT_ROOT/config/config.toml`;
-its origin is recorded in `AGENT_ROOT/config/source.json`. A selected ancestor
+Roaming's nearest project TOML is hardlinked at `AGENT_ROOT/config.toml`;
+its origin is recorded in `AGENT_ROOT/source.json`. A selected ancestor
 configuration grants no access. Home State retains a receipt of only
 the selected root workspace policy, so unrelated root Setup edits do not change it.
 Source discovery and process directories are distinct from execution workdir.

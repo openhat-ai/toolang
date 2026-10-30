@@ -33,7 +33,6 @@ from toolang.base.types.progress import (
 from toolang.base.types.sandbox import SandboxOutput, SandboxRef, SandboxRequest
 from toolang.common.files import file_lock_path
 from toolang.common.version import embedded_source_version, toolang_version
-from toolang.common.environment import agent_environment_paths
 from toolang.common.progress import emit_progress
 from toolang.common.layout import AgentLayout, agent_workspaces_path
 from .closing import ClosingDeadline
@@ -427,7 +426,6 @@ async def _launch_locked(
             if not on_host and layout.source_path is not None
             else None
         )
-        environment_paths = agent_environment_paths(hosted_root, spec.serve.layout)
         request = SandboxRequest(
             local_place=spec.serve.layout.place,
             local_home=spec.serve.layout.home,
@@ -490,9 +488,6 @@ async def _launch_locked(
                 "TOOLANG_WORKSPACE_LOCATION": "host" if on_host else "guest",
             },
             dotenv_envs={**spec.dotenv_envs, **guest_environment},
-            environment_path=environment_paths[0]
-            if not on_host and environment_paths
-            else None,
             mounts=(
                 ()
                 if on_host

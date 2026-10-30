@@ -7,6 +7,7 @@ from collections import deque
 from collections.abc import Mapping, Sequence
 import json
 import os
+from hashlib import sha256
 from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
@@ -35,19 +36,20 @@ def prepare_catalog_mount(
     hosted_place: Path,
     mounts: Sequence[SandboxMount] = (),
 ) -> tuple[tuple[SandboxMount, ...], Path | None]:
-    """Use a directory only when the final guest view exposes the selected file."""
+    """Reuse covered inputs; mount an external catalog independently."""
     if catalog.scope == "packaged":
         return (), None
     path = catalog.path.resolve()
-    if catalog.scope != "custom":
-        directories = tuple(mount for mount in mounts if mount.local_path.is_dir())
-        for mount in directories:
-            if not path.is_relative_to(mount.local_path):
-                continue
-            hosted = mount.hosted_path / path.relative_to(mount.local_path)
-            exposed = _mounted_directory_path(hosted, directories)
-            if exposed is not None and exposed.resolve() == path:
-                return (), None
+    for mount in mounts:
+        local = mount.local_path.resolve()
+        if path != local and not (
+            mount.local_path.is_dir() and path.is_relative_to(local)
+        ):
+            continue
+        hosted = mount.hosted_path / path.relative_to(local)
+        exposed = _mounted_directory_path(hosted, mounts)
+        if exposed is not None and exposed.resolve() == path:
+            return (), hosted if catalog.scope == "custom" else None
     target = hosted_place / ".inputs" / "catalog.json"
     return (SandboxMount(path, target, read_only=True),), target
 
@@ -56,7 +58,13 @@ def _mounted_directory_path(
     hosted: Path, mounts: Sequence[SandboxMount]
 ) -> Path | None:
     owner = max(
-        (mount for mount in mounts if hosted.is_relative_to(mount.hosted_path)),
+        (
+            mount
+            for mount in mounts
+            if hosted == mount.hosted_path
+            or mount.local_path.is_dir()
+            and hosted.is_relative_to(mount.hosted_path)
+        ),
         key=lambda mount: len(mount.hosted_path.parts),
         default=None,
     )
@@ -71,9 +79,13 @@ def prepare_place_mounts(
     local_place: Path,
     hosted_place: Path,
 ) -> tuple[SandboxMount, ...]:
-    """Mount mutable root inputs by directory, keeping their anchors stable."""
-    mounts = []
-    for name in ("config", ".state/root", *CAP_DIRECTORY_NAMES):
+    """Bind root config/catalog snapshots and mutable State/capability directories."""
+    mounts = [
+        SandboxMount(local_place / name, hosted_place / name, read_only=True)
+        for name in ("config.toml", "catalog.json", "source.json")
+        if (local_place / name).is_file()
+    ]
+    for name in (".state/root", *CAP_DIRECTORY_NAMES):
         source = local_place / name
         source.mkdir(parents=True, exist_ok=True)
         mounts.append(SandboxMount(source, hosted_place / name))
@@ -163,6 +175,9 @@ def validate_source_mounts(
     ):
         if not source.is_symlink():
             continue
+        if any(mount.local_path == source and source.is_file() for mount in mounts):
+            # A file bind exposes the selected target inode at its guest alias.
+            continue
         anchor = (
             layout.agent_home
             if source.is_relative_to(layout.agent_home)
@@ -244,6 +259,11 @@ def prepare_guest_environment(
         CONFIG_PATCH_ENV: json.dumps(
             {
                 "origins": origins,
+                "snapshots": {
+                    "config.toml": sha256(layout.root_config.read_bytes()).hexdigest()
+                    if layout.root_config.is_file()
+                    else None,
+                },
                 "defaults": {"root": {"teaming": {"human": current_username()}}},
                 **overlays,
             }

@@ -842,7 +842,7 @@ def source_path_scope(
     relative_path = _relative_to_root(place, path)
     if relative_path is None:
         return None
-    if relative_path == Path("config/config.toml"):
+    if relative_path == Path("config.toml"):
         return "root", "config.toml"
     if relative_path.parts[:1] and relative_path.parts[0] in CAP_DIRECTORY_NAMES:
         return (

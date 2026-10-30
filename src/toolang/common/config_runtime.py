@@ -140,9 +140,11 @@ class ConfigOrigins:
 
     origins: Mapping[str, Path] = field(default_factory=dict)
     captured: bool = True
+    snapshots: Mapping[str, str | None] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "origins", MappingProxyType(dict(self.origins)))
+        object.__setattr__(self, "snapshots", MappingProxyType(dict(self.snapshots)))
 
     def origin(self, scope: str, path: Path) -> Path:
         return self.origins.get(scope, path)
@@ -177,16 +179,17 @@ class RuntimeConfig:
         default_factory=dict, repr=False
     )
     workspaces: Mapping[str, WorkspaceBinding] = field(default_factory=dict)
+    snapshots: Mapping[str, str | None] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        for name in ("origins", "workspaces"):
+        for name in ("origins", "workspaces", "snapshots"):
             object.__setattr__(self, name, MappingProxyType(dict(getattr(self, name))))
         for name in ("defaults", "overlays"):
             object.__setattr__(self, name, freeze_mapping(getattr(self, name)))
 
     @property
     def source_context(self) -> ConfigOrigins:
-        return ConfigOrigins(self.origins)
+        return ConfigOrigins(self.origins, snapshots=self.snapshots)
 
     @classmethod
     def parse(
@@ -197,7 +200,17 @@ class RuntimeConfig:
     ) -> RuntimeConfig:
         try:
             data = _object(json.loads(raw)) if raw is not None else {}
-            if set(data) - {"origins", "defaults", "root", "home"}:
+            if set(data) - {"origins", "defaults", "root", "home", "snapshots"}:
+                raise ValueError
+            snapshots = _object(data.get("snapshots", {}))
+            if set(snapshots) - {"config.toml"} or any(
+                value is not None
+                and (
+                    not isinstance(value, str)
+                    or re.fullmatch(r"[a-f0-9]{64}", value) is None
+                )
+                for value in snapshots.values()
+            ):
                 raise ValueError
             origins = {
                 key: _absolute(value)
@@ -234,6 +247,7 @@ class RuntimeConfig:
                 cast(dict[str, dict[str, object]], defaults),
                 cast(dict[str, dict[str, object]], overlays),
                 workspaces or {},
+                cast(dict[str, str | None], snapshots),
             )
         except (ValueError, TypeError):
             raise ValueError("invalid runtime configuration patch") from None

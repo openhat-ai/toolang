@@ -193,7 +193,9 @@ def test_guest_reuses_shared_layers(tmp_path, monkeypatch):
             prepare_guest_environment(host, mapping={})[CONFIG_PATCH_ENV]
         ),
     )
-    shutil.copytree(host.root_config.parent, guest.root_config.parent)
+    for path in (host.root_config, host.root_source_receipt):
+        if path.exists():
+            shutil.copy2(path, guest.agent_root / path.name)
     shutil.copytree(host.place_state.parent, guest.place_state.parent)
     shutil.copytree(host.agent_home, guest.agent_home)
 

@@ -29,9 +29,8 @@ Current root layout:
 
 ```text
 ${TOOLANG_ROOT}/
-  config/
-    config.toml
-    catalog.json                    # Optional root catalog
+  config.toml
+  catalog.json                    # Optional root catalog
   psyches/
   skills/
   services/
@@ -163,9 +162,9 @@ Roaming shared paths retain the ordinary State layout:
 
 ```text
 DIR/.toolang/
-  config/config.toml                 # Hardlink to the nearest toolang.toml
-  config/catalog.json                # Hardlink to the selected catalog, if any
-  config/source.json                 # Shared configuration/catalog origins
+  config.toml                        # Hardlink to the nearest toolang.toml
+  catalog.json                       # Hardlink to the selected catalog, if any
+  source.json                        # Shared configuration/catalog origins
   .state/root/v24/
   agents/NAME/agent.too               # Hardlink to FILE.too
   agents/NAME/source.json             # Program ownership, origin, and digest
@@ -366,7 +365,7 @@ owns path capture; [Hosting](hosting.md) owns guest mounts.
 
 Durable authored state lives in:
 
-- `AGENT_ROOT/config/config.toml`
+- `AGENT_ROOT/config.toml`
 - agent-root cap directories
 - `AGENT_HOME/config.toml`
 - `AGENT_HOME/agent.too`

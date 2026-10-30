@@ -163,10 +163,17 @@ def script_sources(source: Path) -> tuple[ConfigSource, ...]:
 def config_origins(layout: AgentLayout) -> ConfigOrigins:
     """Load placement-local provenance without opening upstream source files."""
     origins = dict(layout.runtime_config.origins) if layout.runtime_config else {}
+    snapshots = dict(layout.runtime_config.snapshots) if layout.runtime_config else {}
+    launch_captured = bool(origins)
     for path in (layout.source_receipt, layout.root_source_receipt):
         if not path.is_file():
             continue
         receipt = json.loads(path.read_bytes())
+        if path == layout.root_source_receipt and "launch" in receipt:
+            launch = RuntimeConfig.parse(json.dumps(receipt["launch"]))
+            origins.update(launch.origins)
+            snapshots.update(launch.snapshots)
+            launch_captured = True
         captured = receipt.get("origins", {})
         if not isinstance(captured, dict) or any(
             key not in {"root", "root/catalog.json", "program"}
@@ -180,9 +187,7 @@ def config_origins(layout: AgentLayout) -> ConfigOrigins:
             if "root" not in captured and "program" in origins:
                 origins["root"] = origins["program"].parent / "toolang.toml"
         origins.update({key: Path(value) for key, value in captured.items()})
-    return ConfigOrigins(
-        origins, captured=bool(layout.runtime_config and layout.runtime_config.origins)
-    )
+    return ConfigOrigins(origins, captured=launch_captured, snapshots=snapshots)
 
 
 def config_sources(

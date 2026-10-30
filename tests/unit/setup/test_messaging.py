@@ -13,7 +13,7 @@ from toolang.up.config import hub_config
 
 from tests.support.layout import root_file
 
-ROOT = Path("/root/config/config.toml")
+ROOT = Path("/root/config.toml")
 HOME = Path("/root/agents/alice/config.toml")
 
 
@@ -51,7 +51,7 @@ def resolve(root=None, home=None, extra=()):
         (ConfigSource(ROOT, root or {}), ConfigSource(HOME, home or {}), *extra),
         root=ROOT,
         home=HOME,
-        host_root=ROOT.parent.parent,
+        host_root=ROOT.parent,
         default_human="owner",
     )
 
