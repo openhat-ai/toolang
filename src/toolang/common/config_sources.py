@@ -283,19 +283,15 @@ def merge_mappings(layers: Sequence[Mapping[str, object]]) -> dict[str, object]:
 def project_sources(
     sources: Sequence[ConfigSource],
     *,
-    source: Path | None = None,
+    directory: Path,
     catalog: Path | None = None,
-    directory: Path | None = None,
 ) -> str:
     """Keep the original ordered layers alongside the State-facing projection."""
     config = merge_mappings([item.config for item in sources])
     config[PROJECTION_KEY] = [
         {"path": str(item.path), "config": item.config} for item in sources
     ]
-    if source is not None:
-        config["__toolang_source__"] = str(source)
-    if directory is not None:
-        config["__toolang_project_dir__"] = str(directory)
+    config["__toolang_project_dir__"] = str(directory)
     if catalog is not None:
         config["__toolang_catalog__"] = str(catalog)
     return PROJECTION_HEADER + tomlkit.dumps(config)

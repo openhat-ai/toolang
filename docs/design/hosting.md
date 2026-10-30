@@ -316,13 +316,14 @@ staging directory is cleaned manually.
 
 ## Docker filesystem
 
-[Layout](layout.md#agent-placement) defines host and guest ROOT, PLACE, and HOME.
+[Layout](layout.md#agent-placement) defines host and guest agent and runtime roots.
 Let `R` be host Toolang root, `P` host agent root, `H` host agent home,
-`G` guest root, and `A` the complete address. `G` defaults to `/root/.toolang`; guest HOME is always
+`G` guest root, and `A` the complete address. `G` defaults to `/root/.toolang`; guest agent home is always
 `G/agents/NAME`, including roaming without a source-directory grant.
 
 | Host source | Guest target | Access |
 | --- | --- | --- |
+| `RUNTIME_ROOT/agents/NAME/.runtime/` | `G/agents/NAME/.runtime/` | Read-write; instance data |
 | `H/` | `G/agents/NAME/` | Read-write; linked authored inputs receive read-only overlays |
 | `P/.state/` and cap directories | Same relative paths below `G/` | Read-write |
 | Each granted workspace directory | `G/workspaces/NAME/WORKSPACE/` | Read-write |
@@ -331,15 +332,13 @@ Let `R` be host Toolang root, `P` host agent root, `H` host agent home,
 | `P/catalog.json`, when automatically selected | `G/catalog.json` | Read-only |
 | Generated `active/guest.env` | Selected guest root dotenv policy path | Read-only; mode `0600` |
 
-Current-format legacy State is mounted read-only below `G/.legacy` when present
-for the selected roaming instance; historical reads do not migrate it.
 Roaming mounts the selected instance runtime directory over
 `G/agents/NAME/.runtime`, separately from shared agent home. Lab is an ordinary
 separate mount from `P/workspaces/NAME/lab`. All workspace
 names are unique before mounting; nested and alias sources retain distinct named
 targets. Authored-input overlays cannot make a workspace grant read-only.
 
-Host and guest read the same PLACE/HOME source bytes and share prepared State.
+Host and guest read the same agent-root/home source bytes and share prepared State.
 Runtime corrections travel through `guest.env` to the selected root dotenv file
 as `TOOLANG_CONFIG_PATCH`. Source origins keep relative paths and symlink targets
 in the host's canonical path view. Source parsers receive only `ConfigOrigins`;
@@ -357,7 +356,7 @@ State writes. `guest.sh` bootstraps and executes arguments without rewriting opt
 [Workspaces](workspaces.md) owns grant selection and captured-mount checks.
 
 The guest uses its own packaged catalog without a mount or override. Automatic
-PLACE and HOME catalogs retain their owning scope. Independently selected
+agent-root and agent-home catalogs retain their owning scope. Independently selected
 catalogs, including an explicit selection of the default file, mount read-only
 at `G/.inputs/catalog.json`; only these need `TOOLANG_MODEL_CATALOG`.
 Automatic catalog choices are captured in `root/catalog.json` or

@@ -158,7 +158,7 @@ def _source_command(label: str) -> TyperGroup:
 
         program = parse_agent_source(
             AgentLayout.roaming(source),
-            source=source.read_text(encoding="utf-8"),
+            source=source.read_bytes().decode("utf-8"),
             ref=str(source),
         )
     except FileNotFoundError as exc:

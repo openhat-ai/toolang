@@ -1083,10 +1083,12 @@ def test_guest_source_handoff_preserves_layers_catalogs_and_environment(
             from toolang.plugin.catalogs.models_dev.path import PACKAGED_MODEL_CATALOG
 
             catalog = PACKAGED_MODEL_CATALOG
-    (layout.home / "notes").mkdir()
+    (layout.agent_home / "notes").mkdir()
     layout.config.write_text('[workspaces]\nnotes = "./notes"\n')
     if catalog_kind == "home":
-        (layout.home / "catalog.json").write_text('{"providers": [], "models": []}')
+        (layout.agent_home / "catalog.json").write_text(
+            '{"providers": [], "models": []}'
+        )
     _write_local_model_env(root / ".env", local_model_port)
     policy = agent_environment_paths(root, layout)[0]
     policy.write_text(
@@ -1169,7 +1171,7 @@ assert 'TOOLANG_WORKSPACE_MOUNTS' not in env
 print(json.dumps({'revision': state.revision, 'workspaces': dict(state.workspaces), 'bindings': {name: str(value.path) for name, value in bindings.items()}, 'execution': {name: str(path) for name, path in execution.items()}, 'catalog': str(catalog.path), 'catalog_scope': catalog.scope, 'catalog_env': env.get('TOOLANG_MODEL_CATALOG'), 'human': teaming.root.human, 'root_hash': hashlib.sha256(layout.place_config.read_bytes()).hexdigest(), 'home_hash': hashlib.sha256(layout.config.read_bytes()).hexdigest(), 'source_mounted': Path(option('--source-path')).is_file() if '--source-path' in args else False}))
 """
             before = _revision_counts(layout)
-            assert before == (1, 1, 1)
+            assert before == (1, 1, 2 if placement == "roaming" else 1)
             for _ in range(3):
                 probe = subprocess.run(
                     (

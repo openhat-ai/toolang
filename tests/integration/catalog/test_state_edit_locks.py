@@ -185,7 +185,7 @@ def test_catalog_reads_and_unchanged_projection_do_not_create_guards(tmp_path):
     layout = prepare_roaming_home(source, toolang_root=tmp_path)
     layout.home.mkdir(parents=True, exist_ok=True)
     layout.place_config.write_text(
-        project_sources(script_sources(source), source=source, catalog=None)
+        project_sources(script_sources(source), directory=source.parent, catalog=None)
     )
     caps = CapsManager(layout)
     assert caps.root_authoring.list() == caps.home_authoring.list() == ()

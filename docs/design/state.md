@@ -14,7 +14,7 @@ execution progress. Root chores are ignored; the home directory is created
 only on its first explicit file write. Installed providers, tools, environments,
 and other [Setup](setup.md) data remain separate from Agent State.
 
-State preparation reads authored source but never edits it. The place
+State preparation reads authored source but never edits it. The agent root
 and agent home must already exist. A missing `agent.too` produces the empty
 default `agent` module term with an empty Program without creating the source
 file.
@@ -56,7 +56,7 @@ referenced capabilities have `here` scope and belong to one module.
 ## Persistent Layout
 
 ```text
-${PLACE}/.state/root/
+${AGENT_ROOT}/.state/root/
   edit.lock
   v24/
     current
@@ -69,7 +69,7 @@ ${PLACE}/.state/root/
         skills/<name>/SKILL.md
       materialized/<acquisition-key>/<original-relative-path>
 
-${PLACE}/agents/<agent>/.state/home/
+${AGENT_HOME}/.state/home/
   edit.lock
   v24/
     current
@@ -85,7 +85,7 @@ ${PLACE}/agents/<agent>/.state/home/
         skills/<name>/SKILL.md
       materialized/<acquisition-key>/<original-relative-path>
 
-${PLACE}/agents/<agent>/.state/agent/v24/
+${AGENT_HOME}/.state/agent/v24/
   current
   publish.lock
   revs/<state-revision>/
@@ -107,10 +107,9 @@ fallback, or deletion. A missing current-format store is rebuilt from authored
 inputs; exact historical loads search only the running format's store. State
 isolation does not change runtime, API, or database compatibility rules.
 
-For roaming, substitute `DIR/.toolang` for PLACE and
-`DIR/.toolang/agents/NAME` for agent home in the State paths above. State sources
-and watchers use those shared roots; runtime identity/storage remains below
-`DIR/.toolang/R8/P19`. Each State scope keeps its own `current`; no State pointer
+[Placement](layout.md#agent-placement) resolves agent root and agent home.
+Roaming State sources and watchers use `DIR/.toolang`; runtime identity/storage
+remains below `DIR/.toolang/R8/P19`. Each State scope keeps its own `current`; no State pointer
 is added to `.runtime`. Roaming agent `current` publishes authored State;
 invocation overrides and temporary grants are captured in separate exact Run
 revisions. Changing another instance's bindings does not change accepted Runs.
@@ -171,8 +170,12 @@ Revisions are lowercase 64-character SHA-256 strings. Each new revision includes
 a fixed-width UTC creation time with microseconds, such as
 `2026-10-15T08:30:00.000000Z`. Before assigning time, preparation compares the
 candidate without `created_at` to the current document. A no-op reuses that
-revision and time, including on forced refresh. Returning to earlier content
-after an intervening change creates a new revision.
+revision and time, including on forced refresh. Returning to earlier layer
+content after an intervening change creates a new revision.
+
+Roaming compositions use the later root/home layer timestamp, so identical
+layers and invocation bindings resolve to the same revision across processes
+and host/guest launches. Their shared `current` still selects authored State.
 
 List home revisions by creation time from an agent home:
 

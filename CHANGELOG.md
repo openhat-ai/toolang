@@ -34,8 +34,8 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
   ([#985](https://github.com/openhat-ai/toolang/pull/985))
 
 - `too ps` shows the client Hub's URL with `available, VERSION`, `unavailable`,
-  or `error, REASON`; `too hub status` prints `hub HOST:PORT` plus
-  `running VERSION, pid=PID`, `not running`, or `error, REASON`.
+  or `error, REASON`; `too hub status` prints
+  `hub HOST:PORT running VERSION, pid=PID`, `not running`, or `error, REASON`.
   ([#984](https://github.com/openhat-ai/toolang/pull/984))
 
 - **Breaking:** The DDGS `web` toolset is no longer registered. Call

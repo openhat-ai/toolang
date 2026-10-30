@@ -45,32 +45,6 @@ def test_roaming_configuration_belongs_to_place(tmp_path):
     assert "__toolang_sources__" in layout.place_config.read_text()
 
 
-@pytest.mark.parametrize("legacy_link", [False, True])
-def test_roaming_relocates_only_owned_legacy_home_inputs(tmp_path, legacy_link):
-    from toolang.common.config_sources import project_sources, script_sources
-
-    source = tmp_path / "aid.too"
-    source.write_text("flow run():\n  pass\n")
-    config = tmp_path / "toolang.toml"
-    config.write_text('[workspaces]\nrepo = "."\n')
-    catalog = tmp_path / "toolang.catalog.json"
-    catalog.write_text("{}")
-    layout = materialize_roaming_program(source, toolang_root=tmp_path / "global")
-    layout.place_config.unlink()
-    if legacy_link:
-        layout.config.symlink_to(config)
-    else:
-        layout.config.write_text(
-            project_sources(script_sources(source), source=source, catalog=catalog)
-        )
-    (layout.agent_home / "catalog.json").symlink_to(catalog)
-    materialize_roaming_program(source, layout=layout)
-    assert layout.place_config.is_file()
-    assert not layout.config.exists() and not layout.config.is_symlink()
-    assert not (layout.agent_home / "catalog.json").exists()
-    assert config.read_text() == '[workspaces]\nrepo = "."\n'
-
-
 def test_roaming_preserves_authored_home_and_ignores_global_agent_config(tmp_path):
     from toolang.common.config_sources import config_sources
     from toolang.setup.teaming import resolve_teaming_setup

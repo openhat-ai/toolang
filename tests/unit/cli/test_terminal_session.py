@@ -241,7 +241,7 @@ def test_roaming_uses_captured_project_layers_and_no_dotenv(
                 source("outer/toolang.toml", run="outer"),
                 source("inner/toolang.toml", run="inner "),
             ],
-            source=tmp_path / "file.too",
+            directory=tmp_path,
         )
     )
     layout.place_config.write_text('[terminal.title.prefix]\nrun="wrong"\n')

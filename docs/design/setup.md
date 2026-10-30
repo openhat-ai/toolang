@@ -23,7 +23,7 @@ does not dereference a plugin's secret-reference fields. [Plugins](plugins.md)
 owns those contracts and [Models](models.md) owns catalogs and connection routes.
 
 Resident and visiting layouts read the
-[root/home authored scopes](layout.md#root-place-and-home). Roaming layouts use
+[root/home authored scopes](layout.md#roots-and-agent-home). Roaming layouts use
 the captured project layers described in [Scripts](scripts.md#directories-and-configuration),
 with relative paths bound to the declaring file. Environment selection is
 independent of these TOML layers.

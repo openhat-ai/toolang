@@ -9,20 +9,20 @@
 | --- | --- |
 | root | Selected Toolang root path, defaulting to `~/.toolang`; owns configuration, resident agents, active registrations, and hub discovery. |
 | agent root | Shared root-scope inputs, prepared State, agent definitions, and workspaces. |
-| runtime root | Root of instance-owned runtime data; the legacy internal field is `place`. |
+| runtime root | Root of instance-owned runtime data; `AgentLayout.place` stores this path. |
 | agent home | `AGENT_ROOT/agents/NAME`; owns source/configuration and home/agent State. |
 | runtime directory | `RUNTIME_ROOT/agents/NAME/.runtime`; owns status, Threads, Runs, history, and logs. |
 | placement | How an agent is placed: resident, visiting, or roaming. |
 | `root_code` | Code identifying the selected canonical ROOT. |
 | `place_code` | Short code selecting a visiting or roaming place; resident places need none. |
-| agent address | Selects a place/home pair within the selected root. |
+| agent address | Selects an agent runtime instance within the selected root. |
 | location | Where a runtime executes: host or guest; independent of placement. |
-| `launch_id` | Private runtime-generation fence; changes independently of the home/address. |
+| `launch_id` | Private runtime-generation fence; changes independently of the runtime instance/address. |
 
 `ROOT` selects the Toolang root through `--root`/`TOOLANG_ROOT`. Placement
-resolves shared agent paths and independent runtime paths. Existing persisted
-`place/home` identity fields retain runtime root/home paths; `HOME` in runtime
-records and address-selection rules below identifies that retained runtime home.
+resolves shared agent paths and independent runtime paths. Runtime identity fields
+`place` and `home` identify `RUNTIME_ROOT` and
+`RUNTIME_ROOT/agents/NAME`; address selection below always binds runtime storage.
 
 | Placement | Agent root | Runtime root | Named address |
 | --- | --- | --- | --- |
@@ -107,8 +107,8 @@ ROOT/                                     # Resident place
 
 DIR/.toolang/<R8>/
   root.json                               # Canonical ROOT
-  <P19>/                                  # Roaming place
-    agents/aid/                           # Roaming home
+  <P19>/                                  # Roaming runtime root
+    agents/aid/.runtime/                   # Roaming runtime directory
 ```
 
 Each root-code directory records the full root path in `root.json`; collisions
@@ -121,7 +121,7 @@ files. Preserve ownership/link validation.
 | `name@<P10>` | Visiting home derived directly from ROOT and the place code. |
 | `name@<P19>` | ROOT's active registry supplies the source path; then validate the home. |
 | `path/to/file.too@<P19>` | Derive the roaming place from the canonical source path; works offline. |
-| `path/to/file.too@` | Latest existing HOME for the canonical source and current ROOT; missing fails. |
+| `path/to/file.too@` | Latest existing runtime instance for the canonical source and current ROOT; missing fails. |
 
 Require complete place codes; angle-bracketed values above are placeholders.
 A code alone is not an address. Nonresident place directory names contain only codes; addresses add a
@@ -137,23 +137,23 @@ Retained inspection needs ownership metadata/store, not source contents.
 ## Binding and execution
 
 The command contract determines whether an undecorated input denotes a source or
-an existing home. History commands resolve without preparing sources:
-resident name selects its fixed home, ref/URL derives its visiting home, and a bare
-local path selects its last-created matching roaming home. Missing history homes fail.
-Source inspection/workspace preparation uses that ROOT-scoped HOME resolution;
-only preparation commands may allocate when none exists. Reuse never changes
+an existing runtime instance. History commands resolve without preparing sources:
+resident name selects its fixed runtime, ref/URL derives its visiting runtime,
+and a bare local path selects its last-created matching roaming instance.
+Missing history fails. Source inspection/workspace preparation uses that
+ROOT-scoped instance resolution; only preparation commands may allocate when none exists. Reuse never changes
 creation order. Unnumbered legacy homes are preserved and ignored.
 
 | Local source operand | Script execution | `info` |
 | --- | --- | --- |
-| `file.too@P19` | Run in that existing HOME. | Inspect that existing HOME. |
-| `file.too@` | Run in the latest existing HOME. | Inspect the latest existing HOME. |
-| `file.too` | Create a fresh HOME. | Inspect the latest HOME, or prepare one if absent. |
+| `file.too@P19` | Run in that instance. | Inspect that instance. |
+| `file.too@` | Run in the latest instance. | Inspect the latest instance. |
+| `file.too` | Create a fresh instance. | Inspect the latest instance, or prepare one if absent. |
 
-Explicit selectors never allocate or fall back. Latest means HOME creation order
+Explicit selectors never allocate or fall back. Latest means instance creation order
 under the canonical source and ROOT, independent of age, status or reuse. Preparation
 creates durable identity and State without an executor, Run or active registration.
-An owned HOME's `info` observes status and available saved resource metadata without
+An owned instance's `info` observes status and available saved resource metadata without
 projecting inputs, rebinding grants or renewing ownership.
 
 An explicit address fixes root/place/home/store throughout rerun, fork and rewind,
@@ -183,10 +183,11 @@ Preserve placement lifetimes: resident persistent, visiting automatic, roaming
 foreground. Attachments do not gain shutdown ownership. Existing Run admission
 and Thread locks govern concurrency; one home has at most one executor owner.
 
-Roaming scripts and rerun instead claim the HOME exclusively from preparation
+Roaming scripts and rerun instead claim the runtime instance exclusively from preparation
 through cleanup: preparing, running, closing or unverifiable ownership fails
 immediately. Each invocation has a new launch identity, current grants and startup
-settings; history remains in its P19, while lab and prepared State are shared. Different HOMEs may run concurrently on host/guest.
+settings; history remains in its P19, while lab and prepared State are shared.
+Different instances may run concurrently on host/guest.
 Roaming Chat, including `fork/rewind --chat`, is rejected before mutation.
 
 `start/serve/stop` cover resident/visiting only. Roaming foreground shutdown belongs

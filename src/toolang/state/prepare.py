@@ -85,7 +85,7 @@ def prepare_agent_state(
 ) -> AgentState:
     """Prepare and compose the immutable runtime state for one agent."""
 
-    _require_place(layout)
+    _require_agent_root(layout)
     _require_agent_home(layout)
     ensure_scratch_workspace(layout.agent_home)
     overrides = normalize_cap_overrides(allow_overrides)
@@ -95,6 +95,13 @@ def prepare_agent_state(
             force=force,
             progress=progress,
         )
+        # Shared current selects authored State, so effective compositions must
+        # be reproducible without a process-local previous State or extra pointer.
+        composition_time = (
+            max(root.created_at, home.created_at)
+            if layout.placement == "roaming"
+            else None
+        )
         authored_revision = None
         if layout.placement == "roaming" and (overrides or workspace_additions):
             authored_revision = _persist_agent_revision(
@@ -102,6 +109,7 @@ def prepare_agent_state(
                 root_revision=root.revision,
                 home_revision=home.revision,
                 publish=False,
+                created_at=composition_time,
             )
             load_agent_state(layout, authored_revision)
         revision = _persist_agent_revision(
@@ -111,9 +119,7 @@ def prepare_agent_state(
             allow_overrides=overrides,
             workspace_additions=workspace_additions,
             publish=False,
-            previous_revision=previous.revision
-            if layout.placement == "roaming" and previous is not None
-            else None,
+            created_at=composition_time,
         )
         created_at = load_agent_revisions(layout, revision)[-1]
         revision_dir = agent_revision_dir(layout, revision)
@@ -189,16 +195,6 @@ def load_agent_state(
 ) -> AgentState:
     """Load one durable Agent State without consulting authored source."""
 
-    if (
-        revision is not None
-        and layout.placement == "roaming"
-        and layout.agent_root != layout.legacy_agent_root
-        and not agent_revision_dir(layout, revision).exists()
-    ):
-        legacy = replace(layout, agent_root_path=layout.legacy_agent_root)
-        if agent_revision_dir(legacy, revision).exists():
-            layout = legacy
-
     (
         effective,
         root_revision,
@@ -230,12 +226,6 @@ def load_state_caps(
 ) -> tuple[StateCap, ...]:
     """Read one captured layer, including caps shadowed by another scope."""
 
-    if (
-        layout.placement == "roaming"
-        and state.place == layout.legacy_agent_root
-        and layout.agent_root != layout.legacy_agent_root
-    ):
-        layout = replace(layout, agent_root_path=layout.legacy_agent_root)
     if scope == "root":
         return load_root_layer(layout, state.root_revision).caps
     return load_home_layer(layout, state.home_revision).caps
@@ -263,7 +253,7 @@ def prepare_root_home(
 ) -> tuple[RootLayer, HomeLayer]:
     """Prepare and load the shared root and one agent home."""
 
-    _require_place(layout)
+    _require_agent_root(layout)
     _require_agent_home(layout)
     if layout.placement == "visiting":
         parse_agent_source(layout, ref=str(layout.program), progress=progress)
@@ -288,7 +278,7 @@ def prepare_root(
 ) -> RootLayer:
     """Build or reuse the root State layer shared by every agent."""
 
-    _require_place(layout)
+    _require_agent_root(layout)
     source = scan_root_source(layout.agent_root)
     current = _matching_root(
         layout,
@@ -801,7 +791,7 @@ def _observe_scope_source(
     )
 
 
-def _require_place(layout: AgentLayout) -> None:
+def _require_agent_root(layout: AgentLayout) -> None:
     if not layout.agent_root.is_dir():
         raise FileNotFoundError(f"agent root not found: {layout.agent_root}")
 

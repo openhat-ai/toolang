@@ -323,7 +323,7 @@ def _persist_agent_revision(
     allow_overrides: Mapping[str, tuple[str, ...]] | None = None,
     workspace_additions: Mapping[str, str] | None = None,
     publish: bool = True,
-    previous_revision: str | None = None,
+    created_at: str | None = None,
 ) -> str:
     document = agent_layers_document(
         root_revision=root_revision,
@@ -333,7 +333,7 @@ def _persist_agent_revision(
         workspace_additions=workspace_additions,
     )
     try:
-        current = previous_revision or load_current_agent_revision(layout)
+        current = load_current_agent_revision(layout)
         previous = _load_object(
             agent_revision_dir(layout, current) / _LAYERS_FILE, label=_LAYERS_FILE
         )
@@ -342,10 +342,14 @@ def _persist_agent_revision(
             return current
     except (OSError, KeyError, TypeError, ValueError):
         pass
-    document["created_at"] = _creation_time()
+    document["created_at"] = created_at or _creation_time()
     encoded = canonical_json(document)
     revision = sha256(encoded).hexdigest()
     target = agent_revision_dir(layout, revision)
+    if _is_valid_agent_dir(target, revision=revision):
+        if publish:
+            publish_agent_current(layout, revision)
+        return revision
     ensure_directory(target.parent, inherit_owner=True)
     staging = target.with_name(f".{revision}.tmp-{uuid4().hex}")
     try:

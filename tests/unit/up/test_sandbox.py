@@ -633,8 +633,6 @@ def test_guest_roaming_mounts_the_shared_project_edit_guard(monkeypatch, tmp_pat
     )
     layout.home.mkdir(parents=True)
     layout.agent_home.mkdir(parents=True, exist_ok=True)
-    (layout.runtime_root / ".state").mkdir()
-    (layout.home / ".state").mkdir()
     spec = _launch_spec(tmp_path / "global")
     spec = replace(spec, serve=replace(spec.serve, layout=layout))
     asyncio.run(sandbox.launch(spec))
@@ -648,22 +646,6 @@ def test_guest_roaming_mounts_the_shared_project_edit_guard(monkeypatch, tmp_pat
     assert guard.is_file()
     guest_place = Path("/runtime")
     assert SandboxMount(guard, guest_place / ".state/root/edit.lock") in request.mounts
-    assert (
-        SandboxMount(
-            layout.runtime_root / ".state",
-            guest_place / ".legacy/.state",
-            read_only=True,
-        )
-        in request.mounts
-    )
-    assert (
-        SandboxMount(
-            layout.home / ".state",
-            guest_place / ".legacy/agents/aid/.state",
-            read_only=True,
-        )
-        in request.mounts
-    )
     position = request.command.index("--source-edit-lock")
     assert request.command[position + 1] == str(guest_place / ".state/root/edit.lock")
     registry = tmp_path / "global" / ".runtime" / "active" / layout.address

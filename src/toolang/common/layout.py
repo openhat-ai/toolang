@@ -55,7 +55,11 @@ def agent_workspaces_path(place: Path, name: str) -> Path:
 
 @dataclass(frozen=True, slots=True)
 class AgentLayout:
-    """Immutable paths for one agent under its resolved place."""
+    """Placement-resolved shared agent paths and instance runtime paths.
+
+    ``place`` and ``home`` identify the runtime root and its agent directory;
+    authored inputs, State, and workspaces use ``agent_root``/``agent_home``.
+    """
 
     place: Path
     name: str
@@ -77,7 +81,6 @@ class AgentLayout:
         default=None, compare=False, repr=False
     )
     agent_root_path: Path | None = field(default=None, compare=False)
-    legacy_agent_root_path: Path | None = field(default=None, compare=False)
 
     def __post_init__(self) -> None:
         place = self.place.expanduser().resolve()
@@ -182,6 +185,7 @@ class AgentLayout:
 
     @property
     def home(self) -> Path:
+        """Agent directory below the runtime root; owns this instance's .runtime."""
         return self.place / "agents" / self.name
 
     @property
@@ -201,11 +205,6 @@ class AgentLayout:
     @property
     def agent_home(self) -> Path:
         return self.agent_root / "agents" / self.name
-
-    @property
-    def legacy_agent_root(self) -> Path:
-        """Read-only historical State location for this bound runtime instance."""
-        return self.legacy_agent_root_path or self.runtime_root
 
     @property
     def workspaces(self) -> Path:

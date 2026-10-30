@@ -132,31 +132,30 @@ def test_invocation_bindings_never_replace_shared_current(tmp_path):
     asyncio.run(exercise())
 
 
-def test_exact_history_reads_bound_legacy_state_without_moving_it(tmp_path):
+def test_fresh_instances_reuse_the_same_effective_composition(tmp_path):
     source = tmp_path / "aid.too"
     source.write_text("flow main():\n  pass\n")
-    layout = allocate_roaming(source, toolang_root=tmp_path / "root", register=False)
-    legacy = replace(layout, agent_root_path=layout.runtime_root)
-    legacy.program.symlink_to(source)
-    old = prepare_agent_state(legacy)
-    materialize_roaming_program(source, layout=layout)
-    current = prepare_agent_state(layout)
-    restored = load_agent_state(layout, old.revision)
-    assert restored.revision_dir == old.revision_dir
-    assert restored.revision != current.revision
-    assert old.revision_dir is not None
-    assert old.revision_dir.is_dir()
-    assert not (layout.agent_state / "v24" / "revs" / old.revision).exists()
-    assert load_agent_state(layout).revision == current.revision
+    first = _layout(source, tmp_path / "root_one")
+    second = _layout(source, tmp_path / "root_two")
+    additions = {"repo": str(tmp_path)}
+    accepted = prepare_agent_state(first, workspace_additions=additions)
+    authored = load_current_agent_revision(first)
+    revisions = set((first.agent_state / "v24" / "revs").iterdir())
+    repeated = prepare_agent_state(second, workspace_additions=additions)
+    assert repeated.revision == accepted.revision
+    assert set((first.agent_state / "v24" / "revs").iterdir()) == revisions
+    assert load_current_agent_revision(first) == authored
+    assert authored != accepted.revision
 
 
+@pytest.mark.parametrize("newline", ["\n", "\r\n"])
 def test_warm_cli_uses_prepared_program_in_a_fresh_process_cache(
-    tmp_path, monkeypatch, capsys
+    tmp_path, monkeypatch, capsys, newline
 ):
     from toolang.state import source as sources
 
     source = tmp_path / "aid.too"
-    source.write_text("flow main(_: Text) -> Text:\n  pass\n")
+    source.write_bytes(f"flow main(_: Text) -> Text:{newline}  pass{newline}".encode())
     monkeypatch.setenv("TOOLANG_ROOT", str(tmp_path / "root"))
     monkeypatch.setattr("sys.stdin", io.StringIO(""))
     original = Program.from_source
@@ -177,15 +176,10 @@ def test_warm_cli_uses_prepared_program_in_a_fresh_process_cache(
     assert "Prepared state" not in capsys.readouterr().err
 
 
-def test_guest_reuses_shared_layers_and_can_read_bound_legacy_history(
-    tmp_path, monkeypatch
-):
+def test_guest_reuses_shared_layers(tmp_path, monkeypatch):
     source = tmp_path / "aid.too"
     source.write_text("flow main():\n  pass\n")
     host = _layout(source, tmp_path / "root")
-    legacy = replace(host, agent_root_path=host.runtime_root)
-    legacy.program.symlink_to(source)
-    historical = prepare_agent_state(legacy)
     accepted = prepare_agent_state(host)
     guest_root = tmp_path / "guest"
     guest_root.mkdir()
@@ -194,7 +188,6 @@ def test_guest_reuses_shared_layers_and_can_read_bound_legacy_history(
         place=guest_root,
         root=guest_root,
         agent_root_path=guest_root,
-        legacy_agent_root_path=guest_root / ".legacy",
         runtime_config=RuntimeConfig.parse(
             prepare_guest_environment(host, mapping={})[CONFIG_PATCH_ENV]
         ),
@@ -202,9 +195,6 @@ def test_guest_reuses_shared_layers_and_can_read_bound_legacy_history(
     shutil.copyfile(host.place_config, guest.place_config)
     shutil.copytree(host.place_state.parent, guest.place_state.parent)
     shutil.copytree(host.agent_home, guest.agent_home)
-    legacy_guest = replace(guest, agent_root_path=guest.legacy_agent_root)
-    shutil.copytree(legacy.place_state.parent, legacy_guest.place_state.parent)
-    shutil.copytree(legacy.home_state.parent, legacy_guest.home_state.parent)
 
     def unexpected_parse(*args, **kwargs):
         pytest.fail("guest reparsed already prepared source")
@@ -212,10 +202,6 @@ def test_guest_reuses_shared_layers_and_can_read_bound_legacy_history(
     monkeypatch.setattr(ProgramSource, "parse", unexpected_parse)
     loaded = prepare_agent_state(guest)
     assert loaded.revision == accepted.revision
-    restored = load_agent_state(guest, historical.revision)
-    assert restored.revision == historical.revision
-    assert restored.revision_dir is not None
-    assert restored.revision_dir.is_relative_to(guest.legacy_agent_root)
 
 
 def test_roaming_shared_home_rejects_a_directory_symlink(tmp_path):

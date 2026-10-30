@@ -311,38 +311,8 @@ def _sync_roaming_project(layout: AgentLayout, source: Path) -> None:
     catalog_target = place / "catalog.json"
     lock = EditLock(layout.place_state / "edit.lock")
 
-    def retire_previous_projection() -> None:
-        # Relocate generated inputs only after the new PLACE projection succeeds.
-        old_config = layout.config
-        old_lock = EditLock(layout.home_edit_lock)
-
-        def owned() -> bool:
-            if old_config.is_symlink():
-                return (
-                    old_config.resolve() == source.with_name("toolang.toml").resolve()
-                )
-            return old_config.is_file() and old_config.read_text().startswith(
-                PROJECTION_HEADER
-            )
-
-        if not old_lock.read(owned):
-            return
-        with old_lock.write():
-            if not owned():
-                return
-            previous = read_config(old_config)
-            old_catalog = layout.agent_home / "catalog.json"
-            known_catalogs = {source.with_name("toolang.catalog.json").resolve()}
-            for value in (previous.get("__toolang_catalog__"), catalog):
-                if isinstance(value, str | Path):
-                    known_catalogs.add(Path(value).resolve())
-            if old_catalog.is_symlink() and old_catalog.resolve() in known_catalogs:
-                old_catalog.unlink()
-            old_config.unlink()
-
     def needs_update() -> bool:
         previous_catalog = None
-        previous_source = None
         previous_directory = None
         if (
             target.is_file()
@@ -351,7 +321,6 @@ def _sync_roaming_project(layout: AgentLayout, source: Path) -> None:
         ):
             previous = read_config(target)
             previous_catalog = previous.get("__toolang_catalog__")
-            previous_source = previous.get("__toolang_source__")
             previous_directory = previous.get("__toolang_project_dir__")
         for path in (target, catalog_target):
             if path.is_symlink():
@@ -360,18 +329,11 @@ def _sync_roaming_project(layout: AgentLayout, source: Path) -> None:
                 if (
                     path == catalog_target
                     and isinstance(previous_catalog, str)
-                    and (
-                        isinstance(previous_directory, str)
-                        or isinstance(previous_source, str)
-                    )
+                    and isinstance(previous_directory, str)
                 ):
-                    old_home = (
-                        Path(previous_directory) / ".toolang"
-                        if isinstance(previous_directory, str)
-                        else AgentLayout.roaming(Path(str(previous_source))).agent_root
-                    )
+                    old_root = Path(previous_directory) / ".toolang"
                     if os.readlink(path) == os.path.relpath(
-                        previous_catalog, start=old_home
+                        previous_catalog, start=old_root
                     ):
                         continue
                 expected = (
@@ -435,7 +397,6 @@ def _sync_roaming_project(layout: AgentLayout, source: Path) -> None:
         # projection behind after a newer root edit/projection has completed.
         current_sources, current_catalog = root_lock.read(capture)
         if (sources, catalog) == (current_sources, current_catalog):
-            retire_previous_projection()
             return
         sources, catalog = current_sources, current_catalog
         projected = project_sources(sources, directory=source.parent, catalog=catalog)

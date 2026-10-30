@@ -7,28 +7,28 @@ owns invocation syntax and [Hosting](hosting.md) owns sandbox mounts.
 
 ## Grant construction
 
-State merges HOME `[workspaces]` with the agent-root policy in PLACE. The root
-policy wins for a shared name; HOME supplies other names. Resident PLACE equals
-the Toolang root; nonresident agents do not inherit its agent configuration.
+State merges agent-home `[workspaces]` with the agent-root policy. The root
+policy wins for a shared name; agent home supplies other names. Resident agent
+root equals the Toolang root; nonresident agents do not inherit its agent configuration.
 
 | Placement | Root policy |
 | --- | --- |
 | Resident | `[workspaces.hak]` |
-| Visiting | Matching ref table in its managed PLACE, normally empty |
+| Visiting | Matching ref table in its agent root, normally empty |
 | Roaming | Flat `[workspaces]` in source-local `toolang.toml` |
 
-Keyed PLACE tables select only the matching stable agent identity. Roaming
+Keyed agent-root tables select only the matching stable agent identity. Roaming
 project layers retain their flat workspace syntax. Paths may be anywhere on the host.
-Absolute host paths are recommended in both HOME and ROOT configuration.
+Absolute host paths are recommended in both agent-home and root configuration.
 `workspace add` resolves paths at the client's procdir and writes canonical
 absolute paths. Authored relative paths resolve at their declaring file.
-Roaming project configuration is captured in `PLACE/config.toml`; ancestor
+Roaming project configuration is captured in `AGENT_ROOT/config.toml`; ancestor
 project configuration grants no access. Home State retains a receipt of only
 the selected root workspace policy, so unrelated root Setup edits do not change it.
 Source discovery and process directories are distinct from execution workdir.
 
 Setup adds the implicit `lab` workspace at `AGENT_ROOT/workspaces/<agent>/lab`,
-before configured grants. It is runtime-owned and cannot be replaced by a
+before configured grants. It is Toolang-managed and cannot be replaced by a
 configured or temporary grant. Configured and invocation grants retain stable
 names and order; conflicting bindings reject instead of silently rebinding a name.
 Inferred names normalize directory basenames to kebab case. Explicit names use

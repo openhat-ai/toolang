@@ -45,6 +45,39 @@ def test_info_prepares_one_root_scoped_home_and_explicit_run_reuses_it(source_ho
     assert select_roaming(source, toolang_root=root) == latest
 
 
+def test_fresh_cli_processes_reuse_shared_state_across_roots(source_home):
+    import os
+    import subprocess
+    import sys
+
+    source, root = source_home
+    shared = source.parent / ".toolang"
+    revisions = None
+    for selected in (root, root, root.with_name("another root")):
+        result = subprocess.run(
+            [sys.executable, "-m", "toolang.cli.toolang", str(source), "main", "hello"],
+            env={**os.environ, "TOOLANG_ROOT": str(selected)},
+            input="",
+            text=True,
+            capture_output=True,
+            timeout=30,
+        )
+        assert result.returncode == 0, result.stderr
+        current = set(shared.glob("**/revs/*"))
+        if revisions is None:
+            revisions = current
+            assert revisions
+        else:
+            assert current == revisions
+            assert "Prepared state" not in result.stderr
+    layouts = (
+        *retained_roaming(source, toolang_root=root),
+        *retained_roaming(source, toolang_root=root.with_name("another root")),
+    )
+    assert len(layouts) == len({layout.run_store for layout in layouts}) == 3
+    assert len({layout.agent_home for layout in layouts}) == 1
+
+
 def test_explicit_missing_home_does_not_prepare_another(source_home):
     source, root = source_home
     assert main([f"{source}@", "main", "--quiet", "hello"]) != 0

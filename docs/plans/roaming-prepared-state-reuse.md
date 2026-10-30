@@ -49,9 +49,8 @@ remain process-local under the [Setup contract](../design/setup.md). Keep runtim
 records/control per instance. Guests mount shared root inputs, selected agent
 home, lab, and instance `.runtime` separately, preserving host identities/grants.
 
-New preparation uses shared paths. Preserve legacy data; exact history loads may
-read the bound instance's current-format legacy State if absent from shared State.
-Do not migrate/merge old labs or prune revisions. Shared labs allow concurrent writes.
+Preparation and exact history loads use shared State only. Legacy State and labs
+are not read, migrated, merged, or pruned. Shared labs allow concurrent writes.
 
 ## Acceptance and scope
 

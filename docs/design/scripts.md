@@ -45,18 +45,18 @@ Setup inputs, State, and lab reused across instances and selected Toolang roots.
 Agent home is `<srcdir>/.toolang/agents/<agent>`. Published runtime roots survive
 exit/failure; runtime cleanup never deletes them.
 The root-code directory identifies the selected root; its `root.json` retains
-the full root path. `file.too@CODE` reuses an exact HOME; `file.too@` requires the
-latest existing HOME. Bare `info` selects the latest or prepares one without a
+the full root path. `file.too@CODE` reuses an exact runtime instance;
+`file.too@` requires the latest existing instance. Bare `info` selects the latest or prepares one without a
 Run. See [agent addresses](agent-addresses.md#binding-and-execution) for selection
 and record binding. Shared `.toolang/agents/NAME` directories hold definitions, not runtime history.
 Legacy unnumbered `.runtime` data is preserved without adoption; current runtime
 selection still requires a retained P19.
 
-One script, including CLI rerun, may own a HOME at a time. Different HOMEs may run
-on host and Docker concurrently; a verified stopped HOME may switch environments
-on its next invocation. Reuse preserves history and resolves current inputs
+Each runtime instance admits one script invocation, including rerun, at a time.
+Different instances may run on host and Docker concurrently; a verified stopped
+instance may switch environments on its next invocation. Reuse preserves history and resolves current inputs
 and grants, rather than retaining temporary options from the previous invocation.
-HOMEs share their canonical source; they are not source checkouts. Roaming has
+Instances share their canonical source; they are not source checkouts. Roaming has
 no Chat or standalone hosting commands.
 
 Roaming scripts use the selected root's [environment policy](setup.md#environments),
