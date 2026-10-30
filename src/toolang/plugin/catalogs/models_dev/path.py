@@ -78,7 +78,13 @@ def resolve_model_catalog_selection(
             if scope == "home"
             else layout.root_catalog
         )
-        if scope == "root" and "root/catalog.json" in origins:
+        configured = catalog_config(source.config)
+        declared = configured is not None and "path" in configured
+        if (
+            scope == "root"
+            and "root/catalog.json" in origins
+            and (local.exists() or local.is_symlink() or declared)
+        ):
             _require_catalog_candidate(local, label="placement model catalog")
             return ModelCatalogSelection(local, scope)
         config_path = layout.config if scope == "home" else layout.root_config
@@ -86,10 +92,9 @@ def resolve_model_catalog_selection(
             (ConfigSource(config_path, source.config, source.scope),), roaming=False
         )
         if selected is not None:
-            configured = catalog_config(source.config)
             return ModelCatalogSelection(
                 selected.resolve(strict=False),
-                "custom" if configured and "path" in configured else scope,
+                "custom" if declared else scope,
             )
     _require_catalog_candidate(PACKAGED_MODEL_CATALOG, label="packaged model catalog")
     return ModelCatalogSelection(

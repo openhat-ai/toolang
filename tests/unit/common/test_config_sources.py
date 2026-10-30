@@ -22,6 +22,34 @@ from toolang.up.source import materialize_roaming_program
 from toolang.up.mounts import prepare_place_mounts
 
 
+@pytest.mark.parametrize("declared", [False, True])
+def test_removed_roaming_catalog_obeys_local_selection_without_refetch(
+    tmp_path, declared
+):
+    from toolang.plugin.catalogs.models_dev.path import PACKAGED_MODEL_CATALOG
+
+    source = tmp_path / "aid.too"
+    source.write_text("flow run():\n  pass\n")
+    catalog = tmp_path / "toolang.catalog.json"
+    catalog.write_text('{"providers": [], "models": []}')
+    (tmp_path / "toolang.toml").write_text(
+        '[plugin.model_catalog.models_dev]\npath = "toolang.catalog.json"\n'
+        if declared
+        else ""
+    )
+    layout = materialize_roaming_program(source, toolang_root=tmp_path / "root")
+    assert resolve_model_catalog_path(layout) == layout.root_catalog
+    layout.root_catalog.unlink()
+    assert catalog.is_file()
+    if declared:
+        with pytest.raises(FileNotFoundError, match="catalog"):
+            resolve_model_catalog_path(layout)
+    else:
+        assert resolve_model_catalog_path(layout) == PACKAGED_MODEL_CATALOG
+    materialize_roaming_program(source, layout=layout)
+    assert resolve_model_catalog_path(layout).samefile(catalog)
+
+
 @pytest.mark.parametrize("placement", ["resident", "roaming", "visiting"])
 def test_shared_workspaces_are_ignored_before_path_resolution(tmp_path, placement):
     shared = '[workspaces]\nignored = "~toolang-nonexistent-user/repo"\n'

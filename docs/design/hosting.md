@@ -378,6 +378,8 @@ release cannot remove a replacement launch's inputs.
 
 Docker uses the engine's default missing-image pull behavior. Its guest script
 quietly bootstraps uv and installs the selected package with `uv tool install`.
+After container creation, guests have 120 seconds to bootstrap and expose their
+Agent API; host processes retain the 30-second readiness budget.
 The self-contained `guest.sh` reuses a capable image uv, installs pinned uv
 through Python 3.8+ with pip into a private directory, or downloads the pinned
 installer through curl/wget. uv reuses Python 3.11+ or installs managed Python

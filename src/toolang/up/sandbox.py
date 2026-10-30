@@ -78,6 +78,7 @@ if TYPE_CHECKING:
     from toolang.up.server import ServeSpec
 
 SANDBOX_READY_TIMEOUT_SEC = 30.0
+GUEST_READY_TIMEOUT_SEC = 120.0
 SANDBOX_ATTACH_GRACE_SEC = 0.2
 _TASK_LOCKS: WeakKeyDictionary[
     asyncio.AbstractEventLoop, dict[tuple[Path, str | None], asyncio.Lock]
@@ -607,7 +608,9 @@ async def _launch_locked(
                 implementation,
                 ref,
                 launch_id=launch_id,
-                timeout_sec=SANDBOX_READY_TIMEOUT_SEC,
+                timeout_sec=GUEST_READY_TIMEOUT_SEC
+                if implementation.location == "guest"
+                else SANDBOX_READY_TIMEOUT_SEC,
             )
         )
         try:

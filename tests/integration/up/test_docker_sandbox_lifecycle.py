@@ -313,8 +313,9 @@ except KeyboardInterrupt:
             source_thread.join(timeout=2)
 
 
+@pytest.mark.parametrize("attempt", range(3))
 def test_docker_restart_reuses_settings_after_queries_reconcile_killed_guest(
-    tmp_path: Path, docker_wheel_dir: Path, local_model_port: int
+    tmp_path: Path, docker_wheel_dir: Path, local_model_port: int, attempt: int
 ) -> None:
     from toolang.up.instance import read_instance
 
@@ -2059,7 +2060,8 @@ assert json.loads(info.read_text())['home'] == '/root/.toolang/agents/alice'
 assert (runtime / 'guest.sh').is_file() and not (runtime / 'guest.py').exists()
 assert not (runtime / 'docker').exists()
 assert not (runtime / 'config.toml').exists()
-assert Path('/root/.toolang/config.toml').is_file()
+assert Path('/root/.toolang/config').is_dir()
+assert not Path('/root/.toolang/config.toml').exists()
 assert not (runtime / 'host_only.json').exists()
 assert not Path('/root/.toolang/agents/alice/.runtime/registration').exists()
 lab = Path('/root/.toolang/workspaces/alice/lab')
@@ -2952,3 +2954,176 @@ def test_guest_source_validation_preserves_usable_inputs(
         )
         assert read.returncode == 0, read.stderr
         assert read.stdout == program
+
+
+@pytest.mark.parametrize("placement", ["resident", "visiting", "roaming"])
+@pytest.mark.parametrize("location", ["host", "docker"])
+def test_live_placement_watches_sources_catalogs_and_external_pointers(
+    tmp_path, docker_wheel_dir, local_model_port, placement, location
+):
+    from toolang.cli.common.agent_server import acquire_agent_server
+    from toolang.common.environment import agent_environment_paths
+    from toolang.common.files import atomic_write_text
+    from toolang.state.cache import agent_current_path, layer_current_path
+    from toolang.state.prepare import prepare_agent_state
+
+    fetched = []
+    program = "flow main():\n  pass\n"
+
+    class Source(BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802
+            fetched.append(self.path)
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(program.encode())
+
+        def log_message(self, format, *args):
+            pass
+
+    source_server = ThreadingHTTPServer(("127.0.0.1", 0), Source)
+    source_thread = threading.Thread(target=source_server.serve_forever, daemon=True)
+    source_thread.start()
+    noise_stop = threading.Event()
+    noise_thread = None
+    layout = None
+    try:
+        root = tmp_path / "root"
+        root.mkdir()
+        empty_catalog = '{"providers": [], "models": []}'
+        if placement == "resident":
+            layout = AgentLayout.resident(root, "alice")
+            layout.agent_home.mkdir(parents=True)
+            layout.program.write_text(program)
+        elif placement == "visiting":
+            layout = agent_sources.resolve_visiting_layout(
+                f"http://127.0.0.1:{source_server.server_port}/alice.too",
+                toolang_root=root,
+            )
+        else:
+            source = tmp_path / "project/alice.too"
+            source.parent.mkdir()
+            source.write_text(program)
+            (source.parent / "toolang.toml").write_text("[teaming]\nenabled = false\n")
+            (source.parent / "toolang.catalog.json").write_text(empty_catalog)
+            layout = agent_sources.materialize_roaming_program(
+                source, toolang_root=root
+            )
+        root_file(layout.agent_root, "config.toml").write_text(
+            "[teaming]\nenabled = false\n"
+        )
+        layout.root_catalog.write_text(empty_catalog)
+        initial = prepare_agent_state(layout)
+        _write_local_model_env(root / ".env", local_model_port)
+        agent_environment_paths(root, layout)[0].write_text(
+            "OLLAMA_HOST\nLLAMA_CPP_HOST\n"
+        )
+
+        def noise():
+            log = layout.runtime / "logs/noisy.log"
+            log.parent.mkdir(parents=True, exist_ok=True)
+            with log.open("a") as stream:
+                while not noise_stop.wait(0.01):
+                    stream.write("runtime noise\n")
+                    stream.flush()
+                    (layout.lab / "busy.txt").write_text("workspace noise")
+
+        with acquire_agent_server(
+            layout,
+            sandbox="docker:python:3.13-slim" if location == "docker" else "host",
+            dev=docker_wheel_dir if location == "docker" else None,
+            temporary=location == "docker",
+            drivers=frozenset(),
+            bound=True,
+            show_progress=False,
+        ) as server:
+            assert server is not None
+            endpoint = server.endpoint
+            assert (
+                _get_json(f"{endpoint}/api/v0/workspaces")["revision"]
+                == initial.revision
+            )
+            noise_thread = threading.Thread(target=noise, daemon=True)
+            noise_thread.start()
+
+            def wait_items(path, field, expected):
+                deadline = time.monotonic() + 15
+                while True:
+                    observed = _get_json(f"{endpoint}/api/v0/{path}")
+                    actual = {item[field] for item in observed["items"]}
+                    if actual == expected:
+                        return
+                    assert time.monotonic() < deadline, (path, expected, observed)
+                    time.sleep(0.1)
+
+            runnables = layout.agent_home / "runnables"
+            runnables.mkdir()
+            (runnables / "extra.too").write_text("flow extra():\n  pass\n")
+            wait_items("flows", "name", {"main", "extra"})
+            atomic_write_text(layout.program, "flow changed():\n  pass\n")
+            wait_items("flows", "name", {"changed", "extra"})
+
+            for catalog in (layout.root_catalog, layout.agent_home / "catalog.json"):
+                original = catalog.read_text() if catalog.exists() else None
+                for name in ("one", "two"):
+                    atomic_write_text(
+                        catalog,
+                        json.dumps(
+                            {
+                                "providers": [
+                                    {
+                                        "id": "placement-probe",
+                                        "name": "Placement probe",
+                                        "env": [],
+                                        "npm": "@ai-sdk/openai-compatible",
+                                        "api": "https://example.invalid/v1",
+                                    }
+                                ],
+                                "models": [
+                                    {
+                                        "id": name,
+                                        "name": name,
+                                        "provider": "placement-probe",
+                                        "tool_call": True,
+                                        "modalities": {
+                                            "input": ["text"],
+                                            "output": ["text"],
+                                        },
+                                        "limit": {"context": 1000, "output": 100},
+                                    }
+                                ],
+                            }
+                        ),
+                    )
+                    wait_items(
+                        "models?query=placement-probe/*",
+                        "ref",
+                        {f"placement-probe/{name}"},
+                    )
+                catalog.unlink()
+                wait_items("models?query=placement-probe/*", "ref", set())
+                if original is not None:
+                    atomic_write_text(catalog, original)
+
+            for pointer in (
+                layer_current_path(layout, "root"),
+                layer_current_path(layout, "home"),
+                agent_current_path(layout),
+            ):
+                atomic_write_text(pointer, "f" * 64 + "\n")
+                deadline = time.monotonic() + 15
+                while pointer.read_text().strip() == "f" * 64:
+                    assert time.monotonic() < deadline, pointer
+                    time.sleep(0.1)
+                wait_items("flows", "name", {"changed", "extra"})
+            assert fetched == (["/alice.too"] if placement == "visiting" else [])
+    finally:
+        noise_stop.set()
+        if noise_thread is not None:
+            noise_thread.join(timeout=5)
+        if layout is not None and location == "host":
+            from toolang.up import sandbox as sandbox_runtime
+
+            asyncio.run(sandbox_runtime.stop(layout, force=True))
+        source_server.shutdown()
+        source_server.server_close()
+        source_thread.join(timeout=5)

@@ -1241,6 +1241,54 @@ def test_readiness_fails_when_workload_exits() -> None:
         )
 
 
+@pytest.mark.parametrize("location", ["host", "guest"])
+def test_guest_bootstrap_can_exceed_the_host_readiness_budget(
+    tmp_path, monkeypatch, location
+):
+    from types import SimpleNamespace
+    import time
+
+    clock = SimpleNamespace(now=0.0)
+    monkeypatch.setattr(
+        sandbox,
+        "time",
+        SimpleNamespace(
+            monotonic=lambda: clock.now,
+            strftime=time.strftime,
+            gmtime=time.gmtime,
+        ),
+    )
+
+    async def scenario():
+        probed = asyncio.Event()
+        loop = asyncio.get_running_loop()
+
+        class SlowBootstrap(FakeSandbox):
+            async def attach(self, *_args, **_kwargs):
+                await probed.wait()
+                clock.now = 40.0
+
+        implementation = SlowBootstrap()
+        implementation.location = location
+        monkeypatch.setattr(
+            sandbox, "create_sandbox", lambda *_args, **_kwargs: implementation
+        )
+
+        def ready(*_args):
+            loop.call_soon_threadsafe(probed.set)
+            return clock.now >= 40.0
+
+        monkeypatch.setattr(sandbox, "_launch_ready", ready)
+        if location == "host":
+            with pytest.raises(TimeoutError, match="did not become ready"):
+                await sandbox.launch(_launch_spec(tmp_path))
+        else:
+            handle = await sandbox.launch(_launch_spec(tmp_path))
+            assert handle.state.ref.runtime_id == "workload-1"
+
+    asyncio.run(scenario())
+
+
 def test_launch_cannot_adopt_a_healthy_server_from_another_generation(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
