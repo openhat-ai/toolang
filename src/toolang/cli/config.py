@@ -9,6 +9,7 @@ from typing import cast
 
 from toolang.common.layout import root_config_path
 from toolang.common.config_sources import ConfigSource
+from toolang.common.config_runtime import resolve_runtime_config
 
 
 TITLE_KINDS = frozenset({"chat", "talk", "top", "serve", "run", "rerun", "retry"})
@@ -17,14 +18,9 @@ TITLE_KINDS = frozenset({"chat", "talk", "top", "serve", "run", "rerun", "retry"
 def load_config(path: Path) -> dict[str, object]:
     """Load one TOML configuration file when it exists."""
 
-    import os
-    from toolang.common.config_runtime import CONFIG_PATCH_ENV, RuntimeConfig
-    from toolang.cli.common.context import startup_environ
-
     config = tomllib.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
-    return RuntimeConfig.parse(startup_environ(os.environ).get(CONFIG_PATCH_ENV)).apply(
-        config
-    )
+    runtime = resolve_runtime_config()
+    return runtime.apply(config) if runtime is not None else config
 
 
 def load_config_layers(

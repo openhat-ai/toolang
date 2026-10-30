@@ -14,6 +14,7 @@ from toolang.base.protocols.model import ModelAdapter, ModelCatalog
 from toolang.base.types.model import ModelCatalogSnapshot, ModelOverride
 from toolang.base.types.policy import AgentCeiling, RunDefaults, RunLimits
 from toolang.common.layout import AgentLayout
+from toolang.common.config_runtime import bind_runtime_config
 from toolang.common.watching import directory_changes
 from toolang.common.progress import ProgressSink
 from .progress import setup_progress
@@ -122,20 +123,7 @@ class SetupWatcher:
             if agent_context
             else load_place_setup_envs(layout)
         )
-        if layout.runtime_config is None:
-            from toolang.common.config_runtime import (
-                CONFIG_PATCH_ENV,
-                RuntimeConfig,
-                current_runtime_config,
-            )
-
-            runtime = (
-                RuntimeConfig.parse(self._environ[CONFIG_PATCH_ENV])
-                if CONFIG_PATCH_ENV in self._environ
-                else current_runtime_config()
-            )
-            if runtime is not None:
-                self.layout = replace(layout, runtime_config=runtime)
+        self.layout = bind_runtime_config(layout, environ=self._environ)
         self._model_catalog_override = model_catalog
         self._model_catalog_path: Path | None = None
         self._allow_overrides = dict(allow_overrides or {})

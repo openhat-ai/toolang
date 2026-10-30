@@ -22,6 +22,8 @@ from ...common.layout import AgentLayout, root_config_path
 from ...common.config_runtime import (
     CONFIG_PATCH_ENV,
     RuntimeConfig,
+    bind_runtime_config,
+    resolve_runtime_config,
     runtime_config_scope,
 )
 from ...common.environment import (
@@ -198,10 +200,7 @@ def context_layout(ctx: Context) -> AgentLayout:
     layout = state.layout or AgentLayout.resident(
         state.root, state.agent or require_prefix_agent(ctx)
     )
-    raw = startup_environ(os.environ).get(CONFIG_PATCH_ENV)
-    if raw is not None:
-        layout = replace(layout, runtime_config=user_call(RuntimeConfig.parse, raw))
-    return layout
+    return user_call(bind_runtime_config, layout)
 
 
 def require_runtime_agent(ctx: Context, agent: str | None) -> str:
@@ -360,7 +359,7 @@ def command_environment(ctx: Context):
         )
     token = _STARTUP.set(settings)
     try:
-        runtime = user_call(RuntimeConfig.parse, settings.get(CONFIG_PATCH_ENV))
+        runtime = user_call(resolve_runtime_config, settings) or RuntimeConfig()
         with environment_scope(selected), runtime_config_scope(runtime):
             yield
     finally:

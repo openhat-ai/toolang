@@ -672,7 +672,7 @@ def serve(
         selected = user_call(load_runtime_environment, layout, base_environ=environ)
     from toolang.common.config_runtime import (
         CONFIG_PATCH_ENV,
-        RuntimeConfig,
+        bind_runtime_config,
     )
 
     workspaces = user_call(
@@ -684,6 +684,9 @@ def serve(
     )
     controls_config = selected.values.get(
         CONFIG_PATCH_ENV, environ.get(CONFIG_PATCH_ENV)
+    )
+    layout = user_call(
+        bind_runtime_config, layout, environ={**environ, **selected.values}
     )
     controls = {
         name: value for name, value in environ.items() if name in RUNTIME_ENV_NAMES
@@ -703,10 +706,6 @@ def serve(
         )
     if model_catalog := resolve_model_catalog_option(model_catalog):
         environ[MODEL_CATALOG_ENV] = str(model_catalog)
-    layout = replace(
-        layout,
-        runtime_config=user_call(RuntimeConfig.parse, controls_config),
-    )
     if controls_config is not None:
         environ[CONFIG_PATCH_ENV] = controls_config
     environment = replace(selected, values=environ)

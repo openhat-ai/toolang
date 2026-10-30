@@ -81,6 +81,70 @@ def test_setup_captures_environment_before_cross_thread_refresh(tmp_path):
         assert worker.submit(watcher._load_inputs).result().envs == {"TOKEN": "startup"}
 
 
+def test_command_config_is_shared_by_layout_setup_and_cli_readers(tmp_path):
+    import json
+    from typer._click import Context
+    from typer.core import TyperCommand
+    from toolang.cli.common.context import (
+        CliContext,
+        command_environment,
+        context_layout,
+    )
+    from toolang.cli.config import load_config
+    from toolang.common.config_runtime import CONFIG_PATCH_ENV
+    from toolang.setup.watcher import SetupWatcher
+
+    layout = AgentLayout.resident(tmp_path, "alice")
+    layout.agent_home.mkdir(parents=True)
+    layout.config.write_text("[limit]\ntokens=100\n")
+    state = CliContext(
+        root=tmp_path,
+        layout=layout,
+        shell_environment={CONFIG_PATCH_ENV: json.dumps({"limit": {"tokens": 200}})},
+    )
+    context = Context(TyperCommand("serve"), obj=state, info_name="serve")
+    with command_environment(context):
+        selected = context_layout(context)
+        watcher = SetupWatcher(selected)
+        assert context_layout(context).runtime_config is selected.runtime_config
+        assert watcher.layout is selected
+        assert load_config(layout.config)["limit"] == {"tokens": 200}
+        assert watcher._load_inputs().configs[-1]["limit"] == {"tokens": 200}
+    assert load_config(layout.config)["limit"] == {"tokens": 100}
+
+
+def test_nested_command_config_does_not_inherit_another_roots_patch(tmp_path):
+    import json
+    from typer._click import Context
+    from typer.core import TyperCommand
+    from toolang.cli.common.context import CliContext, command_environment
+    from toolang.cli.config import load_config
+    from toolang.common.config_runtime import CONFIG_PATCH_ENV
+
+    config = tmp_path / "config.toml"
+    config.write_text("[limit]\ntokens=100\n")
+    outer = Context(
+        TyperCommand("outer"),
+        obj=CliContext(
+            root=tmp_path,
+            shell_environment={
+                CONFIG_PATCH_ENV: json.dumps({"limit": {"tokens": 200}})
+            },
+        ),
+        info_name="outer",
+    )
+    inner = Context(
+        TyperCommand("inner"),
+        obj=CliContext(root=tmp_path / "other", shell_environment={}),
+        info_name="inner",
+    )
+    with command_environment(outer):
+        assert load_config(config)["limit"] == {"tokens": 200}
+        with command_environment(inner):
+            assert load_config(config)["limit"] == {"tokens": 100}
+        assert load_config(config)["limit"] == {"tokens": 200}
+
+
 def test_launch_parses_controller_settings_without_widening_workload(
     tmp_path, monkeypatch
 ):

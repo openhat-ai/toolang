@@ -18,7 +18,7 @@ from .config_runtime import (
     ConfigOrigins,
     RuntimeConfig,
     parse_source_metadata,
-    current_runtime_config,
+    resolve_runtime_config,
 )
 
 if TYPE_CHECKING:
@@ -204,7 +204,7 @@ def config_sources(
     layout: AgentLayout, *, include_agent: bool = True
 ) -> tuple[ConfigSource, ...]:
     """Load the same placement-local root/home configuration in every mode."""
-    runtime = layout.runtime_config or current_runtime_config() or RuntimeConfig()
+    runtime = layout.runtime_config or resolve_runtime_config() or RuntimeConfig()
     context = config_origins(layout)
     paths = (
         ("root", layout.root_config),

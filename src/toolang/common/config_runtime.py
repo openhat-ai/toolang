@@ -5,16 +5,19 @@ from __future__ import annotations
 from collections.abc import Mapping, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import json
 import math
 import os
 from pathlib import Path
 import re
 from types import MappingProxyType
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 from .immutable import freeze_mapping, mutable_data
+
+if TYPE_CHECKING:
+    from .layout import AgentLayout
 
 CONFIG_PATCH_ENV = "TOOLANG_CONFIG_PATCH"
 LAUNCH_SCHEMA = 2
@@ -205,8 +208,27 @@ _CURRENT: ContextVar[RuntimeConfig | None] = ContextVar(
 )
 
 
-def current_runtime_config() -> RuntimeConfig | None:
-    return _CURRENT.get()
+def resolve_runtime_config(
+    environ: Mapping[str, str] | None = None,
+) -> RuntimeConfig | None:
+    """Parse an explicit environment snapshot, or reuse the command's config."""
+    return (
+        RuntimeConfig.parse(environ.get(CONFIG_PATCH_ENV))
+        if environ is not None
+        else _CURRENT.get()
+    )
+
+
+def bind_runtime_config(
+    layout: AgentLayout, *, environ: Mapping[str, str] | None = None
+) -> AgentLayout:
+    """Keep an explicit layout config; otherwise capture one at the boundary."""
+    if layout.runtime_config is not None:
+        return layout
+    runtime = resolve_runtime_config(
+        environ if environ is not None and CONFIG_PATCH_ENV in environ else None
+    )
+    return replace(layout, runtime_config=runtime) if runtime is not None else layout
 
 
 @contextmanager
