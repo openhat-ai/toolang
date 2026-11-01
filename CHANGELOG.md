@@ -7,6 +7,14 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-01
+
+### Security
+
+- The locked `joserfc` dependency advances to 1.7.7, resolving CVE-2026-119283
+  and CVE-2026-119284.
+  ([#994](https://github.com/openhat-ai/toolang/pull/994))
+
 ## [0.4.0b4] - 2026-10-30
 
 ### Added
@@ -3523,7 +3531,8 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 - The formatter normalizes `exec` statements consistently with other flow
   statements. (#676)
 
-[Unreleased]: https://github.com/openhat-ai/toolang/compare/v0.4.0b4...HEAD
+[Unreleased]: https://github.com/openhat-ai/toolang/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/openhat-ai/toolang/compare/v0.4.0b4...v0.4.0
 [0.4.0b4]: https://github.com/openhat-ai/toolang/compare/v0.4.0b3...v0.4.0b4
 [0.4.0b3]: https://github.com/openhat-ai/toolang/compare/v0.4.0b2...v0.4.0b3
 [0.4.0b2]: https://github.com/openhat-ai/toolang/compare/v0.4.0b1...v0.4.0b2
