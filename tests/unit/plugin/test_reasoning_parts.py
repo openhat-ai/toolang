@@ -737,6 +737,114 @@ def test_responses_rejects_contradictory_final_snapshot(monkeypatch):
         run_stream(responses.ResponsesModelAdapter(), model("responses"), [])
 
 
+@pytest.mark.parametrize(
+    ("field", "value", "changed_fields"),
+    [
+        ("encrypted_content", "private-replacement", ["signature"]),
+        ("status", None, ["provider_metadata.status"]),
+        (
+            "summary",
+            [
+                {"type": "summary_text", "text": "private-replacement"},
+                {"type": "summary_text", "text": "private-second"},
+            ],
+            ["text", "provider_metadata.summary_count"],
+        ),
+    ],
+)
+def test_responses_logs_completed_part_conflict(
+    monkeypatch, caplog, field, value, changed_fields
+):
+    completed = {
+        "type": "reasoning",
+        "id": "rs-conflict",
+        "summary": [{"type": "summary_text", "text": "private-original"}],
+        "encrypted_content": "private-original-signature",
+        "status": "completed",
+    }
+    final = {"id": "response", "output": [{**completed, field: value}]}
+    frames = [
+        {"type": "response.output_item.done", "output_index": 0, "item": completed}
+    ]
+    mock_sdk(monkeypatch, responses, Stream(frames, final))
+    events = []
+    with caplog.at_level("ERROR"), pytest.raises(ToolangError, match="contradicts"):
+        run_stream(responses.ResponsesModelAdapter(), model("responses"), events)
+
+    assert "part=0" in caplog.text
+    assert "rs-conflict" in caplog.text
+    assert "source=response.completed" in caplog.text
+    for path in changed_fields:
+        assert path in caplog.text
+    assert "private-original" not in caplog.text
+    assert "private-replacement" not in caplog.text
+    completed_parts = [
+        event.data for event in events if isinstance(event, ModelPartEnd)
+    ]
+    assert len(completed_parts) == 1
+    assert completed_parts[0].signature == "private-original-signature"
+
+
+@pytest.mark.parametrize("source", ["response.completed", "response.output_item.done"])
+def test_responses_logs_opaque_reasoning_signature_conflict(
+    monkeypatch, caplog, source
+):
+    completed = {
+        "type": "reasoning",
+        "id": "rs-opaque",
+        "summary": [],
+        "encrypted_content": "private-original",
+    }
+    final = {
+        "id": "response",
+        "output": [{**completed, "encrypted_content": "private-replacement"}],
+    }
+    frames = [
+        {"type": "response.output_item.done", "output_index": 0, "item": completed}
+    ]
+    if source == "response.output_item.done":
+        frames.append({"type": source, "output_index": 0, "item": final["output"][0]})
+    mock_sdk(monkeypatch, responses, Stream(frames, final))
+    events = []
+    with caplog.at_level("ERROR"), pytest.raises(ToolangError, match="contradicts"):
+        run_stream(responses.ResponsesModelAdapter(), model("responses"), events)
+
+    assert "key=('reasoning', 'rs-opaque', 'opaque', 0)" in caplog.text
+    assert "changed_fields=['signature']" in caplog.text
+    assert f"source={source}" in caplog.text
+    assert "sha256" in caplog.text
+    assert "private-original" not in caplog.text
+    assert "private-replacement" not in caplog.text
+    assert [
+        event.data.signature for event in events if isinstance(event, ModelPartEnd)
+    ] == ["private-original"]
+
+
+def test_responses_logs_tool_argument_conflict(monkeypatch, caplog):
+    completed = {
+        "type": "function_call",
+        "id": "fc-conflict",
+        "call_id": "call-conflict",
+        "name": "shell__execute",
+        "arguments": '{"command":"private-original"}',
+    }
+    final = {
+        "id": "response",
+        "output": [{**completed, "arguments": '{"command":"private-replacement"}'}],
+    }
+    frames = [
+        {"type": "response.output_item.done", "output_index": 0, "item": completed}
+    ]
+    mock_sdk(monkeypatch, responses, Stream(frames, final))
+    with caplog.at_level("ERROR"), pytest.raises(ToolangError, match="contradicts"):
+        run_stream(responses.ResponsesModelAdapter(), model("responses"), [])
+
+    assert "key=('tool', 'fc-conflict')" in caplog.text
+    assert "changed_fields=['input.command']" in caplog.text
+    assert "private-original" not in caplog.text
+    assert "private-replacement" not in caplog.text
+
+
 def test_explicit_reasoning_visibility_options_survive_normalized_effort():
     request = ModelCall("", [], reasoning=Reasoning("high"), max_output_tokens=1024)
     response = responses.response_payload(

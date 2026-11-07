@@ -389,7 +389,7 @@ async def stream_response(
                                     raise ToolangError(
                                         "Responses text snapshot contradicts its deltas"
                                     )
-                            await parts.finish(key, part)
+                            await parts.finish(key, part, source=event_type)
                 if terminal_response is None:
                     raise ModelResponseError(
                         "model stream ended before a terminal Responses event",
@@ -410,7 +410,7 @@ async def stream_response(
                 and not part.text.startswith(deferred[key])
             ):
                 raise ToolangError("Responses text snapshot contradicts its deltas")
-            await parts.finish(key, part)
+            await parts.finish(key, part, source=event_type)
     except (Exception, asyncio.CancelledError) as exc:
         if isinstance(exc, ModelResponseError):
             if exc.usage is None:

@@ -1,7 +1,10 @@
 """Part ownership and indexed streaming shared by model adapters."""
 
-from collections.abc import Hashable
+from collections.abc import Hashable, Iterator, Mapping
 from dataclasses import dataclass, field, replace
+from hashlib import sha256
+import logging
+from typing import cast
 
 from toolang.base.errors import ToolangError
 from toolang.base.types.message import (
@@ -21,6 +24,60 @@ from toolang.base.types.run import (
     ModelPartStart,
     ModelStreamHandler,
 )
+
+_LOGGER = logging.getLogger(__name__)
+_MISSING = object()
+
+
+def _changed_fields(
+    previous: object, current: object, path: str = ""
+) -> Iterator[tuple[str, object, object]]:
+    if isinstance(previous, Mapping) and isinstance(current, Mapping):
+        previous = cast(Mapping[str, object], previous)
+        current = cast(Mapping[str, object], current)
+        for key in dict.fromkeys((*previous, *current)):
+            yield from _changed_fields(
+                previous.get(key, _MISSING),
+                current.get(key, _MISSING),
+                f"{path}.{key}" if path else str(key),
+            )
+    elif previous != current:
+        yield path, previous, current
+
+
+def _field_summary(value: object) -> object:
+    """Identify changes without logging text, arguments, or opaque state."""
+    if value is _MISSING:
+        return {"present": False}
+    if value is None or isinstance(value, bool | int | float):
+        return value
+    encoded = (value if isinstance(value, str) else repr(value)).encode("utf-8")
+    return {
+        "type": type(value).__name__,
+        "bytes": len(encoded),
+        "sha256": sha256(encoded).hexdigest(),
+    }
+
+
+def _log_conflict(
+    key: Hashable, index: int, previous: Part, current: Part, source: str | None
+) -> None:
+    changes = {
+        path: {"previous": _field_summary(before), "current": _field_summary(after)}
+        for path, before, after in _changed_fields(
+            previous.to_data(), current.to_data()
+        )
+    }
+    _LOGGER.error(
+        "model.part_conflict part=%s key=%r source=%s previous_kind=%s current_kind=%s changed_fields=%s changes=%s",
+        index,
+        key,
+        source,
+        previous.type,
+        current.type,
+        list(changes),
+        changes,
+    )
 
 
 def native_metadata(model: Model, adapter: str, **fields: object) -> dict[str, object]:
@@ -73,21 +130,26 @@ class PartStream:
         await self.start(key, ReasoningPart("") if reasoning else TextPart(""))
         await self.delta(key, ReasoningDelta(text) if reasoning else TextDelta(text))
 
-    async def finish(self, key: Hashable, part: Part) -> None:
+    async def finish(
+        self, key: Hashable, part: Part, *, source: str | None = None
+    ) -> None:
         index = self.indices.get(key)
         if index in self.ended:
             assert index is not None
             if self.parts[index] != part:
+                _log_conflict(key, index, self.parts[index], part, source)
                 raise ToolangError("model final snapshot contradicts a completed Part")
             return
         suffix = ""
         if index is not None:
             previous = self.parts[index]
             if previous.type != part.type:
+                _log_conflict(key, index, previous, part, source)
                 raise ToolangError("model stream changed a Part's type")
             if isinstance(part, TextPart | ReasoningPart):
                 assert isinstance(previous, TextPart | ReasoningPart)
                 if not part.text.startswith(previous.text):
+                    _log_conflict(key, index, previous, part, source)
                     raise ToolangError("model final snapshot contradicts streamed text")
                 suffix = part.text[len(previous.text) :]
         # The native unit is complete before observers see its start or suffix.
