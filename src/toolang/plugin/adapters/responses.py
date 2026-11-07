@@ -7,7 +7,7 @@ import asyncio
 import logging
 from collections.abc import Mapping, Sequence
 from contextlib import aclosing
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from hashlib import sha256
 from typing import Any, cast
 from types import SimpleNamespace
@@ -404,6 +404,15 @@ async def stream_response(
         if parts.indices.keys() - final_keys:
             raise ToolangError("Responses final snapshot omitted an observed Part")
         for key, part in final_parts:
+            completed_index = parts.indices.get(key)
+            if completed_index is not None and completed_index in parts.ended:
+                completed = parts.parts[completed_index]
+                if isinstance(completed, ReasoningPart) and isinstance(
+                    part, ReasoningPart
+                ):
+                    # Item-done reasoning is the replay source. The aggregate
+                    # snapshot may re-encode its opaque encrypted state.
+                    part = replace(part, signature=completed.signature)
             if (
                 key in deferred
                 and isinstance(part, TextPart)

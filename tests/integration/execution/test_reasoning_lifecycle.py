@@ -8,6 +8,7 @@ from toolang.execution.values import parts_from_value
 import asyncio
 from pathlib import Path
 import json
+from types import SimpleNamespace as NS
 
 import pytest
 
@@ -44,6 +45,7 @@ from toolang.execution.events import (
 from toolang.execution.types import ThreadKind
 from toolang.execution.store import RunStore
 from toolang.lang.types import Array, Struct
+from toolang.plugin.adapters import responses
 
 
 SOURCE = """agic chat(_: Part[]) -> Part[]:
@@ -70,6 +72,76 @@ def signed_reasoning(text="reasoning α"):
             "content_type": "summary_text",
         },
     )
+
+
+def test_responses_completed_reasoning_survives_terminal_rotation_and_reopen(
+    tmp_path: Path, monkeypatch
+):
+    completed = NS(id="rs", type="reasoning", summary=[], encrypted_content="item-done")
+    terminal = NS(**{**vars(completed), "encrypted_content": "terminal"})
+    answer = NS(
+        id="msg",
+        type="message",
+        role="assistant",
+        content=[NS(type="output_text", text="answer")],
+    )
+    final = NS(id="response", status="completed", output=[terminal, answer])
+
+    class NativeStream:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return None
+
+        async def __aiter__(self):
+            for index, item in enumerate((completed, answer)):
+                yield NS(
+                    type="response.output_item.done", output_index=index, item=item
+                )
+            yield NS(type="response.completed", response=final)
+
+    client = NS(responses=NS(stream=lambda **_: NativeStream()))
+    monkeypatch.setattr(responses, "create_client", lambda *_, **__: client)
+    harness = ExecutionHarness.create(
+        tmp_path, source=SOURCE, responses=[], streaming=True
+    )
+    monkeypatch.setattr(
+        harness.adapter, "stream", responses.ResponsesModelAdapter().stream
+    )
+    tracer = RecordingRunTracer()
+
+    async def scenario():
+        async with harness:
+            run = await harness.executor.run(
+                harness.run_spec(
+                    thread=harness.threads.create(kind=ThreadKind.CHAT),
+                    runnable="chat",
+                    primary=(TextPart("start"),),
+                ),
+                tracer=tracer,
+            )
+            assert run.status == "succeeded", run.error
+            parts = harness.store.run_output(run_id=run.id)
+            assert parts is not None and len(parts) == 2
+            assert isinstance(parts[0], ReasoningPart)
+            assert parts[0].signature == "item-done"
+            assert tuple(
+                event.data for event in tracer.events if isinstance(event, PartEnd)
+            ) == tuple(part_data(part) for part in parts)
+            assert_run_event_integrity(tracer.events)
+        reopened = RunStore(harness.store.db_path, read_only=True)
+        try:
+            assert reopened.run_output(run_id=run.id) == parts
+            outgoing = responses.encode_message(
+                Message("assistant", parts), model=harness.setup.models()[0]
+            )
+            assert isinstance(outgoing, list)
+            assert outgoing[0]["encrypted_content"] == "item-done"
+        finally:
+            reopened.close()
+
+    asyncio.run(scenario())
 
 
 def test_reasoning_survives_reopening_new_runs_and_fork_without_continuation(

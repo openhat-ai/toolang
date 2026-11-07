@@ -49,7 +49,7 @@ def _field_summary(value: object) -> object:
     """Identify changes without logging text, arguments, or opaque state."""
     if value is _MISSING:
         return {"present": False}
-    if value is None or isinstance(value, bool | int | float):
+    if value is None:
         return value
     encoded = (value if isinstance(value, str) else repr(value)).encode("utf-8")
     return {
