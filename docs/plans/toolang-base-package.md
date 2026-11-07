@@ -30,13 +30,14 @@ planned contract extension.
 | Runtime requirements | Python `>=3.11`; `pydantic>=2.11,<3` |
 | Build | Hatchling; package-owned `pyproject.toml`, README, Apache-2.0 license, and `py.typed` |
 | Toolang dependency | `toolang-base>=0.1.0,<0.2.0`; retain Toolang's other directly used dependencies |
-| Plugin dependency | The same compatible SDK range plus the plugin's own libraries; Toolang is not required for contract-only plugins |
+| Plugin dependency | Its own supported SDK range plus the plugin's own libraries; Toolang is not required for contract-only plugins |
 
 Each Toolang release declares its supported SDK range; their version numbers
 need not match. `uv.lock` fixes development/CI versions, not end-user installations.
 SDK `0.1.x` releases must preserve API compatibility. Using a new SDK API raises
-Toolang's minimum; adopting incompatible `0.2.x` requires a range update. The
-installer combines Toolang/plugin requirements and rejects empty intersections.
+Toolang's minimum; adopting incompatible `0.2.x` requires a range update. Plugins
+declare their own minimum and compatibility ceiling; they need not copy Toolang's
+range. The installer combines all requirements and rejects empty intersections.
 
 Move implementations once; keep the current submodule layout under the new import
 name. First-party imports use `toolang_base`. Keep facades narrow, factory
@@ -70,21 +71,31 @@ boundary checks that run by default and reject imports from `toolang`.
 
 Packaging CI verifies clean installations outside the checkout, without
 `PYTHONPATH` or editable installs; workspace tests cannot establish isolation.
-Default pytest remains offline and deterministic.
+Network-dependent installation and minimum-version checks run in packaging CI;
+default pytest uses local fixtures and remains offline and deterministic. An
+unpublished minimum that matches the candidate uses the candidate artifact; a
+published minimum is tested separately using its registry artifact.
 
 Preserve `--dev [PATH]` syntax and primary Toolang-wheel selection. At the launch
 call site, inspect the selected wheel's directory for SDK wheels satisfying its
 declared SDK requirement, using `packaging` for metadata/version matching and
-declaring it as a direct Toolang dependency: use one compatible companion,
-reject multiple matches,
-or use ordinary index resolution when there is none. Do not build artifacts
-automatically. Pass resolved companion paths through a new
-`SandboxRequest.local_dev_dependencies: tuple[Path, ...] = ()` field. Docker stages
+declaring it as a direct Toolang dependency. Use one compatible companion and
+reject multiple matches. Invalid SDK wheels, or SDK wheels present with no
+compatible match, fail before launch; ordinary index resolution is allowed only
+when no SDK wheel is present. Do not build artifacts automatically.
+
+Use the same artifact resolver for new launches and explicit attachment
+requirements. Compare the complete selected artifact set: adding, removing,
+moving, or changing a companion must require restart when `--dev` is explicit.
+Include companion paths and content digests in the development binding when
+present; preserve existing primary-only and non-development bindings.
+
+Pass resolved companion paths through a new
+`SandboxRequest.local_dev_dependencies: tuple[Path, ...] = ()` field, appended
+after existing fields to preserve positional constructor arguments. Docker stages
 and installs these dependencies with the primary wheel using uv's `--with` option.
-Include companion paths
-and content digests in development-launch identity when present; ordinary launches
-retain their existing bindings. CI builds both wheels into one clean directory
-when testing unpublished workspace changes in Docker.
+CI builds both wheels into one clean directory when testing unpublished workspace
+changes in Docker; fixtures select the primary wheel by distribution name.
 
 ## Build and release workflow
 
@@ -122,7 +133,7 @@ uv build --package toolang --no-sources --out-dir /tmp/toolang-build/runtime
 | --- | --- |
 | Package extraction and metadata | `src/toolang/base/**`, `packages/toolang-base/**`, root `pyproject.toml`, `uv.lock` |
 | Canonical imports and compatibility | Callers in `src/toolang/**`, `tests/**`, `scripts/benchmark_web_search.py`; legacy base forwarding modules |
-| Guest development artifacts | SDK sandbox types, `up/sandbox.py`, `up/contract.py`, Docker sandbox/bootstrap files and their fixtures |
+| Guest development artifacts | SDK sandbox types, `up/sandbox.py`, `up/contract.py`, `cli/common/startup.py`, Docker sandbox/bootstrap files and their fixtures |
 | Versioning and publishing | `common/_version_repo.py`, `common/version.py`, `hatch_build.py`, `.github/workflows/ci.yml`, `publish-pypi.yml`, new SDK publishing workflow, `aid.too` |
 | Tests and documentation | Member tests, root compatibility/plugin/package tests, `CONTRIBUTING.md`, relevant design docs, `reference/config.toml`, package README and changelogs |
 
@@ -136,6 +147,7 @@ uv build --package toolang --no-sources --out-dir /tmp/toolang-build/runtime
    Toolang's existing factories. Internal/reserved toolset authority is unchanged.
 3. **Compatibility and records:** representative classes, exceptions, and helpers
    are identical through old and new imports; legacy and migrated plugins coexist.
+   Existing positional sandbox-request calls retain their argument bindings.
    Existing schema, value-codec, history, and execution round-trip tests pass.
 4. **Artifact isolation:** wheels contain disjoint implementations, SDK typing
    metadata is present, and clean Toolang installation resolves the declared SDK
@@ -143,8 +155,11 @@ uv build --package toolang --no-sources --out-dir /tmp/toolang-build/runtime
    smoke checks cover the declared minimum and candidate SDK; conflicting plugin
    requirements fail resolution.
 5. **Guest development:** an unpublished compatible SDK companion is installed
-   with the selected Toolang wheel; changing it changes launch identity. Ambiguous
-   companions fail before launch. Existing primary-only and non-development paths pass.
+   with the selected Toolang wheel. Launch and attachment agree; adding, removing,
+   moving, or replacing a companion prevents reuse of the previous instance.
+   Ambiguous, invalid, and exclusively incompatible companions fail before launch;
+   an absent companion permits index resolution. Existing primary-only and
+   non-development paths pass.
 6. **Independent releases:** SDK tags leave Toolang's version/provenance correct;
    both publishers reject mismatched tags/versions and select only their own
    artifacts. Changelog generation selects the correct project and preserves
