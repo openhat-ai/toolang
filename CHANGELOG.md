@@ -7,6 +7,13 @@ This record starts at the v0.3.4 baseline; earlier history is not backfilled.
 
 ## [Unreleased]
 
+### Fixed
+
+- OpenAI Responses calls no longer fail after item completion when the terminal
+  aggregate carries different reasoning encryption, and completed Parts stay
+  identical through replay.
+  ([#996](https://github.com/openhat-ai/toolang/pull/996))
+
 ## [0.4.0] - 2026-11-01
 
 ### Security

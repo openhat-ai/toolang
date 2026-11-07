@@ -512,6 +512,11 @@ Continuation holds call-level state such as a Responses cursor, not a second
 copy of reasoning history. An interrupted native unit retains only its readable
 prefix; completed units retain their native fields.
 
+For Responses streams, reasoning from `response.output_item.done` owns the
+replay state. A terminal aggregate snapshot can carry different encrypted bytes;
+the adapter retains the completed Part while checking its identity, content,
+and other structural fields.
+
 Raw Parts and machine inspection expose reasoning. Answer extraction, structured
 output, child-run user context, and human progress/results exclude it. This does
 not enable provider summaries automatically or add a reasoning display option.

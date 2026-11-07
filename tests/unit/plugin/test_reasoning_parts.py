@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from copy import deepcopy
 from dataclasses import replace
 import json
 from types import SimpleNamespace as NS
@@ -10,7 +11,7 @@ from typing import Any, cast
 
 import pytest
 
-from toolang.base.errors import ToolangError
+from toolang.base.errors import ModelResponseError, ToolangError
 from toolang.base.types.message import Message, ReasoningPart, TextPart, ToolCallPart
 from toolang.base.types.model import Model, ModelRoute, ModelToolang, Reasoning
 from toolang.base.types.run import (
@@ -735,6 +736,271 @@ def test_responses_rejects_contradictory_final_snapshot(monkeypatch):
     mock_sdk(monkeypatch, responses, Stream(frames, final))
     with pytest.raises(ToolangError, match="contradicts"):
         run_stream(responses.ResponsesModelAdapter(), model("responses"), [])
+
+
+@pytest.mark.parametrize("shape", ["opaque", "multi", "content_first"])
+@pytest.mark.parametrize(
+    ("completed_signature", "terminal_signature"),
+    [("item-done", "terminal"), ("item-done", None), (None, "terminal")],
+)
+def test_responses_retains_completed_reasoning_when_terminal_encryption_changes(
+    monkeypatch, shape, completed_signature, terminal_signature
+):
+    selected = model("responses")
+    native = native_response("responses", True)
+    item = native["output"][0]
+    if shape == "opaque":
+        item["summary"] = []
+        item.pop("content")
+    if completed_signature is None:
+        item.pop("encrypted_content")
+    else:
+        item["encrypted_content"] = completed_signature
+    frames = []
+    if shape == "content_first":
+        frames.append(
+            {
+                "type": "response.reasoning_text.delta",
+                "item_id": item["id"],
+                "output_index": 0,
+                "content_index": 0,
+                "delta": "native text",
+            }
+        )
+    frames.extend(
+        {"type": "response.output_item.done", "output_index": index, "item": output}
+        for index, output in enumerate(native["output"])
+    )
+    final = deepcopy(native)
+    final["output"][0]["encrypted_content"] = terminal_signature
+    mock_sdk(monkeypatch, responses, Stream(frames, final))
+    events = []
+    result = run_stream(responses.ResponsesModelAdapter(), selected, events)
+
+    assert_events(events, result)
+    assert result.message is not None
+    for event in events:
+        if isinstance(event, ModelPartEnd):
+            assert result.message.parts[event.part] is event.data
+    restored = Message.from_data(json.loads(json.dumps(result.message.to_data())))
+    assert encode("responses", restored, selected)[0] == item
+    followup = ModelCall(
+        "", [restored, Message.user("next")], continuation=result.continuation
+    )
+    payload = responses.response_payload(selected, followup, stateful=True)
+    assert payload["previous_response_id"] == native["id"]
+    assert payload["input"] == [
+        {
+            "type": "message",
+            "role": "user",
+            "content": [{"type": "input_text", "text": "next"}],
+        }
+    ]
+
+
+def test_responses_retains_terminal_only_reasoning_encryption(monkeypatch):
+    native = native_response("responses", False)
+    mock_sdk(monkeypatch, responses, Stream([], native))
+    events = []
+    selected = model("responses")
+    result = run_stream(responses.ResponsesModelAdapter(), selected, events)
+    assert_events(events, result)
+    assert encode("responses", result.message, selected)[0] == native["output"][0]
+
+
+@pytest.mark.parametrize("mutation", ["identity", "order", "content"])
+def test_responses_rejects_structural_conflicts_with_rotated_encryption(
+    monkeypatch, mutation
+):
+    native = native_response("responses", False)
+    frames = [
+        {"type": "response.output_item.done", "output_index": index, "item": item}
+        for index, item in enumerate(native["output"])
+    ]
+    final = deepcopy(native)
+    final["output"][0]["encrypted_content"] = "rotated"
+    if mutation == "identity":
+        final["output"][0]["id"] = "different-item"
+    elif mutation == "order":
+        final["output"].reverse()
+    else:
+        final["output"][0]["content"][0]["text"] = "different-content"
+    mock_sdk(monkeypatch, responses, Stream(frames, final))
+    with pytest.raises(ToolangError, match="contradicts|omitted"):
+        run_stream(responses.ResponsesModelAdapter(), model("responses"), [])
+
+
+@pytest.mark.parametrize("status", ["failed", "incomplete"])
+def test_responses_terminal_failure_retains_completed_reasoning(monkeypatch, status):
+    native = native_response("responses", False)
+    item = native["output"][0]
+    final = deepcopy(native)
+    final.update(
+        status=status,
+        error={"code": "server_error"},
+        incomplete_details={"reason": "max_output_tokens"},
+    )
+    final["output"][0]["encrypted_content"] = "terminal"
+    frames = [{"type": "response.output_item.done", "output_index": 0, "item": item}]
+    terminal = {"type": f"response.{status}", "response": final}
+    mock_sdk(monkeypatch, responses, Stream([*frames, terminal]))
+    events = []
+    with pytest.raises(ModelResponseError):
+        run_stream(responses.ResponsesModelAdapter(), model("responses"), events)
+    retained = Message(
+        "assistant",
+        tuple(event.data for event in events if isinstance(event, ModelPartEnd)),
+    )
+    assert encode("responses", retained, model("responses"))[0] == item
+
+
+def test_responses_disconnection_retains_completed_reasoning(monkeypatch):
+    native = native_response("responses", False)
+    item = native["output"][0]
+    frames = [{"type": "response.output_item.done", "output_index": 0, "item": item}]
+    mock_sdk(
+        monkeypatch, responses, Stream(frames, failure=RuntimeError("disconnected"))
+    )
+    events = []
+    with pytest.raises(RuntimeError, match="disconnected"):
+        run_stream(responses.ResponsesModelAdapter(), model("responses"), events)
+    retained = Message(
+        "assistant",
+        tuple(event.data for event in events if isinstance(event, ModelPartEnd)),
+    )
+    assert encode("responses", retained, model("responses"))[0] == item
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "changed_fields"),
+    [
+        ("status", None, ["provider_metadata.status"]),
+        (
+            "summary",
+            [
+                {"type": "summary_text", "text": "private-replacement"},
+                {"type": "summary_text", "text": "private-second"},
+            ],
+            ["text", "provider_metadata.summary_count"],
+        ),
+    ],
+)
+def test_responses_logs_completed_part_conflict(
+    monkeypatch, caplog, field, value, changed_fields
+):
+    completed = {
+        "type": "reasoning",
+        "id": "rs-conflict",
+        "summary": [{"type": "summary_text", "text": "private-original"}],
+        "encrypted_content": "private-original-signature",
+        "status": "completed",
+    }
+    final = {"id": "response", "output": [{**completed, field: value}]}
+    final["output"][0]["encrypted_content"] = "private-replacement-signature"
+    frames = [
+        {"type": "response.output_item.done", "output_index": 0, "item": completed}
+    ]
+    mock_sdk(monkeypatch, responses, Stream(frames, final))
+    events = []
+    with caplog.at_level("ERROR"), pytest.raises(ToolangError, match="contradicts"):
+        run_stream(responses.ResponsesModelAdapter(), model("responses"), events)
+
+    assert "part=0" in caplog.text
+    assert "rs-conflict" in caplog.text
+    assert "source=response.completed" in caplog.text
+    for path in changed_fields:
+        assert path in caplog.text
+    assert "private-original" not in caplog.text
+    assert "private-replacement" not in caplog.text
+    completed_parts = [
+        event.data for event in events if isinstance(event, ModelPartEnd)
+    ]
+    assert len(completed_parts) == 1
+    assert completed_parts[0].signature == "private-original-signature"
+
+
+def test_responses_logs_repeated_item_completion_conflict(monkeypatch, caplog):
+    completed = {
+        "type": "reasoning",
+        "id": "rs-opaque",
+        "summary": [],
+        "encrypted_content": "private-original",
+    }
+    final = {
+        "id": "response",
+        "output": [{**completed, "encrypted_content": "private-replacement"}],
+    }
+    frames = [
+        {"type": "response.output_item.done", "output_index": 0, "item": completed}
+    ]
+    frames.append(
+        {
+            "type": "response.output_item.done",
+            "output_index": 0,
+            "item": final["output"][0],
+        }
+    )
+    mock_sdk(monkeypatch, responses, Stream(frames, final))
+    events = []
+    with caplog.at_level("ERROR"), pytest.raises(ToolangError, match="contradicts"):
+        run_stream(responses.ResponsesModelAdapter(), model("responses"), events)
+
+    assert "key=('reasoning', 'rs-opaque', 'opaque', 0)" in caplog.text
+    assert "changed_fields=['signature']" in caplog.text
+    assert "source=response.output_item.done" in caplog.text
+    assert "sha256" in caplog.text
+    assert "private-original" not in caplog.text
+    assert "private-replacement" not in caplog.text
+    assert [
+        event.data.signature for event in events if isinstance(event, ModelPartEnd)
+    ] == ["private-original"]
+
+
+def test_responses_logs_tool_argument_conflict(monkeypatch, caplog):
+    completed = {
+        "type": "function_call",
+        "id": "fc-conflict",
+        "call_id": "call-conflict",
+        "name": "shell__execute",
+        "arguments": '{"command":"private-original"}',
+    }
+    final = {
+        "id": "response",
+        "output": [{**completed, "arguments": '{"command":"private-replacement"}'}],
+    }
+    frames = [
+        {"type": "response.output_item.done", "output_index": 0, "item": completed}
+    ]
+    mock_sdk(monkeypatch, responses, Stream(frames, final))
+    with caplog.at_level("ERROR"), pytest.raises(ToolangError, match="contradicts"):
+        run_stream(responses.ResponsesModelAdapter(), model("responses"), [])
+
+    assert "key=('tool', 'fc-conflict')" in caplog.text
+    assert "changed_fields=['input.command']" in caplog.text
+    assert "private-original" not in caplog.text
+    assert "private-replacement" not in caplog.text
+
+
+def test_part_conflict_logs_fingerprint_numeric_arguments(caplog):
+    from toolang.plugin.adapters._parts import PartStream
+
+    original = ToolCallPart("call", "tool", "tool", {"pin": 739204615837})
+    replacement = replace(original, input={"pin": 482605937201})
+
+    async def scenario():
+        async def ignore(event):
+            pass
+
+        parts = PartStream(ignore)
+        await parts.finish("call", original)
+        await parts.finish("call", replacement)
+
+    with caplog.at_level("ERROR"), pytest.raises(ToolangError, match="contradicts"):
+        asyncio.run(scenario())
+    assert "input.pin" in caplog.text
+    assert "739204615837" not in caplog.text
+    assert "482605937201" not in caplog.text
+    assert "sha256" in caplog.text
 
 
 def test_explicit_reasoning_visibility_options_survive_normalized_effort():
